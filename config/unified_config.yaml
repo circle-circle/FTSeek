@@ -100,6 +100,10 @@ catalyst:
     quick_debate_rounds: 1
     quick_debate_timeout: 60
   sector_mapping:
+    telecom:
+    - T
+    - TMUS
+    - VZ
     ai_chip:
     - NVDA
     - AMD
@@ -2179,8 +2183,26 @@ signal_stage:
     agreement_boost: 0.05
     llm_conflict_confidence_threshold: 0.7
     shadow_log_path: data/shadow/shadow_technical_direction.jsonl
+# [DEB-20261009 §22 F1 修复 2026-10-09] EventStream 发现源查询口径 (observe-only)。
+#   此前 google_news_rss 默认 query 与 federal_register 默认 term 写死样本事件
+#   ("SpaceX FCC"/"SpaceX"), 生产库 107/107 行单一 query ⇒ 发现面对非样本事件为瞎,
+#   违反本 DEB §2.3 可泛化。以下列表为生产口径, 采集端按序轮询 (0.5s 礼貌间隔);
+#   锚定相关性过滤器的消费面 (监管机关 + sector 触发词英文面), 后续按覆盖缺口增补。
+#   回滚: 删除本块 (回退代码内 DEFAULT_QUERIES/DEFAULT_TERMS)。
+event_stream:
+  google_news_queries:
+  - FCC OR FTC OR FDA OR "Securities and Exchange Commission"
+  - spectrum OR direct-to-cell OR satellite broadband OR wireless carrier
+  - semiconductor OR chip export OR sanctions
+  - merger OR acquisition OR takeover
+  federal_register_terms:
+  - Federal Communications Commission
+  - Securities and Exchange Commission
 universe_expansion:
   entry_enabled: true
+  # DEB-20261009 P0 前置: RSSHub 返回空且最后写入超过该时长时发降级告警。
+  # 采集 cron 为 3h 一轮, 6h=连续两轮无落库; 回滚: 调大或设 0 禁用。
+  rsshub_stale_hours: 6.0
   # 2026-08-14 (DEB §13): 午间影子扫描开关 — ET 12:30 只 scan 不 inject, 独立 jsonl。
   #   判据: scripts/ue_midday_shadow_eval.py (≥10日+n≥30, 命中率≥55%且均值≥0.5%→开inject)。
   #   回滚: false 或删 crontab 行。
@@ -2258,6 +2280,14 @@ universe_expansion:
   clue_earnings_events: true
   clue_insider_clusters: true
   clue_event_symbols: true
+  # [Phase 1.7 2026-10-09] EventStream observe-only clue: 官方/发现源结构化输入。
+  #   采集端每5分钟写 data/event_stream.db; 本端只读、相关性过滤、去重后进 UE 材料。
+  #   回滚: false (UE 主链退回无 EventStream 输入; 采集 cron 可独立保留/删除)。
+  event_stream_clue_enabled: true
+  event_stream_clue_lookback_hours: 24
+  event_stream_clue_scan_limit: 500
+  event_stream_clue_limit: 20
+  event_stream_clue_dedupe: true
   clue_peer_surge: true
   # 2026-08-29 (盘前榜过滤规则, 用户裁"按建议执行"): 富途全市场盘前榜质量门候选线索。
   #   采集端过质量门(成交额≥$5M/价格≥$5/市值≥$2B/ETF剔除/极端带剔除), 每向≤5 候选,

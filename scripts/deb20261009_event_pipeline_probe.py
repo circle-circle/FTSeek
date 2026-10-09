@@ -142,8 +142,13 @@ def section_c_rsshub_starvation() -> dict:
         dows = [l.split()[4] for l in lines if re.search(pat, l)]
         print(f"  {label} cron 星期字段 = {dows or '未挂'}")
         out[f"{label}_dow"] = dows
-    print("\n  ⇒ 采集只在 周六/周日/周一 跑, 消费方 gen_event_symbols 在 周一~周五 跑")
-    print("     周二~周五的 HARD_EVENT 只能靠 finnhub 降级腿 (_gather_news 无条件并入)")
+    weekday_covered = any("1-5" in dow for dow in out.get("RSSHub 采集_dow", []))
+    if weekday_covered:
+        print("\n  ⇒ P0 修复后: RSSHub 已覆盖周一~周五, 且保留周末采集")
+        print("     消费方 gen_event_symbols 的周一~周五窗口不再依赖 finnhub 降级腿")
+    else:
+        print("\n  ⇒ 采集只在 周六/周日/周一 跑, 消费方 gen_event_symbols 在 周一~周五 跑")
+        print("     周二~周五的 HARD_EVENT 只能靠 finnhub 降级腿 (_gather_news 无条件并入)")
     return out
 
 
@@ -162,13 +167,20 @@ def section_d_silent_failure() -> dict:
     m2 = re.search(r"def _gather_news\(hours: int\).*?\n    return items", scan, re.S)
     body2 = m2.group(0) if m2 else ""
     alert_in_except = bool(re.search(r"except Exception as e:.*?FeishuAlerter", body2, re.S))
+    stale_alert = (
+        "rsshub_stale_hours" in body2
+        and "get_last_fetched_at" in body2
+        and "_send_rsshub_alert" in body2
+    )
     finnhub_unconditional = bool(re.search(
         r"if bool\(_cfg\(\"universe_expansion\.clue_finnhub_news\".*?\n(?!    except)", body2, re.S))
     print(f"  _gather_news 的降级告警位于 except 块内 = {alert_in_except}")
+    print(f"  空结果 + 最后落库陈旧时发告警 = {stale_alert}")
     print(f"  finnhub 腿无条件并入 (不在 except 内) = {finnhub_unconditional}")
-    if raises == 0 and alert_in_except:
+    if raises == 0 and not stale_alert:
         print("\n  ⇒ **真失效形态 (DB 陈旧 → 查询返回 0 行) 不抛异常 ⇒ 告警永不触发**")
-        print("     提案 §1.1 事件当天 (10-06/07/08) RSSHub 腿静默返回 0 条, 无人知晓")
+    elif raises == 0 and stale_alert:
+        print("\n  ⇒ P0 修复后: 空结果且最后落库超过阈值时会触发降级告警")
     return {"raises": raises, "alert_in_except": alert_in_except,
             "finnhub_unconditional": finnhub_unconditional}
 

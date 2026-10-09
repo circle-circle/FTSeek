@@ -1,5 +1,17 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-09 Event-to-Trade 链路 DEB 落档
+
+**触发**: 用户令「同意先落DEB文件」。
+**落档**: `docs/debates/DEB-20261009-event-to-trade-pipeline.md`。
+
+- 新增泛化事件链路设计稿：多源采集 → append-only Event Store → 归一化/实体传导图 → 确定性推理 + LLM 校验 → 信号路由 → 影子执行 → 评估 → Playbook 实盘后置。
+- 明确不重启 `news_v2`、不新建 Kafka/Redis 流平台、不建平行自动交易主管线；盘前/盘后先 observe/shadow，零真实订单。
+- 吸收 SpaceX/FCC/Grain 样本溯源结论：官方频率与 “800 MHz” 叙述存在口径差异；`$17B`、`$93.5B`、`12M subscribers` 未核验，不得入事实层。
+- 复用 `SourceAdapter`、`UnifiedNewsItemV2`、dedup/relevance、LLM 分类、risk/execution 与 extended-hours 护栏，仅新增事件层必要件。
+- **本批零代码/配置/crontab/Hermes 变更**，不触发重启；只做 DEB + handoff 落档。
+- **下一步**: 用户裁决 Phase 0 源与延迟审计、是否引入付费 wire/X、以及 Event Stream 与统一 SessionResolver 的分批关系。
+
 ## 2026-10-09 DEB-20261008 §16 复核修复批: G5 日期/E13 as-of/T+1 补齐
 
 **触发**: 用户令「需要」(复查另一 agent 的 §14/§15 增补后执行小修批)。

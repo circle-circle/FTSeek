@@ -1004,6 +1004,23 @@ def _effective_quote_price(q: Dict[str, Any]) -> Optional[float]:
 
 
 # ── clue brief 组装 (信息获取) ────────────────────────────────
+def _send_rsshub_alert(content: str) -> None:
+    """RSSHub 降级/陈旧告警; 告警失败不阻断主链 (best-effort)."""
+    try:
+        from app.observability.feishu_alert import FeishuAlerter
+        alerter = FeishuAlerter(
+            app_id=os.getenv("FEISHU_APP_ID", ""),
+            app_secret=os.getenv("FEISHU_APP_SECRET", "")
+        )
+        alerter.send_warn(
+            title="UE 新闻源降级告警",
+            content=content,
+            receive_id=os.getenv("FEISHU_CHAT_ID", "")
+        )
+    except Exception as alert_error:
+        print(f"  [warn] 降级告警发送失败 (不阻断): {alert_error}")
+
+
 def _gather_news(hours: int) -> List[Dict[str, Any]]:
     """近 N 小时新闻 (RSSHub, llm_pipeline 同源); 失败返回 [].
 
@@ -1013,26 +1030,32 @@ def _gather_news(hours: int) -> List[Dict[str, Any]]:
     门控: universe_expansion.clue_finnhub_news (默认开); 回滚: 设 false。
     """
     items: List[Dict[str, Any]] = []
+    fetcher = None
     try:
         from app.data.rsshub_us_news import RSSHubUSNewsFetcher
-        items = RSSHubUSNewsFetcher().get_recent_news(hours=hours, limit=30) or []
+        fetcher = RSSHubUSNewsFetcher()
+        items = fetcher.get_recent_news(hours=hours, limit=30) or []
     except Exception as e:
         print(f"  [warn] 新闻拉取失败 (降级): {e}")
-        # P2 (2026-09-17, 用户裁「接收建议」): RSSHub 降级告警 — 静默降级=病D,
-        #   无人知晓信息层断腿. 告警失败只打印, 不阻断主链 (best-effort).
-        try:
-            from app.observability.feishu_alert import FeishuAlerter
-            alerter = FeishuAlerter(
-                app_id=os.getenv("FEISHU_APP_ID", ""),
-                app_secret=os.getenv("FEISHU_APP_SECRET", "")
-            )
-            alerter.send_warn(
-                title="UE 新闻源降级告警",
-                content=f"RSSHub 拉取失败, 降级到 Finnhub 单源。\n错误: {str(e)[:200]}\n时间: {_today()}",
-                receive_id=os.getenv("FEISHU_CHAT_ID", "")
-            )
-        except Exception as _ae:
-            print(f"  [warn] 降级告警发送失败 (不阻断): {_ae}")
+        _send_rsshub_alert(
+            f"RSSHub 拉取失败, 降级到 Finnhub 单源。\n错误: {str(e)[:200]}\n时间: {_today()}"
+        )
+    if not items and fetcher is not None:
+        stale_hours = float(_cfg("universe_expansion.rsshub_stale_hours", 6.0) or 0)
+        if stale_hours > 0:
+            try:
+                last_fetched_at = fetcher.get_last_fetched_at()
+                stale = last_fetched_at is None or (
+                    datetime.now() - last_fetched_at > timedelta(hours=stale_hours)
+                )
+            except Exception as stale_error:
+                stale = True
+                print(f"  [warn] RSSHub 采集时间检查失败: {stale_error}")
+            if stale:
+                _send_rsshub_alert(
+                    f"RSSHub 近 {hours}h 返回 0 条且最后落库超过 {stale_hours:g}h。\n"
+                    f"时间: {_today()}"
+                )
     if bool(_cfg("universe_expansion.clue_finnhub_news", True)):
         try:
             from datetime import timezone as _tz
@@ -1251,7 +1274,10 @@ def _gather_hard_events(news: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         except Exception:
             continue
     try:
-        events = CatalystClassifier().classify(items, use_llm=False)
+        sector_mapping = _cfg("catalyst.sector_mapping", {}) or {}
+        events = CatalystClassifier(sector_mapping=sector_mapping).classify(
+            items, use_llm=False
+        )
     except Exception as e:
         print(f"  [warn] 催化分类失败 (降级): {e}")
         return []
@@ -1414,6 +1440,88 @@ def _gather_event_symbols_file() -> List[Dict[str, Any]]:
     except Exception as e:
         print(f"  [warn] 事件标的文件读取失败 (降级): {e}")
         return []
+
+
+def _parse_event_stream_time(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            from email.utils import parsedate_to_datetime
+            parsed = parsedate_to_datetime(value)
+        except (TypeError, ValueError):
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _gather_event_stream_clues(db_path: Optional[Path] = None
+                               ) -> Tuple[List[Dict[str, Any]], str]:
+    """EventStream observe-only 线索 → UE 结构化事实。
+
+    定位: 输入端扩容, 非放行信号。失败降级为空, 不阻断既有 UE 主链。
+    回滚: universe_expansion.event_stream_clue_enabled=false。
+    """
+    if not bool(_cfg("universe_expansion.event_stream_clue_enabled", False)):
+        return [], "EventStream:off"
+    try:
+        from urllib.parse import urlsplit
+
+        from app.event_stream.dedupe import deduplicate_events
+        from app.event_stream.models import CanonicalEvent
+        from app.event_stream.relevance import (
+            filter_relevant_events,
+            load_relevance_context,
+            match_event_relevance,
+        )
+        from app.event_stream.store import EventStore
+
+        # 2026-10-09 F4 修复: db_path=None 时交 EventStore 默认解析 (get_data_dir),
+        #   与采集侧同口径; 此前 clue 侧硬编 _ROOT/data, 双口径分歧会让 clue 静默为空。
+        store = EventStore(db_path)
+        scan_limit = int(_cfg("universe_expansion.event_stream_clue_scan_limit", 500))
+        lookback_hours = int(
+            _cfg("universe_expansion.event_stream_clue_lookback_hours", 24)
+        )
+        clue_limit = int(_cfg("universe_expansion.event_stream_clue_limit", 20))
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
+        events: List[CanonicalEvent] = []
+        for event in store.get_recent_canonical_events(limit=scan_limit):
+            event_time = _parse_event_stream_time(event.event_time)
+            if event_time is None or event_time < cutoff:
+                continue
+            events.append(event)
+
+        context = load_relevance_context(_ROOT / "config" / "unified_config.yaml")
+        events = filter_relevant_events(events, context)
+        if bool(_cfg("universe_expansion.event_stream_clue_dedupe", True)):
+            events = [cluster.primary for cluster in deduplicate_events(events)]
+        events = events[:clue_limit]
+
+        facts: List[Dict[str, Any]] = []
+        for event in events:
+            relevance = match_event_relevance(event, context)
+            domain = urlsplit(event.source_url).netloc.removeprefix("www.") or event.source_id
+            publisher = str(event.facts.get("source") or domain)
+            text = (
+                f"[{event.source_tier}/{event.event_type}] "
+                f"{event.event_time or 'unknown-time'} | {event.headline} | "
+                f"source={publisher} | event_id={event.event_id}"
+            )
+            facts.append(_fact(
+                "event_stream",
+                text,
+                symbols=(relevance.symbols if relevance else []),
+                published_at=event.event_time,
+                event_key=f"event_stream/{event.event_id}",
+            ))
+        return facts, f"EventStream:{len(facts)}"
+    except Exception as exc:
+        print(f"  [warn] EventStream clue 注入失败 (降级): {exc}")
+        return [], "EventStream:err"
 
 
 def _gather_macro_brief() -> List[Dict[str, Any]]:
@@ -2016,6 +2124,15 @@ def _build_clue_brief(manual_clue: str = "") -> str:
         if es:
             parts.append("\n[今日事件驱动标的 (事件清单, 可作 evidence_ref 引用)]")
             parts.extend(_take_facts(es, source="event_symbols"))
+
+    # [Phase 1.7 2026-10-09] EventStream observe-only 线索 — T0/T1/T2 结构化事实。
+    #   相关性过滤+跨源去重在前, evidence 索引登记在后; 不改变 UE 下游执行轨道。
+    if bool(_cfg("universe_expansion.event_stream_clue_enabled", False)):
+        event_stream_facts, event_stream_health = _gather_event_stream_clues()
+        health.append(event_stream_health)
+        if event_stream_facts:
+            parts.append("\n[EventStream 一手/发现线索 (observe-only, 相关性过滤+去重)]")
+            parts.extend(_take_facts(event_stream_facts, source="event_stream"))
 
     # [P3 2026-07-22] 盘前板块峰群 (影子测量转 clue 输入; 仅热度参考, 跟随策略已回测否决).
     if bool(_cfg("universe_expansion.clue_peer_surge", True)):

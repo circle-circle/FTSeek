@@ -427,6 +427,9 @@ class TestGatherReturnsFacts:
             tickers = ["US.VRTX"]
 
         class _Classifier:
+            def __init__(self, sector_mapping=None):
+                pass
+
             def classify(self, items, use_llm=False):
                 return [_Ev()]
 

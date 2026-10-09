@@ -97,7 +97,7 @@ def gather_hard_events(news_hours: int = 24) -> Dict[str, Dict[str, Any]]:
     """硬事件 (CatalystClassifier 关键词分类, 零成本) → 按 severity 计分."""
     bag: Dict[str, Dict[str, Any]] = {}
     try:
-        from llm_universe_scan import _gather_news  # 复用同一新闻源 (RSSHub)
+        from scripts.llm_universe_scan import _cfg, _gather_news  # 复用同一新闻源 (RSSHub)
         from app.catalyst.event_classifier import CatalystClassifier
         from app.news_v2.models import UnifiedNewsItemV2, NewsUrgency
     except Exception as e:
@@ -127,7 +127,10 @@ def gather_hard_events(news_hours: int = 24) -> Dict[str, Dict[str, Any]]:
         except Exception:
             continue
     try:
-        events = CatalystClassifier().classify(items, use_llm=False)
+        sector_mapping = _cfg("catalyst.sector_mapping", {}) or {}
+        events = CatalystClassifier(sector_mapping=sector_mapping).classify(
+            items, use_llm=False
+        )
     except Exception as e:
         print(f"  [warn] 催化分类失败 (降级): {e}", file=sys.stderr)
         return bag

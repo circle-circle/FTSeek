@@ -598,6 +598,18 @@ class RSSHubUSNewsFetcher:
         rows = cursor.fetchall()
         conn.close()
         return [dict(r) for r in rows]
+
+    def get_last_fetched_at(self) -> Optional[datetime]:
+        """返回最后一条新闻的采集时间; 空表返回 None."""
+        conn = sqlite3.connect(str(self._db_path))
+        value = conn.execute("SELECT MAX(fetched_at) FROM us_news").fetchone()[0]
+        conn.close()
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(str(value))
+        except ValueError:
+            return None
     
     def get_news_for_symbol(self, symbol: str, hours: int = 4) -> List[Dict]:
         """获取指定股票的相关新闻"""

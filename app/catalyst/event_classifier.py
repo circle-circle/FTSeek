@@ -106,6 +106,14 @@ KEYWORD_EVENT_MAP = {
     "sanctions": ("REGULATORY", "CRITICAL", "SHORT"),
     "entity list": ("REGULATORY", "HIGH", "SHORT"),
     "export ban": ("REGULATORY", "HIGH", "SHORT"),
+    "granted authority": ("REGULATORY_APPROVAL", "HIGH", "LONG"),
+    "granted fcc authority": ("REGULATORY_APPROVAL", "HIGH", "LONG"),
+    "receives authorization": ("REGULATORY_APPROVAL", "HIGH", "LONG"),
+    "fcc authorization": ("REGULATORY_APPROVAL", "HIGH", "LONG"),
+    "grants-in-part": ("REGULATORY_APPROVAL", "HIGH", "LONG"),
+    "authorization denied": ("REGULATORY_DENIAL", "CRITICAL", "SHORT"),
+    "application rejected": ("REGULATORY_DENIAL", "CRITICAL", "SHORT"),
+    "license revoked": ("REGULATORY_DENIAL", "CRITICAL", "SHORT"),
 
     # 退市/停牌
     "delist": ("DELISTING", "CRITICAL", "SHORT"),
@@ -150,6 +158,37 @@ KEYWORD_EVENT_MAP = {
     "short seller report": ("BREAKING", "HIGH", "SHORT"),
     "CEO resign": ("BREAKING", "HIGH", "SHORT"),
     "CFO resign": ("BREAKING", "HIGH", "SHORT"),
+
+    # 频谱/竞争进入
+    "spectrum licenses": ("SPECTRUM_TRANSACTION", "HIGH", "LONG"),
+    "acquires spectrum": ("SPECTRUM_TRANSACTION", "HIGH", "LONG"),
+    "spectrum acquisition": ("SPECTRUM_TRANSACTION", "HIGH", "LONG"),
+    "spectrum transaction": ("SPECTRUM_TRANSACTION", "HIGH", None),
+    "direct-to-cell": ("COMPETITOR_ENTRY", "HIGH", None),
+    "direct to cell": ("COMPETITOR_ENTRY", "HIGH", None),
+    "satellite broadband": ("COMPETITOR_ENTRY", "HIGH", None),
+}
+
+SECTOR_TRIGGERS = {
+    "中概": "chinese_adr",
+    "中概股": "chinese_adr",
+    "券商": "chinese_broker",
+    "互联网券商": "chinese_broker",
+    "芯片": "ai_chip",
+    "半导体": "ai_chip",
+    "新能源": "ev",
+    "电动车": "ev",
+    "科技股": "big_tech",
+    "chinese adr": "chinese_adr",
+    "semiconductor": "ai_chip",
+    "telecom": "telecom",
+    "telecommunications": "telecom",
+    "wireless carrier": "telecom",
+    "mobile carrier": "telecom",
+    "direct-to-cell": "telecom",
+    "direct to cell": "telecom",
+    "spectrum": "telecom",
+    "satellite broadband": "telecom",
 }
 
 
@@ -345,6 +384,10 @@ class CatalystClassifier:
             "京东": "US.JD",
             "百度": "US.BIDU", "baidu": "US.BIDU",
             "网易": "US.NTES", "netease": "US.NTES",
+            "at&t": "US.T",
+            "t-mobile": "US.TMUS",
+            "tmobile": "US.TMUS",
+            "verizon": "US.VZ",
         }
         for name, ticker in company_ticker_map.items():
             if name.lower() in text:
@@ -357,21 +400,7 @@ class CatalystClassifier:
         tickers = set()
         
         # 检查是否匹配某个板块关键词
-        sector_triggers = {
-            "中概": "chinese_adr",
-            "中概股": "chinese_adr",
-            "券商": "chinese_broker",
-            "互联网券商": "chinese_broker",
-            "芯片": "ai_chip",
-            "半导体": "ai_chip",
-            "新能源": "ev",
-            "电动车": "ev",
-            "科技股": "big_tech",
-            "chinese adr": "chinese_adr",
-            "semiconductor": "ai_chip",
-        }
-        
-        for trigger, sector_key in sector_triggers.items():
+        for trigger, sector_key in SECTOR_TRIGGERS.items():
             if trigger in text.lower():
                 sector_tickers = self.sector_mapping.get(sector_key, [])
                 tickers.update(f"US.{t}" if not t.startswith("US.") else t

@@ -30,6 +30,31 @@ def _run(cmd: str) -> str:
     return (r.stdout or "") + (r.stderr or "")
 
 
+def _parse_e_rows(source: str) -> list[dict]:
+    """解析一段文本中的 E 表行; §14 P0 后与旧逻辑解耦."""
+    rows = []
+    last_cmd = None
+    for line in source.splitlines():
+        if not re.match(r"^\| E\d+", line):
+            continue
+        cells = [cell.strip() for cell in re.split(r"(?<!\\)\|", line.strip().strip("|"))]
+        if len(cells) < 3:
+            continue
+        row_id, raw_cmd, expect = cells[0], cells[1], cells[2]
+        cmd = raw_cmd.strip("`")
+        if cmd in ("同上", ""):
+            assert last_cmd, f"{row_id} 用『同上』但无上一条命令"
+            cmd = last_cmd
+        else:
+            last_cmd = cmd
+        rows.append({
+            "id": row_id,
+            "cmd": cmd.replace("\\|", "|"),
+            "expect": expect.strip("`").replace("\\|", "|"),
+        })
+    return rows
+
+
 def parse_e_tables(src: str) -> tuple[list[dict], list[dict]]:
     """解析 E 表; `同上` 继承上一条命令。
 
@@ -39,6 +64,9 @@ def parse_e_tables(src: str) -> tuple[list[dict], list[dict]]:
     """
     own, upstream = [], []
     i13 = src.find("## 13. 第二 Agent 独立复查")
+    i14 = src.find("## 14. P0 前置执行记录")
+    if i14 >= 0:
+        return _parse_e_rows(src[i14:]), _parse_e_rows(src[:i13])
     for sec in re.finditer(r"###? (\d+\.\d+)? ?E 表[^\n]*\n(.*?)(?=\n##|\Z)", src, re.S):
         in_own = i13 >= 0 and sec.start() > i13
         last_cmd = None
@@ -85,7 +113,8 @@ def _check_rows(rows: list[dict], probe_cache: dict) -> tuple[int, int, list[str
 
 def verify_e_table(src: str) -> tuple[int, int, list[str], list[str]]:
     own, upstream = parse_e_tables(src)
-    print("--- §13.7 本复查 E 表 (失败计入 rc) ---")
+    label = "--- §14.3 P0 后 E 表 (失败计入 rc) ---" if "## 14. P0 前置执行记录" in src else "--- §13.7 本复查 E 表 (失败计入 rc) ---"
+    print(label)
     ok, tot, fails = _check_rows(own, {})
     print("\n--- §11.7/§12.7 上游 E 表 (只报告可跑性, 不计 rc; 期望列多为描述文字属已知形态) ---")
     u_ok, u_tot, u_fails = _check_rows(upstream, {})
@@ -95,10 +124,14 @@ def verify_e_table(src: str) -> tuple[int, int, list[str], list[str]]:
 def verify_doc_claims(src: str, probe_out: str) -> list[str]:
     """L 系列: §13 正文 claim ↔ 探针实测对账 (期望值不硬编码, 全部现算)."""
     problems = []
-    i = src.find("## 13. 第二 Agent 独立复查")
-    if i < 0:
-        return ["找不到 §13"]
-    sec13 = src[i:]
+    i14 = src.find("## 14. P0 前置执行记录")
+    i13 = src.find("## 13. 第二 Agent 独立复查")
+    if i14 >= 0:
+        sec13 = src[i14:]
+    elif i13 >= 0:
+        sec13 = src[i13:]
+    else:
+        return ["找不到 §13/§14"]
 
     # L1 词表命中 0/4
     m = re.search(r"事件样本 (\d+)/(\d+) 命中，阳性对照 (\d+)/(\d+) 命中", sec13)
@@ -127,6 +160,9 @@ def verify_doc_claims(src: str, probe_out: str) -> list[str]:
         elif abs(float(m.group(3)) - 100.0 * int(pm.group(1)) / int(pm.group(2))) > 0.05:
             problems.append(f"L3: 正文百分比 {m.group(3)}% 与 {pm.group(1)}/{pm.group(2)} 不符")
 
+    if i14 >= 0:
+        return problems
+
     # L4 news_quality.db 死表读数 (字面查找, 不用 regex — 正文含 markdown 粗体星号)
     for frag, label in (("37 行", "行数"), ("**2/37**", "tickers 非空"),
                         ("**0/37**", "sentiment≠0"), ("('other', 37)", "event_type 分布")):
@@ -142,7 +178,7 @@ def verify_doc_claims(src: str, probe_out: str) -> list[str]:
 def verify_structure(src: str) -> list[str]:
     problems = []
     # 1) 表格块列数一致 (按连续块分组)
-    for sec in re.finditer(r"^### (13\.\d)[^\n]*\n(.*?)(?=\n###|\n##|\Z)", src, re.S | re.M):
+    for sec in re.finditer(r"^### ((?:13|14)\.\d)[^\n]*\n(.*?)(?=\n###|\n##|\Z)", src, re.S | re.M):
         name, body = sec.group(1), sec.group(2)
         blocks, cur = [], []
         for line in body.splitlines():
@@ -169,9 +205,12 @@ def verify_structure(src: str) -> list[str]:
             problems.append(f"悬空章节引用 §{ref}")
 
     # 3) 必备节
-    for needed in ("## 13. 第二 Agent 独立复查", "### 13.7 E 表", "### 13.8 复查自曝"):
-        if needed not in src:
-            problems.append(f"缺少必备节: {needed}")
+    needed = ("## 13. 第二 Agent 独立复查", "### 13.7 E 表", "### 13.8 复查自曝")
+    if "## 14. P0 前置执行记录" in src:
+        needed = needed + ("## 14. P0 前置执行记录", "### 14.3 E 表")
+    for item in needed:
+        if item not in src:
+            problems.append(f"缺少必备节: {item}")
 
     # 4) 行号引用真实性
     srcfile = os.path.join(REPO, "config/unified_config.yaml")
@@ -191,8 +230,12 @@ def main() -> int:
     negative = "--negative" in sys.argv
     src = open(DOC, encoding="utf-8").read()
     if negative:
-        tampered = src.replace("事件样本 0/4 命中，阳性对照 2/2 命中",
-                               "事件样本 4/4 命中，阳性对照 0/2 命中", 1)
+        if "## 14. P0 前置执行记录" in src:
+            tampered = src.replace("事件样本 3/4 命中，阳性对照 2/2 命中",
+                                   "事件样本 4/4 命中，阳性对照 0/2 命中", 1)
+        else:
+            tampered = src.replace("事件样本 0/4 命中，阳性对照 2/2 命中",
+                                   "事件样本 4/4 命中，阳性对照 0/2 命中", 1)
         assert tampered != src, "篡改未生效"
         print("[negative] 注入反向数字 (0/4→4/4, 2/2→0/2), 期望 rc=1")
         probe_out = _run(f"env -u PYTHONPATH venv/bin/python {PROBE_REL} 2>&1")

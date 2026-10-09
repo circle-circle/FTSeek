@@ -1,7 +1,7 @@
 ---
 title: 事件驱动的盘前/盘中/盘后采集-推理-交易链路设计
 date: 2026-10-09
-status: 待决策 · 设计稿已落档，未修改代码、配置、crontab、Hermes 任务或交易行为 · §11 主线程只读复查已追加：§1.2 十二条实测 9 真 / 2 语义误读 / 1 不精确；发现 app/catalyst 同轴引擎盘点遗漏 + §5 一处幻影引用；待裁项逐条建议见 §11.6 · §12 用户方向输入：改采 UE 融合路线（Event Stream 降级为 UE 上游供料层，下游 signal_router/shadow_executor/独立毕业门全砍，候选直接进 SIM），修订方案 U 见 §12，原 §6/§9 与 §12 冲突处以 §12 为准 · §13 Hermes 独立复查已追加：复核 §12 方案 U 成立 (U2/U5/U9 实测为真)，另查出四条上游缺口 (事件词表结构性单向致 SpaceX 案 0/4 命中 / RSSHub 停采+星期错配 / 降级告警对真失效形态全盲 / news_quality.db 死表)，其中两件是现役链既有缺陷，建议提为 Phase 0 前置
+status: 方案 U 已采纳并已落地（§14 P0 前置 + §15 Phase 0 + §16–§18 Phase 1/1.5/1.6 + §19 Phase 1.7 UE 接入，§20/§22 两轮实测通过，§21 DA bridge 事故已修复恢复）· §23 主线程落地复查：记录全部属实 · §24 修复批已落地：F1 发现源多 query/term 化 + F2 EDGAR 取链 + F4/F5/F6 小修，生产 cron 已自动生效 · 通道 B / live 未开启
 trigger: 用户要求以 SpaceX/FCC/Grain 新闻为示例，泛化设计一条覆盖盘前、盘中、盘后的信息采集、关联推理与可验证交易链路，并强调如无必要不重复造轮子
 ---
 
@@ -688,6 +688,11 @@ event_stream:
 - 2026-10-09 v1：初版设计稿。只新增本文档，未修改生产代码、配置、crontab 或 Hermes 任务。
 - 2026-10-09 v1.1：追加 §11 主线程只读复查（实测复核 + 新发现 + 待裁项建议）。§1–§9 正文逐字未动（含已被 §11 推翻/更正的 §1.2 第 7、12 条与 §5 幻影引用，改法见 §11，待正文修订窗口统一处理）。
 - 2026-10-09 v1.2：追加 §12 用户方向输入与方案 U（UE 融合路线）。**§12 与 §4.6–§4.8、§6、§9 冲突处以 §12 为准**；§1–§11 正文仍逐字未动。
+- 2026-10-09 v1.3：Codex 复核 §11–§13，实跑探针与验证器；修正当前 `event_symbols` 产物数为 59（10/59）与 `news_quality.db` “当前仍在写”的表述（实为退役链遗留死表）。未修改生产代码、配置、crontab 或交易行为。
+- 2026-10-09 v1.4：用户裁“按建议执行”。落地 §14 P0 前置：双向监管/频谱词表、telecom 传导、UE/gen_event_symbols 复用 sector_mapping、RSSHub 空结果陈旧告警、工作日采集 cron。未新建 Event Stream，未开启通道 B，未修改交易行为。
+- 2026-10-09 v1.5：追加 §23 主线程落地复查（§14–§21 全量实测复核；落档时编号 §22，后因 §22 被 21:10 premarket 实测占用而重编号）。复查动作仅 2 处 except:continue 棘轮清剿（`event_stream_ue_check.py` / `da_bridge_dingtalk_push.py` 坏行计数 + stderr 留痕，零控制流变更），其余零改动。新发现 F1–F10 见 §23.2。另补登记：§15–§21 落地批当时未写变更记录，本节一并追认。
+- 2026-10-09 v1.6：用户裁「请修复」。落地 §24 修复批：F1 发现源多 query/term 化（配置入 `event_stream.*`）+ F2 EDGAR href 取链 + F4 clue 路径同源 + F5 dedupe 时间口径 + F6 ticker 连字符守卫；F7 复核后撤回（非问题）。生产 cron 已自动生效，实测证据见 §24.2。
+
 
 ## 11. 主线程复查（Claude · 2026-10-09 · 只读实测）
 
@@ -885,7 +890,7 @@ LLM 的角色顺势修正：§4.5 原设计"确定性模板出首信号、LLM �
 
 | 实测 | 读数 |
 |---|---|
-| `CatalystClassifier` 的生产消费方（排除 `app/catalyst/` 自身与本探针） | **5 个文件**：`gen_event_symbols.py`(4)、`llm_universe_scan.py`(3, ADR-017)、`scheduler_core.py`(2)、`post_market_audit.py`(1)、`us_pipeline/emergency_interceptor.py`(1) |
+| `CatalystClassifier` 的生产消费方（排除 `app/catalyst/` 自身与本探针） | **6 个文件**：`gen_event_symbols.py`(4)、`llm_universe_scan.py`(3, ADR-017)、`scheduler_core.py`(2)、`post_market_audit.py`(1)、`us_pipeline/emergency_interceptor.py`(1)、`event_stream/relevance.py`(1，Phase 1.6 复用 SECTOR_TRIGGERS) |
 | `catalyst.enabled` 门控范围 | `scheduler_core.py:564` `_gc_cat().get_dotted("catalyst")` **只管 HK/CN detector 链** |
 | `CatalystClassifier` 是否受 `catalyst.enabled` 门控 | **否** —— 消费方直接 `from app.catalyst.event_classifier import CatalystClassifier` 使用 |
 
@@ -923,7 +928,7 @@ LLM 的角色顺势修正：§4.5 原设计"确定性模板出首信号、LLM �
 | 消费方 `gen_event_symbols` cron 星期 | `30 18 * * 1-5` = **周一~周五** |
 | `get_recent_news` 取数方式 | **只读 DB 不实时拉取**（`rsshub_us_news.py:586-600`，`WHERE fetched_at > now-hours`） |
 
-⇒ **周二~周五 RSSHub 腿恒返回 0 行**（DB 停在周一），HARD_EVENT 只能靠 `_gather_news` 的 finnhub 降级腿。产物面实证：`event_symbols_*.json` 58 个产物里 HARD_EVENT 总产出率仅 **10/58 = 17.2%**，且 **周三 0/12、周五 0/11**（与"周中 RSSHub 断粮"同向）。SpaceX 事件当天（10-06 周二/10-07 周三/10-08 周四）RSSHub 腿全空。
+⇒ **周二~周五 RSSHub 腿恒返回 0 行**（DB 停在周一），HARD_EVENT 只能靠 `_gather_news` 的 finnhub 降级腿。产物面实证：`event_symbols_*.json` 59 个产物里 HARD_EVENT 总产出率仅 **10/59 = 16.9%**，且 **周三 0/12、周五 0/11**（与"周中 RSSHub 断粮"同向）。SpaceX 事件当天（10-06 周二/10-07 周三/10-08 周四）RSSHub 腿全空。
 
 **② 静默失效：2026-09-17 用户裁的降级告警在真失效形态下永不触发**（`llm-decision-input-audit` 死门形态⑥同族）：
 
@@ -942,11 +947,12 @@ LLM 的角色顺势修正：§4.5 原设计"确定性模板出首信号、LLM �
 | 实测 | 读数 |
 |---|---|
 | `data/news_quality.db::news_classifications` | 37 行 |
+| `data/news_quality.db` mtime | `2026-07-26 10:45`；结合 `news_v2.enabled: false`，当前不是活跃写入，而是退役链遗留死表 |
 | 列 | `event_type / primary_tickers / impacted_tickers_json / sentiment / horizon_min / credibility / action_hint / rationale / classified_at`（与 §4.3 canonical_events 字段几乎一一对应） |
 | 内容 | `event_type` **全 = 'other'**（37/37）；`primary_tickers` 非空仅 **2/37**；`sentiment≠0` **0/37** |
 | 写入方 | `app/news_v2/processor/llm_classifier.py:227`（属**已退役** news_v2 链，`news_v2.enabled: false`） |
 
-⇒ 这是"**表在写、内容恒为兜底值**"的死输出（`llm-decision-input-audit` 死门形态⑨"判据字面量≠生产值域 / 空写入"）。**Phase 1 若直接新建 `event_stream.db` 会长出第二张事件分类表**（违反铁律 3"不新增台账"）。处置二选一，须在 Phase 1 开工前定：a) 显式退役 `news_quality.db`（走 P7 归档，注明由 event_stream 接管）；b) event_stream 复用/迁移该表结构。不定论 = 两张同 schema 表并存漂移。
+⇒ 这是"**退役链遗留、内容恒为兜底值**"的死表，而非当前仍在写（`llm-decision-input-audit` 死门形态⑨同类）。**Phase 1 若直接新建 `event_stream.db` 会长出第二张事件分类表**（违反铁律 3"不新增台账"）。处置二选一，须在 Phase 1 开工前定：a) 显式退役 `news_quality.db`（走 P7 归档，注明由 event_stream 接管）；b) event_stream 复用/迁移该表结构。不定论 = 两张同 schema 表并存漂移。
 
 ### 13.6 对 §12.6 待裁项的补充建议
 
@@ -964,9 +970,9 @@ LLM 的角色顺势修正：§4.5 原设计"确定性模板出首信号、LLM �
 |---|---|---|
 | E17 | `venv/bin/python scripts/deb20261009_event_pipeline_probe.py` | `事件样本词表命中               : 0/4` |
 | E18 | 同上 | `阳性对照命中                   : 2/2` |
-| E19 | 同上 | `CatalystClassifier 消费方文件数 : 5` |
+| E19 | 同上 | `CatalystClassifier 消费方文件数 : 6` |
 | E20 | 同上 | `get_recent_news 内 raise 数    : 0` |
-| E21 | 同上 | `HARD_EVENT 总产出率            : 10/58` |
+| E21 | 同上 | `HARD_EVENT 总产出率            : 10/59` |
 | E22 | 同上 | `news_us.db 行数                : 273` |
 | E23 | 同上 | `news_quality.db event_type     : [('other', 37)]` |
 | E24 | `grep -n "entry_enabled" config/unified_config.yaml` | `2183:  entry_enabled: true` |
@@ -997,3 +1003,413 @@ LLM 的角色顺势修正：§4.5 原设计"确定性模板出首信号、LLM �
 3. 我的验证器 `scripts/verify_deb20261009_event.py` 已把上游表与 §13.7 分区：§13.7 失败计入 rc，上游表只报告不计 rc（不代他人守门，但可跑性可见）。
 
 > ⚠️ **本节自曝#5**：我给上游表做可跑性分类时，初版把 **E8 误判为"命令坏"**——E8 是 `grep -rn "EventSignalGenerator" …`，其**空输出正是"0 命中"的期望结果**，我却把"输出为空"当成命令失败。这是"测量工具自身的假阳"第三例（前两例见 13.8 自曝#1/#2）。修正后真不可跑 = E7/E10 共 2 条，不是 3 条。若不核，我会把一条正确的幻影引用证据（§11.3 已核实 `EventSignalGenerator` 全仓 0 命中）报成"E 表命令有错"。
+
+
+## 14. P0 前置执行记录（2026-10-09）
+
+> 用户裁决：按 §13.6 建议执行。本节只覆盖 **Phase 0 之前的现役链修复**；外部源能力/延迟/授权审计仍待 Phase 0 单独裁决。
+
+### 14.1 已执行
+
+| 项 | 执行 | 边界 |
+|---|---|---|
+| 事件词表 | 新增 `REGULATORY_APPROVAL`、`REGULATORY_DENIAL`、`SPECTRUM_TRANSACTION`、`COMPETITOR_ENTRY` 关键词 | 只补关键词，不改交易方向决策 |
+| 电信传导 | `catalyst.sector_mapping` 新增 `telecom: [T, TMUS, VZ]`；分类器增加 direct-to-cell/spectrum 等触发 | 供 UE/事件标的生成，不自动下单 |
+| UE/gen_event_symbols | 两处 `CatalystClassifier` 均传入生产 `sector_mapping` | 不新建第二事件引擎 |
+| 陈旧源告警 | RSSHub 空结果且最后落库超过 `rsshub_stale_hours=6h` 时发 Feishu 告警 | 告警 best-effort，不阻断主链 |
+| 采集覆盖 | RSSHub cron 由周一 `0-15/3` 扩为周一~周五 `*/3`，保留周末 `*/3` | 未改变采集频率与数据源 |
+| 测试 | 新增 `tests/test_event_pipeline_p0.py` | 覆盖样本命中、双向词表、映射接线、陈旧/新鲜空结果 |
+
+### 14.2 复跑读数
+
+| 读数 | 修复前 | 修复后 |
+|---|---|---|
+| SpaceX/FCC 样本词表命中 | `0/4` | `3/4` |
+| 阳性对照 | `2/2` | `2/2` |
+| RSSHub 采集星期 | 周六/周日/周一 | 周一~周五 + 周末 |
+| 空结果且 DB 陈旧 | 不告警 | 告警 |
+
+P0 后复跑口径：事件样本 3/4 命中，阳性对照 2/2 命中；`CatalystClassifier` 消费方 **6 个文件**（Phase 1.6 新增 `event_stream/relevance.py` 复用 `SECTOR_TRIGGERS`）；`HARD_EVENT` **10/59 = 16.9%**。
+
+未命中的第 3 条是“AT&T/T-Mobile/Verizon shares fall 6%”这类市场结果描述；其上游授权/频谱事件已被前两条与官方 order 条目命中，市场结果本身不应重复作为事实触发词。
+
+### 14.3 E 表（P0 后可复算）
+
+| # | 命令 | 期望输出 |
+|---|---|---|
+| E26 | `venv/bin/python scripts/deb20261009_event_pipeline_probe.py` | `事件样本词表命中               : 3/4` |
+| E27 | 同上 | `阳性对照命中                   : 2/2` |
+| E28 | 同上 | `CatalystClassifier 消费方文件数 : 6` |
+| E29 | 同上 | `get_recent_news 内 raise 数    : 0` |
+| E30 | 同上 | `HARD_EVENT 总产出率            : 10/59` |
+| E31 | 同上 | `news_us.db 行数                : 273` |
+| E32 | 同上 | `news_quality.db event_type     : [('other', 37)]` |
+| E33 | `rg -n "rsshub_stale_hours" config/unified_config.yaml` | `2190:  rsshub_stale_hours: 6.0` |
+| E34 | `rg -n "telecom:" config/unified_config.yaml` | `103:    telecom:` |
+| E35 | `crontab -l \| grep -v '^#' \| grep 'RSSHubUSNewsFetcher'` | `15 */3 * * 1-5` |
+| E36 | `venv/bin/python -m pytest tests/test_event_pipeline_p0.py -q` | `7 passed` |
+
+### 14.4 自曝与边界
+
+1. 初版测试把 `scripts.llm_universe_scan` 与 `llm_universe_scan` 当成同一模块，monkeypatch 没有作用到 `gen_event_symbols` 的实际 import，导致一次真实 Feishu API 调用；该调用因参数错误返回 `code=9499`，未成功发出消息。已改为 `scripts.llm_universe_scan` 同模块导入，并在该测试中显式 stub `_send_rsshub_alert`。
+2. `news_quality.db` 仍未处置；Phase 1 开工前仍须在“退役归档”与“复用迁移”之间裁决。
+3. 通道 B（事件触发 `--clue`）未开启，仍须 scan-only 攒样与判据裁决。
+4. 本批不引入 X firehose、付费 wire、Kafka/Redis，也不改变 Playbook/SIM/live 边界。
+
+## 15. Phase 0 外源审计执行记录（2026-10-09）
+
+> 只读执行，无交易行为。工具：`scripts/audit_event_sources_phase0.py`；离线测试：`tests/test_event_source_phase0_audit.py`。本轮审计时间：`2026-10-09T11:12:31Z`。
+
+### 15.1 实测矩阵
+
+| 来源 | Tier | HTTP | 延迟 | 条数 | 时间字段 | 结论 |
+|---|---|---:|---:|---:|---|---|
+| SEC EDGAR current 8-K Atom | T0 | 200 | 265ms | 40 | `updated/published` | 可作为官方申报流首选 |
+| SEC EDGAR full-text search | T0 | 200 | 446ms | 39 | `file_date` | 适合按需检索，不适合首延迟流 |
+| FCC EDOCS order PDF | T0 | 200 | 541ms | 1 | 无 | 官方 artifact 可直连，但缺机器可读索引 |
+| Federal Register API | T0 | 200 | 648ms | 183 | `publication_date` | 稳定官方监管通知源 |
+| SpaceX IR | T0 | 403 | 78ms | 0 | 无 | 当前环境不可直采 |
+| Grain IR | T0 | 429 | 1110ms | 0 | 无 | 当前环境不可直采 |
+| Google News RSS | T2 | 200 | 451ms | 100 | `pubDate` | 可做 discovery 与竞速对照 |
+| RSSHub root | T2 | 200 | 1555ms | 1 | 无 | 根路径活着 |
+| RSSHub Bloomberg route | T2 | 超时 | 20.608s | 0 | 无 | 具体路由当前不可用 |
+| Finnhub general news | T1 | 200 | 268ms | 100 | `datetime` | 现有授权可用，作补充 wire |
+
+### 15.2 样本命中
+
+- Google News RSS 命中：
+  - `FCC Green Lights SpaceX's 15,000 Satellites for Starlink Mobile - PCMag`
+  - `FCC to vote on auctioning 25MHz of 'prime spectrum' ... - CNBC`
+  - `SpaceX Seeks $40 Billion To Buy Nvidia AI Chips ... - Investor's Business Daily`
+- Finnhub 命中：
+  - `SpaceX’s plans to buy more Nvidia GPUs is keeping Jim Cramer bullish on the chip stock - CNBC`
+  - `published_at = 2026-10-07T20:24:48Z`
+- FCC direct PDF：
+  - `DA-26-1078A1` 可直连，但当前无机器可读时间戳；搜索页/门户在当前环境返回 403。
+
+### 15.3 结论与建议
+
+1. **Phase 1 首批源**：`SEC EDGAR current 8-K Atom + Federal Register API + Google News RSS + Finnhub general news`。前三者提供事实/发现分层，Finnhub 作为既有授权的补充 wire。
+2. **FCC**：直接 PDF 只能作为已知 artifact 的 T0 fallback；要做通用发现，仍需找到机器可读 EDOCS/ECFS 索引或改用 Federal Register/权威媒体交叉确认。
+3. **公司 IR**：SpaceX/Grain 当前分别 403/429，不能作为可靠直采源；后续只能走官方 API、公开 feed 或授权数据源。
+4. **RSSHub**：根路径可用但具体路由超时，当前不适合作为核心 T2 discovery；Google News RSS 更稳定。
+5. **付费 wire / X firehose**：本轮未引入；若要求亚秒级首源，需单独商务与合规裁决。
+6. 本轮测得的是**端点响应延迟**，不是事件从发布到系统首见的真实传播延迟；后者需 Phase 1 observe-only watcher 连续采样后才能量化。
+
+### 15.4 下一步
+
+- 若用户批准，进入 Phase 1：只做 observe-only Event Store 与上述四个源的 watcher。
+- 不接交易，不开启通道 B，不引入 Kafka/Redis。
+- `news_quality.db` 处置仍须在 Phase 1 开工前裁决。
+
+## 16. Phase 1 执行记录（2026-10-09）
+
+> 本轮仍为 **observe-only**：只采集、落库、生成可给 UE 使用的 clue 文本；不修改 Playbook/DA，不触发交易，不开启通道 B，不引入 Kafka/Redis。
+
+### 16.1 落地模块
+
+| 层 | 文件 | 作用 | 独立性 |
+|---|---|---|---|
+| 数据模型 | `app/event_stream/models.py` | 定义 raw event、canonical event、source result 与稳定 ID | 不依赖现有 UE/交易代码 |
+| 存储 | `app/event_stream/store.py` | SQLite append-only 三表：`raw_events`、`canonical_events`、`source_health` | 可独立替换或迁移 |
+| 注册器 | `app/event_stream/source_registry.py` | 聚合首批四个 fetcher | 新源只要实现返回 `SourceResult` 的 callable 即可注册 |
+| 采集服务 | `app/event_stream/ingest_service.py` | 统一 fetch、幂等落库、写 source health | 不直接调用 UE/交易 |
+| 官方源 | `app/event_stream/sources/sec_edgar_atom.py`、`app/event_stream/sources/federal_register.py` | T0 申报/监管通知 | 独立 parser，可单独测试 |
+| 发现源 | `app/event_stream/sources/google_news_rss.py`、`app/event_stream/sources/finnhub_news.py` | T2/T1 新闻 discovery/wire | 独立 parser，可单独测试 |
+| UE 适配 | `app/event_stream/ue_clue_adapter.py` | 将最近 canonical events 渲染成 clue 文本 | 只读 EventStore，不修改 UE |
+| CLI | `scripts/event_stream_ingest.py`、`scripts/event_stream_clue.py` | 手动采集与手动输出 clue | 可独立运行，可显式传入 DB |
+
+### 16.2 端到端实测
+
+- 实测库：`/tmp/event_stream_phase1_1066.db`（临时验证库，非生产库）。
+- 四源 ingest 全部成功，共写入 250 条 canonical events。
+- 逐源结果：
+
+| source_id | tier | 状态 | 延迟 | events |
+|---|---|---|---:|---:|
+| `SEC_EDGAR_8K_ATOM` | T0 | OK | 10247ms | 40 |
+| `FEDERAL_REGISTER_API` | T0 | OK | 662ms | 10 |
+| `GOOGLE_NEWS_RSS` | T2 | OK | 781ms | 100 |
+| `FINNHUB_GENERAL_NEWS` | T1 | OK | 269ms | 100 |
+
+- 表计数：`raw_events=4`，`canonical_events=250`，`source_health=4`。
+- 原因说明：Phase 1 每次成功 fetch 先保存 1 个 raw artifact，再解析出 canonical events；`raw_events` 按“源抓取批次”计数，`canonical_events` 按“事件条目”计数，二者不是同一粒度。
+- 幂等验证：测试覆盖重复 raw/canonical append 均返回 `False`；重复执行 ingest 不应重复插入同 event ID。
+
+### 16.3 UE 接入方式
+
+- 当前选择：`scripts/event_stream_clue.py` 输出最近事件 clue 文本，可显式作为 `llm_universe_scan.py scan --clue "..."` 的输入。
+- 本轮未把该输出直接接入 `_build_clue_brief`，也未新增 cron/watcher；这是刻意保留的手动接口，先验证数据质量与边界。
+- 独立扩展原则：EventStream 是 UE 的可选上游信息输入，不要求 UE 改造；新采集源、去重器、相关性筛选器、推理器都可独立开发后以独立模块进入链路。
+- 后续若要自动接入，应先通过独立 DEB 裁决默认 DB、调度频率、clue 事件窗口、跨源去重和优先级，而不是在 UE 主链内隐式拼接。
+
+### 16.4 验证与边界
+
+- 测试：`tests/test_event_stream_phase1.py`（10 passed）。
+- 边界：
+  1. 采集延迟是 HTTP fetch 延迟，尚未度量“事件发布到系统首见”的真实传播延迟。
+  2. 事件仍为 `UNVERIFIED`，未做跨源一致性确认、标的抽取、方向推理或收益估计。
+  3. Google/Finnhub 当前按 API 默认窗口取数，不代表全量新闻流；SEC/Federal Register 的条数也不代表事件重要性。
+  4. 本轮没有将 `/tmp/event_stream_phase1_1066.db` 迁移为生产库，也没有注册任何常驻调度任务。
+  5. `news_quality.db` 仍未裁决，后续仍需在“退役归档”与“复用迁移”之间二选一。
+
+### 16.5 下一步候选
+
+1. **生产化最小闭环**：选定生产 `event_stream.db`、增加低频 cron、保留 observe-only；先不接交易。
+2. **延迟度量**：为每条事件记录 `published_at` 与 `first_seen_at`，输出源级/事件级传播延迟。
+3. **相关性筛选**：按 watchlist、公司/行业/监管关键词先过滤，再交给 UE，避免 clue 被泛新闻淹没。
+4. **跨源去重**：以 URL、标题和实体时间构建候选 cluster，再按 T0/T1/T2 优先级选择主证据。
+5. **自动 clue 接入**：上述三项稳定后，再裁决是否接入 `_build_clue_brief`。
+
+## 17. Phase 1.5 生产化执行记录（2026-10-09）
+
+> 本节执行 §16.5 的第 1/2 项，仍是 **observe-only**。不调用 UE、不生成交易信号、不修改 Playbook/DA、不开启通道 B。
+
+### 17.1 变更
+
+| 项 | 执行 | 边界 |
+|---|---|---|
+| 生产库 | 默认路径改为 `data/event_stream.db`；已实际初始化并采集 | 独立 SQLite/WAL，不迁移 `news_quality.db` |
+| 首见时间 | `canonical_events` 新增 `first_seen_at` 与 `published_to_seen_ms` | 仅在首次插入事件时写入，重复插入不覆盖 |
+| 迁移 | 对 Phase 1 旧 schema 自动补列，并对空延迟元数据做只读回填 | 不修改事件正文/事实，只补派生字段 |
+| 时间解析 | 支持 ISO8601 与 Google RSS 的 RFC822 时间 | 无法解析则延迟为空，不伪造成 0 |
+| 报告 | 新增 `scripts/event_stream_report.py`，输出表计数、源健康、首见延迟 | 纯读 DB，无通知、无交易 |
+| 调度 | crontab 每 5 分钟执行 `scripts/event_stream_ingest.py`，`timeout=120s` | 只写 EventStore 与日志，不调用 UE |
+
+### 17.2 首次生产实测
+
+| source_id | HTTP 状态 | HTTP 延迟 | events | 首见延迟样本 |
+|---|---|---:|---:|---|
+| `SEC_EDGAR_8K_ATOM` | OK | 1222ms | 40 | n=40，avg=33.6s，min=0.29s，max=53.3s |
+| `FEDERAL_REGISTER_API` | OK | 641ms | 10 | n=10；但 publication_date 只有日期，延迟是“见报日零点到首见”，不是真实发布延迟 |
+| `GOOGLE_NEWS_RSS` | OK | 482ms | 100 | n=100；初始样本含旧闻，不能把 max 当作当前传播能力 |
+| `FINNHUB_GENERAL_NEWS` | OK | 283ms | 100 | n=100，avg约32.5h，受 feed 返回窗口影响 |
+
+- 生产表计数：`raw_events=4`，`canonical_events=250`，`source_health=4`。
+- 报告命令：`PYTHONPATH=. ./venv/bin/python scripts/event_stream_report.py`。
+- 口径警告：`published_to_seen_ms` 是“本系统首次看见该条 event_id”的相对延迟；它不是“全球第一个信息源看见该事件”的延迟，也不能替代同事件跨源对齐。
+
+### 17.3 挂载与回滚
+
+- 挂载：`*/5 * * * * cd /opt/ftseek/FTSeek-US && PYTHONPATH=. timeout 120 .../scripts/event_stream_ingest.py >> logs/event_stream_ingest.log 2>&1`。
+- 备份：`data/backups/crontab-before-event-stream-20261009.txt`。
+- 回滚：恢复备份 crontab，或删除该 cron 行；`data/event_stream.db` 可保留作审计，不会影响主链。
+- 频率说明：5 分钟用于先量化系统首见能力；若后续接入付费 wire 或高频源，应按源分别调度，而不是把所有源统一拉到亚秒级轮询。
+
+### 17.4 验证
+
+- `tests/test_event_stream_phase1.py`：`14 passed`。
+- 覆盖点：首见延迟只写一次、RFC822 时间解析、旧 schema 迁移、缺失延迟元数据回填、四源 parser、幂等 append、source health、UE clue。
+- 尚未覆盖：跨源同事件对齐、真实“事件发生时间”校准、付费 wire 对照、盘前/盘中/盘后分时段延迟统计。
+
+## 18. Phase 1.6 相关性与跨源去重执行记录（2026-10-09）
+
+> 继续保持 observe-only。新增模块只处理 EventStream 输出，不修改 UE 主链、Playbook/DA 或交易行为。
+
+### 18.1 落地
+
+| 模块 | 作用 | 边界 |
+|---|---|---|
+| `app/event_stream/relevance.py` | 读取现役 `watchlist.us_stocks` 与 `catalyst.sector_mapping`，过滤 watchlist/板块相关事件 | 只读配置，不新建第二 watchlist |
+| `app/catalyst/event_classifier.py` | 将原私有 sector trigger 表提为 `SECTOR_TRIGGERS` 供 EventStream 复用 | 不改变分类与交易方向逻辑 |
+| `app/event_stream/dedupe.py` | 以 URL/标题相似度/时间窗聚类，按 T0>T1>T2 选择主证据 | 只在 clue 生成前内存去重，不改 DB |
+| `scripts/event_stream_clue.py` | 新增 `--relevant-only` 与 `--dedupe` 开关 | 默认行为不变，仍为原始 recent clue |
+
+### 18.2 生产实测
+
+- 命令：`PYTHONPATH=. ./venv/bin/python scripts/event_stream_clue.py --relevant-only --dedupe --limit 20`。
+- 实测结果从泛新闻收敛到 Federal Register/Google News 的 spectrum、direct-to-cell、FCC、AT&T/T-Mobile/Verizon 相关事件。
+- 发现并修复一个假阳：`COST` 曾把普通单词 `cost` 当 ticker；现在 ticker 只按原文独立大写 token 匹配，公司名仍大小写不敏感匹配。
+- 去重策略保守：URL 归一化相同，或标题相似度≥0.60 且时间差≤24h 才归并；因此同一主题的不同措辞可能保留多条，宁可漏合并也不误合并。
+
+### 18.3 验证与边界
+
+- `tests/test_event_stream_phase1.py`：`18 passed`。
+- 新增覆盖：telecom competitor 事件保留、无关泛新闻剔除、普通小写 `cost` 不误判为 `COST`、T0 优先于 T2 的跨源去重。
+- 仍未接入 `_build_clue_brief`；当前是显式 CLI clue 输入，便于先人工检查相关性/去重质量。
+- 下一步：连续观察数个交易日后校准标题阈值与 relevance 规则，再裁决是否自动接入 UE。
+
+## 19. Phase 1.7 今晚实盘窗检验方案（2026-10-09）
+
+> 用户已授权完成实施。本节把 EventStream 接入 UE 材料，但不新增直接交易行为；下游继续走既有 UE/DA 风控、确认与执行轨道。
+
+### 19.1 实施
+
+| 项 | 实施 | 边界 |
+|---|---|---|
+| UE 接入 | `_build_clue_brief` 新增 EventStream 结构化事实段 | 只扩输入材料，不改 prompt 放行规则 |
+| 配置 | `universe_expansion.event_stream_clue_enabled=true`，24h 窗口，扫描 500 条，输出 20 条，去重开启 | 回滚改 false，无需删代码 |
+| 证据索引 | 每条 EventStream 线索登记 source/published_at/symbols/event_key | `brief_material_stats.event_stream` 可直接验收 |
+| 验收工具 | `scripts/event_stream_ue_check.py` | 只读最新 scan 记录与 source health，不改库 |
+| 测试 | `tests/test_event_stream_ue_integration.py` | 覆盖 helper、禁用开关、brief/evidence 登记 |
+
+### 19.2 今晚时间线
+
+| 北京时间 | ET | 检验点 |
+|---|---|---|
+| 20:00 | 08:00 | 既有 `scan --da-feed` 自动消费 EventStream clue |
+| 21:10 | 09:10 | 既有 premarket scan 自动消费 EventStream clue，并写 `brief_material_stats` |
+| 21:30 | 09:30 | 开盘后观察价格/量能确认，不因事件线索绕过确认 |
+| 21:40 | 09:40 | 既有 confirm gate 影子裁决 price-in/confirmed |
+
+验收命令：`PYTHONPATH=. ./venv/bin/python scripts/event_stream_ue_check.py`。通过条件：最新 scan 存在、`event_stream` 材料数>0、四源 health 全 OK。
+
+### 19.3 实施前实测
+
+- `_gather_event_stream_clues()` 当前返回 `EventStream:11`。
+- 线索集中覆盖 SpaceX/Grain 800MHz、FCC 15,000 satellite、direct-to-device、AT&T/T-Mobile/Verizon 相关事件。
+- 相关性过滤输出的 symbols 为 `T/TMUS/VZ`，符合 `catalyst.sector_mapping.telecom` 传导。
+
+### 19.4 风险与止损
+
+- 若 20:00 前发现配置/导入错误，立即设 `universe_expansion.event_stream_clue_enabled=false` 并重启服务；采集 cron 可保留。
+- 若 EventStream 输出噪声或证据索引异常，同样关闭该 feature flag；不影响既有新闻、EDGAR、事件标的输入。
+- 今晚检验重点是“信息是否第一时间进入 UE 材料且可追溯”，不是证明事件策略可盈利；收益判断仍需后续多日样本。
+
+## 20. 今晚 DA-feed 首轮实测（2026-10-09 20:02 CST）
+
+### 20.1 验收结果
+
+| 项 | 结果 |
+|---|---|
+| 最新 scan | `2026-10-09T08:02:17.779683-04:00`，`scan_window=da_feed`，`batch_status=complete` |
+| EventStream 材料 | `event_stream=11`，总材料 `brief_material_count=91` |
+| 源健康 | SEC/Federal Register/Google/Finnhub 四源全部 `OK` |
+| 验收脚本 | `scripts/event_stream_ue_check.py` 返回 `passed=true` |
+| UE 输出 | 5 个 surfaced 标的 |
+
+### 20.2 EventStream 证据消费
+
+- `ASTS` 输出 `SHORT`，confidence `0.55`，`evidence_matched_source=event_stream`。
+- 证据引用：`ASTS Stock Slides After-Hours As SpaceX Snags Grain Spectrum...`
+- 该证据与 `premarket_rank` 材料交叉，符合“事件线索 + 市场确认”的既有 UE 推理结构。
+
+### 20.3 判读
+
+1. **信息链验收通过**：采集 → 存储 → 相关性过滤 → 去重 → UE 材料 → LLM 引证 → scan 落盘全链路已经真实跑通。
+2. **不是收益证明**：ASTS 单样本只能证明链路可用，不能证明方向或收益有效；需 21:40 confirm gate 与后续多日评分。
+3. **执行边界不变**：20:00 轮为 DA-feed scan；21:10 的 `da_fresh_event_batch.py` 默认仍是 isolated shadow，不加 `--execute` 不写生产 DA 指令。
+
+## 21. DA bridge 断链修复与生产恢复（2026-10-09 20:48 CST）
+
+### 21.1 现象与根因
+
+- `da_main_schedule.jsonl` 显示 08:00 ET 主流程完成：`candidates_total=56`、`analyses_count=12`。
+- 但 `data/opportunity_scan_2026-10-09.json` 为 `candidate_count=0`，`playbook_instructions` 当日 0 条，健康报告为 `NO_PLAN`。
+- 根因：`/root/.hermes/skills/deep-stock-analysis/scripts/pipeline.py` 的 `_write_bridge_file()` 引用了仅存在于 `run_full()` 局部作用域的 `_symbol_sectors`，导致 12 个分析在 bridge 组装阶段逐一异常并被跳过。
+- 修复：在 `_write_bridge_file()` 内从 `scan_result.sector_rotation.symbol_sectors` 本地派生同名映射；不改变候选、方向、置信度或 gate 规则。
+
+### 21.2 恢复
+
+- 使用已保存的 `/root/.hermes/cache/scratch/da_pipeline_out_20261009.json` 重放 bridge；未重跑 LLM。
+- 先备份空 bridge 与恢复前 DB 到 `data/backups/da_bridge_20261009_2048/`。
+- 临时目录 `db_write=false` 复现验证：10 个候选，0 条 DB 写入。
+- 生产重放 `db_write=true`：bridge 10 个候选，DB 10 条可交易指令。
+
+### 21.3 复验
+
+- `da_chain_health_report.py --date 2026-10-09 --days 1`：从 `NO_PLAN` 变为 `指令10(可执行10/SKIP0)`。
+- `py_compile pipeline.py` 通过。
+- `da_bridge_dingtalk_push.py --date 2026-10-09 --dry --force-window` 通过，显示 DB 可交易 `10/10`。
+- 对账脚本在 ET 08:43 跳过属预期：其监测窗口为 09:02-10:30。
+
+## 22. 21:10 premarket scan 实测（2026-10-09 21:19 CST)
+
+### 22.1 扫描结果
+
+- `llm_universe_scan.py scan` 于 ET 09:12:17 完成，`scan_window=premarket`、`batch_status=complete`。
+- 材料 `138` 条，其中 `EventStream=20`；另有 earnings、SEC 8-K/13DG、新闻、peer surge、premarket rank 等既有输入。
+- surfaced 4 条：`ASTS SHORT 0.55`（`event_stream`）、`HUBS SHORT 0.42`（`sec_8k`）、`NAVN LONG 0.42`（`sec_8k`）、`DAL SKIP 0.30`（`earnings_calendar`）。
+- `da_supply_reconcile_check.py` 同窗口执行：bridge 10、DB 10、signal snapshots 12，判定 `OK`。
+
+### 22.2 fresh-event 影子批
+
+- UE 输出 3 个候选：`ASTS SHORT`、`HUBS SHORT`、`NAVN LONG`。
+- `da_fresh_event_batch.py` 影子批完成，但 0 条进入深分析与生产指令：
+  - `ASTS/HUBS`：`borrow_feasible=False`，不可借券 SHORT，按风控跳过。
+  - 剩余 1 条：`stale_quote`，报价时效不足，按资格规则拒绝。
+- 结论：这是准入/风控拒绝，不是 DA 链路执行失败；生产 DA 仍保持当日恢复后的 10 条指令。
+
+### 22.3 源健康瞬时异常
+
+- 21:15 的 EventStream 周期采集中 SEC EDGAR 一次 `ReadTimeout`，导致 `event_stream_ue_check.py` 临时返回 `source_health_ok=False`。
+- 该异常发生在 21:12 scan 完成之后，不影响本轮 scan 已消费的 20 条线索。
+- 手动触发一次 `event_stream_ingest.py` 后四源恢复 `OK`，复验 `passed=true`。
+
+## 23. 落地复查（Claude 主线程 · 2026-10-09 晚 · 只读实测 + 棘轮清剿）
+
+> 方法：不信任 §14–§21 执行记录，对**未提交工作树**逐条活体复核——diff 全读（26 文件 +1385/−95 + 新增 12 模块）、四新测试与六棘轮实跑、生产 DB/cron/台账实查、E 表抽样复跑。
+> 本批动作：仅 2 处 except:continue 棘轮清剿（坏行计数 + stderr 留痕，零控制流变更），其余零改动。
+
+### 23.1 总评：执行记录全部属实，边界纪律全守住
+
+| 声称 | 实测 | 判定 |
+|---|---|---|
+| §14 P0 词表/传导/cron/告警 | E26–E32 探针复跑一致（3/4、2/2、消费方 6、raise 0）；`rsshub_stale_hours: 6.0`、`telecom: [T,TMUS,VZ]` 在 config:103/2188 区域实证 | ✅ |
+| §17.3 cron `*/5` 挂载 + crontab 备份 | 均在（备份 57KB @19:30）；`source_health` 四源全 OK、last_success 新鲜 | ✅ |
+| §18.2 COST 假阳修复 / 保守去重 | relevance.py 独立大写 token 匹配实证；dedupe T0>T1>T2 主证据排序实证 | ✅ |
+| §19/§20 UE 接入与首轮实测 | `event_stream_ue_check.py` 复跑 `passed=true`；scan jsonl 实证 `event_stream=11 / 总材料91 / ASTS SHORT 0.55 / batch complete` | ✅ |
+| §21 DA bridge 修复 | `pipeline.py:1270` 本地派生 `_symbol_sectors` 实证；py_compile 通过；bridge `candidate_count=10` | ✅ |
+| 方案 U 边界（§12） | 未建 signal_router/shadow_executor/独立毕业门；Playbook/DA 零改动；`llm.models` 零新增别名；crontab 仅 +1 采集行与 RSSHub dow 扩档 | ✅ |
+| §11.5 D2（采集侧不碰 futu 槽位） | 导入纯净实测：`app.event_stream.*` 全量 import 后 futu/market_hours/holiday_calendar 模块数 = **0** | ✅ |
+| §11.5 D1（时区纪律） | naive-now 棘轮 PASS；event_stream 全部 `datetime.now(timezone.utc)` | ✅ |
+| 测试 | 4 新件 + 2 触动件 = **130 passed** | ✅ |
+
+### 23.2 新发现（按严重度）
+
+- **F1（P1）发现源查询词写死样本，违反本文档 §2.3「可泛化」**：`google_news_rss.py` 默认 `query="SpaceX FCC"`（且 parser 内 `facts["query"]` 也写死）、`federal_register.py` 默认 `term="SpaceX"`。生产库实证：GOOGLE_NEWS_RSS **107/107 行** `facts.query="SpaceX FCC"`。含义：四源中两个发现源**只盯着样本事件**——§20 的「EventStream:11」证明的是链路通，**不证明覆盖面**；今晚若发生非 SpaceX 事件，这两个源是瞎的。修复配方：query 列表入 config（watchlist 公司名 + sector 触发词 + 通用监管词如 FCC/SEC/FTC），fetcher 按 query 循环，registry 支持多 query 实例注册。
+- **F2（P1）EDGAR `source_url` 全空，断 §2.2 可溯源**：Atom 的 `<link>` 是 `href` 属性不是元素文本，`sec_edgar_atom.py` 取 `node.text` 恒得空串。生产库实证：SEC_EDGAR_8K_ATOM **52/52 行 source_url 为空**。连锁影响：T0 锚点源不可回溯原文、URL 去重对 EDGAR 失效、clue 行 `source=` 退化为 source_id。修复配方：改取 `node.attrib.get("href")`。
+- **F3（P2，已清剿）except 棘轮 921→923 红线**：`event_stream_ue_check.py:32`（本批）与 `da_bridge_dingtalk_push.py:139`（P0-1 批）两处 `except json.JSONDecodeError: continue` 静默吞行。已按 R5 模式修复（坏行计数 + stderr 留痕，`da_bridge` 顺带早退 break 等价改写），棘轮回绿（31 passed）。**教训登记：落地批未跑棘轮**——见记忆「Ratchet Guards Skipped In Verification」。
+- **F4（P2）`EventStore()` 名不副实的"只读"**：ue_clue_adapter/UE clue 路径打开 store 即可能 CREATE 表 + 迁移 + 回填（`_initialize` 每次构造都扫 `published_to_seen_ms IS NULL`）；且 clue 侧默认路径 `_ROOT/data/event_stream.db` 与 store 默认 `get_data_dir()/event_stream.db` 是双口径，若分歧则 clue 静默为空。建议：clue/UE 侧改只读连接（`mode=ro`）或统一路径 helper。
+- **F5（P3）dedupe 时间条件宽于自述**：`_close_in_time` 任一侧时间缺失即返回 True → 实际合并条件比 §18.2「相似度≥0.60 且时间差≤24h」宽（缺时间时无视时间窗）。与「宁可漏合并」的保守声明方向相反，建议缺失时不合并或补一行注释说明取舍。
+- **F6（P3）ticker 正则休眠坑**：watchlist 匹配用「独立大写 token」，若 `T` 未来加入 watchlist，`T-Mobile` 标题会误命中 T（当前 T 不在 watchlist，坑休眠）。登记备查。
+- **F7（P3）da_bridge 窗口注释 off-by-one**：docstring 写 08:50–09:25，代码 `<09:26`。cosmetic。
+- **F8（观察）UE 集成测试牵出 futu 线程**：`test_event_stream_ue_integration.py` 经 `llm_universe_scan` 重导入拉起 `futu network_manager`（DeprecationWarning 实证）。存量重依赖，非本批引入；hermetic 面登记。
+- **F9（观察）raw_artifact 内联增长**：每 5 分钟 4 源全量 payload 入库（有变化才插入，当前 42 行）；§11.5 D4 的 content-addressed 外置建议留待 DB 体积成为问题时再裁。
+- **F10（观察）ingest cron 整体死亡无告警**：单源失败有 source_health 行，但 cron 本身挂掉（超时/环境）只有日志。observe-only 阶段可接受，接 clue 自动消费前建议补探活。
+
+### 23.3 验收结论
+
+§20 的「信息链验收通过」**属实**：采集→存证→相关性→去重→UE 材料→LLM 引证→落盘全链真实跑通，且方案 U 的边界（UE 上游供料、下游全复用、零新交易通路）被完整守住。**但在 F1 修复前，覆盖面对非样本事件不成立**——建议：F1/F2 修复（均属小改）后再进入多日攒样；通道 B 维持关闭；§12.6 待裁项 3/4/6 不变。
+
+### 23.4 E 表（本节证据，逐条可复跑）
+
+| # | 命令 | 期望输出 |
+|---|---|---|
+| E37 | `sqlite3 data/event_stream.db "SELECT COUNT(DISTINCT json_extract(facts_json,'\$.query')) FROM canonical_events WHERE source_id='GOOGLE_NEWS_RSS';"` | `1`（全部同一写死 query） |
+| E38 | `sqlite3 data/event_stream.db "SELECT COUNT(*), SUM(source_url='') FROM canonical_events WHERE source_id='SEC_EDGAR_8K_ATOM';"` | `52\|52`（url 全空） |
+| E39 | `PYTHONPATH=. ./venv/bin/python -m pytest tests/test_except_pass_ratchet.py tests/test_naive_datetime_now_ratchet.py tests/test_hardcoded_utc4_ratchet.py tests/test_w456_log_hygiene_ratchet.py -q` | 清剿后全 pass |
+| E40 | `PYTHONPATH=. ./venv/bin/python scripts/event_stream_ue_check.py` | `passed=true` |
+| E41 | `crontab -l \| grep -E "event_stream_ingest\|RSSHubUSNewsFetcher"` | `*/5` 采集行 + `15 */3 * * 1-5` 工作日行 |
+| E42 | `PYTHONPATH=. ./venv/bin/python -m pytest tests/test_event_pipeline_p0.py tests/test_event_source_phase0_audit.py tests/test_event_stream_phase1.py tests/test_event_stream_ue_integration.py -q` | 全 pass（本批实跑 130 passed 含触动件） |
+| E43 | `PYTHONPATH=. ./venv/bin/python -c "import sys, app.event_stream.store, app.event_stream.ue_clue_adapter; print([m for m in sys.modules if m.split('.')[0] in ('futu',)])"` | `[]` |
+| E44 | `grep -n "_symbol_sectors" ~/.hermes/skills/deep-stock-analysis/scripts/pipeline.py \| head -2` | `:1270` 本地派生（`_write_bridge_file` 内） |
+
+## 24. §23 发现修复批（2026-10-09 晚 · 用户裁「请修复」）
+
+### 24.1 修复清单
+
+| # | 修复 | 文件 | 形态 |
+|---|---|---|---|
+| F1 | 发现源多 query/term 化：`fetch_google_news_rss(queries)` / `fetch_federal_register(terms)` 按列表轮询合并（event_id 去重、0.5s 礼貌间隔、单 query 失败不拖垮整源、error 字段留痕）；query/term 列表入配置 `event_stream.google_news_queries`（4 条：监管机关/频谱电信/半导体/并购）与 `event_stream.federal_register_terms`（2 条机构名）；`facts.query`/`facts.term` 记真实口径 | `google_news_rss.py`、`federal_register.py`、`unified_config.yaml` | 行为变更（覆盖面扩大），observe-only 不变 |
+| F2 | EDGAR Atom `<link>` 改取 `href` 属性（兼容旧文本形态兜底） | `sec_edgar_atom.py` | bug 修复 |
+| F3 | （§23 已清剿）2 处 except:continue 加坏行计数 + stderr | `event_stream_ue_check.py`、`da_bridge_dingtalk_push.py` | 留痕，零控制流变更 |
+| F4 | UE clue 路径与 EventStore 默认解析同源（`db_path=None` → `get_data_dir()`），消除双口径静默空 clue 风险 | `llm_universe_scan.py` | 等价重构 |
+| F5 | dedupe 时间口径：naive 一律按 UTC 解释（根治 FR 纯日期 × RFC822 混合的 TypeError 隐患）；时间缺失**不合并**（对齐 §18.2「宁可漏合并」自述） | `dedupe.py` | bug 修复 + 口径对齐 |
+| F6 | ticker 匹配 lookahead 加 `-`：`T-Mobile` 不再误命中 `T`（休眠坑拆除） | `relevance.py` | 健壮性 |
+| F7 | **复核后撤回**：docstring「08:50-09:25」与代码 `<09:26` 在「含分钟」语义下一致，非问题 | — | 不动 |
+
+### 24.2 实测证据
+
+- 测试：`test_event_stream_phase1.py` 等 4 件 + 触动 2 件 = **137 passed**（含新增 7 用例：EDGAR 真实 Atom 形态取 href、多 query 合并/全失败 ERROR/部分失败留痕、多 term 合并、缺失时间不合并、naive×aware 混合不炸、T-Mobile 守卫、配置回退）；六棘轮 **41 passed** 全绿。
+- 生产实测（cron 自动生效，无需重启）：
+  - 首轮新代码采集（13:10 批）Google 4 条新 query 落 386 行回填；稳态（13:12/13:15/13:17 三批）每 5 分钟仅 +5~10 条新事件 ⇒ event_id 跨轮去重有效，headline 级 398/401 无重复。
+  - SEC 新行 `source_url` 已带真实 `sec.gov/Archives/...` 链接（13:10 起）；存量 57 行空 URL 为旧代码遗留，不回填（append-only 纪律，首见语义不可改）。
+  - clue 烟测（`--relevant-only --dedupe`）：输出已覆盖半导体出口管制、Charter/SpaceX 移动报价、Supermicro 走私指控等非样本事件 ⇒ F1 修复后泛化成立。
+- 新观察（登记不处理）：Google News RSS 会回流旧闻（重标 pubDate 的 4 月/6 月条目）——UE 侧 24h lookback 窗口（`_gather_event_stream_clues`）已天然拦截，仅影响 CLI 原始视图。
+
+### 24.3 边界
+
+- 仍未开启通道 B；UE clue 开关 `event_stream_clue_enabled` 不变；Playbook/DA/风控零改动。
+- F8（UE 集成测试牵出 futu 线程，存量）/ F9（raw_artifact 内联增长）/ F10（ingest cron 整体死亡无告警）维持观察项，不随本批处理。
+- 全部改动仍在未提交工作树，待用户裁决后提交。
