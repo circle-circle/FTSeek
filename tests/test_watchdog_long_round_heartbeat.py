@@ -7,7 +7,10 @@
 本文件钉住修法的四条语义边界:
   1. 非盘中阶段护航 (补心跳) / TRADING·WEEKEND 不护航 (保持紧检出);
   2. 预算耗尽即停 ping → 交回 watchdog (不做"永不检出"的无脑定时 ping = 静默死亡);
-  3. 轮次跨入 TRADING 立即停 ping + critical 告警 (盘前轮次跨开盘 = 入场被阻塞);
+  3. 轮次跨入 TRADING 立即停 ping + 交回 watchdog; 跨界先 WARNING, 宽限
+     (scheduler.watchdog_cross_open_grace_sec, 默认 120s) 内未收轮才升级 critical
+     (2026-10-09 两阶段化, 用户裁「请优化调整」: 10-09 实证慢轮跨开盘 0.2s 自解,
+     即时推送是纯噪音; 真卡死检出延迟 0s→grace, 「入场被阻塞必须可见」保留);
   4. 线程卫生: 每轮最多 1 个护航线程, 结算即 join, 不累积 (同日 D3 泄漏教训)。
 
 回滚: 删本文件即可, 零生产代码依赖。
@@ -105,7 +108,10 @@ class TestRoundHeartbeat:
         sched._wd_close_round_heartbeat()
 
     def test_crossing_into_trading_stops_and_alerts(self, sched, monkeypatch):
-        """轮次跨入 TRADING → 停 ping + critical 告警 (入场被阻塞必须可见)。"""
+        """轮次跨入 TRADING → 停 ping; 超宽限未收轮 → critical 升级 (真卡死必须可见)。
+
+        grace=0 ⇒ 跨界后的下一次循环即升级 (两阶段语义下钉升级路径本身)。"""
+        sched._test_cfg["scheduler.watchdog_cross_open_grace_sec"] = 0
         sent = []
         import app.utils.critical_alerts as ca
         monkeypatch.setattr(ca, "send_critical",
@@ -116,13 +122,38 @@ class TestRoundHeartbeat:
         sched._wd_open_round_heartbeat(MarketPhase.PRE_MARKET)
         time.sleep(0.06)
         phase["now"] = MarketPhase.TRADING
-        time.sleep(0.1)
+        time.sleep(0.12)
         frozen = len(sched._test_wd.pings)
         time.sleep(0.1)
         assert len(sched._test_wd.pings) == frozen
         _th, _stop, _t0, _phase_name, state = sched._wd_round_keeper
         assert state["stopped_reason"] and "TRADING" in state["stopped_reason"]
-        assert sent and "入场执行被阻塞" in sent[0]
+        assert sent and "入场执行被阻塞" in sent[0] and "真卡死" in sent[0]
+        sched._wd_close_round_heartbeat()
+
+    def test_crossing_within_grace_no_push(self, sched, monkeypatch):
+        """两阶段降噪 (2026-10-09): 跨界后宽限内收轮 → 零推送, 仅 WARNING+慢轮次遥测。
+
+        钉死 10-09 生产实证形态: 121s 慢轮跨开盘 0.2s 自解, 🚨 不得发出。"""
+        sched._test_cfg["scheduler.watchdog_cross_open_grace_sec"] = 9999
+        sent = []
+        import app.utils.critical_alerts as ca
+        monkeypatch.setattr(ca, "send_critical",
+                            lambda msg, async_mode=False: sent.append(msg))
+        import app.core.scheduler_triggers as st
+        phase = {"now": MarketPhase.PRE_MARKET}
+        monkeypatch.setattr(st, "get_market_phase", lambda: phase["now"])
+        sched._wd_open_round_heartbeat(MarketPhase.PRE_MARKET)
+        time.sleep(0.06)
+        phase["now"] = MarketPhase.TRADING
+        time.sleep(0.12)
+        frozen = len(sched._test_wd.pings)
+        time.sleep(0.1)
+        assert len(sched._test_wd.pings) == frozen, "跨界后不得再补 ping"
+        assert sent == [], "宽限内收轮不得推送 critical (10-09 噪音实证)"
+        _th, _stop, _t0, _phase_name, state = sched._wd_round_keeper
+        assert state.get("crossed_at"), "跨界时刻必须落态 (供宽限判定)"
+        assert "TRADING" in (state.get("stopped_reason") or "")
         sched._wd_close_round_heartbeat()
 
     def test_disabled_by_config_restores_old_behavior(self, sched):
@@ -190,8 +221,9 @@ class TestWiringAndConfigContract:
         assert cfg["watchdog_llm_loop_stale_sec"] == 600  # 默认不放宽检出
         assert cfg["watchdog_long_round_enabled"] is True
         assert cfg["watchdog_long_round_budget_sec"] == 2700
+        assert cfg["watchdog_cross_open_grace_sec"] == 120  # 跨界告警宽限 (2026-10-09)
         for key in ("watchdog_llm_loop_stale_sec", "watchdog_long_round_enabled",
-                    "watchdog_long_round_budget_sec"):
+                    "watchdog_long_round_budget_sec", "watchdog_cross_open_grace_sec"):
             assert key in _SCHED_SRC or key in _CFG_SRC
 
     def test_runtime_reads_the_same_keys(self, sched):

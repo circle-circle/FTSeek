@@ -291,7 +291,11 @@ def check_scan_executed(date_str: str) -> Dict:
                 f = gzip.open(lf, 'rt', encoding='utf-8', errors='replace')
             else:
                 f = open(lf, 'r', encoding='utf-8', errors='replace')
-        except OSError:
+        except OSError as _open_err:
+            # R5 留痕 (2026-10-09 棘轮清剿): 轮转窗口内文件被挪走/权限变化,
+            #   stderr 留痕 — 「文件不存在」与「存在但读不开」不得同形。
+            print(f"[insider_monitor] 日志文件打开失败跳过: {lf.name} "
+                  f"({type(_open_err).__name__}: {_open_err})", file=sys.stderr)
             continue
         try:
             for line in f:

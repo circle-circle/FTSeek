@@ -1,5 +1,46 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-09 pipeline 拆分独立复查 + 修复批 + 开盘体检优化批
+
+**触发**: 用户令「另外agent已完成了对pipeline.py的调整和优化，请复查」→ 复查报告 →
+裁「请修复」→ 开盘后「请检查整个链路」→ 裁「请优化调整」。
+**落档**: `docs/debates/DEB-20261008-playbook-pipeline-refactor-roadmap.md` §24。
+
+**复查 (6 保真核对 agent + 本地实证)**: 迁移本体语句级保真通过 (auto_execute 主循环
+1079 行仅 3 处注入替换; close/monitor 20 条 SQL 逐字; 状态容器/函数属性回环正确)。
+但抓出: **P0** trigger_flow.py 资金流背离影子块漏带 `Path/json/datetime` 三名
+(NameError 被 except 吞成 warning ⇒ 影子静默死亡, 该影子是十月重裁数据底座);
+**P1** 48 条根目录源码锚点测试断裂 (迁移回归口径只含 tests/playbook 所致) +
+except:pass 棘轮 921→922; P2 注释/docstring 设计理由剥损 + 日志丢 {symbol} +
+pipeline.py 两个死缓存声明。
+
+**修复 (全部验证)**: ①P0 按文件内 `_Path/_json/_dt` 惯例补局部 import +
+新增 `tests/playbook/test_falsification_capital_flow_shadow.py` 钉「影子真落盘」
+(变异测试实证: buggy 态红/修复态绿); ②48 锚点重钉 (3 agent 并行, 只改源指针,
+断言零改动; horizon_confidence 白名单显式登记新消费文件); ③except:pass 清剿
+4 处 (data_retention / gate_attribution / event_pipeline_probe / insider_monitor,
+R5 留痕进输出行); ④watchdog 跨开盘告警两阶段化 (跨界 WARNING+停 ping 不变,
+宽限 `scheduler.watchdog_cross_open_grace_sec`=120s 未收轮才 🚨critical —
+10-09 实证 121s 慢轮 0.2s 自解, 即时推送纯噪音; 真卡死检出延迟 0s→grace,
+watchdog 600s stale 兜底不变); ⑤exit_lifecycle `*_pending` 瞬态族降 INFO 不打栈
+(非瞬态守卫拒绝保留 WARNING+栈, 9/13 留栈教训不变; 30min 14 条 Traceback 噪音消除);
+⑥P2: vwap_slope/vol_ratio/gather_evidence 设计理由注释从 HEAD 逐字补回,
+`{symbol}` 日志恢复 (`_evaluate_technical_direction` 补 symbol 参数),
+pipeline.py 两个死缓存声明删除; ⑦test_extended_hours_exit_cron 锁路径隔入 tmp
+(与每分钟 cron 共锁假红)。
+
+**开盘体检 (21:55 CST / 09:55 ET)**: 全链绿 — bridge 热重载生产实证、
+auto_execute 3min 循环正常、8 开仓/6 平仓 (5 锁利 +1 SL_INITIAL −$157 按设计)、
+LIVE C-lite 被账户熔断拦 (live 回撤 7.2%≥3% 真实触发, sim 不受影响)、
+EXT 盘前窗「无持仓」符合翻面后预期。唯一真 ERROR = 上述 watchdog 噪音 (本批已治)。
+
+**验证**: 棘轮家族 5 件 34 passed; 受影响面 (watchdog/execution/playbook/pipeline/
+ext_cron/premarket_overrun) 1402 passed; 全量见 §24 落档行。
+**纪律留痕**: ①「四棘轮」不得自行圈定 (迁移 agent 与复查官各漏 except_pass,
+唯全量套件抓到) — 已更新 memory ratchet 条目; ②全量跑测期间禁并行 pytest
+(共享生产 data/ 态 ⇒ 活体数据测试假红, 本次三例误报实证)。
+**未提交**: 本批全部改动在工作树 (用户未令提交)。
+
 ## 2026-10-09 Event-to-Trade 链路 DEB 落档
 
 **触发**: 用户令「同意先落DEB文件」。

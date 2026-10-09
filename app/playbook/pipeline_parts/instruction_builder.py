@@ -150,15 +150,18 @@ def _record_vote_snapshot(symbol: str, vote_result: Dict[str, Any], factors) -> 
         )
 
 
-def _evaluate_technical_direction(market_ctx) -> Optional[str]:
-    """best-effort 计算 technical 方向; 失败降级为 None。"""
+def _evaluate_technical_direction(market_ctx, symbol: str = "") -> Optional[str]:
+    """best-effort 计算 technical 方向; 失败降级为 None。
+
+    2026-10-09: 恢复 symbol 参数 (拆分时随日志丢了 {symbol} — 异常定位需要标的)。
+    """
     try:
         from app.strategy.pure import evaluate as eval_strategy
         candidate = eval_strategy("technical", market_ctx)
         if candidate is not None:
             return str(candidate.direction).upper()
     except Exception as error:
-        logger.debug(f"[playbook] technical 信号评估异常: {error}")
+        logger.debug(f"[playbook] {symbol} 技术信号评估异常: {error}")
     return None
 
 

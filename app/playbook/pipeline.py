@@ -1023,10 +1023,10 @@ def _record_vote_snapshot(symbol: str, vote_result, factors) -> None:
     return _ib._record_vote_snapshot(symbol, vote_result, factors)
 
 
-def _evaluate_technical_direction(market_ctx) -> Optional[str]:
+def _evaluate_technical_direction(market_ctx, symbol: str = "") -> Optional[str]:
     """[阶段 3b] technical 方向本体迁 instruction_builder; 转发器保 pipeline 缝。"""
     from app.playbook.pipeline_parts import instruction_builder as _ib
-    return _ib._evaluate_technical_direction(market_ctx)
+    return _ib._evaluate_technical_direction(market_ctx, symbol)
 
 
 def _apply_technical_arbitration(symbol: str, vote_direction: str,
@@ -1229,7 +1229,7 @@ def _build_instructions_from_votes(
         # ── ADR-008 (2026-06-28): 盘中技术方向仲裁 ──
         # [v0.70 P1] 配置读取已提到循环外 (_direction_cfg_init) — 原每候选重复
         #   get_config()+两次 get_dotted, 50候选=150次冗余调用。
-        technical_direction = _evaluate_technical_direction(_market_ctx)
+        technical_direction = _evaluate_technical_direction(_market_ctx, symbol)
 
         # 记录方向审计日志 (无论模式)
         _log_playbook_direction_audit(symbol, vote_direction, technical_direction, vote_result)
@@ -2107,7 +2107,8 @@ def _emit_widen_shadow(inst, symbol: str, is_short: bool, widen_path: str,
 
 # 2026-07-30 流动性门: (symbol, date) → (adv_dollar, avg_vol) 日级缓存 — ADV 盘中不变,
 #   每标的每日只算一次, 不给触发循环增加 K 线配额压力 (bar-ruler 冻结教训)
-_LIQUIDITY_CACHE: dict = {}
+#   2026-10-09: 缓存本体随函数迁入 pipeline_parts/intraday_indicators.py (此处原声明
+#   成死副本, 已删防直引分裂; _LIQUIDITY_LOGGED 仍注入 trigger_flow 故保留)。
 _LIQUIDITY_LOGGED: set = set()  # 拦截日志每标的每日一次
 
 
@@ -2126,7 +2127,7 @@ def _check_liquidity_gate(data_router, symbol: str, current_price: float,
 
 
 # 2026-07-30 SHORT 借券池门: (symbol, date) → {pool, fee_rate, shortable} 日级缓存
-_BORROW_POOL_CACHE: dict = {}
+#   2026-10-09: 缓存本体随函数迁入 pipeline_parts/intraday_indicators.py (死副本已删)。
 _BORROW_POOL_LOGGED: set = set()  # 拦截日志每标的每日一次
 
 

@@ -2139,6 +2139,11 @@ scheduler:
   #   32min, 留 1.4× 余量)。回滚本项: watchdog_long_round_enabled=false + 重启 (恢复原行为)。
   watchdog_long_round_enabled: true
   watchdog_long_round_budget_sec: 2700
+  # 2026-10-09 (用户裁「请优化调整」): 跨开盘告警两阶段化 — 跨界先 WARNING 停 ping
+  #   交回 watchdog, 宽限内未收轮才升级 critical。缘由: 10-09 实证 121s 慢轮跨开盘
+  #   0.2s 后自解, 即时推送纯打扰; 真卡死检出延迟 0s→本宽限 (watchdog 600s stale
+  #   兜底不变)。回滚: 本键置 0 = 恢复跨界即时推送。
+  watchdog_cross_open_grace_sec: 120
 service:
   api:
     external_url: http://39.97.58.4:8901

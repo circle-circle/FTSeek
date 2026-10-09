@@ -64,6 +64,9 @@ def _gather_intraday_evidence(
             "sector": None, "sector_pulse_chg": None, "pulse_asof_et": None,
             "pulse_date": None, "pulse_age_min": None, "pulse_stale_reason": None,
         }
+        # 板块脉搏: symbol→sector (deep_sector_rotation) × 实时涨跌 (sector_pulse)
+        # data_root 仅供测试注入 (默认走生产 data/): 脉搏新鲜度守卫需要构造
+        #   "陈旧/当日"两种文件, 而测试禁止写生产 data/ (tests/conftest.py)。
         try:
             root = data_root if data_root is not None else (
                 Path(module_file).resolve().parents[2] / "data")
@@ -75,6 +78,20 @@ def _gather_intraday_evidence(
             pulse = json.loads((root / "sector_pulse.json").read_text())
             changes = pulse.get("changes") or {}
             today = today_provider()
+            # ── [P1-2 2026-09-14, 用户裁「全部处理」盘前数据有效性审计] ────────────
+            # 病根: 原实现读 sector_pulse.json 只记 `asof_et` (如 "15:30") **不记日期**,
+            #   且**无任何新鲜度检查**。该文件由 scripts/sector_pulse.py 在盘中每 30min
+            #   覆盖写 (cron: CST 22:00-23:30 + 00:00-03:30 = ET 10:00-15:30) ⇒
+            #   ① topup 盘前窗 (ET 08:45-09:30) 读到的**必然是上一交易日**的收盘读数
+            #      (周一更跨周末 = 3 天前), 却记成"盘中脉搏 asof 15:30";
+            #   ② 若脉搏 cron 挂掉, 可以是任意久的旧文件。
+            #   后果: 该 evidence 会被写进 raw_instruction.evidence 供 S1 记分牌按
+            #   "证据一致度"切片 (胜出者才升确认/否决门, Phase2) —— 陈旧读数被当成
+            #   当日盘中读数参与切片, 污染候选证据。本条 record-only, 不动任何交易
+            #   行为, 只把"这份读数到底新不新"如实记下来。
+            # 修法: ① 只接受 date == 当日 ET 的脉搏 (盘前窗必然为旧 ⇒ 如实 null 并
+            #   写明原因, 不拿昨收读数冒充日内); ② 补记 pulse_date 与 pulse_age_min,
+            #   让 scoreboard 能按陈旧度切片而不是被动继承一个无日期的 "15:30"。
             pulse_date = str(pulse.get("date", "") or "")
             if pulse_date != today:
                 ev["pulse_stale_reason"] = (
@@ -86,6 +103,8 @@ def _gather_intraday_evidence(
                     asof = str(pulse.get("asof_et", "") or "")
                     hour, minute = (int(value) for value in asof.split(":")[:2])
                     now = datetime_cls.now(now_et_provider())
+                    # 同 ET 日内的"分钟差"即可: 跨日情形已被上面的 date 守卫拒掉,
+                    #   故不必做完整日期运算。负值 = 时钟偏差, 如实 null 不取绝对值。
                     age = ((now.hour * 60 + now.minute) - (hour * 60 + minute))
                     ev["pulse_age_min"] = age if age >= 0 else None
                 except Exception:
@@ -128,7 +147,19 @@ def _calc_vwap_slope(
     *,
     now_et_provider: Optional[Callable] = None,
 ) -> Optional[float]:
-    """滚动窗 VWAP 斜率; 数据不足返回 None。"""
+    """P1-1 证伪门: 滚动窗 VWAP 斜率 (最近 window 根 1min bar 相对前 window 根的变化率)。
+
+    与既有 VWAP 方向门 (当日累计 VWAP 的哪一侧) 正交 — 后者问"价在均价哪侧",
+    本函数问"volume-weighted 价近 5min 在往哪走"。用当日累计 VWAP 算斜率是错的:
+    d(累计VWAP)/dt 的符号恒等于 sign(近期价 - 累计VWAP), 与方向门同信息量。
+
+    VWAP 优先用 turnover/volume (Futu 原生成交额, 真 VWAP); 缺 turnover 回落
+    典型价 (h+l+c)/3 × volume。
+
+    Returns: float 变化率 (BUY 期望 >0) / None 数据不足 → 调用方 fail-open。
+    (2026-10-09 迁移自 pipeline.py; now_et_provider 由转发器注入, 缺省回落
+    app.utils.timezone.now_et。)
+    """
     try:
         futu = getattr(data_router, "futu", None)
         if futu is None or not hasattr(futu, "get_kline"):
@@ -352,7 +383,29 @@ def _calc_intraday_vol_ratio(
     now_et_provider: Optional[Callable] = None,
     curve_provider: Optional[Callable] = None,
 ) -> Optional[float]:
-    """盘中实时量能比; 数据不足返回 None。"""
+    """计算盘中实时量能比 (intraday volume ratio).
+
+    分母两条路径 (P1-3, 2026-08-23):
+      主: today_cumulative_vol / 历史同分钟累积量 p50 (_intraday_vol_curve_p50, ~45票)
+      回落: today_cumulative_vol / (avg_daily_vol_5d × elapsed_fraction)  ← 原线性模型
+      - today_cumulative_vol: 今日开盘至当前的累计成交量
+      - elapsed_fraction: 已过交易时间占全天比例 (9:30-16:00 ET = 390min)
+
+    Args:
+        use_p50_curve: True=强制走 p50, False=强制走线性, None=从 config 读开关。
+
+    Returns:
+        float > 0: 盘中量能比 (1.0=与历史同时段持平, >1.5=放量)
+        None: 数据不足, 调用方应 fail-open.
+
+    2026-07-20 新增: 替代原日级 volume_ratio (对盘中突破零预测力), 用真实盘中
+    累计量/同时段期望量做动量确认.
+    2026-07-20 修复 (量能门误拦根因): 分子改用 Futu LV3 实时快照的当日累计成交量
+      (get_quote()["volume"], <100ms 推送维护) — 原来聚合 K_1M(300s缓存) 系统性
+      滞后低估, 令 AAPL/MSFT 盘中40min仍仅~0.7 → 近乎全拦. 实时快照不可用时才回退
+      K_1M 聚合. 数据源: Futu LV3 快照(主) / K_1M(兜底) + 日K线.
+    (2026-10-09 迁移自 pipeline.py; now_et_provider/curve_provider 由转发器注入。)
+    """
     try:
         if now_et_provider is None:
             from app.utils.timezone import now_et
@@ -374,9 +427,12 @@ def _calc_intraday_vol_ratio(
         if realtime_cum_vol and realtime_cum_vol > 0:
             today_cumulative_volume = float(realtime_cum_vol)
         else:
+            # 兜底: 聚合 K_1M (300s缓存, 滞后但盘初实时源缺失时聊胜于无)
             futu = getattr(data_router, "futu", None)
             if futu is None or not hasattr(futu, "get_kline"):
                 return None
+            # count=800 — HTTP 冷路径 start=T-1 时 OpenD 返回"最旧N根",
+            #   count 小于范围总数(~780)会拿到纯 T-1 bar → 今日过滤后空 → 门恒 fail-open.
             bars = futu.get_kline(symbol, ktype="K_1M", count=800) or []
             if not bars:
                 return None
@@ -391,17 +447,26 @@ def _calc_intraday_vol_ratio(
                 return None
             today_cumulative_volume = sum(today_volumes)
 
-        market_open_minutes = 9 * 60 + 30
+        # ── 分母: 已过交易时间 ──
+        # 美股常规交易时段: 9:30 - 16:00 ET = 390 min (半日市 13:00 收 = 210 min)
+        market_open_minutes = 9 * 60 + 30  # 570
+        # 2026-07-25 (隐患扫描修复): 半日市支持 — 否则提前收盘日 elapsed_fraction 分母偏大, 量能门误判
         try:
             from app.utils.holiday_calendar import get_us_close_minutes_et
             market_close_minutes = get_us_close_minutes_et(now.date())
         except Exception:
-            market_close_minutes = 16 * 60
+            market_close_minutes = 16 * 60  # 960
         elapsed = max(
             now.hour * 60 + now.minute - market_open_minutes, 1
         )
         total = market_close_minutes - market_open_minutes
 
+        # ── P1-3 (2026-08-23): VWAP-relative — 分母改用历史同分钟累积量 p50 ──
+        #   原线性折算 (日均量 × elapsed/390) 忽略 U 型分布, 开盘时段分母系统性偏小 →
+        #   ratio 虚高 → 门在最该确认的时段恒开 (见 _intraday_vol_curve_p50 docstring)。
+        #   ⚠️ 本分支会实质改变量能门行为 (阈值 0.8 从"几乎恒过"变为真实过滤), 这是修门的
+        #   目的而非副作用。覆盖外标的 (~45 票之外) 自动回落线性, 故行为变化仅限有曲线的票。
+        #   回滚: volume_gate_vwap_relative 改 false。
         if use_p50_curve is not None:
             use_curve = use_p50_curve
         else:
@@ -416,6 +481,7 @@ def _calc_intraday_vol_ratio(
         if use_curve:
             curve_provider = curve_provider or _intraday_vol_curve_p50
             curve = curve_provider(symbol)
+            # bar i (09:31) 覆盖开盘后第 1 分钟 → 开盘后 elapsed 分钟对应 index elapsed-1
             index = min(
                 max(elapsed - 1, 0),
                 (len(curve) - 1) if curve else 0,
@@ -423,7 +489,9 @@ def _calc_intraday_vol_ratio(
             if curve and curve[index] > 0:
                 return round(today_cumulative_volume / curve[index], 3)
 
+        # ── 回落: 最近5日日均成交量 × 时间占比 (线性模型) ──
         daily_bars = data_router.get_daily_bars(symbol, count=10) or []
+        # 排除今日 (可能不完整), 取最近5个已完成交易日
         historical_volumes = []
         for daily_bar in daily_bars:
             date = str(daily_bar.get("time", ""))[:10]

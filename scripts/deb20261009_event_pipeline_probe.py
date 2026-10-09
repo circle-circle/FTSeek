@@ -195,11 +195,15 @@ def section_e_product_surface() -> dict:
     hit_by_wd, tot_by_wd = collections.Counter(), collections.Counter()
     types = collections.Counter()
     syms = set()
+    n_bad_name = 0
     for f in files:
         ds = os.path.basename(f)[14:24]
         try:
             y, m, d = map(int, ds.split("-"))
         except ValueError:
+            # R5 留痕 (2026-10-09 棘轮清剿): 文件名日期段解析失败计数进汇总,
+            #   不让「全部入统」与「有跳行」输出同形。
+            n_bad_name += 1
             continue
         wd = date(y, m, d).weekday()
         tot_by_wd[wd] += 1
@@ -213,7 +217,8 @@ def section_e_product_surface() -> dict:
                     types[r.split("]")[0] + "]"] += 1
         if has:
             hit_by_wd[wd] += 1
-    print(f"  覆盖标的数 = {len(syms)}")
+    print(f"  覆盖标的数 = {len(syms)}"
+          + (f"  (跳过文件名日期解析失败 {n_bad_name} 个)" if n_bad_name else ""))
     print("  HARD_EVENT 类型分布:")
     for k, v in types.most_common():
         print(f"    {k:<38}{v}")

@@ -102,12 +102,16 @@ class TestGuardFieldsPresentOnEveryPath:
         assert r["skip"] == "outside_extended_hours"
         assert "orphan" in r and "closekey_health" in r
 
-    def test_in_session_dry_carries_both_guards(self, monkeypatch):
+    def test_in_session_dry_carries_both_guards(self, monkeypatch, tmp_path):
         """窗内 dry 分支 — 首版正是这里丢字段。"""
         _stub_guards(monkeypatch)
         monkeypatch.setattr(
             "scripts.extended_hours_exit_cron.get_exit_cron_session",
             lambda now=None: "premarket")
+        # 2026-10-09: 锁路径隔入 tmp — 与生产每分钟 cron 共用真实锁文件时,
+        #   cron tick 持锁瞬间本用例假红 (实测一次), 兄弟用例早已隔离。
+        monkeypatch.setattr("scripts.extended_hours_exit_cron.LOCK_FILE",
+                            tmp_path / "lock.file")
         r = run_once(dry=True)
         assert r["session"] == "premarket" and r.get("dry") is True
         assert "orphan" in r, "窗内分支必须带 orphan"

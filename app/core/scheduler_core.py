@@ -1043,9 +1043,12 @@ class TradingScheduler:
     #   ① **预算** (scheduler.watchdog_long_round_budget_sec, 默认 2700s): 超预算即停 ping →
     #      交回 watchdog 判定。无脑定时 ping 会让真卡死永远检不出 = 静默死亡
     #      (见 DEB-20260831-silent-death-hardening), 故必须有预算。
-    #   ② **阶段**: 轮次跨到 TRADING 立即停 ping + critical 告警 — 盘前轮次跨开盘意味着
-    #      `run_playbook_auto_execute` (入场) 被阻塞, 此时要的是 watchdog 权威而不是护航
-    #      (09-03 那次误重启恰好解了阻塞, 不能把这条恢复路径挡掉)。
+    #   ② **阶段**: 轮次跨到 TRADING 立即停 ping + 交回 watchdog (盘前轮次跨开盘意味着
+    #      `run_playbook_auto_execute` (入场) 被阻塞, 真卡死检出归 watchdog 权威,
+    #      09-03 那次误重启恰好解了阻塞, 不能把这条恢复路径挡掉)。
+    #      2026-10-09 两阶段化 (用户裁「请优化调整」): 跨界先 WARNING, 宽限
+    #      (scheduler.watchdog_cross_open_grace_sec, 默认 120s) 内未收轮才 ERROR+critical —
+    #      10-09 实证慢轮跨开盘 0.2s 自解, 即时推送是纯噪音; 真卡死检出延迟 0s→grace。
     #   TRADING 阶段**不护航**: 入场执行在同一循环内, 卡死要紧检出 + heal;
     #   出场另有独立快循环 (`playbook_exit_loop`, 阈值 120s), 完全不受本改动影响。
     # 线程卫生 (同日 D3 教训): 全程最多 1 个护航线程, 每轮顶部结算 + join(5s), 停机随
@@ -1103,19 +1106,47 @@ class TradingScheduler:
                             get_market_phase as _gmp_wd, MarketPhase as _MP_wd,
                         )
                         if _gmp_wd() == _MP_wd.TRADING:
-                            _state["stopped_reason"] = f"跨入 TRADING (已跑 {_elapsed:.0f}s)"
-                            _msg = (
-                                f"⚠️ [Watchdog·护航] {_phase_name} 轮次跨开盘仍未结束 "
-                                f"(已跑 {_elapsed:.0f}s) → 入场执行被阻塞; 停止补心跳, "
-                                f"交回 watchdog 判定"
-                            )
-                            logger.error(_msg)
-                            try:
-                                from app.utils.critical_alerts import send_critical
-                                send_critical(_msg, async_mode=True)
-                            except Exception as _se:
-                                logger.debug(f"[Watchdog·护航] critical 上送失败: {_se}")
-                            return
+                            if _state.get("crossed_at") is None:
+                                # 2026-10-09 降噪 (用户裁「请优化调整」): 跨开盘不再即时推送 —
+                                #   10-09 实证: 121s 慢轮跨开盘后 0.2s 自解, 🚨 属误打扰。
+                                #   两阶段: 停 ping 交回 watchdog 不变 (真卡死仍有 600s stale
+                                #   兜底); 跨界先 WARNING, 宽限内未收轮才升级 ERROR+critical —
+                                #   09-03「入场被阻塞必须可见」的检出能力保留, 延迟 0s→grace。
+                                _state["crossed_at"] = time.time()
+                                _state["stopped_reason"] = f"跨入 TRADING (已跑 {_elapsed:.0f}s)"
+                                try:
+                                    from app.core.config_container import get_config as _gc_gr
+                                    _grace = float(_gc_gr().get_dotted(
+                                        "scheduler.watchdog_cross_open_grace_sec", 120))
+                                except Exception:
+                                    _grace = 120.0
+                                _state["grace"] = _grace
+                                logger.warning(
+                                    f"[Watchdog·护航] {_phase_name} 轮次跨开盘仍未结束 "
+                                    f"(已跑 {_elapsed:.0f}s) → 停止补心跳, 交回 watchdog; "
+                                    f"宽限 {_grace:.0f}s 内未收轮将升级 critical"
+                                )
+                            else:
+                                # 显式 None 判定: grace=0 是合法配置 (即时升级/回滚阀),
+                                #   不得用 `or` 兜底 (0 is falsy 会把 0 错成 120)。
+                                _grace_now = _state.get("grace")
+                                if _grace_now is None:
+                                    _grace_now = 120.0
+                                if time.time() - _state["crossed_at"] >= float(_grace_now):
+                                    _msg = (
+                                        f"🚨 [Watchdog·护航] {_phase_name} 轮次跨开盘 "
+                                        f"≥{float(_grace_now):.0f}s 仍未收轮 "
+                                        f"→ 判真卡死: 入场执行被阻塞"
+                                    )
+                                    logger.error(_msg)
+                                    try:
+                                        from app.utils.critical_alerts import send_critical
+                                        send_critical(_msg, async_mode=True)
+                                    except Exception as _se:
+                                        logger.debug(f"[Watchdog·护航] critical 上送失败: {_se}")
+                                    return
+                            # 跨界后不再补 ping (交回 watchdog), 留在循环内等收轮/宽限升级
+                            continue
                     except Exception as _pe:
                         logger.debug(f"[Watchdog·护航] 阶段判定失败 → 继续护航 (不误停): {_pe}")
                     self._wd_ping()

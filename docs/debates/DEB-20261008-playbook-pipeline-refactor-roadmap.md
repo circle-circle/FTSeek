@@ -827,3 +827,55 @@ LLM 调用 ⇒「llm exactly once」契约假红 (v1 是生产已弃用路径)�
   (genuine 龄 P95=1329.2s >> 90s, 激活=系统性误杀; 维持 9/15 用户裁 C 现状,
   禁止事后改阈值)。注册条目记裁决 + 挂账 (`no_adjudication_reason`) 阻断
   refresh_counts 重复提升 (该提升即全量套件「单跑绿/全量红」污染源)。
+
+## 24. 独立复查 + 修复批 (2026-10-09 晚, 用户令「请复查」→「请修复」→「请优化调整」)
+
+### 24.1 复查方法与结论
+
+第二 agent 独立复查 (6 个保真核对 agent 按模块组逐语句对照 HEAD + 本地实证):
+迁移本体**保真通过** — auto_execute 主循环 1079 行仅 3 处注入替换; close/monitor/
+overnight 20 条 SQL 逐字相同; 状态容器全部按引用注入无重绑; 函数属性回环作用于
+pipeline 转发器本体; `_build_instructions_from_votes` 拆分后 continue 链与
+filter_audit 键集逐项等价; 45 个外部 import 面完整; 零顶层循环导入。
+
+### 24.2 抓出并修复
+
+| # | 级 | 问题 | 修复 |
+|---|---|---|---|
+| 1 | P0 | trigger_flow.py 资金流背离影子块漏带 `Path/json/datetime` (迁移时唯一漏网站点, AST 全包扫描确认), NameError 被 except 吞成 warning ⇒ 影子静默死亡 (十月重裁数据底座; 实证 jsonl 自 9/25 无新行属门未触发, 暂未丢数据) | 按文件内 `_Path/_json/_dt` 惯例补局部 import; 新增 `tests/playbook/test_falsification_capital_flow_shadow.py` 钉真落盘 + record-only 不拦单 + monkeypatch 缝, **变异测试实证** (buggy 态红/修复态绿) |
+| 2 | P1 | 48 条根目录源码锚点测试断裂 (chase_cap×15/premarket_inv×4/pullback×6/phase1×3/push×4/r8×3/be×2 等) — 迁移回归口径只含 tests/playbook + test_playbook_pipeline, 漏根目录契约族 | 3 agent 并行重钉 (只改源指针/拼接, 断言零改动); horizon_confidence 白名单显式登记 instruction_builder.py |
+| 3 | P1 | except:pass 棘轮 921→922 (迁移本体 −53/+53 此消彼平; 净增来自夹带批 data_retention/gate_attribution, 及当日新提交 probe/insider) | 4 处 R5 留痕清剿 (计数进输出行/stderr), 棘轮复绿 |
+| 4 | P2 | intraday_indicators 迁移剥损设计理由 (vwap_slope 累计VWAP不可求导论证/vol_ratio P1-3 U型分布+count=800 实证/gather_evidence P1-2 新鲜度审计 21 条注释) | 从 HEAD 逐字补回 (适配新变量名) |
+| 5 | P2 | `_evaluate_technical_direction` 日志丢 `{symbol}` | 补 symbol 参数并接线 (转发器+调用点), 消息对齐 HEAD 原文 |
+| 6 | P2 | pipeline.py `_LIQUIDITY_CACHE`/`_BORROW_POOL_CACHE` 死声明 (活体已在新宿主) | 删除+留指针注释, 防直引分裂 |
+
+### 24.3 优化批 (开盘体检后用户裁「请优化调整」)
+
+- **watchdog 跨开盘告警两阶段化**: 跨界 WARNING+停 ping 交回 watchdog 不变;
+  宽限 `scheduler.watchdog_cross_open_grace_sec` (默认 120s, yaml 已登记) 未收轮
+  才 ERROR+critical。缘由: 10-09 实证 121s 慢轮跨开盘 0.2s 自解仍 🚨 推送。
+  真卡死检出延迟 0s→grace, watchdog 600s stale 兜底不变; 回滚: 键置 0。
+  测试钉更新 (grace=0 钉升级路径 / grace=∞ 钉宽限内零推送) + 修出
+  `0 or 120` falsy 陷阱一处 (显式 None 判定)。
+- **exit_lifecycle HELD 日志两级分流**: `*_pending` 瞬态族降 INFO 不打栈
+  (playbook 层宽限/升级不动), 非瞬态守卫拒绝保留 WARNING+exc_info
+  (9/13 留栈教训); 新增 `tests/execution/test_exit_lifecycle_held_logging.py`
+  钉归一先于分流/瞬态无栈/非瞬态带栈; W456 口径 INFO 不计违例, 棘轮零扰动。
+- **test_extended_hours_exit_cron 锁隔 tmp** (与每分钟 cron 共锁假红, 实证一次)。
+
+### 24.4 流程教训 (制度化)
+
+① 「N passed」子集验证不等于全量 — 迁移/重构批的回归口径必须含 tests/ 根目录
+源码锚点契约族; ② 棘轮不得自行圈定「四件」— 本批迁移方与复查方各自漏跑
+except_pass, 唯全量套件抓到; ③ 全量跑测期间禁并行 pytest (共享生产 data/ ⇒
+活体数据测试假红, 本批三例误报实证); ④ 语句级对照 + AST 裸名扫描是迁移批的
+必要复查面 (P0 哑弹只有这层能抓 — 1118 绿没抓住因为它零测试覆盖)。
+
+### 24.5 验收
+
+- 棘轮家族 5 件 34 passed; 受影响面 (watchdog/execution/playbook/pipeline/ext_cron/
+  premarket_overrun) 1402 passed; P0 变异测试双向实证 (buggy 态红/修复态绿)。
+- **全量回归终跑 (串行无并行污染, 含 patient_exit 已修复 40 条): 6987 passed /
+  16 failed / 70 skipped** — 16 红全部经 HEAD 隔离 worktree 实证为既有债
+  (chokepoint 祖父名单 / manual_hold SSOT / ops_scripts_sync / EXT 臂等,
+  与本批零交集); 修复前对照为 67 failed (48 锚点 + 1 棘轮 + 17 既有 + 1 污染)。

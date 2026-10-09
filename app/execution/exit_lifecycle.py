@@ -832,11 +832,20 @@ class ExitLifecycle:
             if (not error.startswith('exit_') or ' ' in error
                     or 'broker_no_position' in error or 'insufficient' in error):
                 error = 'exit_evidence_invalid'
-            # exc_info=True (2026-09-13, W456 棘轮 W6_except_stack 处置①): 本 ValueError 是
-            #   守卫 fail-closed 的控制流信号, 栈=抛出点, 正是值班人定位"哪个守卫拦的"所需
-            #   (9/11 exit_identity_required 事故若有栈可即刻定位 dual_broker 守卫而非猜)。
-            #   与同函数上方 cancel-response warning 的 exc_info=True 保持一致 (原为漏写)。
-            logger.warning('Exit held intent=%s reason=%s', intent_id, error, exc_info=True)
+            # 2026-10-09 (用户裁「请优化调整」): *_pending 瞬态族 (成交证据/回报在途)
+            #   降为 INFO 不打栈 — 抛出点恒已知 (上方 query 守卫), 宽限与超窗升级由
+            #   playbook 监控层持有 (「平仓待回报」行 + 120s 宽限), 此处每条 10s 一轮的
+            #   堆栈是纯噪音 (10-09 实证: 5 笔平仓 30min 内 14 条 Traceback)。
+            #   下方 exc_info=True 保留给非瞬态守卫拒绝 (9/13 理由不变: 栈=抛出点,
+            #   是值班人定位"哪个守卫拦的"所需)。W456 口径: INFO 不计两维违例。
+            if error.endswith('_pending'):
+                logger.info('Exit held intent=%s reason=%s (transient, 在途)', intent_id, error)
+            else:
+                # exc_info=True (2026-09-13, W456 棘轮 W6_except_stack 处置①): 本 ValueError 是
+                #   守卫 fail-closed 的控制流信号, 栈=抛出点, 正是值班人定位"哪个守卫拦的"所需
+                #   (9/11 exit_identity_required 事故若有栈可即刻定位 dual_broker 守卫而非猜)。
+                #   与同函数上方 cancel-response warning 的 exc_info=True 保持一致 (原为漏写)。
+                logger.warning('Exit held intent=%s reason=%s', intent_id, error, exc_info=True)
             return self.ledger.result(intent_id, self.clock.time(), error, 'HELD')
         except Exception:
             logger.exception('Exit reconciliation failed intent=%s', intent_id)
