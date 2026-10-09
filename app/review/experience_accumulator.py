@@ -162,7 +162,9 @@ class ExperienceAccumulator:
         for t in trades:
             verdict = t.get('verdict', '')
             issues = t.get('issues', [])
-            pnl = t.get('realized_pnl', 0)
+            # 2026-10-09 净口径修复: lesson 判定用净额 (net_pnl 缺失回退毛额, 0 是合法值禁 or)
+            _net = t.get('net_pnl')
+            pnl = _net if _net is not None else (t.get('realized_pnl', 0) or 0)
             symbol = t.get('symbol', '')
             exit_reason = t.get('exit_reason', '')
             
@@ -246,14 +248,17 @@ class ExperienceAccumulator:
         for dt in debate_trades:
             reason = dt.get('debate_reason', '')
             symbol = dt.get('symbol', '')
+            # 2026-10-09 净口径修复: lesson 判定/金额用净额 (0 是合法值, 禁 or 回退)。
+            _net = dt.get('net_pnl')
+            _net = _net if _net is not None else (dt.get('realized_pnl') or 0)
             
-            if '盘前入场' in reason and dt.get('realized_pnl', 0) > 0:
-                # 盘前盈利 — 需要辩论确认是策略还是运气
+            if '盘前入场' in reason and _net > 0:
+                # 盘前净盈利 — 需要辩论确认是策略还是运气
                 lessons.append(Lesson(
-                    lesson_text=f"{symbol} 盘前入场盈利 ${dt['realized_pnl']:.2f} — 待辩论确认是策略有效还是运气",
+                    lesson_text=f"{symbol} 盘前入场净盈利 ${_net:.2f} — 待辩论确认是策略有效还是运气",
                     lesson_category="timing",
                     lesson_subcategory="premarket_profit_debate",
-                    impact_score=dt.get('realized_pnl', 0),
+                    impact_score=_net,
                     confidence=0.3,  # 低置信度，需要辩论确认
                     symbols=[symbol],
                     source_type="debate",

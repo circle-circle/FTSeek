@@ -50,6 +50,10 @@ class TradeAnalysis:
     signal_strength: int
     signal_confidence: float
     
+    # 净口径 (2026-10-09, 对齐 7d9a800fa 净口径 SSOT): COALESCE(pnl_net, realized_pnl)
+    # 辩论触发/盈亏归因/推送/lesson 一律用净额; 旧行 pnl_net=NULL 回退毛额
+    net_pnl: float = 0.0
+    
     # 分析结果
     verdict: str = ""             # 合理/待定观察/不合理
     entry_logic: str = ""         # 入场逻辑评估
@@ -75,6 +79,7 @@ class TradeAnalysis:
             'entry_price': self.entry_price,
             'exit_price': self.exit_price,
             'realized_pnl': round(self.realized_pnl, 2),
+            'net_pnl': round(self.net_pnl, 2),
             'pnl_pct': round(self.pnl_pct, 6),  # 保留原始比率, 不×100 (格式化层负责×100)
             'exit_reason': self.exit_reason,
             'holding_hours': round(self.holding_hours, 1),
@@ -162,13 +167,19 @@ class TradeAnalyzer:
     
     def _analyze_single_trade(self, trade: Dict, attribution: Dict) -> TradeAnalysis:
         """分析单笔交易"""
+        # 净口径 SSOT (2026-10-09): pnl_net 存在用净额, NULL(旧行)回退毛额。
+        # 0 是合法净额, 禁 `or` 回退 (会把净 0 当缺失)。
+        _gross = trade.get('realized_pnl', 0) or 0
+        _pnl_net = trade.get('pnl_net')
+        _net = _pnl_net if _pnl_net is not None else _gross
         analysis = TradeAnalysis(
             trade_id=trade.get('id', 0),
             symbol=trade.get('symbol', ''),
             direction=trade.get('direction', ''),
             entry_price=trade.get('entry_price', 0),
             exit_price=trade.get('exit_price', 0),
-            realized_pnl=trade.get('realized_pnl', 0) or 0,
+            realized_pnl=_gross,
+            net_pnl=_net,
             pnl_pct=trade.get('pnl_pct', 0) or 0,
             exit_reason=trade.get('exit_reason', ''),
             holding_hours=trade.get('holding_hours', 0) or 0,
@@ -277,7 +288,8 @@ class TradeAnalyzer:
     
     def _attribute_pnl(self, analysis: TradeAnalysis, trade: Dict, attribution: Dict):
         """盈亏归因"""
-        pnl = analysis.realized_pnl
+        # 2026-10-09 净口径修复: 归因判定/金额用净额 (毛正净负单曾被归因为"盈利退出")。
+        pnl = analysis.net_pnl
         pnl_pct = analysis.pnl_pct
         
         if pnl > 0:
@@ -409,18 +421,20 @@ class TradeAnalyzer:
         # 1. 判定为"不合理"但信号强度 > 60 (高信号却亏损)
         # 2. 判定为"待定观察"且亏损超过 $500
         # 3. 盘前入场但盈利 (可能是运气)
-        
+        # 2026-10-09 净口径修复: 判定 2/3 改用 net_pnl (费用后净额)。
+        # 根因: id=1631 PEP 毛 +$1.13 / 净 -$3.20 (费 $4.33=毛利3.8x) 误触发
+        # "盘前盈利待辩论"; 全仓 553 笔毛正里 78 笔 (14.1%) 实为净亏。
         if analysis.verdict == TradeVerdict.UNREASONABLE and analysis.signal_strength > 60:
             analysis.needs_debate = True
             analysis.debate_reason = f"高信号强度 (strength={analysis.signal_strength}) 但判定不合理 — 需要辩论确认信号有效性"
         
-        elif analysis.verdict == TradeVerdict.OBSERVE and analysis.realized_pnl < -500:
+        elif analysis.verdict == TradeVerdict.OBSERVE and analysis.net_pnl < -500:
             analysis.needs_debate = True
-            analysis.debate_reason = f"待定观察但亏损较大 (-${abs(analysis.realized_pnl):.2f}) — 需要辩论确认是否系统问题"
+            analysis.debate_reason = f"待定观察但净亏损较大 (净-${abs(analysis.net_pnl):.2f}, 毛${analysis.realized_pnl:+.2f}) — 需要辩论确认是否系统问题"
         
-        elif "盘前入场" in ' '.join(analysis.issues) and analysis.realized_pnl > 0:
+        elif "盘前入场" in ' '.join(analysis.issues) and analysis.net_pnl > 0:
             analysis.needs_debate = True
-            analysis.debate_reason = "盘前入场但盈利 — 需要辩论确认是策略有效还是运气"
+            analysis.debate_reason = f"盘前入场但净盈利 (+${analysis.net_pnl:.2f}) — 需要辩论确认是策略有效还是运气"
 
 
 # ============================================================================
@@ -576,6 +590,7 @@ def aggregate_weekly_analyses(analyses: List[Dict]) -> Dict:
             entry_price=a.get('entry_price', 0),
             exit_price=a.get('exit_price', 0),
             realized_pnl=a.get('realized_pnl', 0),
+            net_pnl=a.get('net_pnl', a.get('realized_pnl', 0)),
             pnl_pct=a.get('pnl_pct', 0),  # 不再/100, to_dict已保留原始比率
             exit_reason=a.get('exit_reason', ''),
             holding_hours=a.get('holding_hours', 0),

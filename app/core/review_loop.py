@@ -1058,9 +1058,13 @@ def run_review_loop(report: Dict, notifier=None, context: Dict = None) -> Dict:
         if notifier:
             debate_msg = "🔍 交易辩论触发\n"
             for dt in debate_trades[:3]:  # 最多推送 3 笔
+                # 2026-10-09 净口径修复: 显示净额 (毛正净负曾把净亏单当"盈利"推送)。
+                # net_pnl 缺失时回退毛额 (与 COALESCE(pnl_net, realized_pnl) 同语义)。
+                _net = dt.get('net_pnl')
+                _net = _net if _net is not None else (dt.get('realized_pnl') or 0)
                 debate_msg += (
                     f"\n• #{dt['trade_id']} {dt['symbol']} {dt['direction']} "
-                    f"pnl=${dt['realized_pnl']:.2f}\n"
+                    f"净pnl=${_net:.2f} (毛${dt['realized_pnl']:.2f})\n"
                     f"  判定: {dt['verdict']} | 原因: {dt['debate_reason']}\n"
                 )
             notifier.send_text(debate_msg)
