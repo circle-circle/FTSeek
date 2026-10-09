@@ -224,6 +224,47 @@ def _validate_startup_mode_or_exit():
     return result
 
 
+def _exit_policy_startup_gate(live_capable: bool) -> None:
+    """Layer 1.5: Exit Policy 启动校验 (P0-3 2026-04-29; 2026-10-08 加 LIVE fail-close).
+
+    exit_policy.yaml 是止损/止盈的 SSOT，启动时必须验证代码覆盖所有启用的规则。
+    SIM (纯研究) 校验失败保持告警降级; LIVE-capable (broker/db 任一 real 或
+    ALLOW_REAL_TRADING=true, 含已授权工程探针窗口) 下校验失败/异常 → SystemExit
+    拒绝启动 —— 原实现只打 CRITICAL 继续跑, 对允许真钱的模式等于"止损保护
+    可能缺失但照常开仓"。
+    """
+    try:
+        from app.risk.exit_policy_guardian import validate_exit_policy
+        ep_result = validate_exit_policy()
+        if not ep_result.is_valid:
+            logger.critical(
+                "[ExitPolicy] ❌ 退出策略校验失败: %s — 系统可能缺少关键止损保护!",
+                ep_result.rules_violated
+            )
+            if live_capable:
+                raise SystemExit(
+                    f"[StartupMode] LIVE-capable 模式下 ExitPolicy 校验失败 — "
+                    f"规则未实现: {ep_result.rules_violated}; 拒绝启动 (exit=1)"
+                )
+        else:
+            logger.info(
+                "[ExitPolicy] ✅ 退出策略校验通过: %d/%d 条规则已实现 (%s)",
+                len(ep_result.rules_enabled), len(ep_result.rules_enabled), ep_result.version
+            )
+        if ep_result.warnings:
+            for warning in ep_result.warnings:
+                logger.warning("[ExitPolicy] ⚠️ %s", warning)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        logger.error("[ExitPolicy] 退出策略校验异常 (降级运行): %s", exc)
+        if live_capable:
+            raise SystemExit(
+                f"[StartupMode] LIVE-capable 模式下 ExitPolicy 校验异常: {exc}; "
+                "拒绝启动 (exit=1)"
+            )
+
+
 def _run_new_scheduler(args):
     """启动 TradingScheduler: DI容器装配 + 多模型投票 + 自适应轮询 + Futu LV3"""
     import fcntl
@@ -271,7 +312,14 @@ def _run_new_scheduler(args):
             print(f"⚠️  进程锁清理失败 ({LOCK_FILE}): {_e}", file=sys.stderr)
     atexit.register(cleanup_lock)
 
-    _validate_startup_mode_or_exit()
+    _startup_mode = _validate_startup_mode_or_exit()
+    # LIVE-capable 判据: broker/db 任一 real, 或 ALLOW_REAL_TRADING=true
+    # (含已授权的 LIVE 工程探针窗口 — 探针期同样不允许带着失效的退出策略校验跑).
+    _live_capable = (
+        _startup_mode["broker_route"] == "real"
+        or _startup_mode["db_route"] == "live"
+        or _startup_mode["allow_real_trading"]
+    )
 
     # ── 启动前 OpenD 连通性检查 (P0 修复 2026-05-01) ──
     # 防止 OpenD 不可用时, Futu SDK _init_connect_sync 无限重试阻塞启动
@@ -431,26 +479,8 @@ def _run_new_scheduler(args):
         else:
             logger.info("[ConfigGov] ✅ 配置校验通过: %s", validation_result.summary)
 
-        # Layer 1.5: Exit Policy 启动校验 (P0-3 2026-04-29 新增)
-        # exit_policy.yaml 是止损/止盈的 SSOT，启动时必须验证代码覆盖所有启用的规则
-        try:
-            from app.risk.exit_policy_guardian import validate_exit_policy
-            ep_result = validate_exit_policy()
-            if not ep_result.is_valid:
-                logger.critical(
-                    "[ExitPolicy] ❌ 退出策略校验失败: %s — 系统可能缺少关键止损保护!",
-                    ep_result.rules_violated
-                )
-            else:
-                logger.info(
-                    "[ExitPolicy] ✅ 退出策略校验通过: %d/%d 条规则已实现 (%s)",
-                    len(ep_result.rules_enabled), len(ep_result.rules_enabled), ep_result.version
-                )
-            if ep_result.warnings:
-                for w in ep_result.warnings:
-                    logger.warning("[ExitPolicy] ⚠️ %s", w)
-        except Exception as e:
-            logger.error("[ExitPolicy] 退出策略校验异常 (降级运行): %s", e)
+        # Layer 1.5: Exit Policy 启动校验 (语义见 _exit_policy_startup_gate docstring)
+        _exit_policy_startup_gate(_live_capable)
 
         # Layer 1.6: 做空策略启动校验 (2026-04-29 新增)
         # 验证 unified_config.yaml stock_short + exit_policy.yaml short_overrides 配置完整性

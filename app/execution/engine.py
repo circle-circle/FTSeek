@@ -315,8 +315,23 @@ class ExecutionEngine(BaseExecutionEngine):
                             f"(auto_trading_enabled=false)"
                         )
                         return order
-                except Exception:
-                    pass  # YAML 读取异常不阻断 (order_executor 有自己的独立检查)
+                except Exception as _auto_gate_err:
+                    # 2026-10-08 (运维体检批): 读异常改 fail-close — 自动引擎的
+                    # 总开关读不到时不得放行。原注释"order_executor 有自己的独立
+                    # 检查"已过时: 该检查读 ModeSwitchService 内存态
+                    # (app/pipeline/order_executor.py), 与本处 YAML 直读是两个
+                    # 来源, 本处异常并不能由彼处兜住同一次判定。
+                    order.state = OrderState.REJECTED
+                    order.failure_reason = (
+                        f"auto_trading_enabled 读取异常 (fail-close), "
+                        f"{_source} 引擎入场被阻断"
+                    )
+                    logger.warning(
+                        f"[ExecutionEngine·AutoGate] {order.symbol} {_source} "
+                        f"YAML 读取异常 ({_auto_gate_err}), fail-close 拒绝自动入场",
+                        exc_info=True,
+                    )
+                    return order
 
         # 幂等检查
         # ------------------------------------------------------------------

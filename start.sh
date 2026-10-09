@@ -67,11 +67,31 @@ if [ ! -f "requirements.lock" ]; then
     echo "❌ 未找到 requirements.lock"
     exit 1
 fi
-echo "检查依赖（lock 模式）..."
-# C2 (2026-08-24, 体检 E1): lock 失败即终止, 不回退松散 manifest。
-if ! $PIP install -q -r requirements.lock; then
-    echo "❌ lock 依赖安装失败 — 环境不完整, 终止启动"
-    exit 1
+
+# 2026-10-08 (运维体检批): pip install 从"每次重启必跑"改为"指纹+pip check 双闸"。
+# 原实现把重启可用性与 PyPI 网络耦合 — PyPI 抖动时 start.sh 失败 → systemd 重试循环,
+# 恰好在最需要快速拉起 (OpenD/网络恢复窗口) 的时候最慢最脆。
+# 快路径 = sha256(requirements.lock) 指纹匹配 + venv 自检通过 → 零网络依赖;
+# 指纹不匹配 / venv 被手动改动 (pip check 红) → 回落全量 lock 安装 (C2 语义不变)。
+LOCK_HASH=$(sha256sum requirements.lock | awk '{print $1}')
+MARKER_FILE="$VENV_DIR/.requirements.lock.sha256"
+NEED_INSTALL=1
+if [ -f "$MARKER_FILE" ] && [ "$(cat "$MARKER_FILE" 2>/dev/null)" = "$LOCK_HASH" ]; then
+    if $PIP check >/dev/null 2>&1; then
+        NEED_INSTALL=0
+        echo "✅ 依赖指纹匹配 + pip check 通过, 跳过安装 (启动零网络依赖)"
+    else
+        echo "⚠️ 依赖指纹匹配但 pip check 未通过 (venv 被改动/损坏) → 重装 lock"
+    fi
+fi
+if [ "$NEED_INSTALL" = "1" ]; then
+    echo "检查依赖（lock 模式, 指纹 ${LOCK_HASH:0:12}...）..."
+    # C2 (2026-08-24, 体检 E1): lock 失败即终止, 不回退松散 manifest。
+    if ! $PIP install -q -r requirements.lock; then
+        echo "❌ lock 依赖安装失败 — 环境不完整, 终止启动"
+        exit 1
+    fi
+    echo "$LOCK_HASH" > "$MARKER_FILE" || echo "⚠️ 依赖指纹 marker 写入失败 (不影响本次启动)"
 fi
 
 # ── 4. 配置文件完整性快速校验 ──

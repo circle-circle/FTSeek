@@ -3,17 +3,57 @@
 """
 import asyncio
 import logging
+import os
 from datetime import datetime
+from pathlib import Path
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from app.web_dashboard.data_service import get_data_service
 from app.web_dashboard.api_response import api_ok, api_error, err_broker_unavailable
+from app.web_dashboard.mode_switch_service import get_mode_switch_service
 from app.web_dashboard.order.gates import collect_manual_gates
 from app.execution.futu_accounting import normalize_futu_account
 
 logger = logging.getLogger("ftseek_us.routes.trade")
 router = APIRouter()
+
+# auto_trading_enabled 的持久层 (重启后 ModeSwitchService 从此恢复).
+# 路径口径与三处裸 regex 直读 (AGENT.md 军规: 刻意绕过热重载 60s 延迟) 同一文件.
+_AUTO_TRADING_YAML_PATH = (
+    Path(__file__).resolve().parents[3] / "config" / "unified_config.yaml"
+)
+
+
+def _write_yaml_auto_trading(enabled: bool) -> bool:
+    """同步写入 YAML auto_trading_enabled (原子替换, 与三处裸 regex 直读对齐).
+
+    返回 False = 持久化失败 (key 缺失/缩进漂移/IO 异常), 调用方必须拒绝切换,
+    不得让"内存已关/盘上仍开"的双源漂移存活到下一次重启。
+    """
+    import re
+    import tempfile
+    try:
+        with open(_AUTO_TRADING_YAML_PATH, "r") as f:
+            content = f.read()
+        pattern = r'(  auto_trading_enabled:\s*)(true|false)'
+        replacement = f'\\g<1>{"true" if enabled else "false"}'
+        new_content = re.sub(pattern, replacement, content)
+        if new_content == content:
+            return False
+        dir_name = os.path.dirname(_AUTO_TRADING_YAML_PATH)
+        fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as tmp_f:
+                tmp_f.write(new_content)
+            os.replace(tmp_path, _AUTO_TRADING_YAML_PATH)
+        except Exception:
+            os.unlink(tmp_path)
+            raise
+        return True
+    except Exception as e:
+        logger.error(f"[auto-trade] YAML 写入失败: {e}")
+        return False
 
 
 def register(app, templates):
@@ -588,41 +628,16 @@ def register(app, templates):
     # ═══════════════════════════════════════════════════════════
     #  Auto Trade — Dashboard 一键开关 + 激进程度 (Task #2)
     # ═══════════════════════════════════════════════════════════
-    from app.web_dashboard.mode_switch_service import get_mode_switch_service
-
-    _YAML_PATH = "/opt/ftseek/FTSeek-US/config/unified_config.yaml"
-
-    def _write_yaml_auto_trading(enabled: bool) -> bool:
-        """同步写入 YAML auto_trading_enabled (原子替换, 与 _submit_order 直读对齐)"""
-        import re, os, tempfile
-        try:
-            with open(_YAML_PATH, "r") as f:
-                content = f.read()
-            pattern = r'(  auto_trading_enabled:\s*)(true|false)'
-            replacement = f'\\g<1>{"true" if enabled else "false"}'
-            new_content = re.sub(pattern, replacement, content)
-            if new_content == content:
-                return False
-            dir_name = os.path.dirname(_YAML_PATH)
-            fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
-            try:
-                with os.fdopen(fd, "w") as tmp_f:
-                    tmp_f.write(new_content)
-                os.replace(tmp_path, _YAML_PATH)
-            except Exception:
-                os.unlink(tmp_path)
-                raise
-            return True
-        except Exception as e:
-            logger.error(f"[auto-trade] YAML 写入失败: {e}")
-            return False
-
     @router.post("/api/auto-trade/toggle")
     async def toggle_auto_trade(request: Request):
         """Dashboard 一键开关自动交易 (不影响手动链路).
 
-        同时写入内存 (ModeSwitchService) + YAML 文件,
+        同时写入 YAML 文件 (持久层) + 内存 (ModeSwitchService),
         确保信号扫描和订单提交两道门控同步切换.
+
+        写入顺序 = YAML 先行: 持久化失败即拒绝切换且内存态不动。
+        (2026-10-08 修: 原实现忽略 YAML 写返回值, "关闭"写盘失败后重启
+        会静默回到 ON —— 双源开关最危险的漂移方向。)
         """
         try:
             body = await request.json()
@@ -630,11 +645,18 @@ def register(app, templates):
             return api_error("BAD_REQUEST", "请求体无效 (需要 JSON)", 400)
         enabled = bool(body.get("enabled", False))
 
-        # 1. 内存开关 (控制信号扫描 + 订单提交 Gate)
-        result = get_mode_switch_service().set_auto_enabled(enabled)
+        # 1. 持久化到 YAML (重启后 ModeSwitchService 从此恢复) — 失败即拒绝
+        if not _write_yaml_auto_trading(enabled):
+            return api_error(
+                "AUTO_TRADE_PERSIST_ERROR",
+                "auto_trading_enabled 写入 unified_config.yaml 失败 "
+                "(key 缺失/缩进漂移/IO), 已拒绝切换 (内存开关未变)",
+                500,
+                retryable=True,
+            )
 
-        # 2. 持久化到 YAML (重启后 ModeSwitchService 从此恢复)
-        _write_yaml_auto_trading(enabled)
+        # 2. 内存开关 (控制信号扫描 + 订单提交 Gate)
+        result = get_mode_switch_service().set_auto_enabled(enabled)
 
         # 模式状态变化后清缓存, 让 Dashboard 立即看到新状态
         try:

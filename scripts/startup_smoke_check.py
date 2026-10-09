@@ -47,17 +47,28 @@ AGENT.md 军规"重启必跑启动冒烟"在这一形态下当值失明, 且报�
 `scripts/error_alert.py:112` 的先例**不 import 那个模块** (它 import 期会 load_dotenv +
 改写 sys.path), 同构实现于此。
 当前档已含启动标记时走原快路径 (只读一个档) ⇒ 重启后立刻跑的行为逐字不变。
+
+2026-10-08 修 (探针窗口 SOP 摩擦): LIVE 工程探针 waiver (RFC-135,
+data/live_probe_lock_waiver.json) 活跃期内, AGENT.md 通用重启 SOP 命令
+(不带 --live-probe) 的断言 5 必红 —— 授权窗口 10-05→10-12 期间每轮重启都要人工
+记得补 flag, 忘记即假红。修法 = 冒烟脚本**只读** waiver 文件 (刻意不 import
+app/playbook/live_arm_gate.py, 守卫须独立于被守对象): 未过期 ⇒ 断言 5 放宽为
+「全锁闭(False) 或 已授权探针(True)」两形态任一成立, 且两证据源必须同侧一致;
+waiver 缺失/损坏/已过期 ⇒ 维持原严格判据 (False 才过) —— 与 live_arm_gate 的
+「到期自动失效」语义对称: 到期后 ALLOW_REAL_TRADING 仍 true 时冒烟自动复红。
 """
 import argparse
 import gzip
+import json
 import re
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 LOG = ROOT / "logs" / "ftseek_us.log"
+WAIVER = ROOT / "data" / "live_probe_lock_waiver.json"
 # 回溯几天的轮转档 (MAX_BOOT_AGE_HOURS=6 ⇒ 最多跨一个轮转点; 取 2 天留余量:
 # 轮转由 cron.daily 触发, 时刻浮动, 且"今天还没轮转"时要读昨天那档)
 _ROTATE_LOOKBACK_DAYS = 2
@@ -92,6 +103,61 @@ def _is_safe_arm_mode(seg: str, *, live_probe: bool = False) -> bool:
     """断言 5: 全局 SIM 常驻; LIVE 只能作为显式授权的独立工程探针。"""
     got = _mode_sources(seg, live_probe=live_probe)
     return bool(got) and all(actual == expected for actual, expected in got.values())
+
+
+def _live_probe_waiver_state() -> dict:
+    """LIVE 探针四锁破例 (RFC-135) 的冒烟侧只读镜像.
+
+    判据与 app/playbook/live_arm_gate.py 同语义 (fail-close: 文件缺失/坏 JSON/
+    无 expires/解析失败/无授权 ID/已到期 → inactive), 但刻意独立实现 —
+    冒烟守卫不得 import 被守对象 (同本文件"不 import daily_alert_summary"先例)。
+    """
+    def inactive(reason: str, **kw) -> dict:
+        return {"active": False, "reason": reason, **kw}
+
+    try:
+        raw = json.loads(WAIVER.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return inactive("waiver_file_absent", expires=None, authorization_id=None)
+    except Exception as exc:
+        return inactive(f"waiver_read_error:{type(exc).__name__}",
+                        expires=None, authorization_id=None)
+    if not isinstance(raw, dict):
+        return inactive("waiver_not_an_object", expires=None, authorization_id=None)
+    authorization_id = str(raw.get("authorization_id") or "").strip()
+    expires_raw = str(raw.get("expires") or "").strip()
+    if not authorization_id:
+        return inactive("waiver_missing_authorization_id", expires=expires_raw or None)
+    if not expires_raw:
+        return inactive("waiver_missing_expires", authorization_id=authorization_id)
+    try:
+        expires = datetime.fromisoformat(expires_raw)
+    except ValueError:
+        return inactive("waiver_expires_unparsable", expires=expires_raw,
+                        authorization_id=authorization_id)
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    if expires <= datetime.now(timezone.utc):
+        return inactive("waiver_expired", expires=expires_raw,
+                        authorization_id=authorization_id)
+    return {"active": True, "reason": "authorized_live_probe",
+            "expires": expires_raw, "authorization_id": authorization_id}
+
+
+def _is_safe_arm_mode_waiver_window(seg: str) -> bool:
+    """断言 5 (waiver 活跃期): 接受「全锁闭」或「已授权探针」两种形态, 源必须同侧.
+
+    - 全锁闭 (ALLOW_REAL_TRADING=False) 恒安全 → 过 (探针期临时关锁不误报);
+    - 探针形态 (sim/sim/True) 仅授权窗内可过;
+    - 两源各说各话 (一个 False 一个 True) / 真钱路由 → 仍红 (与原判据同严格度)。
+    """
+    locked = _mode_sources(seg)
+    probe = _mode_sources(seg, live_probe=True)
+    if not locked or not probe:
+        return False
+    locked_ok = all(actual == expected for actual, expected in locked.values())
+    probe_ok = all(actual == expected for actual, expected in probe.values())
+    return locked_ok or probe_ok
 
 
 # (名称, 判定函数) — 判定输入为启动段文本
@@ -196,9 +262,15 @@ def run_once(*, live_probe: bool = False):
         return 2, [f"模式证据缺失 {missing} ⇒ 判定无效 (守卫失明 ≠ 安全); "
                    f"段界标记={BOOT_MARKER}/{BOOT_MARKER_FALLBACK}"], boot_time
     failed = []
+    waiver = _live_probe_waiver_state()
     for name, fn in CHECKS:
         if name == "双臂安全确认":
-            passed = fn(seg, live_probe=live_probe)
+            if live_probe:
+                passed = fn(seg, live_probe=True)
+            elif waiver.get("active"):
+                passed = _is_safe_arm_mode_waiver_window(seg)
+            else:
+                passed = fn(seg)
         else:
             passed = fn(seg)
         if not passed:
@@ -212,7 +284,8 @@ def main():
     ap.add_argument("--push", action="store_true", help="失败时飞书告警")
     ap.add_argument(
         "--live-probe", action="store_true",
-        help="显式授权的 1 股 LIVE 工程探针模式 (全局仍必须是 SIM)")
+        help="显式授权的 1 股 LIVE 工程探针模式 (全局仍必须是 SIM; "
+             "waiver 活跃时无需此 flag, 脚本会自动识别)")
     args = ap.parse_args()
 
     # 2026-07-27 修复 (实战暴露): restart 后立即跑 --wait 时, 新启动段尚未写出,
@@ -235,6 +308,13 @@ def main():
             + ("·跨轮转拼接" if LAST_COVERAGE["spliced"] else ""))
     print(f"启动冒烟检查 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} "
           f"(启动段: {boot_time or '未知'} | {_cov})")
+    _waiver = _live_probe_waiver_state()
+    if _waiver.get("active"):
+        print(f"  [i] LIVE 探针 waiver 活跃: {_waiver['authorization_id']} "
+              f"(到期 {_waiver['expires']}) — 双臂判据自动接受 全锁闭/授权探针 两形态")
+    elif args.live_probe:
+        print(f"  [!] --live-probe 显式传入但 waiver 未激活 ({_waiver['reason']}) — "
+              "请核对授权是否已过期/被撤销")
     for name, _ in CHECKS:
         mark = "✗" if name in failed else "✓"
         print(f"  [{mark}] {name}")

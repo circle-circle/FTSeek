@@ -23,7 +23,10 @@ daily + copytruncate (实测 03:12-03:48 CST) ⇒ 进程在轮转前启动、轮
 """
 import importlib.util
 import gzip
+import json
+import tempfile
 from datetime import datetime, timedelta
+from datetime import timezone
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -42,6 +45,11 @@ LIVE_PROBE_ROUTE = "  账户路由 AUTO_TRADE_ACCOUNT=sim | ALLOW_REAL_TRADING=T
 def _load():
     mod = importlib.util.module_from_spec(_spec)
     _spec.loader.exec_module(mod)
+    # 2026-10-08 (waiver 自适应批): 把真实 data/live_probe_lock_waiver.json 隔离掉 —
+    # 存量用例的默认判据必须是"无 waiver"的严格形态; waiver 行为由下方
+    # TestWaiverAutoDetect 组显式注入, 不吃生产文件的当前态 (否则 10-12 前后
+    # 同一用例结果漂移 = 测试依赖外部世界)。
+    mod.WAIVER = Path(tempfile.gettempdir()) / "ftseek-smoke-test-waiver-absent.json"
     return mod
 
 
@@ -287,3 +295,96 @@ class TestCrossRotation:
         assert boot_time is not None
         assert ssc.LAST_COVERAGE == {"sources": 1, "spliced": False}, (
             "当前档已有段界标记却去拼了轮转档 ⇒ 读取面变宽, 上一个进程的崩栈会污染本次判定")
+
+
+class TestWaiverAutoDetect:
+    """2026-10-08 (运维体检批): LIVE 探针 waiver 活跃期, 不带 --live-probe 的
+    AGENT.md 通用 SOP 命令不得必红 (授权窗口 10-05→10-12 每轮重启都要人工记得
+    补 flag 的摩擦)。判据放宽 = 接受「全锁闭」或「已授权探针」两形态, 但真钱
+    路由 / 双源各说各话仍红; waiver 缺失/损坏/过期 → 维持原严格判据。
+    """
+
+    def _ssc_with_waiver(self, tmp_path, *, active=True, payload=None):
+        ssc = _load()
+        ssc.LOG = _write_boot_log(tmp_path)
+        ssc.WAIVER = tmp_path / "live_probe_lock_waiver.json"
+        if payload is None:
+            payload = {
+                "authorization_id": "AUTH-TEST-1SHARE-LONG",
+                "expires": (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
+            } if active else {
+                "authorization_id": "AUTH-TEST-1SHARE-LONG",
+                "expires": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+            }
+        if payload is not False:
+            ssc.WAIVER.write_text(json.dumps(payload), encoding="utf-8")
+        return ssc
+
+    def test_active_waiver_accepts_probe_mode_without_flag(self, tmp_path):
+        """病根钉: 授权窗内 LIVE 探针形态 (sim/sim/True) 不带 flag 也过。"""
+        ssc = self._ssc_with_waiver(tmp_path, active=True)
+        ssc.LOG = _write_boot_log(
+            tmp_path, mode_line=LIVE_PROBE_MODE, route_line=LIVE_PROBE_ROUTE)
+        code, failed, _bt = ssc.run_once()  # 不带 live_probe=True
+        assert code == 0, failed
+
+    def test_active_waiver_still_accepts_locked_mode(self, tmp_path):
+        """探针期内临时把锁关回 False (更安全侧) 不误报。"""
+        ssc = self._ssc_with_waiver(tmp_path, active=True)
+        code, failed, _bt = ssc.run_once()
+        assert code == 0, failed
+
+    def test_active_waiver_rejects_real_routing(self, tmp_path):
+        """放宽≠放松: 真钱路由在授权窗内照样红。"""
+        ssc = self._ssc_with_waiver(tmp_path, active=True)
+        ssc.LOG = _write_boot_log(tmp_path, mode_line=REAL_MODE, route_line=REAL_ROUTE)
+        code, failed, _bt = ssc.run_once()
+        assert code == 1
+        assert "双臂安全确认" in failed
+
+    def test_active_waiver_rejects_disagreeing_sources(self, tmp_path):
+        """两源各说各话 (一个锁闭一个探针) → 仍红 (同侧一致是放行的前提)。"""
+        ssc = self._ssc_with_waiver(tmp_path, active=True)
+        ssc.LOG = _write_boot_log(
+            tmp_path, mode_line=SIM_MODE, route_line=LIVE_PROBE_ROUTE)
+        code, failed, _bt = ssc.run_once()
+        assert code == 1
+        assert "双臂安全确认" in failed
+
+    def test_expired_waiver_restores_strict_default(self, tmp_path):
+        """到期自动复红: waiver 过期后探针形态 (True) 不带 flag 必须回到红。"""
+        ssc = self._ssc_with_waiver(tmp_path, active=False)
+        ssc.LOG = _write_boot_log(
+            tmp_path, mode_line=LIVE_PROBE_MODE, route_line=LIVE_PROBE_ROUTE)
+        code, failed, _bt = ssc.run_once()
+        assert code == 1
+        assert "双臂安全确认" in failed
+
+    def test_missing_waiver_file_keeps_strict_default(self, tmp_path):
+        """文件缺失 = fail-close (与 live_arm_gate 同语义), 不是自动放宽。"""
+        ssc = self._ssc_with_waiver(tmp_path, payload=False)  # 不写文件
+        # conftest 的 autouse fixture 会在 tmp_path 预置有效 TEST-AUTH waiver
+        # (见 tests/conftest.py::_isolate_live_probe_waiver_file), 此处显式移除
+        # 才能测"文件缺失"语义本身。
+        ssc.WAIVER.unlink(missing_ok=True)
+        ssc.LOG = _write_boot_log(
+            tmp_path, mode_line=LIVE_PROBE_MODE, route_line=LIVE_PROBE_ROUTE)
+        code, failed, _bt = ssc.run_once()
+        assert code == 1
+        assert "双臂安全确认" in failed
+
+    def test_corrupt_waiver_file_is_inactive(self, tmp_path):
+        """坏 JSON → inactive (宁严勿松)。"""
+        ssc = self._ssc_with_waiver(tmp_path, payload=False)
+        ssc.WAIVER.write_text("{not-json", encoding="utf-8")
+        state = ssc._live_probe_waiver_state()
+        assert state["active"] is False
+        assert state["reason"].startswith("waiver_read_error")
+
+    def test_waiver_state_missing_expires_fails_closed(self, tmp_path):
+        """无 expires → inactive (授权必须有到期, 与 RFC-135 载体契约一致)。"""
+        ssc = self._ssc_with_waiver(
+            tmp_path, payload={"authorization_id": "AUTH-TEST", "expires": ""})
+        state = ssc._live_probe_waiver_state()
+        assert state["active"] is False
+        assert state["reason"] == "waiver_missing_expires"
