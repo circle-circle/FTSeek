@@ -216,7 +216,8 @@ class TestMonitorPatientExitStateMachine:
 
         def _fake_close(conn_, trade_id, exit_price, exit_reason, pnl, pnl_pct,
                         holding_hours, inst_id=None, symbol=None, close_futu_order_id=None,
-                        *, exit_intent_id=None, exit_owner=None, exit_metadata=None, exit_time=None):
+                        *, exit_intent_id=None, exit_owner=None, exit_metadata=None, exit_time=None,
+                        fee_broker=None):
             if exit_metadata is not None:
                 conn_.execute("UPDATE trade_records SET metadata_json=? WHERE id=?",
                               (json.dumps(exit_metadata), trade_id))

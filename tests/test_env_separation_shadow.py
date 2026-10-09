@@ -214,18 +214,28 @@ def test_live_db_blocking_columns_are_present():
 @pytest.mark.skipif(not (ess.LIVE_DB.exists() and ess.SIM_DB.exists()),
                     reason="两库需同时存在")
 def test_live_db_account_type_does_not_mislabel_real_rows_as_sim():
-    """补列时若照抄 sim 的 DEFAULT 'sim', 8 行 owner='manual' 的实盘墓碑会被反向污染."""
+    """补列时若照抄 sim 的 DEFAULT 'sim', 实盘行会被反向污染.
+
+    前提更新 (2026-10-09, DEB-20261008 路线图 §24.4): 8 行 6 月 owner='manual'
+    open_positions 墓碑已于 10-03→10-04 窗口 (RFC-130/131 双臂收口期) 清除,
+    open_positions 现为空表 ⇒ 原「manual>0」前提失效, 改钉 trade_records
+    (17 行: 6 月期 + RFC-131 探针) 作非空锚, mode/trade_mode 零 sim 误标。
+    """
     conn = sqlite3.connect(f"file:{ess.LIVE_DB}?mode=ro", uri=True)
     try:
         bad = conn.execute(
             "SELECT COUNT(*) FROM open_positions "
             "WHERE LOWER(COALESCE(account_type,'')) IN ('sim','simulate')").fetchone()[0]
-        manual = conn.execute(
-            "SELECT COUNT(*) FROM open_positions WHERE owner='manual'").fetchone()[0]
+        tr_bad = conn.execute(
+            "SELECT COUNT(*) FROM trade_records "
+            "WHERE LOWER(COALESCE(mode,'')) IN ('sim','simulate') "
+            "OR LOWER(COALESCE(trade_mode,'')) IN ('sim','simulate')").fetchone()[0]
+        tr_total = conn.execute("SELECT COUNT(*) FROM trade_records").fetchone()[0]
     finally:
         conn.close()
-    assert bad == 0, f"live 库有 {bad} 行被标成 sim (实盘墓碑反向污染)"
-    assert manual > 0, "live 库应仍有 owner='manual' 的实盘行 (口径未变)"
+    assert bad == 0, f"live 库 open_positions 有 {bad} 行被标成 sim (实盘反向污染)"
+    assert tr_bad == 0, f"live 库 trade_records 有 {tr_bad} 行 mode/trade_mode 被标成 sim"
+    assert tr_total > 0, "live 库应有实盘历史行 (口径未变; 空表 = 本测试失去锚)"
 
 
 @pytest.mark.skipif(not ess.LIVE_DB.exists(), reason="live 库不存在")

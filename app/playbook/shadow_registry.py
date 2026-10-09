@@ -1990,14 +1990,28 @@ REGISTRY: list[ShadowItem] = [
         eval_script="scripts/ue_quote_freshness_shadow_eval.py",
         created="2026-09-15",
         count_mode="distinct:date",   # 与预注册单位同轴 (交易日轮次 ≠ jsonl 行数)
-        last_evaluated="2026-09-15",
+        last_evaluated="2026-10-09",
         verdict_history=[
             {"date": "2026-09-15", "verdict": "BASELINE_NO_DATA (挂环当日 1/10 轮次)",
              "evidence": "挂环当日 4 组读数 (ET 盘前同一批 5-7 标的): 交易所时戳可得率 5/5→7/7 "
                          "=100%; genuine 龄 1.5–159.1s (AXON 4 次观测 2 次超 90s ⇒ **90s 阈值在盘前"
                          "阵发报价下不成立**); alias 洗白真陈旧 1/5 (AXON 别名 −10s'很新鲜' / 交易所 "
                          "159.1s 已超阈)。机械裁决器首跑 = INSUFFICIENT_RECORD (有效轮次 1/10, "
-                         "P95 41.8s 仅供参考) ⇒ 禁止建议激活。"}],
+                         "P95 41.8s 仅供参考) ⇒ 禁止建议激活。"},
+            {"date": "2026-10-09", "verdict": "NOT_READY (18/10 轮次达标但判据不过门)",
+             "evidence": "机械裁决器 18 个有效交易日轮次 (2026-09-15→10-08, 22 读数行, "
+                         "0 坏行/forced/非交易日): genuine 龄 P50=9.7s / **P95=1329.2s** / "
+                         "max=48010s ⇒ P95 >> 90s 候选阈值, 激活会**系统性误杀** "
+                         "(超阈 30 次、会新拒 17 个候选、别名洗白 30、交易所时戳可得 123/130)。"
+                         "按预注册: 不得事后改阈值重算, 维持现状 (9/15 用户裁 C); "
+                         "要盘前专属阈值须另立 DEB 重新预注册。裁决逾期 11 天 "
+                         "(9/28 达 10 轮未被触发), resume 会话补跑, 读数落 "
+                         "data/shadow/ue_quote_freshness_shadow_eval_latest.json。"}],
+        # 已裁决 NOT_READY: 样本量达标但判据不过门, 现状下无待裁事项; 挂账阻断
+        # refresh_counts 运行时提升 (否则每周 READY 通知 = 已裁事项重复报数, 且
+        # 全量套件里提升后与下方静态 OBSERVING 钉冲突)。重提激活 = 新阈值重新预注册。
+        no_adjudication_reason="ADJUDICATED_NOT_READY (2026-10-09): P95=1329.2s >> 90s, "
+                               "激活=系统性误杀; 采集继续作证据基, 新阈值须重新预注册 (另立 DEB)",
         notes="挂环 `crontab-ue-quote-freshness-shadow` (15 21 * * 1-5 = 09:15 ET 盘前, 刻意避开 "
               "21:10 scan→inject→push 链, 不抢 OpenD 槽位/DailyK 配额)。"
               "**2026-09-15 三点补口 (用户裁「请执行」)**: ①**交易日守卫** — 探针在取数**之前**"

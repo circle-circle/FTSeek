@@ -123,7 +123,15 @@ class TestGraduationScriptEraBlock:
     """graduation 脚本 era 块 (RFC-138 借鉴① 在本脚本的接线)."""
 
     def test_era_block_live_no_drift(self):
-        """活体: 9/26 至今退出参数零漂移 ⇒ then==now, applies=True (出现 False 即假阳)."""
+        """活体: era 块对 9/26 裁决日指纹与现役指纹的判定 (2026-10-09 重钉).
+
+        原钉 then==current (9/26 至今零漂移) 已于 10-08 失效: 410297295 (RFC-106 §5.2)
+        把 overnight_gap_stop_pct=3.0 同值显式化写入 yaml, 整文件哈希副作用 ⇒
+        现役 exit-ca4487172a6f。逐提交二分归因证实**零行为变更** (隔离 worktree
+        9/26 钉值精确复现), 豁免已登记 config_freeze_baseline.json (用户裁「继续」)。
+        本条转为**阳性对照**: era 守卫必须检出指纹不等 (applies=False) —— 检出=有牙齿;
+        行为等价声明在豁免台账, era 模块按设计只做指纹比对 (RFC-138: 只标注不降级)。
+        """
         if not SHADOW.exists():
             pytest.skip("生产数据不可用 (裸 worktree)")
         m = _load_grad()
@@ -131,8 +139,9 @@ class TestGraduationScriptEraBlock:
         assert "error" not in era, f"era fail-open 被触发: {era.get('error')}"
         assert era["adjudicated_at"] == "2026-09-26", \
             "裁决日必须从 ADJUDICATED SSOT 读, 不得漂移/硬编码"
-        assert era["then"] == era["current"] == "exit-34c7153088a1"
-        assert era["applies"] is True
+        assert era["then"] == "exit-34c7153088a1", "裁决日指纹是 DB 推导的历史事实, 不得改"
+        assert era["current"] == "exit-ca4487172a6f"
+        assert era["applies"] is False, "指纹不等必须检出; 行为等价声明在豁免台账不在本模块"
 
     def test_era_block_fail_open(self, monkeypatch):
         """指纹查询炸 ⇒ fail-open 在 era_status 内部消化: applies=None + note 注明失败,

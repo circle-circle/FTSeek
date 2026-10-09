@@ -1,5 +1,374 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-09 迁移复查收尾验证 + ue_quote_freshness 到期裁决 (resume 会话)
+
+**触发**: 用户令「resume」(接 06:43–08:07 复查+修复会话被中断的全量验证)。
+
+- **全量套件**: **6911 passed / 39 failed / 70 skipped** (536s)。39 红全部归类,
+  **零迁移/修复批新引入**:
+  - patient_exit ×19 = 既有债 (8047b494f 给 `_close_trade_record` 加 `fee_broker`
+    未同步测试存根, 路线图 §10.6 已记, 本批已顺手修复 → 40/40 绿);
+  - D-1 ×2 (be_passive 冻结基线 + graduation era 指纹红): **归因完成** —— 逐提交
+    二分唯一直接跳变点 = `410297295` (10-08 22:04, RFC-106 §5.2) 把
+    `overnight_gap_stop_pct=3.0` 从代码默认显式写入 yaml, 整文件哈希副作用,
+    行为零变更 (9/26 钉值 `exit-34c7153088a1` 在隔离 worktree 精确复现);
+  - D-2 env_separation: live 库 open_positions 8 行 6 月墓碑于 **10-03→10-04
+    备份窗口**被清 (RFC-130/131 双臂收口期), 主不变量 bad=0 仍成立; 历史在
+    trade_records (17 行含 6 月期) + live_round_trips(68) + live_deal_records(122) 完好;
+  - ue_quote_freshness 单跑绿/全量红 = 注册表 refresh_counts 运行时自动提升
+    (18 轮 ≥ min_n=10 → READY_TO_EVALUATE) 与测试钉静态 OBSERVING 冲突, 非迁移所致;
+  - 其余 14 条 HEAD 隔离 worktree 实证同红 (既有债族: chokepoint/manual_hold/
+    ops_sync/ext_entry×3/u1/ue_scan/unit_cell/intraday_silence/trading_day 副本等)。
+- **棘轮**: except_pass+naive_datetime 13 passed; size/w456/utc4/w2 28 passed。
+- **生产**: PID 221600 (10:36 重启载 e079796d1) 冒烟 **7/7**; 晨间零 ERROR/CRITICAL。
+- **ue_quote_freshness 到期裁决 (逾期 11 天补跑)**: 影子 9/28 已达 10 轮门槛
+  (预注册「届时手工/会话跑 eval 呈裁」未被触发); 机械裁决器跑 18 轮 →
+  **NOT_READY** (genuine 龄 P95=1329.2s >> 90s 阈值, 会新拒 17/130, 别名洗白 30,
+  交易所时戳可得 123/130) ⇒ 按预注册维持现状 (9/15 用户裁 C), **禁止事后改阈值**;
+  要盘前专属阈值须重新预注册。读数已落 `data/shadow/ue_quote_freshness_shadow_eval_latest.json`。
+- **待用户裁**: ①D-1 重钉 (exit-ca4487172a6f 登记 freeze 豁免+era/golden,
+  注明行为等价防 cohort 分裂误读); ②D-2 测试前提更新 (墓碑已清, 改钉
+  trade_records 历史行或更新前提); ③ue_quote 注册条目收尾 (记裁决+状态去留)
+  + 测试钉改钉静态定义; ④工作树 4–5 批分拆提交 (运维加固/方向闸§15/EXT 默认值
+  翻转/迁移本体+复查修复); ⑤patient_exit 存根顺手修 or 留费账批。
+
+**续 (用户裁「继续」, ①②③⑤全部执行 + ④分拆提交完成)**:
+- D-1: 豁免登记含行为等价声明 (仅解 W1_exit_version_drift; 主/oct cohort 两维
+  BROKEN 维持, 预注册回滚线要求开跑会级裁决 — **05:05 不变量已推
+  W1_oct_cohort_broken, 须在 10 月开跑会呈裁**); era 钉转阳性对照 (applies=False
+  = 检出即牙齿)。
+- D-2: 改钉 trade_records (17 行) mode/trade_mode 零 sim 误标 + 非空锚。
+- ue_quote: 注册条目记 NOT_READY 裁决 + `no_adjudication_reason` 挂账阻断提升
+  (污染源根除), 测试加挂账钉 + 基线钉改钉首条。
+- patient_exit: 存根补 `fee_broker=None`, 40/40 绿。
+- **提交治理钩抓到第二个 P0**: `generation_flow.run_playbook_topup_supplement`
+  漏带 TechnicalFallbackAdapter 局部 import (复查漏网) ⇒ topup 屏幕通过分支必
+  NameError 被吞 = 补量静默失效; 已修 + `test_topup_fallback_adapter.py` 分支级钉
+  (修复前实测红/后绿)。
+- 复验: 全量 **6939 passed / 16 failed** (16 = 全部 HEAD 隔离实证既有债),
+  较接手时 39 红净清 23, 零新增。
+- **分拆提交 6 笔**: `9edf3c1bd` 运维加固批 / `c7d882433` EXT 默认值翻转 /
+  `befe3d37a` 方向闸复查链 / `80d8817ba` 迁移+复查修复(66文件) / 本收尾批 /
+  obsidian chore (例行)。
+
+## 2026-10-09 pipeline 连续迁移阶段10–14落地
+
+**触发**: 用户授权「继续基于 pipeline 优化计划, 完成全部迁移, 盘中验证」。
+**落档**: `docs/debates/DEB-20261008-playbook-pipeline-refactor-roadmap.md` §21–§23。
+
+- **阶段10**: `_check_intraday_trigger` 本体迁 `trigger_flow.py`;
+  时间/module_file、降噪状态与全部指标回调显式注入。
+- **阶段11**: `run_playbook_auto_execute` 本体迁 `auto_execute_flow.py`;
+  风险/预算/触发/审计/影子回调与状态显式注入。
+- **阶段12**: `_close_trade_record` 本体迁 `close_flow.py`;
+  时间、分类、净值与止损连发状态显式注入。
+- **阶段13**: `monitor_playbook_exits` 本体迁 `exit_monitor_flow.py`;
+  函数属性、缓存、超时、出场/对账/落账回调显式注入。
+- **阶段14**: `_force_close_orphaned_sim_positions` 本体迁
+  `overnight_cleanup.py`; 出场与恢复回调显式注入。
+- **验收**: 触发专项 109 passed; auto_execute 专项 254 passed;
+  close/exit 专项 118 passed; 阶段12–13 合并回归 **1118 passed**;
+  阶段14 源码宿主同步后专项 49 passed; 最终合并回归 **1118 passed**;
+  行数+W456 **18 passed**。
+- **规模**: `pipeline.py` 7,605→**3,577** (较 10,207 基线 **−6,630**)。
+- **盘中实弹**: 03:37:40 CST 重启 PID **188719**, 冒烟 7/7;
+  03:37:46 装载 17 个 bridge 候选并挂 `BridgeVotingAdapter`;
+  03:37:57 退出快循环启动并检查 1 个未平仓;
+  03:37:59 auto_execute 处理 74 条指令、输出预算/单日 guardrail,
+  03:38:02 正常完成, 零 ERROR/Traceback/CRITICAL。
+- **最终复验**: 03:51:43 CST 重启 PID **189747**, 冒烟 7/7;
+  03:51:48 装载 17 个 bridge 候选, 03:51:58 退出快循环检查 1 个未平仓,
+  03:52:14 auto_execute 处理 74 条指令并于 03:52:17 正常完成;
+  两本 exit DB 未 BOOKED 意图为 0, 零 ERROR/Traceback/CRITICAL。
+
+## 2026-10-09 pipeline 连续迁移阶段3b/4/5/6落地
+
+**触发**: 用户授权「继续基于 pipeline 优化计划, 完成全部迁移, 盘中验证」。
+**落档**: `docs/debates/DEB-20261008-playbook-pipeline-refactor-roadmap.md` §16。
+
+- **阶段3b**: 单候选阶段与组合闸迁入
+  `instruction_builder.py` / `portfolio_guardrails.py`; 判定顺序、审计键、
+  monkeypatch 缝与影子 schema 不变。
+- **阶段4**: 风险闸/live 镜像迁入 `risk_gates.py`; baseline、连亏回调、
+  `now_et/module_file` 均显式注入, fail-open/fail-close 语义不变。
+- **阶段5**: VWAP/资金流/连败/双锚影子迁入 `intraday_indicators.py`;
+  第二批完成 p50 量能曲线、盘中量能比、流动性门与借券池门接线;
+  `_check_intraday_trigger` 主体暂不动。
+- **阶段6**: 生成/morning push/topup/定桶迁入 `generation_flow.py`;
+  盘后追踪与周报迁入 `tracking_flow.py`; 盘中证据迁入
+  `intraday_indicators.py`; pipeline 全部保留同名转发器和显式回调缝。
+- **阶段7**: auto_execute 的 kill/regime/risk/日亏前置闸迁入
+  `risk_gates.py`; 候选与下单顺序不动。
+- **阶段8**: signal context 关键位/主题缓存/持久化迁入
+  `signal_context_store.py`, 新增专项 2 条。
+- **阶段9**: auto_execute 预算/日帽装配迁入 `execution_flow.py`,
+  DB fail-close 契约随宿主更新。
+- **验收**: 专项 86/29/207/220/264/226 全绿; `tests/playbook` **1043 passed**;
+  行数+W456 棘轮 **18 passed**; 阶段6专项 **34 passed**;
+  Playbook+pipeline 合并回归 **1118 passed**;
+  `pipeline.py` 9,754→**7,605**。
+- **盘中实弹**: 01:39 重启 PID 179603, 冒烟 7/7; 01:40/01:43/01:46 三轮
+  auto_execute 处理 74 条指令, 零 ERROR/Traceback/CRITICAL。第二批接线后
+  复核两库未 BOOKED 出场意图=0, 02:03:58 重启 PID **181539**, 冒烟 7/7;
+  02:04:04 装载 17 个 bridge 候选, 02:04:16 auto_execute 处理 74 条指令
+  并正常完成, 零 ERROR/Traceback/CRITICAL。
+- **阶段6生产复验**: 02:41:02 重启 PID **184156**, 冒烟 7/7; 02:41:10
+  装载 17 个 bridge 候选, 02:41:22 auto_execute 处理 74 条指令并于
+  02:41:25 正常完成, 退出快循环检查 1 个未平仓, 零
+  ERROR/Traceback/CRITICAL。
+- **阶段7生产复验**: 02:47:51 重启 PID **184644**, 冒烟 7/7;
+  02:47:56 装载 17 个 bridge 候选, 02:48:06 auto_execute 处理 74 条
+  指令并于 02:48:10 正常完成, 零 ERROR/Traceback/CRITICAL。
+- **阶段8生产复验**: 02:54:22 重启 PID **185164**, 冒烟 7/7;
+  02:54:27 装载 17 个 bridge 候选, 02:54:38 auto_execute 处理 74 条
+  指令并于 02:54:41 正常完成, 零 ERROR/Traceback/CRITICAL。
+- **阶段9生产复验**: 03:05:33 重启 PID **186189**, 冒烟 7/7;
+  03:05:39 装载 17 个 bridge 候选, 03:05:50 auto_execute 处理 74 条
+  指令并输出预算/单日 guardrail, 03:05:54 正常完成, 零
+  ERROR/Traceback/CRITICAL。
+- **下一批**: 生成/追踪流拆分, 或先拆 auto_execute 前置风险/预算阶段;
+  每批继续零行为迁移 + 全量测试 + 盘中观察。
+
+## 2026-10-09 最新策略语义对齐 + close-record 债落档
+
+**触发**: 用户令「既有 close-record 债先修复掉」「确认最新策略是否已无选举投票」。
+**落档**: `docs/debates/DEB-20261008-playbook-pipeline-refactor-roadmap.md` §14–§15。
+
+- **close-record 债**: 旧测试误把 `sl_broker_order_id` 当入场身份; 现改用
+  `entry_broker_order_id` 断言, STOP 单号仅断言 STOP 身份。
+  `tests/test_playbook_pipeline.py` 已恢复 **73/73 passed**。
+- **最新策略**: 生产链路无旧 3 模型 `VotingCoordinator` 选举投票; 权威链路为
+  DA bridge → deterministic technical fallback → Null 全 SKIP。
+- **语义对齐**: 只改注释/日志为 decision adapter 语义; 保留
+  `voting_coordinator` 字段、`vote()` 接口与 `_build_instructions_from_votes`
+  兼容缝, 零判定行为变更。
+- **下一批**: 阶段 3b 继续拆 `_build_instructions_from_votes` 单候选阶段。
+
+## 2026-10-09 pipeline 拆分阶段3a投票输入/前置态落地
+
+**触发**: 用户令「继续」。
+**落档**: `docs/debates/DEB-20261008-playbook-pipeline-refactor-roadmap.md` §13。
+
+- **阶段3a**: `_direction_conditioned_ic_net` / `_normalize_regime_str` /
+  `_build_vote_market_data` 迁入 `pipeline_parts/instruction_builder.py`;
+  `_build_instructions_from_votes` 循环外前置态拆为 IC 加载、regime 乘数、
+  漏斗计数、方向仲裁配置四个函数。
+- **零行为变更**: 主循环判定/continue 顺序、日志文案、Instruction 字段与
+  portfolio guardrail 均未动; pipeline 留同名懒转发器保 patch 缝。
+- **验收**: 3a 专项 **275 passed**; `tests/playbook` 全量 **1035 passed**;
+  `tests/test_playbook_pipeline.py` 72 passed + 1 既有 close-record 失败。
+- **盘中实弹**: 重启前未 BOOKED 出场意图=0; 01:06:05 CST 重启 PID
+  **177080**, 冒烟 **7/7**; 新进程加载 17 个 bridge 候选并挂
+  `BridgeVotingAdapter`, 01:06:24 / 01:09:52 两轮 auto_execute 均处理 74 条
+  指令, 零 ERROR/Traceback/CRITICAL。
+- **行数/卫生**: `pipeline.py` 9,825→**9,754**; W456 except_stack 基线
+  pipeline 70→69, `instruction_builder.py=1`。
+- **下一批**: 阶段3b 拆 `_build_instructions_from_votes` 单候选阶段
+  (投票快照/技术仲裁/方向门/horizon/数值构造), 继续一批一域。
+
+## 2026-10-09 pipeline 拆分阶段2b-1运行上下文落地 + 盘中冒烟
+
+**触发**: 用户令「继续」。
+**落档**: `docs/debates/DEB-20261008-playbook-pipeline-refactor-roadmap.md` §12。
+
+- **阶段2b-1**: 新建 `pipeline_parts/runtime_context.py`, 迁 HorizonSelector
+  单例、playbook 配置读取、DataCollector 装配、watchlist/positions/equity、
+  sizing base 与 voting coordinator; pipeline 留同名懒转发器。
+- **RuntimeContext**: 显式 DI + 懒属性, 生成/补量按原调用顺序取依赖;
+  provider 注入 pipeline facade, monkeypatch 缝不变。时间/交易日函数刻意
+  暂留 pipeline, 保 `datetime/_now_et` 测试缝。
+- **验收**: RuntimeContext/entry/stale bridge/W456/棘轮 233 passed;
+  `tests/playbook` **1030 passed**; 生成/补量根测试 22 passed;
+  `pipeline.py` 9,933→**9,825** 行。W456 debug 基线 pipeline 47→44,
+  新模块 3。
+- **盘中实弹**: 重启前未 BOOKED 出场意图=0; 00:48:06 CST 重启 PID
+  **175383**, 冒烟 **7/7**; 新进程加载 17 个 bridge 候选并挂
+  `BridgeVotingAdapter`, 00:48:23 / 00:51:33 两轮 auto_execute 均处理 74 条
+  指令, 零 ERROR/Traceback/CRITICAL。
+- **下一批**: 阶段3候选构建/组合闸, 先拆 `_build_vote_market_data` 与
+  `_build_instructions_from_votes` 的阶段函数; 时间域缝另批统一。
+
+## 2026-10-09 pipeline 拆分阶段1收口 + 阶段2a bridge适配器落地 + 盘中冒烟
+
+**触发**: 用户令「继续」。
+**落档**: `docs/debates/DEB-20261008-playbook-pipeline-refactor-roadmap.md` §11。
+
+- **P1b收口**: `_net_pnl_pair` / `_playbook_exit_owner` /
+  `_playbook_exit_decision` 迁入 `pipeline_parts/exit_classification.py`;
+  §4 阶段1清单完成。
+- **阶段2a**: `NullVotingAdapter` / `TechnicalFallbackAdapter` /
+  `BridgeVotingAdapter` / `_validate_bridge_schema` 逐字迁入
+  `pipeline_parts/bridge_adapters.py`; pipeline 只 re-export 并保留文件加载、
+  健康检查、运行期重载调度入口。W456 基线同批搬家: pipeline except_stack
+  71→70, 新模块 1。
+- **验收**: bridge 契约 38 passed; `tests/playbook` 1027 + stale bridge/W456/
+  行数棘轮 49 = **1076 passed**; `pipeline.py` 10,118→**9,933** 行。
+  `tests/test_playbook_pipeline.py` 1 个 close-record SL 单号快照测试失败
+  (非 bridge 域、本批未触碰), 已在 DEB §11.3 登记。
+- **盘中实弹**: 重启前两库未 BOOKED 出场意图=0; 00:32:38 CST 重启 PID
+  **174171**, 冒烟 **7/7**; 新进程加载 **17 个 bridge 候选** 并挂
+  `BridgeVotingAdapter`, 00:32:55 / 00:36:04 两轮 auto_execute 均处理 74 条
+  指令, 零 ERROR/Traceback/CRITICAL。
+- **下一批**: 阶段2b RuntimeContext/装配函数 (风险高于 2a, 独立批)。
+
+## 2026-10-09 pipeline 拆分阶段1首批(P1a)落地 + offline链验收尺修复 + 盘中实弹验证
+
+**触发**: 用户令「今日无实盘, 按照计划对 pipeline.py 优化, 看是否可完成,
+基于盘中交易阶段验证检查」。
+**落档**: `docs/debates/DEB-20261008-playbook-pipeline-refactor-roadmap.md` §10。
+
+- **P1a 拆分**: §9.6 钉名 9 函数迁入新包 `app/playbook/pipeline_parts/`
+  (shadow_telemetry / instruction_builder / exit_classification), pipeline.py
+  留同名转发器, monkeypatch 缝全保; 10,249→**10,145 行**, 行数棘轮 2/2 绿;
+  W456 实扫新包 **0 违规** ⇒ 无需迁基线键。
+- **offline full chain 修活**: §9.2 前置债 **18 errors → 18 passed**
+  (SIM 身份改道 / force_window / call_llm 双形存根 / get_db 签名 /
+  冻结材料契约补齐 / prompt v1→v2 对齐生产 — 详见 DEB §10.4, 共 6 层腐坏)。
+- **验收**: 域专项 101 passed; exit_recovery+pulse_freshness 47 passed
+  (datetime ×3 缝保住); `tests/playbook` 全量 **1027 passed**。
+- **盘中实弹**: 00:03:42 CST 重启 (SPCX 多/P 空在仓、零在途意图) + 冒烟
+  7/7; 00:04/00:07 两轮 auto_execute 74 指令正常, **VWAP A/B 放行臂+台账已记**
+  = 迁移函数转发链生产闭环实证; 重启后零 ERROR/Traceback。
+- **既有债(非本批)**: `tests/test_patient_exit.py` 19 failed = `8047b494f`
+  加 `fee_broker` kwarg 未同步 `_fake_close` 存根 (HEAD 静态可证), 留费账批。
+- **下一批**: 阶段1余下 net PnL/exit rule 转发层两组 → 阶段2 bridge/context。
+
+## 2026-10-08 盘前重启落地 + 明日 pipeline 拆分提醒登记（用户令「再重启一遍，明日提醒优化改造计划」）
+
+**重启**（用户明示授权，18:02:43 CST，PID 135898）：本重启使 17:40 落盘的 G6
+`sector_vision` 影子批随主进程生效（record-only、专项 38 passed、零交易判定变更）；
+运维加固批自 17:23 已在跑，本次无新增面。`startup_smoke_check.py --wait 90` **7/7
+通过**（启动段 18:02:47 正确锁定）；QCOM SIM 仓被 position_sync/reconciler 正确识别
+为 playbook 自管（Futu=1，一致性 ✓），无在途出场意图，重启前后零 Traceback/ERROR。
+
+**⏰ 明日提醒（2026-10-09，任何会话开工先读本条）**：执行
+`docs/debates/DEB-20261008-playbook-pipeline-refactor-roadmap.md` §9 拆分路线，顺序：
+1. **先裁决行数棘轮冲突**：`tests/test_pipeline_size_ratchet.py` 因 G6 批 +42 行
+   当前红（10,249 > 10,207 基线，且基线禁止调大）⇒ G6 新逻辑挪新模块，或按棘轮
+   文档落 DEB 例外后再降基线；
+2. **修 offline full chain 18 errors**（阶段 4/5 验收尺）：driver 子进程
+   `require_auto_sim()` 读 LIVE `.env.us`（`ALLOW_REAL_TRADING=true`）抛错 — 修法须
+   把 snapshot 读取改道 workdir 冻结 SIM 副本；**只设子进程 env 不够**（文件读取
+   优先于 env，`app/core/trading_mode.py:59`）；
+3. **重钉 §9.6 行号后开阶段 1 首批**（10 个纯函数共 278 行；L2111 之后行号因 +42
+   已漂，须按新 HEAD 重钉）；
+4. **每批同批迁 W456 基线键**（pipeline.py 挂 47+71=118 条按文件豁免）；
+   datetime patch 实为 **×3**（含 `test_exit_recovery.py:241` 经 `entry_env.pipeline`
+   间接，原 §9.4 记 ×2 漏一处）。
+
+**今晚冻结纪律**：21:30–04:00 CST 会话内不动 `app/`、`main.py`（延长时段出场/入场
+执行器为每 1–5 分钟新子进程，直接 import 盘上代码，半截文件会当场打断 cron）。
+
+## 2026-10-08 `40b4b6a1f` 复查修复批：G6 影子/E13/F4 dry/F2 语义已修
+
+**触发**: 用户令「请修复」。
+**落档**: `docs/debates/DEB-20261008-direction-gates-long-short-bias.md` §15。
+
+- **G6**: `skew_gate_vision.jsonl` 新增 `sector_vision`（counts/violations/would-skip
+  低置信 victim），同一产物承接 G4/G6，不新增第二影子、不改判定。
+- **E13**: `OWN` 白名单加入 F4 回填脚本，守卫覆盖 5 个本 DEB 脚本。
+- **F4**: dry-run 改为零写盘，不再把 provenance `filled` 覆盖成 `dry`。
+- **F2**: 仓外 skill 删除 `quality_score -= 10`；纯记录 = 无扣分、无降档、仅留痕。
+- **统计口径**: §13 已降级为 pooled 首读；按日聚类 D0 +0.638% (t=1.26)、
+  T+1 +0.443% (t=0.48)，不作为「拦错盈利单」的显著性背书。
+- **验证**: 专项 38 passed；E13 7/7 + 5 脚本全覆盖；py_compile 通过；F4 dry-run
+  provenance hash 前后不变；`tests/playbook`（deselect 既有 offline-chain）1004 passed。
+- **部署**: `pipeline.py` 待下一合法重启生效；F2 随下次 DA 进程生效；脚本/文档即时生效。未重启。
+
+## 2026-10-08 复查 `40b4b6a1f`：实现可保留，F4 统计结论须降级
+
+**触发**: 用户令复查另一 agent 的分析优化提交 `40b4b6a1f`。
+**落档**: `docs/debates/DEB-20261008-direction-gates-long-short-bias.md` §14。
+
+- **验证**: 相关五测试 40 passed；三棘轮 29 passed；`tests/playbook` 1004 passed +
+  18 既有 offline-chain 环境错误；E13 7/7；F6 §2 漏斗独立复算一致。
+- **主要发现**: F4「+0.92%/+1.36%」是 pooled 读数；按日聚类后 D0 +0.638%
+  (t=1.26)、T1 +0.443% (t=0.48)，均与 0 不可区分，不能作为「拦错盈利单」的统计背书。
+- **次要发现**: F4 的 100% 仅指 `fwd_return_intraday`（T1 当前 75/78，3 行待 10-08 收盘）；
+  G6 无自动 sector 影子；E13 白名单漏检 F4 新脚本；F2 仍保留 quality_score −10；
+  F4 `--dry` 会覆盖 provenance 状态。
+- **处置**: 代码不建议回滚；统计表述与守卫边界留下批小修。未改交易代码、未重启。
+
+## 2026-10-08 Playbook pipeline 拆分阶段 0：职责地图/路线图已落地，零代码变更
+
+**触发**: 用户问 `pipeline.py` 超 1 万行是否必须打散、集中/分散是否有绝对优劣；随后令
+「按照推荐建议来」。
+**落档**: `docs/debates/DEB-20261008-playbook-pipeline-refactor-roadmap.md`。
+
+- **结论**: 不按行数机械拆，也不一次性大拆；采用 facade + 逐域迁移。当前 `pipeline.py`
+  10,207 行、119 个顶层函数/类，5 个 >500 行函数占约 49%，结构性风险成立但不必紧急打散。
+- **阶段 0 已落地**: 11 个职责域地图（shadow/遥测、运行上下文、bridge、候选/组合闸、
+  生成/追踪、风险/live 镜像、自动执行、盘中触发、出场/落账/对账、出场监控、隔夜清理）、
+  模块级状态清单、测试锚点、5 阶段拆分顺序、风险评级与回归纪律。
+- **零代码变更**: 未改 `app/playbook/pipeline.py`，不改变 Playbook 唯一下单管线约束。
+  后续每域搬代码须独立批、独立回归、独立落档；facade 与 monkeypatch 兼容是硬门槛。
+
+## 2026-10-08 多空不偏裁决落地批 (用户裁 F1摘/F2纯记录/F3保留G1/F4做/F5做/F6分析)
+
+**提交**: `40b4b6a1f` (14 文件 +670/−9)。**刻意不重启** — 工作树有运维加固批在途
+未提交 (其条目自明「待下一合法重启窗口」), 按军规不把他人 WIP 顺带上线;
+F1 摘闸在下一合法重启后生效 (今晚 20:00 CST DA 载体首发仍处旧闸下, 多一日
+旧行为无新增风险)。F5 (推送口径) 与 F2 (skill v0.95) 读工作树, 今晚 20:55 推送
+与 20:00 DA 首跑即生效; F4 已执行完毕。
+
+- **F1**: `playbook.portfolio_guardrail_enabled=false` — G4/G5/G6 砍单停用,
+  影子照算照写 (G5 审计行新增 enforced 字段)。回滚: yaml 置 true。
+- **F2**: skill signal_gate.py G2 降纯记录, v0.94→v0.95 (PROMPT_HASH 不变)。
+- **F4**: 被拦 78 笔方向取证+回填, fwd 填充率 0%→100%; **首读: 被拦行当日
+  +0.92%/T+1 +1.36% (胜率 53%/60%) — 闸净拦盈利单, 摘闸裁决获证据支持**。
+- **F5**: 推送口径补 universe_expansion% (原漏 9 条可交易含 5 条 SHORT)。
+- **F6**: DEB-20261008-model-long-bias-decomposition.md 落档 — 偏向非 regime
+  (SPY 跌日仍 75% 多头); bearish 下模型顺势做空仅 21%/逆势抄底 62%; 对策 A-D
+  待裁, 先决验证=抄底臂实战 IC。
+- **守卫**: 四棘轮绿 (本批自检抓出并修复新脚本自身 W5/W6 违规 — 棘轮记忆
+  第四/五次实证); E13 verify_claims 7/7 (C5 锚点迁 F4 后口径); 哨兵测试按
+  「开关开=行为不变 / 开关关=零砍单+影子照写」改造。
+- **遗留观察**: ①test_control_loop_ledger 红 — data_retention.py (运维加固批
+  在途 cron) 未挂台账, 属他批收口范围; ②明晨核 da_checkpoint/2026-10-08
+  标的数 ≈44 (载体首发实证); ③G5 首次 would-skip 影子行出现时核 enforced=false。
+
+## 2026-10-08 运维加固批：7 项建议已落地，434 回归通过，待合法重启生效
+
+**触发**: 用户令「从运维、性能优化、框架逻辑等角度检查项目」→ 复查后令「按照建议执行优化」。
+**落档**: `docs/debates/DEB-20261008-ops-hardening-batch.md`。
+
+- **已修**: Dashboard auto-trade YAML 先写/失败拒切换；LIVE-capable ExitPolicy 启动 fail-close；
+  engine AutoGate 读取异常拒绝订单；`start.sh` lock 指纹 + `pip check` 跳过网络安装；
+  systemd 删除 flock 预清锁；冒烟 waiver 自适应（严格 fail-close 解析）；`replay_cache` 90 天 retention。
+- **验证**: 专项 43 passed；合并回归 `184 passed + 250 passed`（合计 434，含重叠）；
+  `bash -n` / `pip check` 通过；retention dry-run `0 stale`；当前态冒烟 7/7 通过。
+- **环境**: systemd 已改并 daemon-reload；crontab 已加 04:20 apply 行；依赖 marker 已预置。
+- **未重启**: 工作区仍有其他 agent 在途 WIP，按 AGENT.md 不把别人 WIP 顺带上线。Python 代码待
+  下一合法重启窗口生效；重启后按 AGENT.md 跑 `startup_smoke_check.py --wait 90`（waiver 会自动识别）。
+
+## 2026-10-08 UE/DA 融合复查: 输入完整性基本成立 (今晚首发待实证), 多空不偏**未达成** (F1-F5 待裁)
+
+> **触发**: 用户令复查 UE/DA 融合 (RFC-136/RFC-121) 的信息输入完整/新鲜度与多空偏向。
+
+**输入完整性/新鲜度**:
+- ✅ 10-07 P0 (agent job $SYMBOLS 未注入 → 只分析 11 只) 已切 no-agent 载体 +
+  watchlist SSOT 实测读出 44 只; **但载体首发=今晚 20:00 CST, 尚无生产实证**
+  (观察点: 明晨 da_checkpoint/2026-10-08 应 ≈44 只而非 11/22)。
+- ✅ UE da_feed 融合实证 (10-07 BKV/MRVL origin="ue_candidate"); fresh-event
+  影子 10-07 首跑成功 (3 候选 1 深析); cron && 串接双季行在位。
+- ✅ DA checkpoint data_quality 19/19=100%; DA 深分析自取 08:00 ET 活数据,
+  UE 候选只传 thesis ⇒ 融合路径新鲜度可控 (ue_quote_freshness P95 21min 陈旧
+  属 UE 自身评分侧, 门未激活=正确裁决)。
+- 🔴 **F5 未修**: da_bridge_dingtalk_push.py:57 仍 `LIKE 'DA-%'` ⇒ 推送口径
+  漏 UE 行 (近 14 日漏 9 条可交易, 其中 5 条 SHORT) — 与多空不偏直接冲突。
+
+**多空偏向** (DEB-20261008-direction-gates, E13 验证器我亲跑 7/7 claim 一致):
+- 六道闸普查成立; 模型自身提案 77% 多头 (闸只 +1.6pp); 4 个空头清零日
+  (9/21/9/22/10-02/10-07); G5 断崖 (0 空头日恒留 1 条) 已上线、零实弹未触发。
+- checkpoint 级实测: 10-06 BUY16/SKIP3/SHORT3, 10-07 BUY6/SKIP3/SHORT2 —
+  与 DEB L1 口径一致, 偏向源头在模型提案分布 (F6 另案)。
+- **F1 (摘 G4/G5/G6) / F2 (G2 纯记录) / F3 (G1 三选一) / F4 (被拦行回填) /
+  F5 (推送口径) 全部仍待用户裁决** — 摘闸方案零落地, 偏向治理未开始。
+
+**顺手修复**: W456 第四次复发 (RFC-138 verdict_era.py 无栈 warning) →
+exc_info=True 已提交 `1b37d83e2`, 四棘轮回绿。RFC-139 auto-adjudication 工作树
+WIP 未动 (他批在途)。
+
 ## 2026-10-08 裁决落地批（用户裁「继续」= 三项待裁批推按建议执行）
 
 **提交**: `c421e138a` → **main 已 ff 同步并 push**（49b8ba33b→c421e138a，74 commits；

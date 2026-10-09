@@ -20,6 +20,7 @@ KNOWN_EXEMPT = {
     "exit-de49b1299290",   # DEB-20260903 9/3 用户裁"按建议执行" 被动侧marketable限价(议题二方案A)
     "exit-13f6c2cc7fc4",   # DEB-20260909 9/9 用户裁"同意" M2: BE垫兜底收敛(0.4→0.15+共享常量), 零交易行为变更
     "exit-34c7153088a1",   # DEB-20260917 §20–§22/§23.8 (Codex 66d781dcc + 2d0bcf60f, 9/17 盘前批): adaptive trailing 上限开放; 基线 note 已留痕, 本钉子当时漏同步 (2026-09-24 补登, 非新增豁免 — 裁决先在)
+    "exit-ca4487172a6f",   # 410297295 (2026-10-08, RFC-106 §5.2): overnight_gap_stop_pct=3.0 同值显式化, 零行为变更, 整文件哈希副作用; 2026-10-09 resume 会话逐提交二分归因 + 用户裁「继续」; 仅解 W1_exit_version_drift, cohort 两维 BROKEN 维持
 }
 
 

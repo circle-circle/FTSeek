@@ -581,6 +581,23 @@ class TestRegistryEntryPairsWithEvaluator:
         assert it.min_n == ev.MIN_ROUNDS == 10
         assert it.count_mode == "distinct:date", "计数单位必须是交易日轮次, 不是 jsonl 行数"
 
+    def test_adjudicated_not_ready_is_shelved_from_auto_promotion(self):
+        """2026-10-09 已裁决 NOT_READY (P95=1329.2s >> 90s): 挂账阻断 refresh_counts 提升。
+
+        没有这条钉时全量套件实红: 任一在前测试对真实数据跑 refresh_counts 会把
+        OBSERVING(n≥10) 提升为 READY_TO_EVALUATE, 上方静态钉即被污染打红
+        (单跑绿/全量红)。挂账后已裁事项不再重复报 READY, 钉的静态语义恢复稳定。
+        """
+        from app.playbook import shadow_registry as sr
+        it = _registry_item()
+        assert it is not None
+        assert it.no_adjudication_reason.startswith("ADJUDICATED_NOT_READY"), (
+            "已裁 NOT_READY 的事项必须挂账, 否则 refresh_counts 会把已裁事项重复提升 READY")
+        assert it.last_evaluated == "2026-10-09"
+        notifications = sr.refresh_counts()   # 对真实数据实跑, 不得提升本项
+        assert it.status == sr.ShadowStatus.OBSERVING
+        assert all("ue_quote_freshness_shadow" not in n for n in notifications)
+
     def test_counter_residual_cannot_produce_a_false_activation(self, tmp_path):
         """口径残留演练: 接口 `distinct:date` 会把 `--force` 人工行也算 1 个日期 (可能 READY),
         但**裁决器**必须仍判不足 —— 到期判据以裁决器为准, 假 READY 不得变成假激活。
@@ -604,6 +621,10 @@ class TestRegistryEntryPairsWithEvaluator:
         it = _registry_item()
         assert "2026-09-29" in it.notes, "到期触发日未写进注册表 ⇒ 又变成无人被提醒"
         assert "不落盘" in it.notes and "零 futu 连接" in it.notes, "补口①的三条纪律须留痕"
-        last = it.verdict_history[-1]
-        assert last["verdict"].startswith("BASELINE_NO_DATA")
-        assert "禁止建议激活" in last["evidence"]
+        # 钉**首条** (挂环当日基线): 2026-10-09 追加真实裁决 (NOT_READY) 后 [-1] 已是新条目,
+        # 基线反假绿意图应钉 [0] — 否则任何后续裁决追加都会误红本条。
+        first = it.verdict_history[0]
+        assert first["verdict"].startswith("BASELINE_NO_DATA")
+        assert "禁止建议激活" in first["evidence"]
+        # 到期裁决已落 (2026-10-09 NOT_READY): 裁决历史必须推进, 不得停在基线
+        assert any(v["verdict"].startswith("NOT_READY") for v in it.verdict_history[1:])
