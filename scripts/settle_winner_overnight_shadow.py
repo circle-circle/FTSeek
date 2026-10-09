@@ -74,8 +74,101 @@ def load_1m(symbol: str, day: str):
     return bars if len(bars) >= 30 else None
 
 
+def _replay_fixed_sl(bars, direction, sl):
+    """初始 SL 冻结口径 (RFC-074 原语义, 保留作 legacy 对照列).
+
+    返回 (fact_price, tag)。sl<=0 → 视为无 SL, 持到收盘。
+    """
+    if sl > 0:
+        o0 = bars[0][1]
+        if (direction == "LONG" and o0 <= sl) or (direction == "SHORT" and o0 >= sl):
+            return o0, "SL_gap"
+        for b in bars:
+            if direction == "LONG" and b[3] <= sl:
+                return sl, "SL_touch"
+            if direction == "SHORT" and b[2] >= sl:
+                return sl, "SL_touch"
+    return bars[-1][4], "EOD_next_day"
+
+
+def _era_adaptive_cfg(row):
+    """era-faithful adaptive trailing 配置 (按 arm 当时 era, 非当前 config).
+
+    era_adaptive_on=False (如 2026-09-17 前的 arm) → adaptive 关闭, 走静态因子 dd。
+    target/min/max 自 9/17 引入后未变 (git 实证单 commit), 缺省即该值。
+    """
+    if not row.get("era_adaptive_on"):
+        return {"adaptive_trailing_enabled": False}
+    return {
+        "adaptive_trailing_enabled": True,
+        "adaptive_trailing_target_capture_pct": float(row.get("era_target_capture_pct", 60.0)),
+        "adaptive_trailing_min_drawdown_pct": float(row.get("era_min_dd_pct", 0.4)),
+        "adaptive_trailing_max_drawdown_pct": float(row.get("era_max_dd_pct", 1.2)),
+    }
+
+
+def _eff_sl_at(direction, entry, init_sl, peak_pct, row):
+    """arm 后第 N bar 的生效 SL — 复用生产 SSOT, 不写第二份数学 (RFC-140).
+
+    era 参数 (be_pct/trailing/factor_dd/fee/slip cushion/adaptive) 全部取自 arm 行
+    落档的 era 字段, 不读当前 config ⇒ 免「参数时代混算」(exit_replay 同源纪律)。
+    """
+    from app.playbook.exit_engine import _compute_dynamic_effective_sl
+    from app.playbook.adaptive_trailing import adaptive_trailing_drawdown_pct
+    cfg = {
+        "breakeven_at_pct": float(row.get("era_be_pct", 0.4)),
+        "trailing_enabled": bool(row.get("era_trailing_enabled", True)),
+        "drawdown_from_peak_pct": float(row.get("era_factor_dd_pct", 0.8)),
+    }
+    add = adaptive_trailing_drawdown_pct(peak_pct, _era_adaptive_cfg(row), "PLAYBOOK_SIM")
+    return _compute_dynamic_effective_sl(
+        direction, entry, init_sl, peak_pct, cfg,
+        float(row.get("era_fee_cushion_pct", 0.0)),
+        float(row.get("era_slip_cushion_pct", 0.0)),
+        add,
+    )
+
+
+def _replay_eff_sl(bars, direction, entry, init_sl, peak0, row):
+    """生效 SL 逐 bar 重放 (悲观序: 不利极值先触, 与 exit_replay_backtest 同约定).
+
+    峰值日内升高 → BE/锁盈线跟随 ratchet (生产每轮重算的忠实近似)。
+    规则0 冷却 (生产同语义): 开盘前 15min 且 BE 未武装 → SL 放宽到 -cooldown%;
+    已武装仓豁免 (DEB-20260820 §三十九, 与 exit_engine 规则0 一致)。
+    返回 (fact_price, tag)。
+    """
+    sign = 1.0 if direction == "LONG" else -1.0
+    peak = float(peak0 or 0.0)
+    be_pct = float(row.get("era_be_pct", 0.4))
+    cool_pct = float(row.get("era_cooldown_sl_pct", 4.0))
+    for i, b in enumerate(bars):
+        o, h, l = b[1], b[2], b[3]
+        eff = _eff_sl_at(direction, entry, init_sl, peak, row)
+        if i < 15 and peak < be_pct:
+            cool = entry * (1 - cool_pct / 100.0 * sign)
+            eff = min(eff, cool) if direction == "LONG" else max(eff, cool)
+        if i == 0 and ((direction == "LONG" and o <= eff) or (direction == "SHORT" and o >= eff)):
+            return o, "SL_gap"
+        adv = l if direction == "LONG" else h
+        if eff > 0 and ((direction == "LONG" and adv <= eff) or (direction == "SHORT" and adv >= eff)):
+            return eff, "SL_touch"
+        fav = h if direction == "LONG" else l
+        pp = (fav - entry) * sign / entry * 100.0
+        if pp > peak:
+            peak = pp
+    return bars[-1][4], "EOD_next_day"
+
+
 def settle_row(row):
-    """返回 (ok, fields). ok=False 表示 bar 缺失."""
+    """返回 (ok, fields). ok=False 表示 bar 缺失.
+
+    RFC-140 (2026-10-09, 用户裁「确认无误，确保精准后修复」): overnight_delta 主口径
+    从「初始 SL 冻结」修为「era-faithful 生效 SL 逐 bar 重放」— 对齐 B16 判据原文
+    「带 SL 持一夜」本意 (真实赢家仓 arm 时刻 BE/动态锁盈线已远紧于初始 SL)。
+    旧初始 SL 口径保留为 overnight_delta_init_sl / settle_outcome_init_sl 双列留档,
+    不删旧读数 (RFC-095 同款口径修复纪律)。era 字段缺失 (legacy arm 行) → 回退初始 SL
+    口径并标 sl_caliber=init_sl_legacy (fail-safe, 不静默套用当前 config)。
+    """
     sym = row["symbol"]
     nxt = next_trading_day(row["arm_date"])
     if not nxt:
@@ -84,33 +177,33 @@ def settle_row(row):
     if not bars:
         return False, {}
     entry = float(row["entry_price"])
-    sl = float(row.get("stop_loss_at_arm") or 0)
+    init_sl = float(row.get("stop_loss_at_arm") or 0)
     q = float(row.get("quantity") or 0)
     sign = 1.0 if row["direction"] == "LONG" else -1.0
     ap = float(row["arm_price"])
-    fact_price = None
-    tag = ""
-    if sl > 0:
-        o0 = bars[0][1]
-        if (row["direction"] == "LONG" and o0 <= sl) or \
-                (row["direction"] == "SHORT" and o0 >= sl):
-            fact_price, tag = o0, "SL_gap"
-        else:
-            for b in bars:
-                if row["direction"] == "LONG" and b[3] <= sl:
-                    fact_price, tag = sl, "SL_touch"
-                    break
-                if row["direction"] == "SHORT" and b[2] >= sl:
-                    fact_price, tag = sl, "SL_touch"
-                    break
-    if fact_price is None:
-        fact_price, tag = bars[-1][4], "EOD_next_day"
-    delta = (fact_price - ap) * q * sign
+    direction = row["direction"]
+
+    # legacy 初始 SL 口径 (恒算, 作对照列)
+    old_price, old_tag = _replay_fixed_sl(bars, direction, init_sl)
+    old_delta = round((old_price - ap) * q * sign, 2)
+
+    # 主口径: era 字段齐备 → 生效 SL 重放; 否则回退初始 SL (fail-safe)
+    if row.get("eff_sl_at_arm") is not None:
+        fact_price, tag = _replay_eff_sl(
+            bars, direction, entry, init_sl, row.get("peak_profit_pct_at_arm"), row)
+        caliber = "effective_sl"
+    else:
+        fact_price, tag, caliber = old_price, old_tag, "init_sl_legacy"
+    delta = round((fact_price - ap) * q * sign, 2)
+
     return True, {
         "settle_date": nxt,
         "settle_outcome": tag,
         "settle_price": round(fact_price, 4),
-        "overnight_delta": round(delta, 2),
+        "overnight_delta": delta,
+        "sl_caliber": caliber,
+        "overnight_delta_init_sl": old_delta,
+        "settle_outcome_init_sl": old_tag,
         "settled": True,
     }
 
@@ -188,11 +281,24 @@ def main(argv=None) -> int:
     ap.add_argument("--days", type=int, default=0, help="只结算近 N 天 arm 行 (0=全部)")
     ap.add_argument("--pending-alert-days", type=int, default=3,
                     help="未结算 arm 超过 N 天未结算 → HIGH 告警 + exit 1 (积压棘轮)")
+    ap.add_argument("--reset-settled", action="store_true",
+                    help="清除全部结算字段重放 (口径修复后重结算用; arm 行本身不动)")
     args = ap.parse_args(argv)
     if not SHADOW.exists():
         print("无影子文件, 退出 (尚未产生 arm 行)")
         return 0
     rows = [json.loads(l) for l in SHADOW.open() if l.strip()]
+    if args.reset_settled:
+        _SETTLE_KEYS = ("settle_date", "settle_outcome", "settle_price", "overnight_delta",
+                        "sl_caliber", "overnight_delta_init_sl", "settle_outcome_init_sl")
+        n_reset = 0
+        for r in rows:
+            if r.get("type") == "arm" and r.get("settled"):
+                r["settled"] = False
+                for k in _SETTLE_KEYS:
+                    r.pop(k, None)
+                n_reset += 1
+        print(f"[--reset-settled] 清除 {n_reset} 笔结算字段, 全量重放")
     pending = [r for r in rows if not r.get("settled") and r.get("type") == "arm"]
     if args.days > 0:
         from datetime import date, timedelta

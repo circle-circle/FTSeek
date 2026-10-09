@@ -1356,7 +1356,13 @@ REGISTRY: list[ShadowItem] = [
         created="2026-09-02",
         notes="count_mode=settled_winner_arm_lines (arm_profit_pct>0, 毛口径; 汇总由"
               "结算脚本过滤, 亏损臂仅 loser_n 对照); 悲观序结算(不假设更优出场); "
-              "stop_loss_at_arm=初始SL口径(生效SL更紧, SL_touch 偏少知悉); "
+              "2026-10-09 RFC-140 口径修复: overnight_delta 主口径从「初始SL冻结」改为"
+              "「era-faithful 生效SL逐bar重放」(arm 行落 era_be/dd/cushion/adaptive 字段, "
+              "结算器复用生产 SSOT _compute_dynamic_effective_sl 重放, BE武装/锁盈ratchet/"
+              "冷却豁免同生产语义); 旧口径留档 overnight_delta_init_sl 双列; legacy arm 行"
+              "无 era 字段 → fail-safe 回退初始SL并标 sl_caliber=init_sl_legacy。存量4笔"
+              "重结算: 旧口径 +183.14/0次SL → 生效SL口径 -142.24/4次SL类出场(3 touch+1 gap), "
+              "方向翻转实锤「带SL持一夜」判据此前被结构性高估。判据文/阈值逐字未动; "
               "DEB-20260902-overnight-exit-timing; 判据字典 B16",
     ),
 

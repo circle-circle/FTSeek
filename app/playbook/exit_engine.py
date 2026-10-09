@@ -800,6 +800,10 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
                     from app.utils.timezone import now_et as _wos_now
                     _wos_et = _wos_now()
                     _wos_sl = float(meta.get("stop_loss", 0) or 0)
+                    # ── RFC-140 (2026-10-09): era 状态落档 — 结算器按 arm 当时生效 SL
+                    #   重放 (此前只落初始 SL, 真实 BE/锁盈线更紧 ⇒ 反事实臂结构性偏乐观,
+                    #   4 笔实测旧口径 +183 → 生效 SL 口径 −186)。全部取本轮规则链已算好的
+                    #   在作用域变量, 零新计算; 参数时代随 arm 行冻结, 未来调参自动跟随。
                     _wos_row = {
                         "shadow": "winner_overnight",
                         "type": "arm",
@@ -814,6 +818,19 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
                         "arm_profit_pct": round(profit_pct, 4),
                         "arm_net_profit_pct": round(_profit_net_pct, 4),
                         "stop_loss_at_arm": round(_wos_sl, 4) if _wos_sl > 0 else None,
+                        # era-faithful 生效 SL 重放输入 (结算器 settle_row 消费):
+                        "eff_sl_at_arm": round(_active_sl, 4) if _active_sl > 0 else None,
+                        "peak_profit_pct_at_arm": round(peak_profit_pct, 4),
+                        "era_be_pct": float(_exit_cfg.get("breakeven_at_pct", 0.4)),
+                        "era_trailing_enabled": bool(_exit_cfg.get("trailing_enabled", False)),
+                        "era_factor_dd_pct": float(_exit_cfg.get("drawdown_from_peak_pct", 0.8)),
+                        "era_fee_cushion_pct": round(_fee_cushion_pct, 4),
+                        "era_slip_cushion_pct": round(_slip_cushion_pct, 4),
+                        "era_adaptive_on": _adaptive_drawdown_pct is not None,
+                        "era_target_capture_pct": float(_pb_cfg.get("adaptive_trailing_target_capture_pct", 60.0)),
+                        "era_min_dd_pct": float(_pb_cfg.get("adaptive_trailing_min_drawdown_pct", 0.4)),
+                        "era_max_dd_pct": float(_pb_cfg.get("adaptive_trailing_max_drawdown_pct", 1.2)),
+                        "era_cooldown_sl_pct": float(_pb_cfg.get("cooldown_sl_pct", 4.0)),
                         "settled": False,
                     }
                     with open(_WOS_P("data/shadow/winner_overnight_shadow.jsonl"), "a") as _wos_f:

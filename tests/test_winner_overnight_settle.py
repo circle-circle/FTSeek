@@ -218,3 +218,82 @@ class TestPendingStaleAlert:
         monkeypatch.setattr(sw, "_push_stale_alert", lambda stale, pending_n, days: False)
         rc = sw.main(argv=[])
         assert rc == 1  # 推送失败不吞掉违反状态 (下轮 cron 重试告警)
+
+
+class TestW8EraFaithfulEffSl:
+    """W8 (RFC-140, 2026-10-09): 生效 SL 口径 — arm 行带 era 字段时按 arm 时刻
+    BE/锁盈线逐 bar 重放 (非初始 SL 冻结), 旧口径留档双列。
+
+    缘起: 4 笔存量实测旧口径 +183.14 → era-faithful 生效 SL 口径 −142.24
+    (4/4 SL 类出场), 初始 SL 口径对「带 SL 持一夜」判据结构性偏乐观。
+    """
+
+    def _era_row(self, **kw):
+        """带 era 字段的 arm 行 (LONG, entry=100, arm=100.5, peak=1.0%, BE 已武装)."""
+        row = _arm_row(arm_price=100.5, quantity=10, **kw)
+        row.update({
+            "eff_sl_at_arm": 100.6,          # BE+slip 触发线 (紧于初始 SL 95)
+            "peak_profit_pct_at_arm": 1.0,
+            "era_be_pct": 0.4,
+            "era_trailing_enabled": True,
+            "era_factor_dd_pct": 0.8,
+            "era_fee_cushion_pct": 0.1,
+            "era_slip_cushion_pct": 0.2,
+            "era_adaptive_on": False,
+            "era_cooldown_sl_pct": 4.0,
+        })
+        row.update(kw)
+        return row
+
+    def test_w8_eff_sl_touch_beats_init_sl_eod(self, monkeypatch):
+        """BE 武装后价格回踩触发线 → SL_touch@eff, 而初始 SL 口径会给 EOD (偏乐观)."""
+        monkeypatch.setattr(sw, "next_trading_day", lambda d: "2026-09-03")
+        # 全天在 100.2-100.9 震荡, 收盘 100.8: 初始 SL 95 不触 → EOD +3.0;
+        # 生效线 ~100.6 (BE armed, entry*(1+0.3%)) 被 100.2 低点击穿 → SL_touch
+        bars = [[f"t{i}", 100.5, 100.9, 100.2, 100.8] for i in range(35)]
+        monkeypatch.setattr(sw, "load_1m", lambda s, d: bars)
+        ok, f = sw.settle_row(self._era_row(stop_loss_at_arm=95.0))
+        assert ok and f["sl_caliber"] == "effective_sl"
+        assert f["settle_outcome"] == "SL_touch"
+        assert f["settle_outcome_init_sl"] == "EOD_next_day"  # 旧口径对照列留档
+        assert f["overnight_delta"] < 0 < f["overnight_delta_init_sl"]  # 方向翻转实证
+
+    def test_w8_no_era_fields_falls_back_legacy(self, monkeypatch):
+        """era 字段缺失 (legacy arm 行) → 初始 SL 口径 + sl_caliber 标记 (fail-safe)."""
+        monkeypatch.setattr(sw, "next_trading_day", lambda d: "2026-09-03")
+        monkeypatch.setattr(sw, "load_1m", lambda s, d: _mk_bars(o=100.0, c=101.0))
+        ok, f = sw.settle_row(_arm_row(stop_loss_at_arm=95.0))
+        assert ok and f["sl_caliber"] == "init_sl_legacy"
+        assert f["settle_outcome"] == "EOD_next_day"
+        assert f["overnight_delta"] == f["overnight_delta_init_sl"] == 10.0
+
+    def test_w8_peak_ratchet_raises_lock_line(self, monkeypatch):
+        """日内峰值升高 → 锁盈线跟随 ratchet (生产每轮重算语义): 高开后深回落
+        触发的应是抬高后的锁盈线, 不是 arm 时刻旧线."""
+        monkeypatch.setattr(sw, "next_trading_day", lambda d: "2026-09-03")
+        # bar0 冲到 103 (peak→3%), dd 0.8% 锁盈线 ≈ 102.18; bar1 跌到 101 触发
+        bars = [["t0", 100.5, 103.0, 100.4, 102.8], ["t1", 102.8, 102.9, 101.0, 101.2]]
+        bars += [[f"t{i}", 101.2, 101.3, 101.1, 101.2] for i in range(2, 35)]
+        monkeypatch.setattr(sw, "load_1m", lambda s, d: bars)
+        ok, f = sw.settle_row(self._era_row(stop_loss_at_arm=95.0))
+        assert ok and f["settle_outcome"] == "SL_touch"
+        # 锁盈出场价应远高于 BE 线 ~100.6 且高于 arm 价 (锁住利润)
+        assert f["settle_price"] > 101.5
+        assert f["overnight_delta"] > 0  # 锁盈臂也可以是正收益 — 语义正确性关键
+
+    def test_w8_reset_settled_replays(self, monkeypatch, tmp_path):
+        """--reset-settled: 已结算行清字段重放 (口径修复后重结算通道)."""
+        shadow = tmp_path / "wos.jsonl"
+        out = tmp_path / "wos_latest.json"
+        row = self._era_row(stop_loss_at_arm=95.0, settled=True,
+                            settle_outcome="EOD_next_day", overnight_delta=99.9)
+        shadow.write_text(json.dumps(row) + "\n", encoding="utf-8")
+        monkeypatch.setattr(sw, "SHADOW", shadow)
+        monkeypatch.setattr(sw, "OUT", out)
+        monkeypatch.setattr(sw, "next_trading_day", lambda d: "2026-09-03")
+        monkeypatch.setattr(sw, "load_1m", lambda s, d: _mk_bars(o=100.0, c=101.0))
+        rc = sw.main(argv=["--reset-settled"])
+        assert rc == 0
+        settled = json.loads(shadow.read_text(encoding="utf-8"))
+        assert settled["overnight_delta"] != 99.9  # 旧值被重放覆盖
+        assert settled["sl_caliber"] == "effective_sl"
