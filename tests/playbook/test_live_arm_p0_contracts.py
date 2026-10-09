@@ -389,7 +389,8 @@ def test_live_rule_exit_books_raced_stop_fill_instead_of_closing_twice(monkeypat
 
 def test_all_live_close_paths_release_broker_stop_before_close():
     monitor_source = inspect.getsource(pipeline.monitor_playbook_exits)
-    eod_source = inspect.getsource(pipeline._force_close_orphaned_sim_positions)
+    from app.playbook.pipeline_parts import overnight_cleanup
+    eod_source = inspect.getsource(overnight_cleanup._force_close_orphaned_sim_positions)
 
     assert monitor_source.count("_release_live_broker_stop_for_rule_exit") == 2
     assert "_release_live_broker_stop_for_rule_exit" in eod_source

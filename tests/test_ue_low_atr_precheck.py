@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from scripts import llm_universe_scan as ue  # noqa: E402
 
 _SRC = os.path.join(os.path.dirname(__file__), "..", "scripts", "llm_universe_scan.py")
-_PIPE = os.path.join(os.path.dirname(__file__), "..", "app", "playbook", "pipeline.py")
+_PIPE = os.path.join(os.path.dirname(__file__), "..", "app", "playbook", "pipeline_parts", "trigger_flow.py")
 
 
 def _src(path: str) -> str:

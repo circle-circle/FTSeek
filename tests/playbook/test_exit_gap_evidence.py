@@ -54,6 +54,6 @@ def test_never_raises_on_bad_inputs():
 def test_telemetry_mirror_wiring():
     """exit_telemetry 构建处必须镜像 exit_gap — 单表切片不用翻顶层 metadata."""
     import inspect
-    from app.playbook import pipeline as pb
-    source = inspect.getsource(pb._close_trade_record)
+    from app.playbook.pipeline_parts import close_flow
+    source = inspect.getsource(close_flow._close_trade_record)
     assert '"exit_gap": _tmeta.get("exit_gap")' in source

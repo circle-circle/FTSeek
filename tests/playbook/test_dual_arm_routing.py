@@ -72,7 +72,8 @@ def test_research_lane_preserves_file_override(monkeypatch, tmp_path):
 
 
 def test_auto_execute_mirrors_same_decision_to_live_probe():
-    source = inspect.getsource(pipeline.run_playbook_auto_execute)
+    from app.playbook.pipeline_parts import auto_execute_flow
+    source = inspect.getsource(auto_execute_flow.run_playbook_auto_execute)
     assert 'route_playbook_db("sim")' in source
     assert 'target_env="real"' in source
     assert "_mirror_instruction_to_live" in source
@@ -176,7 +177,8 @@ def test_allowed_live_gate_writes_mirror_once(monkeypatch):
 
 
 def test_exit_monitor_scans_and_aggregates_both_lanes_separately():
-    source = inspect.getsource(pipeline.monitor_playbook_exits)
+    from app.playbook.pipeline_parts import exit_monitor_flow
+    source = inspect.getsource(exit_monitor_flow.monitor_playbook_exits)
     assert 'for _arm_target in ("sim", "real")' in source
     assert "rows_by_arm" in source
     assert "for _bs_arm_path, _bs_arm_rows in rows_by_arm.items()" in source

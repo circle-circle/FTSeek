@@ -1,6 +1,6 @@
 """[P1.2 2026-09-12, DEB-20260910 / proud-slope-falcon] 执行侧低ATR门读筛选快照同义字段.
 
-被测: `app/playbook/pipeline.py::_check_intraday_trigger` 的低ATR门 +
+被测: `app/playbook/pipeline_parts/trigger_flow.py::check_intraday_trigger` 的低ATR门 +
       `_screening_age_hours` + `_emit_trigger_miss(extra=...)`。
 
 修前病灶: 门只读 `inst["atr_pct"]` (盘前定桶写入的**止损口径** get_atr_pct),
@@ -38,7 +38,8 @@ from app.playbook.pipeline import (  # noqa: E402
     _check_intraday_trigger, _screening_age_hours,
 )
 
-_SRC = (Path(__file__).resolve().parents[2] / "app" / "playbook" / "pipeline.py"
+_SRC = (Path(__file__).resolve().parents[2]
+        / "app" / "playbook" / "pipeline_parts" / "trigger_flow.py"
         ).read_text(encoding="utf-8")
 
 # 与 tests/test_playbook_pipeline.py::TestCheckIntradayTrigger 同款密封档,

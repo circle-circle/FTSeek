@@ -71,11 +71,13 @@ def test_22_marker_table_created_by_ensure_tables():
 
 
 def test_22_gate_uses_completion_marker_not_row_existence():
-    src = (PROJECT_ROOT / "app" / "playbook" / "pipeline.py").read_text(encoding="utf-8")
+    src = (PROJECT_ROOT / "app" / "playbook" / "pipeline_parts" / "generation_flow.py").read_text(
+        encoding="utf-8"
+    )
     assert "is_generate_completed(today)" in src, "幂等门须查完成标记 (#22 回归)"
-    assert "mark_generate_completed" in src or "_mark_generate_done(today)" in src
+    assert "mark_generate_done(today)" in src
     # 异常路径不写标记: 完成/空表终态共 3 处调用, 不含 except 分支
-    assert src.count("_mark_generate_done(today)") == 3
+    assert src.count("mark_generate_done(today)") == 3
 
 
 def test_22_rows_without_marker_do_not_block():

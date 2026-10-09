@@ -210,13 +210,17 @@ def test_w_week_exempt_dual_arm_whitelist(monkeypatch):
 
 def test_call_sites_use_the_helpers():
     pipe_src = (REPO / "app" / "playbook" / "pipeline.py").read_text(encoding="utf-8")
+    monitor_src = (REPO / "app" / "playbook" / "pipeline_parts" /
+                   "exit_monitor_flow.py").read_text(encoding="utf-8")
+    cleanup_src = (REPO / "app" / "playbook" / "pipeline_parts" /
+                   "overnight_cleanup.py").read_text(encoding="utf-8")
     eng_src = (REPO / "app" / "playbook" / "exit_engine.py").read_text(encoding="utf-8")
     # poll monitor 与 sweeper 都经 cohort_b_skip_eligible
-    assert pipe_src.count("cohort_b_skip_eligible") >= 2, (
+    assert (pipe_src + monitor_src).count("cohort_b_skip_eligible") >= 2, (
         "poll 与 sweeper 两处都应 import+调用单点助手")
     # sweeper 与引擎都经 overnight_master_switch_on
-    assert "overnight_master_switch_on as _master_on" in pipe_src
-    assert "if not _master_on():" in pipe_src
+    assert "overnight_master_switch_on as _master_on" in cleanup_src
+    assert "if not _master_on():" in cleanup_src
     assert "if not overnight_master_switch_on():" in eng_src
 
 

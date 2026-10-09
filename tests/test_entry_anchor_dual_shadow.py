@@ -115,7 +115,9 @@ def test_invalid_anchor_returns_none_not_guess():
 
 def test_geometry_stays_in_sync_with_production_branches():
     """生产判定段的关键常量/分支若变更而本纯函数未同步 ⇒ 影子读数脱钩, 必须红。"""
-    src = inspect.getsource(_check_intraday_trigger)
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "app" / "playbook"
+           / "pipeline_parts" / "trigger_flow.py").read_text(encoding="utf-8")
     assert "_near_miss_tolerance = 0.01" in src, (
         "生产 near_miss 容忍度已改 — _anchor_trigger_geometry 的 _T=0.01 须同步 "
         "(否则反事实几何与生产语义脱钩)")
@@ -130,8 +132,9 @@ def test_geometry_stays_in_sync_with_production_branches():
 
 def test_emit_block_is_record_only():
     """埋点块必须: 在 try 内 / 不改 triggered / 不改返回值 / 不喂生产判定。"""
-    from app.playbook import pipeline as pl
-    src = inspect.getsource(pl)
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "app" / "playbook"
+           / "pipeline_parts" / "trigger_flow.py").read_text(encoding="utf-8")
     i = src.index('"schema": "rfc123-s0-v1"')
     block = src[max(0, i - 2000): i + 1500]
     assert "entry_anchor_dual_shadow_enabled" in block, "开关门控缺失 = 不可回滚"

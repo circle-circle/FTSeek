@@ -319,13 +319,13 @@ class TradingScheduler:
         # 保留 news 属性别名，兼容旧引用
         self.news = self.news_provider
 
-        # 多模型投票
-        # 2026-07-06: 超时从 YAML llm.defaults.voting_timeout_seconds 读取, 默认60s.
+        # 决策适配器 (scheduler.voting_coordinator 是历史兼容字段名).
+        # 旧 VotingCoordinator 超时配置已不在生产决策路径.
         # 2026-07-09: bridge模式 — 如果opportunity_scan_YYYYMMDD.json存在,
         # 2026-07-09: 移除VotingCoordinator fallback。
         # 根因: 3模型投票方向准确率47%≈随机(DeepSeek 88%偏空/qwen 88%偏多),
         #       bridge不存在时fallback到投票=用噪声替代信号。
-        # 新逻辑: bridge存在 → BridgeVotingAdapter; bridge不存在 → NullVotingAdapter(全SKIP)。
+        # 新逻辑: bridge存在 → BridgeVotingAdapter; bridge缺失 → technical/none。
         # deep_analysis skill负责盘前生成bridge文件(cron CST 21:00/ET 09:00)。
         self.voting_coordinator = None  # 先置空, 下面按bridge状态赋值
 
@@ -339,7 +339,7 @@ class TradingScheduler:
                 if _bridge_n < 3:
                     logger.warning(f"[scheduler] bridge加载成功但只有{_bridge_n}个候选(<3), 信号覆盖可能不足")
                 else:
-                    logger.info(f"[scheduler] bridge文件加载成功 ({_bridge_n}候选), voting_coordinator → BridgeVotingAdapter")
+                    logger.info(f"[scheduler] bridge文件加载成功 ({_bridge_n}候选), decision_adapter → BridgeVotingAdapter")
                 self.voting_coordinator = _bridge
                 _bridge_loaded = True
         except Exception as _bridge_err:

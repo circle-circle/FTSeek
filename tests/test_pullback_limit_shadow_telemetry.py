@@ -20,11 +20,28 @@ from pathlib import Path
 import pytest
 
 _SRC = Path(__file__).resolve().parents[1] / "app" / "playbook" / "pipeline.py"
+# [RFC-060 phase1] pipeline 重构后, 遥测/影子/去重本体分布在三处:
+#   - pipeline.py: _shadow_dedup_ok 等功能仍留 (replay 用)
+#   - pipeline_parts/auto_execute_flow.py: chase_cap 遥测 + 去重 claim/commit
+#   - pipeline_parts/trigger_flow.py: trigger 影子行 + source 兜底 isinstance 守卫
+# 三源拼接保住所有锚字符串。
+_SRC_AEF = (
+    Path(__file__).resolve().parents[1] / "app" / "playbook"
+    / "pipeline_parts" / "auto_execute_flow.py"
+)
+_SRC_TF = (
+    Path(__file__).resolve().parents[1] / "app" / "playbook"
+    / "pipeline_parts" / "trigger_flow.py"
+)
 _REPLAY = Path(__file__).resolve().parents[1] / "scripts" / "cf_pullback_limit_replay.py"
 
 
 def _src() -> str:
-    return _SRC.read_text(encoding="utf-8")
+    return (
+        _SRC.read_text(encoding="utf-8") + "\n"
+        + _SRC_AEF.read_text(encoding="utf-8") + "\n"
+        + _SRC_TF.read_text(encoding="utf-8")
+    )
 
 
 def test_no_direct_json_loads_on_raw_instruction_json():

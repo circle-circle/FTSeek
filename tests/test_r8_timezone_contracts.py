@@ -138,7 +138,8 @@ class TestR8aTelemetryUsesET:
     def _src():
         from pathlib import Path
         return (Path(__file__).resolve().parent.parent
-                / "app" / "playbook" / "pipeline.py").read_text(encoding="utf-8")
+                / "app" / "playbook" / "pipeline_parts"
+                / "trigger_flow.py").read_text(encoding="utf-8")
 
     def test_date_field_no_longer_naive_now(self):
         src = self._src()

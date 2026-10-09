@@ -191,23 +191,20 @@ _ALIAS_EXEMPTIONS = [
     ("app/storage/trade_store.py",
      '_now = _dt.now().isoformat()', 1, "A except 兜底",
      "upsert_position_simple 主路径已是 now_et() (R-12 2026-08-23); 同上"),
-    ("app/playbook/pipeline.py",
+    ("app/playbook/pipeline_parts/generation_flow.py",
      'today = _dt.now().date().isoformat()', 1, "A except 兜底",
      "晨报推送主路径 :2314 已是 now_et(); 同上"),
-    ("app/playbook/pipeline.py",
+    ("app/playbook/pipeline_parts/trigger_flow.py",
      '_ts = _dt.now().isoformat(timespec="seconds")', 1, "A except 兜底",
      "主路径 :5196 已是 _dt.now(_now_et()) 带尺; 清剿兜底=让异常路径也炸"),
     ("app/storage/trade_store.py",
      '原用裸 _dt.now() = 宿主 Asia/Shanghai (CST)', 1, "B 注释非代码",
      "R-12 修复留痕 (记着 entry_time 两表差 12h 的实证), 删掉是纯信息损失"),
-    ("app/playbook/pipeline.py",
-     '原用裸 _dt.now() = 宿主 Asia/Shanghai, ET 下午的', 1, "B 注释非代码",
-     "R-8a 修复留痕 (exec_gate_audit 归因), 同上"),
-    ("app/playbook/pipeline.py",
+    ("app/playbook/pipeline_parts/trigger_flow.py",
      '原用裸 _dt.now() = 宿主 Asia/Shanghai。ET 12:00-15:59', 1, "B 注释非代码",
      "R-8a 修复留痕 (含 15,150 行中 9,049 行=59.7% 错位的实证数字), 同上"),
-    ("app/playbook/pipeline.py",
-     '"ts_cst": _dt.now().isoformat(timespec="seconds"),', 2, "C 刻意 CST 自证字段",
+    ("app/playbook/pipeline_parts/trigger_flow.py",
+     '"ts_cst": _dt.now().isoformat(timespec="seconds"),', 1, "C 刻意 CST 自证字段",
      "字段名即 ts_cst, 与并列的 tz='ET' 构成 ET 主口径 + CST 对照列, 用于与 08-23 之前历史行"
      "对齐排查 (源码注释自陈) — 属棘轮提示语里'确属本地墙钟语义'那一类"),
     ("app/us_pipeline/emergency_interceptor.py",
@@ -411,10 +408,13 @@ def test_pattern_only_matches_naive_forms():
 
 def test_cleared_sites_stay_cleared():
     """本批已清剿的三处不得回潮 (信息位 ts/flip_at + 死变量 now_iso)."""
-    pipe = (PROJECT_ROOT / "app" / "playbook" / "pipeline.py").read_text(encoding="utf-8")
-    assert '"ts": _now_et_ts().isoformat()' in pipe, "daily_loss_baseline 的 ts 应写 ET"
-    assert '"flip_at": _now_et_ts().isoformat()' in pipe, "flip_at 应写 ET"
-    assert "now_iso = datetime.now().isoformat()\n\n        for r in rows:" not in pipe, \
+    risk_gates = (PROJECT_ROOT / "app" / "playbook" / "pipeline_parts" /
+                  "risk_gates.py").read_text(encoding="utf-8")
+    cleanup = (PROJECT_ROOT / "app" / "playbook" / "pipeline_parts" /
+               "overnight_cleanup.py").read_text(encoding="utf-8")
+    assert '"ts": now_et().isoformat()' in risk_gates, "daily_loss_baseline 的 ts 应写 ET"
+    assert '"flip_at": now_et().isoformat()' in risk_gates, "flip_at 应写 ET"
+    assert "now_iso = datetime.now().isoformat()\n\n        for r in rows:" not in cleanup, \
         "_force_close_orphaned_sim_positions 的死变量 now_iso 不得回潮"
 
 

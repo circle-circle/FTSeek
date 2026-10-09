@@ -55,26 +55,58 @@ VENDOR_LOG_ALLOW = (Path.home() / ".com.futunn.FutuOpenD" / "Log",)
 #   名额只在合格集合内发放, 被拒者不占额度也不回流, 由剩余合格队列补位。
 FROZEN_SURFACED = [
     {"symbol": "TESTG", "direction": "LONG", "confidence": 0.95,
-     "thesis": "frozen: no quote → UNKNOWN (缺数≠拒绝)", "causal_chain": "chain-g",
-     "invalidation": "invalid-g", "sector": "TEST"},
+     "thesis": "frozen: no quote → UNKNOWN (缺数≠拒绝)",
+     "evidence_ref": "ev-g",
+     "causal_chain": "事实: chain-g; 传导假设: chain-g; 市场确认: chain-g",
+     "invalidation": "invalid-g", "counter_evidence": "none-g",
+     "confidence_basis": "THESIS_ONLY", "event_phase": "ONE_SHOT",
+     "move_basis": "UNQUALIFIED", "sector": "TEST"},
     {"symbol": "TESTB", "direction": "LONG", "confidence": 0.90,
-     "thesis": "frozen: stale quote → REJECT", "causal_chain": "chain-b",
-     "invalidation": "invalid-b", "sector": "TEST"},
+     "thesis": "frozen: stale quote → REJECT",
+     "evidence_ref": "ev-b",
+     "causal_chain": "事实: chain-b; 传导假设: chain-b; 市场确认: chain-b",
+     "invalidation": "invalid-b", "counter_evidence": "none-b",
+     "confidence_basis": "THESIS_ONLY", "event_phase": "ONE_SHOT",
+     "move_basis": "UNQUALIFIED", "sector": "TEST"},
     {"symbol": "TESTA", "direction": "LONG", "confidence": 0.80,
-     "thesis": "frozen: healthy → PASS", "causal_chain": "chain-a",
-     "invalidation": "invalid-a", "sector": "TEST"},
+     "thesis": "frozen: healthy → PASS",
+     "evidence_ref": "ev-a",
+     "causal_chain": "事实: chain-a; 传导假设: chain-a; 市场确认: chain-a",
+     "invalidation": "invalid-a", "counter_evidence": "none-a",
+     "confidence_basis": "THESIS_ONLY", "event_phase": "ONE_SHOT",
+     "move_basis": "UNQUALIFIED", "sector": "TEST"},
     {"symbol": "TESTC", "direction": "LONG", "confidence": 0.75,
-     "thesis": "frozen: $3 below floor → REJECT", "causal_chain": "chain-c",
-     "invalidation": "invalid-c", "sector": "TEST"},
+     "thesis": "frozen: $3 below floor → REJECT",
+     "evidence_ref": "ev-c",
+     "causal_chain": "事实: chain-c; 传导假设: chain-c; 市场确认: chain-c",
+     "invalidation": "invalid-c", "counter_evidence": "none-c",
+     "confidence_basis": "THESIS_ONLY", "event_phase": "ONE_SHOT",
+     "move_basis": "UNQUALIFIED", "sector": "TEST"},
     {"symbol": "TESTD", "direction": "SHORT", "confidence": 0.70,
-     "thesis": "frozen: ATR 0.5% → REJECT low_atr", "causal_chain": "chain-d",
-     "invalidation": "invalid-d", "sector": "TEST"},
+     "thesis": "frozen: ATR 0.5% → REJECT low_atr",
+     "evidence_ref": "ev-d",
+     "causal_chain": "事实: chain-d; 传导假设: chain-d; 市场确认: chain-d",
+     "invalidation": "invalid-d", "counter_evidence": "none-d",
+     "confidence_basis": "THESIS_ONLY", "event_phase": "ONE_SHOT",
+     "move_basis": "UNQUALIFIED",
+     "short_check": {"provided": True, "borrow_feasible": True,
+                     "borrow_data_basis": "UNKNOWN",
+                     "downside_catalyst_expiry_hours": 24, "squeeze_risk": 2},
+     "sector": "TEST"},
     {"symbol": "TESTE", "direction": "LONG", "confidence": 0.68,
-     "thesis": "frozen: healthy → PASS", "causal_chain": "chain-e",
-     "invalidation": "invalid-e", "sector": "TEST"},
+     "thesis": "frozen: healthy → PASS",
+     "evidence_ref": "ev-e",
+     "causal_chain": "事实: chain-e; 传导假设: chain-e; 市场确认: chain-e",
+     "invalidation": "invalid-e", "counter_evidence": "none-e",
+     "confidence_basis": "THESIS_ONLY", "event_phase": "ONE_SHOT",
+     "move_basis": "UNQUALIFIED", "sector": "TEST"},
     {"symbol": "TESTF", "direction": "LONG", "confidence": 0.66,
-     "thesis": "frozen: healthy but budget_cut", "causal_chain": "chain-f",
-     "invalidation": "invalid-f", "sector": "TEST"},
+     "thesis": "frozen: healthy but budget_cut",
+     "evidence_ref": "ev-f",
+     "causal_chain": "事实: chain-f; 传导假设: chain-f; 市场确认: chain-f",
+     "invalidation": "invalid-f", "counter_evidence": "none-f",
+     "confidence_basis": "THESIS_ONLY", "event_phase": "ONE_SHOT",
+     "move_basis": "UNQUALIFIED", "sector": "TEST"},
 ]
 
 # 冻结配置: 只改本链必需的旋钮, 阈值仍走活 yaml (load_candidate_policy 单一真源)。
@@ -86,7 +118,10 @@ FROZEN_CFG = {
     "universe_expansion.min_price_floor": 5,
     "universe_expansion.premarket_anchor": True,
     "universe_expansion.same_symbol_cooldown_days": 0,
-    "universe_expansion.prompt_version": "v1",
+    # 2026-10-08 修: 对齐生产 yaml (v2)。冻结在 v1 时 _normalize_surfaced 不透传
+    # 契约字段 (invalidation/counter_evidence/...) ⇒ 7/7 结构性违约 → repair
+    # 二次 LLM 调用 → "llm exactly once" 契约假红。
+    "universe_expansion.prompt_version": "v2",
     "universe_expansion.midday_shadow_enabled": False,
     "universe_expansion.da_candidate_feed": False,
     "universe_expansion.inject_reject_log": True,
@@ -345,8 +380,13 @@ def run(workdir: Path, db_path: Path) -> dict:
     # 隔离在导入之后装: `import futu` 自身要开供应商日志 (见 VENDOR_LOG_ALLOW)。
     install_isolation(workdir, violations, db_path)
 
-    def fake_call_llm(task, brief, **kwargs):
-        llm_calls.append({"task": task, "brief_len": len(str(brief)),
+    def fake_call_llm(*args, **kwargs):
+        # 2026-10-08 修: call_llm 现存两种调用形 — (task, brief) 位置形与
+        # (feature=..., prompt=...) 关键字形 (合同修复臂) — 存根须两形通吃,
+        # 否则合同修复路径 TypeError 被观测模式吞掉, 扫描带病继续。
+        _task = args[0] if args else kwargs.get("feature")
+        _brief = args[1] if len(args) > 1 else kwargs.get("prompt")
+        llm_calls.append({"task": _task, "brief_len": len(str(_brief)),
                           "max_tokens": kwargs.get("max_tokens"),
                           "json_mode": kwargs.get("json_mode")})
         return SimpleNamespace(success=True, model_used="frozen-stub-llm",
@@ -380,10 +420,28 @@ def run(workdir: Path, db_path: Path) -> dict:
                  "symbol TEXT, direction TEXT, trade_date TEXT, source_type TEXT, "
                  "entry_price REAL, quantity INTEGER, entry_time TEXT, exit_time TEXT)")
     conn.commit()
+    # 2026-10-08 修: db._conn 现以 connection(db_name) 位置参调用 — 存根须两形兼容
+    # (旧形 connection() 零参), 否则 ensure_tables 当场 TypeError。
     undo.append(patch("app.playbook.db.get_db",
-                      lambda name: SimpleNamespace(connection=lambda: conn)))
+                      lambda name: SimpleNamespace(connection=lambda *a, **kw: conn)))
 
     # ── SIM 身份前置条件 (计划 P0.2): 非 SIM 直接失败, 不降级 ──
+    # 2026-10-08 修 (DEB-20261008-pipeline-refactor §9.2 前置债): 生产 .env.us 是
+    # LIVE-capable (ALLOW_REAL_TRADING=true 探针授权态) — 本离线链的身份判定须读
+    # workdir 冻结 SIM 副本, 而非生产 .env.us。只设子进程 env 不够:
+    # read_startup_mode_snapshot 的**文件读取优先于 env** (app/core/trading_mode.py:59),
+    # 故必须把 _ENV_FILE 改道到 workdir; 同时把三个身份键**显式置 SIM 值**
+    # (不能只 pop — config 包的 load_dotenv(override=False) 会在 scan 深层
+    # 懒导入时把生产 .env.us 的 ALLOW_REAL_TRADING=true 重新灌进 os.environ,
+    # 第二个 require_auto_sim (cmd_inject) 又会红)。
+    _env_frozen = workdir / ".env.us"
+    _env_frozen.write_text(
+        "AUTO_TRADE_ACCOUNT=sim\nTRADE_ENV=1\nALLOW_REAL_TRADING=false\n",
+        encoding="utf-8")
+    os.environ["AUTO_TRADE_ACCOUNT"] = "sim"
+    os.environ["TRADE_ENV"] = "1"
+    os.environ["ALLOW_REAL_TRADING"] = "false"
+    undo.append(patch("app.core.trading_mode._ENV_FILE", _env_frozen))
     from app.playbook.candidate_eligibility import require_auto_sim
     sim_mode = require_auto_sim()
 
@@ -392,7 +450,9 @@ def run(workdir: Path, db_path: Path) -> dict:
            "violations": violations, "stages": {}}
 
     # ══ Stage 1: UE scan (冻结材料 + stub LLM) ══
-    rc_scan = ue.cmd_scan()
+    # force_window: 离线链设计=冻结材料+随时可跑, 不绑真实墙钟窗口
+    # (2026-10-08 修: 修完 require_auto_sim 后暴露的时间依赖第二层)。
+    rc_scan = ue.cmd_scan(force_window=True)
     scan_rows = [json.loads(x) for x in
                  (workdir / "scan.jsonl").read_text(encoding="utf-8").splitlines() if x.strip()]
     out["stages"]["ue_scan"] = {

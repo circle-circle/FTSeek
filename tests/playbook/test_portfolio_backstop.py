@@ -33,7 +33,8 @@ import yaml  # noqa: E402
 
 from app.playbook.pipeline import _portfolio_backstop_evaluate  # noqa: E402
 
-_PIPE_SRC = (PROJECT_ROOT / "app" / "playbook" / "pipeline.py").read_text(encoding="utf-8")
+_PIPE_SRC = (PROJECT_ROOT / "app" / "playbook" / "pipeline_parts" /
+             "exit_monitor_flow.py").read_text(encoding="utf-8")
 _CFG_PATH = PROJECT_ROOT / "config" / "unified_config.yaml"
 
 # 保守档 (绝对下限主导): max(500, 100×1.5=150) = 500
@@ -243,7 +244,7 @@ class TestConservativeInputs:
 
 def _monitor_fn_span():
     start = _PIPE_SRC.index("def monitor_playbook_exits(")
-    nxt = _PIPE_SRC.index("\ndef ", start + 10)
+    nxt = len(_PIPE_SRC)
     return start, nxt
 
 
@@ -265,7 +266,7 @@ class TestWiringContract:
     def test_breach_path_alerts_critical_and_pushes(self):
         start, end = _monitor_fn_span()
         body = _PIPE_SRC[start:end]
-        idx = body.index("_portfolio_backstop_evaluate")
+        idx = body.index("_bs_agg = _portfolio_backstop_evaluate(")
         block = body[idx:idx + 4000]
         assert "logger.critical" in block, "越线必须 critical (G-13 同族: 静默失效不可接受)"
         assert "push_text" in block, "越线必须外推 (进程内 logger 不够 — 需人看到)"

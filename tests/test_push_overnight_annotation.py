@@ -95,8 +95,8 @@ class TestPipelineOvernightCalc:
 
     def test_pipeline_wires_overnights_into_payload(self):
         """源级契约钉: pipeline 平仓推送构造处必须把 overnights 写进 _px_extra。"""
-        import inspect
-        from app.playbook import pipeline as pl
-        src = inspect.getsource(pl)
+        from pathlib import Path
+        src = (Path(__file__).resolve().parents[1] / "app" / "playbook"
+               / "pipeline_parts" / "close_flow.py").read_text(encoding="utf-8")
         assert '"overnights": _overnights_et' in src
         assert "parse_iso_safe" in src   # 用真实 API (曾因臆测 parse_time 差点接线死)

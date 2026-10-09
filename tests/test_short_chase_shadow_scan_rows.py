@@ -14,7 +14,9 @@ from app.playbook.pipeline import _short_chase_shadow_row
 from app.playbook import shadow_registry as sr
 
 REPO = Path(__file__).resolve().parents[1]
-SRC = (REPO / "app" / "playbook" / "pipeline.py").read_text(encoding="utf-8")
+PIPELINE_SRC = (REPO / "app" / "playbook" / "pipeline.py").read_text(encoding="utf-8")
+TRIGGER_SRC = (REPO / "app" / "playbook" / "pipeline_parts" / "trigger_flow.py").read_text(
+    encoding="utf-8")
 
 
 def test_hit_row_contract():
@@ -48,9 +50,9 @@ def test_writer_wires_helper_and_dedup():
 
     防「静默恢复旧行为」(只写过阈值行 = 无对照臂) 或「扫描行逐轮灌水」。
     """
-    assert "_scb_scan_logged" in SRC and "_scb_scan_logged: set = set()" in SRC
-    assert "_short_chase_shadow_row(" in SRC.split("def _short_chase_shadow_row", 1)[1]
-    body = SRC.split("SHORT 禁追涨 shadow", 1)[1]
+    assert "_scb_scan_logged" in TRIGGER_SRC
+    assert "_short_chase_shadow_row(" in TRIGGER_SRC
+    body = TRIGGER_SRC.split("SHORT 禁追涨 shadow", 1)[1]
     assert "_scb_scan_logged.add(_scb_key)" in body, "扫描行去重集合未接线"
     assert "_scb_key = (_scb_inst_id, _scb_date)" in body, "去重键必须含 ET 日期"
     # 旧行为「只有在过阈值时才落行」必须已消失

@@ -2,7 +2,7 @@
 
 被测对象:
   `app/playbook/db.py::PlaybookDB.merge_instruction_metadata` (新增)
-  `app/playbook/pipeline.py::run_playbook_auto_execute` 的 re-price 现场 (源级契约)
+  `app/playbook/pipeline_parts/auto_execute_flow.py::run_playbook_auto_execute` 的 re-price 现场 (源级契约)
 
 立项依据 (DEB-20260910 §18.3 只读实测):
   `pipeline.py` 自 2026-06-29 起每次 re-price 都构造
@@ -39,7 +39,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from app.playbook.db import PlaybookDB, _TRACKING_FIELDS  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
-PIPELINE_SRC = (REPO / "app" / "playbook" / "pipeline.py").read_text(encoding="utf-8")
+PIPELINE_SRC = (REPO / "app" / "playbook" / "pipeline_parts" /
+                "auto_execute_flow.py").read_text(encoding="utf-8")
 
 # 生产库 metadata_json 里真实存在的既有注记键 (377 行非空, §18.3 实测键分布)
 PRODUCTION_META_KEYS = (

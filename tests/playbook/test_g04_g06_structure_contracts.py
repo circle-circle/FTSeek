@@ -37,7 +37,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import pytest
 
 _SVC = PROJECT_ROOT / "app" / "playbook" / "playbook_service.py"
-_PIPE = PROJECT_ROOT / "app" / "playbook" / "pipeline.py"
+_PIPE = PROJECT_ROOT / "app" / "playbook" / "pipeline_parts" / "auto_execute_flow.py"
 
 
 def _tree(path: Path) -> ast.Module:

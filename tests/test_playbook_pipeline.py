@@ -408,12 +408,18 @@ class TestCloseTradeRecord:
         assert "unregister" not in sealed_close_callbacks.calls
 
     def test_replacement_entry_order_survives_identical_snapshot(self, owned_conn, sealed_close_callbacks):
-        # upsert_position_simple preserves old entry_time on symbol conflict but changes this ID.
+        # upsert_position_simple preserves old entry_time on symbol conflict but changes
+        # the entry order. STOP order identity must not be mistaken for entry identity.
         owned_conn.execute("ALTER TABLE open_positions ADD COLUMN sl_broker_order_id TEXT")
-        owned_conn.execute("UPDATE open_positions SET sl_broker_order_id='entry-2'")
+        owned_conn.execute("ALTER TABLE open_positions ADD COLUMN entry_broker_order_id TEXT")
+        owned_conn.execute("UPDATE open_positions SET sl_broker_order_id='stop-2', entry_broker_order_id='entry-2'")
         owned_conn.commit()
         assert self.book(owned_conn) is True
-        assert owned_conn.execute("SELECT sl_broker_order_id FROM open_positions").fetchone()[0] == "entry-2"
+        row = owned_conn.execute(
+            "SELECT sl_broker_order_id, entry_broker_order_id FROM open_positions"
+        ).fetchone()
+        assert row[0] == "stop-2"
+        assert row[1] == "entry-2"
         assert "tombstone" not in sealed_close_callbacks.calls
         assert "unregister" not in sealed_close_callbacks.calls
 

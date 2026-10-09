@@ -85,8 +85,12 @@ class TestPipelineCaptureClampRemoved:
 
     def _src(self):
         from pathlib import Path
-        return (Path(__file__).resolve().parents[1] / "app" / "playbook"
-                / "pipeline.py").read_text(encoding="utf-8")
+        base = Path(__file__).resolve().parents[1] / "app" / "playbook" / "pipeline_parts"
+        return (
+            (base / "exit_monitor_flow.py").read_text(encoding="utf-8")
+            + "\n"
+            + (base / "close_flow.py").read_text(encoding="utf-8")
+        )
 
     def test_capture_clamp_removed(self):
         s = self._src()

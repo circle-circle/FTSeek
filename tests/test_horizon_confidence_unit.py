@@ -49,6 +49,7 @@ ALLOWED_CONSUMERS = {
     "app/playbook/db.py",                  # 建表 + 写入/更新 (schema 列)
     "app/playbook/instruction_generator.py",  # Instruction dataclass 字段, 默认 0.0
     "app/playbook/pipeline.py",            # 取 decision.confidence 落库; 异常兜底写 0.0
+    "app/playbook/pipeline_parts/instruction_builder.py",  # 重构迁出: 同 pipeline.py 原消费 (pass-through)
     "app/playbook/playbook_service.py",    # 看板透传 (只呈现, 不判定)
     "app/playbook/shadow_tracker.py",      # DEBUG 日志 (只呈现, 不判定)
 }

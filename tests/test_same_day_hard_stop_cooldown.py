@@ -128,8 +128,8 @@ class TestCooldownGate:
         """SSOT: 门引用的原因集与再入场通道是同一常量对象 (禁双份清单漂移)。"""
         import app.playbook.intraday_reentry as ir
         import inspect
-        from app.playbook import pipeline
-        src = inspect.getsource(pipeline._check_same_day_hard_stop_cooldown)
+        from app.playbook.pipeline_parts import risk_gates
+        src = inspect.getsource(risk_gates._check_same_day_hard_stop_cooldown)
         assert "_HARD_STOP_REASONS" in src
         # 关键硬止损原因必须在集内 (9/24 两笔的出场原因)
         assert "OVERNIGHT_GAP_STOP" in ir._HARD_STOP_REASONS
@@ -141,8 +141,8 @@ class TestWiring:
 
     def test_gate_wired_in_auto_execute(self):
         import inspect
-        from app.playbook import pipeline
-        src = inspect.getsource(pipeline.run_playbook_auto_execute)
+        from app.playbook.pipeline_parts import auto_execute_flow
+        src = inspect.getsource(auto_execute_flow.run_playbook_auto_execute)
         assert "same_day_hard_stop_cooldown" in src
         assert "_check_same_day_hard_stop_cooldown" in src
         assert "skipped_hard_stop_cooldown" in src  # 审计行可归因

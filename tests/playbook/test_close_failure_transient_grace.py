@@ -153,12 +153,12 @@ class TestDedupAndHygiene:
     """去重键与长跑卫生不因本次改动回归"""
 
     def test_same_symbol_day_reason_pushed_once(self, pipeline):
-        """终态重复命中仍按 symbol+day+reason 去重 (原 2026-07-20 行为)"""
+        """终态重复命中的 ERROR 与飞书都按 symbol+day+reason 去重"""
         for _ in range(4):
             pipeline._alert_close_failure("US.DUP", "sim", "EXIT_HELD", "d",
                                           error="exit_identity_required")
         assert len(_pushes(pipeline._TEST_pushed)) == 1
-        assert len(_errors(pipeline._TEST_pushed)) == 4, "ERROR 每轮都记 (日志不去重)"
+        assert len(_errors(pipeline._TEST_pushed)) == 1
 
     def test_never_raises(self, pipeline, monkeypatch):
         """永不抛异常 (record-only 契约): 推送炸了也不影响平仓主流程"""

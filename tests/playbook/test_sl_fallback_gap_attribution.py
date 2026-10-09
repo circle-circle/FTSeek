@@ -87,7 +87,8 @@ def test_reentry_gate_treats_both_reasons_identically():
 
 def test_fallback_call_site_uses_the_attribution_helper():
     """防"抽了函数忘了接线": 兜底记账必须走 _sl_fallback_exit_reason."""
-    src = inspect.getsource(pb.monitor_playbook_sim_exits)
+    from app.playbook.pipeline_parts import exit_monitor_flow
+    src = inspect.getsource(exit_monitor_flow.monitor_playbook_exits)
     assert "_sl_fallback_exit_reason(" in src
     assert '_close_trade_record(conn, r["id"], _exit_price, "SL_INITIAL"' not in src, \
         "兜底处仍硬编码 SL_INITIAL — 跳空归因未接线"

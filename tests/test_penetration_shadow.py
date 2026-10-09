@@ -220,7 +220,8 @@ def test_scorer_match_and_bad_op():
 
 # ── 6. 源级契约 ────────────────────────────────────────────
 def test_pipeline_hook_present():
-    src = (REPO / "app" / "playbook" / "pipeline.py").read_text(encoding="utf-8")
+    src = (REPO / "app" / "playbook" / "pipeline_parts"
+           / "exit_monitor_flow.py").read_text(encoding="utf-8")
     idx = src.find("record_penetration")
     assert idx > 0, "pipeline 净保本限价块必须埋 record_penetration"
     block = src[max(0, idx - 800):idx]

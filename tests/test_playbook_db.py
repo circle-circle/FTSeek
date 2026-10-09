@@ -548,9 +548,10 @@ class TestUpsertSourcePriority:
 
     def test_src_priority_ordering(self):
         """预算排序契约: UE(2) > DA(1) > 其他(0) — 新源接入必须显式定级"""
-        import inspect
-        from app.playbook import pipeline as pl
-        src = inspect.getsource(pl)
+        from pathlib import Path as _P
+        src = (_P(__file__).resolve().parent.parent
+               / "app" / "playbook" / "pipeline_parts" / "auto_execute_flow.py"
+               ).read_text(encoding="utf-8")
         assert 'did.startswith("universe_expansion")' in src
         # 从源码提取并执行 _src_priority 语义 (嵌套函数, 用等价断言)
         def _src_priority(inst):

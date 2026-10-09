@@ -138,7 +138,20 @@
     "app/playbook/market_regime.py": 6,
     "app/playbook/overnight_decision.py": 1,
     "app/playbook/overnight_hold_shadow.py": 1,
-    "app/playbook/pipeline.py": 71,
+    "app/playbook/pipeline.py": 15,
+    "app/playbook/pipeline_parts/auto_execute_flow.py": 13,
+    "app/playbook/pipeline_parts/close_flow.py": 3,
+    "app/playbook/pipeline_parts/exit_monitor_flow.py": 5,
+    "app/playbook/pipeline_parts/overnight_cleanup.py": 2,
+    "app/playbook/pipeline_parts/bridge_adapters.py": 1,
+    "app/playbook/pipeline_parts/execution_flow.py": 3,
+    "app/playbook/pipeline_parts/generation_flow.py": 8,
+    "app/playbook/pipeline_parts/instruction_builder.py": 3,
+    "app/playbook/pipeline_parts/portfolio_guardrails.py": 1,
+    "app/playbook/pipeline_parts/risk_gates.py": 10,
+    "app/playbook/pipeline_parts/signal_context_store.py": 1,
+    "app/playbook/pipeline_parts/trigger_flow.py": 5,
+    "app/playbook/pipeline_parts/tracking_flow.py": 1,
     "app/playbook/playbook_service.py": 33,
     "app/playbook/reentry_tp_shadow.py": 1,
     "app/playbook/risk_circuit_breaker.py": 3,
@@ -1676,6 +1689,46 @@
       {
         "line": 82,
         "code": "logger.warning('[隔夜shadow] 写入失败: %s', e)"
+      }
+    ],
+    "app/playbook/pipeline_parts/bridge_adapters.py": [
+      {
+        "line": 75,
+        "code": "logger.warning(f'[TechnicalFallback] {symbol} technical 评估异常: {type(e).__name__}: {e}')"
+      }
+    ],
+    "app/playbook/pipeline_parts/instruction_builder.py": [
+      {
+        "line": 62,
+        "code": "logger.warning(f'[playbook] {symbol} get_full_market_context 异常: {e}')"
+      },
+      {
+        "line": 147,
+        "code": "logger.warning(f'[playbook] {symbol} 信号快照记录失败(非阻断, IC管线将缺此样本): decision_id={decision_id}, err={error}')"
+      },
+      {
+        "line": 248,
+        "code": "logger.warning(f'[playbook] {symbol} Horizon 选择失败: {error}, 默认 short')"
+      }
+    ],
+    "app/playbook/pipeline_parts/portfolio_guardrails.py": [
+      {
+        "line": 55,
+        "code": "logger.warning(f'[playbook] vault industry 读取失败 (fail-open, sector 维持原值): {error}')"
+      }
+    ],
+    "app/playbook/pipeline_parts/risk_gates.py": [
+      {
+        "line": 37,
+        "code": "logger.warning(f'[playbook] 日亏熔断: 净值读取失败, 本轮跳过 (fail-open): {error}')"
+      },
+      {
+        "line": 153,
+        "code": "logger.warning(f'[playbook] 连续亏损检查失败 (fail-close): {error}')"
+      },
+      {
+        "line": 189,
+        "code": "logger.error(f'[playbook] graduation gate 异常 (fail-close): {error}')"
       }
     ],
     "app/playbook/pipeline.py": [

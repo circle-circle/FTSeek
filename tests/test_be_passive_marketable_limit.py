@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-_SRC = Path(__file__).resolve().parents[1] / "app" / "playbook" / "pipeline.py"
+_SRC = Path(__file__).resolve().parents[1] / "app" / "playbook" / "pipeline_parts" / "exit_monitor_flow.py"
 _CFG_SRC = Path(__file__).resolve().parents[1] / "app" / "playbook" / "config.py"
 _YAML = Path(__file__).resolve().parents[1] / "config" / "unified_config.yaml"
 
@@ -68,6 +68,64 @@ def test_telemetry_records_path_and_floor():
     seg = b[t:t + 400]
     for k in ('"path"', '"floor_px"', '"pad_bps"', '"limit_side"'):
         assert k in seg, f"遥测必须含 {k} (议题二毕业判分: 被动侧笔数与净结局按路径分组)"
+
+
+@pytest.mark.parametrize(
+    "direction,fill_price,expected_bps,expected_delta,expected_breach",
+    [
+        ("LONG", 99.0, -100.0, -10.0, 10.0),
+        ("SHORT", 99.0, 100.0, 10.0, 0.0),
+        ("SHORT", 101.0, -100.0, -10.0, 10.0),
+    ],
+)
+def test_be_close_telemetry_is_direction_aware(
+        direction, fill_price, expected_bps, expected_delta, expected_breach):
+    from app.playbook.pipeline import _annotate_breakeven_close_telemetry
+
+    meta = {
+        "_be_close_telemetry": {"limit_px": 100.0, "floor_px": 100.0},
+        "_be_net_line_price": 100.0,
+    }
+    _annotate_breakeven_close_telemetry(
+        meta, fill_price, direction, 10.0, "market_fallback")
+    telemetry = meta["_be_close_telemetry"]
+    assert telemetry["outcome"] == "limit_fallback_market"
+    assert telemetry["fallback_fill"] == fill_price
+    assert telemetry["floor_enforced"] is False
+    assert telemetry["fill_vs_net_line_bps"] == expected_bps
+    assert telemetry["net_line_delta_usd"] == expected_delta
+    assert telemetry["net_breach_usd"] == expected_breach
+    assert telemetry["drift_basis"] == "floor_px"
+
+
+def test_be_close_telemetry_marks_enforced_limit_fill():
+    from app.playbook.pipeline import _annotate_breakeven_close_telemetry
+
+    meta = {
+        "_be_close_telemetry": {"limit_px": 100.0, "floor_px": 100.0},
+        "_be_net_line_price": 100.0,
+    }
+    _annotate_breakeven_close_telemetry(
+        meta, 100.0, "LONG", 10.0, "broker_limit_deal")
+    telemetry = meta["_be_close_telemetry"]
+    assert telemetry["outcome"] == "limit_filled"
+    assert telemetry["floor_enforced"] is True
+    assert telemetry["fill_vs_net_line_bps"] == 0.0
+    assert telemetry["net_breach_usd"] == 0.0
+
+
+def test_be_close_telemetry_reports_missing_floor():
+    from app.playbook.pipeline import _annotate_breakeven_close_telemetry
+
+    meta = {"_be_close_telemetry": {"limit_px": 100.0}}
+    _annotate_breakeven_close_telemetry(
+        meta, 99.0, "LONG", 10.0, "market_fallback")
+    telemetry = meta["_be_close_telemetry"]
+    assert telemetry["drift_from_be_line"] is None
+    assert telemetry["fill_vs_net_line_bps"] is None
+    assert telemetry["net_line_delta_usd"] is None
+    assert telemetry["net_breach_usd"] is None
+    assert telemetry["drift_basis"] == "missing"
 
 
 def test_config_key_default_15_in_yaml():

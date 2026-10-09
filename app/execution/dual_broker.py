@@ -352,6 +352,19 @@ class DualBrokerAdapter:
             result['exit_intent_id'] = intent_id
             return result
 
+    def release_exit_intent(self, intent_id: str, *, reason: str,
+                            evidence: dict | None = None,
+                            kind: str = "manual_release") -> tuple:
+        """Archive and delete one durable exit intent without submitting an order."""
+        try:
+            lifecycle = self._exit_lifecycle()
+            return lifecycle.ledger.archive_and_delete(
+                intent_id, reason=reason, now=lifecycle.clock.time(),
+                evidence=evidence or {}, kind=kind)
+        except Exception:
+            logger.exception('[DualBroker] exit intent release failed intent=%s', intent_id)
+            return None, 'exit_release_error'
+
     def acknowledge_close(self, intent_id: str, receipt: dict) -> bool:
         try:
             lifecycle = self._exit_lifecycle()

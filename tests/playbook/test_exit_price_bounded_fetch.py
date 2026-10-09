@@ -20,6 +20,7 @@ import os
 import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -119,11 +120,11 @@ class TestExitCallSiteIsBounded:
 
     @staticmethod
     def _monitor_body() -> str:
-        src = pb.__file__
+        src = str(Path(pb.__file__).parent / "pipeline_parts" / "exit_monitor_flow.py")
         with open(src, "r", encoding="utf-8") as fh:
             text = fh.read()
         start = text.index("def monitor_playbook_exits(")
-        return text[start:text.index("\ndef ", start + 10)]
+        return text[start:]
 
     def test_batch_and_single_fetches_go_through_bounded_helper(self):
         # 去掉注释行再断言 (注释里保留了历史直调写法的说明)

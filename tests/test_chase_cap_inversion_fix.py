@@ -32,11 +32,28 @@ from app.playbook.entry_routing import chase_cap_violated  # noqa: E402
 from app.playbook import pipeline as pl  # noqa: E402
 
 _SRC_PIPE = os.path.join(os.path.dirname(__file__), "..", "app", "playbook", "pipeline.py")
+# [RFC-060 phase1] pipeline 大重构后:
+#   - 倒挂归一化块 (norm/band-edge/orig_cap) 迁入 pipeline_parts/auto_execute_flow.py
+#   - _write_round_skip_reason 定义留 pipeline.py, 两处调用迁入 pipeline_parts/trigger_flow.py
+# 双源拼接保住所有锚字符串 (def + 调用两侧)。
+_SRC_AEF = os.path.join(
+    os.path.dirname(__file__), "..", "app", "playbook",
+    "pipeline_parts", "auto_execute_flow.py",
+)
+_SRC_TF = os.path.join(
+    os.path.dirname(__file__), "..", "app", "playbook",
+    "pipeline_parts", "trigger_flow.py",
+)
 
 
 def _src(path: str) -> str:
     with open(path, encoding="utf-8") as f:
         return f.read()
+
+
+def _src_pipe_all() -> str:
+    """pipeline.py + 两个新宿主的拼接 (供源级契约断言)。"""
+    return _src(_SRC_PIPE) + "\n" + _src(_SRC_AEF) + "\n" + _src(_SRC_TF)
 
 
 # ── ① normalize_chase_cap 纯函数 ─────────────────────────────────────
@@ -101,7 +118,7 @@ class TestNormalizePure:
 # ── ② 执行层锚纪律 (源级契约) ────────────────────────────────────────
 class TestGateAnchorContract:
     def setup_method(self):
-        self.s = _src(_SRC_PIPE)
+        self.s = _src_pipe_all()
 
     def test_normalization_wired_before_violation_check(self):
         """归一必须在违例判定之前 (否则死锁原样)。"""
@@ -268,7 +285,7 @@ class TestRoundSkipReasonWriteback:
         pl._write_round_skip_reason(inst, "vwap_gate_blocked(dev=-1%,逆BUY,下轮复评)")  # 不抛
 
     def test_wired_into_both_gates(self):
-        s = _src(_SRC_PIPE)
+        s = _src_pipe_all()
         assert s.count("_write_round_skip_reason(") >= 3  # def + VWAP门 + 证伪斜率门
         assert 'f"vwap_gate_blocked(dev=' in s
         assert 'f"falsification_slope_blocked(slope=' in s

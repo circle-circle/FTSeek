@@ -288,7 +288,7 @@ class TestSourceSplitTelemetry:
 
     @staticmethod
     def _src():
-        return (ROOT / "app" / "playbook" / "pipeline.py").read_text(encoding="utf-8")
+        return (ROOT / "app" / "playbook" / "pipeline_parts" / "trigger_flow.py").read_text(encoding="utf-8")
 
     def test_telemetry_row_has_decision_id(self):
         """trigger_miss 遥测必须带 decision_id — 无此字段对比组不可拆分."""

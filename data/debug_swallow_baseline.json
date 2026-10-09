@@ -92,7 +92,16 @@
   "app/playbook/feishu_push.py": 1,
   "app/playbook/ic_tracker.py": 3,
   "app/playbook/overnight_decision.py": 4,
-  "app/playbook/pipeline.py": 47,
+    "app/playbook/pipeline.py": 7,
+    "app/playbook/pipeline_parts/auto_execute_flow.py": 3,
+    "app/playbook/pipeline_parts/close_flow.py": 9,
+    "app/playbook/pipeline_parts/exit_monitor_flow.py": 3,
+    "app/playbook/pipeline_parts/overnight_cleanup.py": 1,
+    "app/playbook/pipeline_parts/generation_flow.py": 3,
+    "app/playbook/pipeline_parts/intraday_indicators.py": 1,
+    "app/playbook/pipeline_parts/instruction_builder.py": 1,
+    "app/playbook/pipeline_parts/runtime_context.py": 3,
+    "app/playbook/pipeline_parts/tracking_flow.py": 15,
   "app/playbook/playbook_service.py": 8,
   "app/playbook/premarket_invalidation.py": 1,
   "app/playbook/screener.py": 2,
@@ -1074,7 +1083,33 @@
     "code": "logger.debug(f'[overnight_decision] W_WEEK 判定异常 {symbol} (不豁免): {_ew}')"
    }
   ],
-  "app/playbook/pipeline.py": [
+    "app/playbook/pipeline_parts/runtime_context.py": [
+      {
+        "line": 63,
+        "code": "logger.debug(f'FutuExtendedProvider init skipped: {e}')"
+      },
+      {
+        "line": 110,
+        "code": "logger.debug(f'[playbook] 动态池合并失败, 使用静态 watchlist: {e}')"
+      },
+      {
+        "line": 133,
+        "code": "logger.debug(f'[playbook] 持仓读取失败 (行业集中度检查将降级): {e}')"
+      }
+    ],
+    "app/playbook/pipeline_parts/instruction_builder.py": [
+      {
+        "line": 161,
+        "code": "logger.debug(f'[playbook] technical 信号评估异常: {error}')"
+      }
+    ],
+    "app/playbook/pipeline_parts/intraday_indicators.py": [
+      {
+        "line": 162,
+        "code": "logger.debug(f'[playbook] 连败封禁查询异常 (fail-open): {error}')"
+      }
+    ],
+    "app/playbook/pipeline.py": [
    {
     "line": 487,
     "code": "logger.debug(f'[playbook] 方向审计日志失败: {e}')"

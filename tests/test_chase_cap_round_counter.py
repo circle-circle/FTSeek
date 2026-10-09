@@ -33,6 +33,12 @@ das = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(das)
 
 _SRC_PIPE = (PROJECT_ROOT / "app" / "playbook" / "pipeline.py").read_text(encoding="utf-8")
+# [RFC-060 phase1] pipeline 重构后 enforce 块/遥测文案迁入 pipeline_parts/auto_execute_flow.py;
+# 本轮测试的计数/文案/分流锚字符串全在新宿主, 单独拼一份给源级纪律断言用。
+_SRC_AEF = (
+    PROJECT_ROOT / "app" / "playbook" / "pipeline_parts" / "auto_execute_flow.py"
+).read_text(encoding="utf-8")
+_SRC_ENFORCE = _SRC_PIPE + "\n" + _SRC_AEF
 
 
 @pytest.fixture(autouse=True)
@@ -110,16 +116,16 @@ def test_dedup_still_separates_different_templates():
 
 # ── ③ 源级纪律 ──────────────────────────────────────────────────
 def test_warning_carries_the_round_counter():
-    assert "同指令累计第{_cc_rounds}轮" in _SRC_PIPE
-    assert '_cc_rounds = _chase_cap_round_bump(inst["id"])' in _SRC_PIPE
+    assert "同指令累计第{_cc_rounds}轮" in _SRC_ENFORCE
+    assert '_cc_rounds = _chase_cap_round_bump(inst["id"])' in _SRC_ENFORCE
 
 
 def test_counter_taken_after_enforce_actions_not_before():
     """计数必须在落痕/审计**之后**取 — 观测面排在判定面后面, 不可能反过来影响判定。"""
-    enforce_pos = _SRC_PIPE.index("if _cc_enforce:")
-    audit_pos = _SRC_PIPE.index('action="skipped_chase_cap"', enforce_pos)
-    bump_pos = _SRC_PIPE.index("_chase_cap_round_bump(inst[", enforce_pos)
-    gate_ok_pos = _SRC_PIPE.index("_cc_gate_ok = True", enforce_pos)
+    enforce_pos = _SRC_ENFORCE.index("if _cc_enforce:")
+    audit_pos = _SRC_ENFORCE.index('action="skipped_chase_cap"', enforce_pos)
+    bump_pos = _SRC_ENFORCE.index("_chase_cap_round_bump(inst[", enforce_pos)
+    gate_ok_pos = _SRC_ENFORCE.index("_cc_gate_ok = True", enforce_pos)
     assert audit_pos < bump_pos < gate_ok_pos
 
 
@@ -167,11 +173,11 @@ def test_enforce_decision_untouched():
     对空单方向说反 → 值班人把结构性死锁误读成"等回落"。改钉新契约: 两个方向
     文案字面量都必须在源码中, 且由 _dir 分流选择。
     """
-    assert "if _cc_violated(_dir, _new_entry, _cc_f):" in _SRC_PIPE
-    assert 'chase_cap_enforced(reprice=' in _SRC_PIPE
-    assert '"enforced": bool(_cc_enforce)' in _SRC_PIPE
-    assert "→ 本轮跳过 (每~5min重评, {_cc_release}; " in _SRC_PIPE
-    assert '"涨回帽上即放行"' in _SRC_PIPE   # SHORT 分支
-    assert '"回落帽下即放行"' in _SRC_PIPE   # BUY 分支
-    assert 'if str(_dir).upper() != "BUY"' in _SRC_PIPE  # 方向分流判据
-    assert "P0-A enforce)" in _SRC_PIPE
+    assert "if _cc_violated(_dir, _new_entry, _cc_f):" in _SRC_ENFORCE
+    assert 'chase_cap_enforced(reprice=' in _SRC_ENFORCE
+    assert '"enforced": bool(_cc_enforce)' in _SRC_ENFORCE
+    assert "→ 本轮跳过 (每~5min重评, {_cc_release}; " in _SRC_ENFORCE
+    assert '"涨回帽上即放行"' in _SRC_ENFORCE   # SHORT 分支
+    assert '"回落帽下即放行"' in _SRC_ENFORCE   # BUY 分支
+    assert 'if str(_dir).upper() != "BUY"' in _SRC_ENFORCE  # 方向分流判据
+    assert "P0-A enforce)" in _SRC_ENFORCE

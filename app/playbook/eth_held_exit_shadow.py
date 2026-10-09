@@ -127,7 +127,13 @@ def build_eth_held_rth_event(
     if not rth_open:
         return None
     quantity = float(intent.get("quantity") or 0.0)
-    dealt_qty = float(result.get("dealt_qty") or 0.0)
+    raw_dealt_qty = result.get("dealt_qty")
+    if raw_dealt_qty is None:
+        return None
+    try:
+        dealt_qty = float(raw_dealt_qty)
+    except (TypeError, ValueError):
+        return None
     remaining_qty = max(0.0, quantity - dealt_qty)
     if remaining_qty <= 0:
         return None

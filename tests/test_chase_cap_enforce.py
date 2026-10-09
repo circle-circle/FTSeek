@@ -32,7 +32,13 @@ from app.playbook.entry_routing import (  # noqa: E402
 )
 from scripts import llm_universe_scan as ue  # noqa: E402
 
-_SRC_PIPE = os.path.join(os.path.dirname(__file__), "..", "app", "playbook", "pipeline.py")
+# [RFC-060 phase1] pipeline 大重构后 enforce 本体迁入
+# app/playbook/pipeline_parts/auto_execute_flow.py, pipeline.py 留同名转发器。
+# 本测试锚字符串 (enforce 块/违例判定/去重/终态跳过) 全在新宿主, 重指源指针。
+_SRC_PIPE = os.path.join(
+    os.path.dirname(__file__), "..", "app", "playbook",
+    "pipeline_parts", "auto_execute_flow.py",
+)
 _SRC_ER = os.path.join(os.path.dirname(__file__), "..", "app", "playbook", "entry_routing.py")
 _SRC_YAML = os.path.join(os.path.dirname(__file__), "..", "config", "unified_config.yaml")
 

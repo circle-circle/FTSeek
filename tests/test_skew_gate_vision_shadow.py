@@ -19,7 +19,9 @@ import pytest
 
 import app.playbook.pipeline as P
 
-_SRC = (Path(__file__).resolve().parents[1] / "app" / "playbook" / "pipeline.py").read_text(
+_GUARD_SRC = (Path(__file__).resolve().parents[1] / "app" / "playbook" / "pipeline_parts" / "portfolio_guardrails.py").read_text(
+    encoding="utf-8")
+_PIPELINE_SRC = (Path(__file__).resolve().parents[1] / "app" / "playbook" / "pipeline.py").read_text(
     encoding="utf-8")
 
 
@@ -74,9 +76,9 @@ class TestShadowZeroBehaviorChange:
 
     def test_judgment_still_batch_vision_source_contract(self):
         """源级钉: majority_pct 判定仍用 batch 口径 (影子不得改判定分母)。"""
-        assert "majority_pct = max(buy_count, short_count) / total if total > 0 else 0" in _SRC
-        assert "if majority_pct > max_direction_skew:" in _SRC
-        assert "_trim_majority_direction(valid, majority_dir, max_direction_skew)" in _SRC
+        assert "majority_pct = max(buy_count, short_count) / total if total > 0 else 0" in _GUARD_SRC
+        assert "if majority_pct > max_direction_skew:" in _GUARD_SRC
+        assert "trim_direction(valid, majority_dir, max_direction_skew)" in _GUARD_SRC
 
 
 # ── ② 双口径计算正确性 (FakeDB + tmp jsonl, 零生产 I/O) ─────────────────
@@ -137,6 +139,26 @@ class TestShadowDualVision:
         assert rec["batch_vision"]["violates"] is False, "口径必须与真实 trim 行为对齐"
         assert rec["divergent"] is False
 
+    def test_sector_vision_records_g6_would_skip_without_culling(self, monkeypatch, tmp_path):
+        """F1 摘闸后 G6 也必须有事件级 would-skip 影子, 但不得改方向。"""
+        valid = [
+            _Inst("US.LOW", "BUY", confidence=40),
+            _Inst("US.MID", "BUY", confidence=50),
+            _Inst("US.HIGH", "BUY", confidence=80),
+            _Inst("US.OTHER", "SELL_SHORT", confidence=70),
+        ]
+        for item, sector in zip(valid, ["Technology", "Technology", "Technology", "Healthcare"]):
+            item.sector = sector
+        rec = self._emit(monkeypatch, tmp_path, [], valid)
+        assert all(item.direction != "SKIP" for item in valid)
+        assert rec["sector_vision"]["counts"] == {"Healthcare": 1, "Technology": 3}
+        violation = rec["sector_vision"]["violations"][0]
+        assert violation["sector"] == "Technology"
+        assert violation["count"] == 3
+        assert violation["pct"] == 0.75
+        assert violation["would_skip_count"] == 3
+        assert violation["would_skip_symbols"] == ["US.LOW", "US.MID", "US.HIGH"]
+
     def test_empty_today_skips(self, tmp_path, monkeypatch):
         """today 空 → 影子直接跳过, 不落盘不抛错 (fail-open)。"""
         monkeypatch.setattr(P, "__file__", str(tmp_path / "app" / "playbook" / "pipeline.py"))
@@ -171,7 +193,7 @@ class TestShadowDualVision:
         assert len(lines) == 2, "append-only 不得覆盖"
         r0, r1 = json.loads(lines[0]), json.loads(lines[1])
         assert set(r0) == set(r1) == {
-            "ts", "date", "batch_vision", "portfolio_vision", "divergent",
+            "ts", "date", "batch_vision", "portfolio_vision", "sector_vision", "divergent",
             "batch_symbols", "threshold", "note"}
         assert r0["batch_symbols"] == sorted(r0["batch_symbols"])
 
@@ -180,17 +202,21 @@ class TestShadowDualVision:
 class TestWiringContract:
     def test_emit_called_after_early_return_before_skew_judgment(self):
         """影子调用点必须在 len(valid)<=1 早返回之后、真实偏斜判定之前。"""
-        i_early = _SRC.find("if len(valid) <= 1:")
-        i_emit = _SRC.find("_emit_skew_gate_vision_shadow(valid, today, max_direction_skew)")
-        i_skew = _SRC.find("majority_pct = max(buy_count, short_count)")
+        i_early = _GUARD_SRC.find("if len(valid) <= 1:")
+        i_emit = _GUARD_SRC.find(
+            "emit_shadow(valid, today, max_direction_skew, max_sector_pct)"
+        )
+        i_skew = _GUARD_SRC.find("majority_pct = max(buy_count, short_count)")
         assert 0 < i_early < i_emit < i_skew, "影子须夹在早返回与真实判定之间"
 
     def test_builder_passes_today(self):
         """builder 调用 guardrail 必须传 today (否则影子恒跳过 = 死门)。"""
-        assert "_apply_portfolio_guardrails(instructions, today=today)" in _SRC
+        assert "_apply_portfolio_guardrails(instructions, today=today)" in _PIPELINE_SRC
 
     def test_call_site_has_fuse(self):
         """调用点必须包 try (双层防护: emit 自吞错 + 调用点保险丝)。"""
-        i = _SRC.find("_emit_skew_gate_vision_shadow(valid, today, max_direction_skew)")
-        ctx = _SRC[max(0, i - 200):i]
+        i = _GUARD_SRC.find(
+            "emit_shadow(valid, today, max_direction_skew, max_sector_pct)"
+        )
+        ctx = _GUARD_SRC[max(0, i - 200):i]
         assert "try:" in ctx, "调用点缺保险丝 — 遥测异常会杀交易路径"

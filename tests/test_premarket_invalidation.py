@@ -96,8 +96,11 @@ _GATE_ANCHOR = "# ── RFC-068"
 
 def test_gate_anchor_is_unique():
     """锚点自身守护: 若 `# ── RFC-068` 不再唯一 (或被删), 下面两个守卫同时失去意义。"""
+    # [RFC-060 phase1] pipeline 重构: B门硬门块迁入 pipeline_parts/auto_execute_flow.py,
+    # pipeline.py 不再带此锚; 源指针改指新宿主。
     from pathlib import Path
-    src = Path("app/playbook/pipeline.py").read_text(encoding="utf-8")
+    src = (Path("app/playbook/pipeline_parts/auto_execute_flow.py")
+           .read_text(encoding="utf-8"))
     assert src.count(_GATE_ANCHOR) == 1, (
         f"B门锚点 {_GATE_ANCHOR!r} 出现 {src.count(_GATE_ANCHOR)} 次 (须恰 1) — "
         "锚点漂移会让顺序/SSOT 两个守卫静默失效"
@@ -107,7 +110,8 @@ def test_gate_anchor_is_unique():
 def test_knife_gate_uses_ssot_rule_definition():
     """硬门判定必须复用 evaluate_rules (阈值唯一定义源), 不得在 pipeline 内联 -5.0。"""
     from pathlib import Path
-    src = Path("app/playbook/pipeline.py").read_text(encoding="utf-8")
+    src = (Path("app/playbook/pipeline_parts/auto_execute_flow.py")
+           .read_text(encoding="utf-8"))
     i_gate = src.index(_GATE_ANCHOR)
     i_reprice = src.index("2026-06-29: 触发后重新定价")
     seg = src[i_gate:i_reprice]
@@ -120,7 +124,8 @@ def test_knife_gate_uses_ssot_rule_definition():
 def test_knife_gate_wired_before_execution():
     """挂载顺序守护: 硬门拦截块必须位于触发判定之后、execute_instruction 之前。"""
     from pathlib import Path
-    src = Path("app/playbook/pipeline.py").read_text(encoding="utf-8")
+    src = (Path("app/playbook/pipeline_parts/auto_execute_flow.py")
+           .read_text(encoding="utf-8"))
     i_trigger = src.index("盘中触发")
     i_gate = src.index(_GATE_ANCHOR)
     i_exec = src.index("result = service.execute_instruction")
@@ -142,7 +147,8 @@ def test_knife_gate_writes_precise_skip_reason():
     (try/except 包裹, warning 级不静默)。
     """
     from pathlib import Path
-    src = Path("app/playbook/pipeline.py").read_text(encoding="utf-8")
+    src = (Path("app/playbook/pipeline_parts/auto_execute_flow.py")
+           .read_text(encoding="utf-8"))
     i_block = src.index('if _kg_block:')
     i_audit = src.index('action="skipped_knife_gate"', i_block)
     seg = src[i_block:i_audit]

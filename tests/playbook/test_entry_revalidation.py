@@ -238,6 +238,26 @@ def env(tmp_path, monkeypatch):
     data = load("app.playbook.data_collector", "app/playbook/data_collector.py")
     load("app.playbook.condition_taxonomy", "app/playbook/condition_taxonomy.py")
     generator = load("app.playbook.instruction_generator", "app/playbook/instruction_generator.py")
+    # P1a 2026-10-08 (DEB-20261008 拆分路线): pipeline 纯函数本体已迁
+    # pipeline_parts — 本隔离环境按"只加载已复核纯模块"原则同批纳入,
+    # 否则 pipeline 转发器的懒 import 在空包路径下找不到新包。
+    load("app.playbook.pipeline_parts", "app/playbook/pipeline_parts/__init__.py")
+    load("app.playbook.pipeline_parts.shadow_telemetry",
+         "app/playbook/pipeline_parts/shadow_telemetry.py")
+    load("app.playbook.pipeline_parts.instruction_builder",
+         "app/playbook/pipeline_parts/instruction_builder.py")
+    load("app.playbook.pipeline_parts.exit_classification",
+         "app/playbook/pipeline_parts/exit_classification.py")
+    load("app.playbook.pipeline_parts.bridge_adapters",
+         "app/playbook/pipeline_parts/bridge_adapters.py")
+    load("app.playbook.pipeline_parts.runtime_context",
+         "app/playbook/pipeline_parts/runtime_context.py")
+    load("app.playbook.pipeline_parts.portfolio_guardrails",
+         "app/playbook/pipeline_parts/portfolio_guardrails.py")
+    load("app.playbook.pipeline_parts.risk_gates",
+         "app/playbook/pipeline_parts/risk_gates.py")
+    load("app.playbook.pipeline_parts.intraday_indicators",
+         "app/playbook/pipeline_parts/intraday_indicators.py")
     pipeline = load("app.playbook.pipeline", "app/playbook/pipeline.py")
     monkeypatch.setattr(pipeline, "_now_et", lambda: timezone.utc)
     monkeypatch.setattr(pipeline, "_today_et_str", lambda: "2026-09-10")
