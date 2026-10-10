@@ -160,3 +160,41 @@ git revert <本提交>                       # 完整: 判据回到 alarm = not 
 - 追加 STOP 终检：若 broker STOP 先于规则引擎触发，退出监控用券商成交
   证据补记 `SL_BROKER_STOP`，并按 `entry_broker_order_id` 清理 open position；
   LIVE 手动持仓检查异常时 fail-close。终检定向回归 **146 passed**。
+
+
+---
+
+## 2026-10-10 裁决: 到期自然终止, 不续期 (用户裁 A)
+
+### 裁决
+
+破例于 **2026-10-12 16:00 ET 到期后自然失效**, 不续期、不提前撤销。到期后按预注册行为:
+`evaluate_live_arm_gate` 拒 (reason=LIVE_PROBE_WAIVER_EXPIRED) + 四锁/周检 ALLOW_REAL_TRADING 告警自动复响。无需人工操作。
+
+### 依据 (全部 DB/日志实证, 2026-10-10 复核)
+
+1. **探针目的已达成**: waiver scope = 「验证 LIVE 多持仓场景, 最多 3 仓, 每单 1 股」。
+   3 笔 1 股探针 (PBR 10-06 / CEG 10-07 / BKV 10-07) 曾同场并存 (PBR 10-07 13:31 ET 才平),
+   多持仓链路已验证; 三笔均 SL_BREAKEVEN 出场, 合计 -$10.31, 10-07 已全部了结
+   (`ftseek_us_live.db open_positions size>0` = 0 行)。
+2. **续期也跑不了探针 (结构性)**: 10-08/10-09 REAL 臂 OKR熔断恒触发
+   (`账户熔断触发: 回撤=7.20% ≥ 3% | equity=73395 peak=79087`), 10-09 当天拦掉全部 7 个
+   LIVE C-lite 镜像入场 (LLY/BA/SNDK/CAT/META/MU/AMD, LIVE C-lite 成功执行=0)。
+   7.20% 回撤来源 = REAL 账户内**个人港股持仓市值缩水** (live_position_snapshots 10-09:
+   智谱 -33.65% / MINIMAX-W -22.09% / 腾讯 +0.13%, 市值 $65,794 = REAL 臂权益 90%),
+   与探针交易无关。REAL 臂 AccountCircuitBreaker 的 peak/current 权益读全账户
+   (capital_safety `get_capital_safety_system_for_arm("real")` → `ftseek_us_live.db capital_state`),
+   个人持仓回撤 ≥3% 期间熔断恒拦一切 LIVE 新开仓, waiver 只解 ALLOW_REAL_TRADING 锁, 解不了熔断。
+3. **续期 = 空转豁免 + 治理负债**: 探针不可执行期间维持 waiver 只会让四锁告警继续静默, 无收益。
+
+### 遗留 (不在本裁决范围, 另立提案才动)
+
+若未来要恢复实盘探针, 需先解决 REAL 臂熔断权益口径问题 (探针资本与个人持仓隔离,
+或熔断改用探针专属权益子账本)。属 L2 实盘风控门变更, 需用户批准 + 预注册。
+
+### 复盘 job 修正 (同批落地)
+
+10/09 盘后复盘 P1 行动项「当前探针 3 标的各 1 股持仓中」为 LLM 沿用旧上下文的虚假声称
+(实查 0 持仓)。已在 job `7a40dd7c9e94` prompt 行动项纪律追加第 8 条:
+持仓/探针/锁状态类声称必须当场查 DB/文件 (REAL 臂 `ftseek_us_live.db`, SIM 臂 `ftseek_us.db`),
+查不到写「状态未核」, 不得编造。
