@@ -38,34 +38,45 @@ FWD = ROOT / "data" / "shadow" / "entry_confirm_forward.jsonl"
 OUT = ROOT / "data" / "shadow" / "entry_confirm_forward_latest.json"
 DB = ROOT / "data" / "ftseek_us.db"
 
-# ── 预注册基线 (RFC-141 §4, 2026-10-10 开门前冻结, 裁决日禁挪) ──
+# ── 预注册基线 (RFC-141 §4, 裁决日禁挪) ──
 # 口径: source_type=PLAYBOOK_SIM ∧ exit_price>0 ∧ COALESCE(pnl_net,realized_pnl) NOT NULL
-#      ∧ trade_date ∈ [2026-06-24, 2026-10-10)
+#      ∧ trade_date ∈ [BASELINE_SINCE, BASELINE_UNTIL)
+#
+# 📌 v2 窗口变更 (2026-10-10 22:37, 用户裁「从8月份开始统计, 早期的策略和逻辑不够成熟」):
+#   v1 = [2026-06-24, 2026-10-10) n=632  →  v2 = [2026-08-01, 2026-10-10) n=441
+#   **不构成挪门柱**: 门 21:36 部署后 forward 产物文件从未生成 (0 行)、verdict=TOO_EARLY、
+#   playbook_instructions 含 entry_confirm 旗标 0 条 ⇒ **零读数**。挪门柱的定义是拿已结算
+#   案例反推阈值; 零读数下按用户口径修正窗口是修口径错误, 且判据④ 方向是**收紧**
+#   (地板 +2.79→+7.79 / 剔费 +3.47→+8.79, 对门更不利)。
+#   生成方式: `scripts/deb20261009_rfc141_baseline_gen.py --since 2026-08-01`
+#   (用本文件自己的 _pnl_block/_day_clustered_t 算 ⇒ 生成尺子=裁决尺子, 非手抄)
 # ⚠️ t 一律用 statistics.stdev (样本标准差 ddof=1), 与 _day_clustered_t 同尺 ——
-#   首版基线脚本误用 pstdev ⇒ t 偏小 (如 sl_initial −10.6924 应为 −10.4217)。
-#   两把尺子比 t = 错相位对比 (死门形态), 已于 2026-10-10 统一重算。
-#   净均/net_sum/n/win_rate 与标准差无关, 首版即正确 (recent.win_rate 0.7725 是
-#   口算笔误, 实测 98/127=0.7717, 已修 — 预注册文档禁口算)。
+#   v1 首版误用 pstdev ⇒ t 偏小 (sl_initial −10.6924 应为 −10.4217), 已统一。
+BASELINE_SINCE = "2026-08-01"    # v2: 用户裁「早期策略不成熟」, 8 月起统计
+BASELINE_UNTIL = "2026-10-10"    # 开门前 (右开界)
 BASELINE = {
-    "all": {"n": 632, "net_sum": -2477.74, "net_mean": -3.9205,
-            "days": 74, "t": -0.3262, "win_rate": 0.5918},
-    "open_win": {"n": 324, "net_sum": -1332.12, "net_mean": -4.1115,
-                 "days": 58, "t": -0.3218, "win_rate": 0.5988},
-    # 门靶向病灶族: 29 笔亏 4579.30 = 全样本净亏的 1.8482×, 胜率 0/29
-    "sl_initial": {"n": 29, "net_sum": -4579.30, "net_mean": -157.9069,
-                   "days": 20, "t": -10.4217, "win_rate": 0.0},
+    "all": {"n": 441, "net_sum": -352.67, "net_mean": -0.7997,
+            "days": 49, "t": -0.1499, "win_rate": 0.6644},
+    "open_win": {"n": 214, "net_sum": -484.33, "net_mean": -2.2632,
+                 "days": 44, "t": -0.3849, "win_rate": 0.6682},
+    # 门靶向病灶族: 27 笔亏 4383.08 = 全样本净亏的 12.4283×, 胜率 0/27
+    # (v1 是 1.8482×/29 笔 ⇒ v2 窗口下病灶集中度大幅上升, 更支持门靶向正确)
+    "sl_initial": {"n": 27, "net_sum": -4383.08, "net_mean": -162.3363,
+                   "days": 18, "t": -10.2418, "win_rate": 0.0},
     # 剔除 SL_INITIAL 后的正贡献面 (判据 4 的基准)
-    "rest": {"n": 603, "net_sum": 2101.56, "net_mean": 3.4852,
-             "days": 74, "t": 0.2099, "win_rate": 0.6202},
-    # 判据④ 的两端同尺基准 (RFC-141 §5.6): rest 剔 fee_bps>100 的 3 笔
-    # (CTNT 915.1 / GIPR 203.6 / NVDA 198.6) 后的干净面。裁决以此为准。
-    "rest_clean": {"n": 600, "net_sum": 2600.41, "net_mean": 4.3340,
-                   "fee_bps_anomaly_dropped": 3, "fee_bps_threshold": 100.0},
-    "recent": {"n": 127, "net_sum": -520.64, "net_mean": -4.0995,
-               "days": 17, "t": -0.0159, "win_rate": 0.7717},
-    "recent_win": {"n": 80, "net_sum": -697.07, "net_mean": -8.7134,
-                   "days": 17, "t": -0.4892, "win_rate": 0.725},
+    # v2: +9.7353/笔 t=+2.4673 (显著正) — 系统其余部分是赚钱的, 亏损全在 SL_INITIAL 族
+    "rest": {"n": 414, "net_sum": 4030.41, "net_mean": 9.7353,
+             "days": 49, "t": 2.4673, "win_rate": 0.7077},
+    # 判据④ 的两端同尺基准 (RFC-141 §5.6): rest 剔 fee_bps>100 的 2 笔
+    # (CTNT 915.1 / GIPR 203.6, 均 9/17) 后的干净面。裁决以此为准。
+    "rest_clean": {"n": 412, "net_sum": 4526.00, "net_mean": 10.9854,
+                   "fee_bps_anomaly_dropped": 2, "fee_bps_threshold": 100.0},
 }
+# 判据② 的 t 门槛**单独钉住 v1 值** (取严不放松):
+#   v2 基线 open_win.t = −0.3849, 比 v1 的 −0.3218 更负 ⇒ 若跟着基线走, t 门槛会**放松**
+#   (更容易通过)。净均门槛随 v2 收紧 (−4.1115 → −2.2632), 但 t 门槛按挪门柱禁令
+#   「改窗口只准收紧不准放松」保持 v1 严值。两侧取严 ⇒ 判据② 整体只紧不松。
+OPEN_WIN_T_FLOOR = -0.3218       # v1 值, 刻意不随 v2 基线放松
 # 判据阈值 (RFC-141 §4 逐字)
 MIN_SIM_N = 60                 # 开门后 SIM 成交笔数
 MIN_SIM_DAYS = 10              # 或交易日数 (先到为准)
@@ -74,10 +85,12 @@ SL_INIT_MAX_N = 1              # 判据1 或: 族 n ≤ 1
 MIN_AVOID = 0.30               # 判据3
 MAX_OPP = 0.3                  # 判据3
 # WINNER_MEAN_FLOOR / _CLEAN 由 winner_floor() 从 BASELINE 派生 (见下方), 单一真源
-# 判据4 两端同尺 (RFC-141 §5.6 / DEB §33.3): 基线 +$3.4852 含 3 笔 fee_bps>100 的
-# 费用异常单 (CTNT 915.1 / GIPR 203.6 / NVDA 198.6), 剔后基线 +$4.3340 ⇒ 干净地板
-# +$3.4672 (全量地板被低估 +$0.6791/笔 = 24.4%)。裁决以**剔后地板**为准。
-# 阈值 100 与 §27 缺陷3 同 (915/204 与第三名 198.6 断层不明显, 故取 §30 已实装的
+# 判据4 两端同尺 (RFC-141 §5.6 / DEB §33.3): v2 基线 (8/1–10/9) rest +$9.7353 含 2 笔
+# fee_bps>100 的费用异常单 (CTNT 915.1 / GIPR 203.6, 均 9/17), 剔后 +$10.9854 ⇒ 剔费地板
+# +$8.79 (全量地板被低估 +$1.00/笔 = 12.8%)。裁决以**剔后地板**为准。
+# v1 留档 (窗口 6/24–10/9): rest +$3.4852 含 3 笔 (多 NVDA 198.6), 剔后 +$4.3340
+# ⇒ 全量地板 +$2.79 / 剔费地板 +$3.47。v2 使门槛抬高 2.8× (对门更严 = 收紧方向)。
+# 阈值 100 与 §27 缺陷3 同 (915/204 与第三名断层不明显, 故取 §30 已实装的
 # W8_fee_bps_anomaly 同一 100bps 口径, 不另造阈值 = 防阈值购物)。
 FEE_BPS_ANOMALY = 100.0
 OPEN_WIN_START, OPEN_WIN_END = "09:35", "09:45"
@@ -86,25 +99,22 @@ OPEN_WIN_START, OPEN_WIN_END = "09:35", "09:45"
 def winner_floor(clean: bool = False) -> float:
     """判据④ 地板 = 基准净均 × 80% (从 BASELINE 派生, 单一真源不重复硬编码)。
 
-    ⚠️ round 到 **2 位** = 与 RFC-141 §4 预注册文本逐字一致 (+$2.79)。
-    4 位精确值是 2.7881/3.4672, 若直接用 4 位 ⇒ 全量地板 2.7882 < 2.79 =
-    **放松门槛方向**, 属挪门柱 (2026-10-10 自查抓出); 预注册门槛值不得因
+    ⚠️ round 到 **2 位** = 与 RFC-141 §4 预注册文本逐字一致 (v2: +$7.79 / 剔费 +$8.79)。
+    4 位精确值是 7.7882/8.7883, 若直接用 4 位 ⇒ 地板低于预注册文本 =
+    **放松门槛方向**, 属挪门柱 (2026-10-10 v1 自查抓出同一问题); 预注册门槛值不得因
     「派生更精确」而漂移, 精度对齐到注册文本。
 
-    clean=False → 全量地板 (基准含 3 笔费用异常单, 与开门后全量样本同尺)
+    clean=False → 全量地板 (基准含费用异常单, 与开门后全量样本同尺)
     clean=True  → 剔费地板 (基准与开门后剔费样本同尺) ⇒ **裁决以此为准** (§5.6)
     """
     key = "rest_clean" if clean else "rest"
     return round(BASELINE[key]["net_mean"] * 0.8, 2)
 
 
-# 两端同尺 (RFC-141 §5.6 / DEB §33.3): 基线 +$3.4852 含 3 笔 fee_bps>100 的费用异常单
-# (CTNT 915.1 / GIPR 203.6 / NVDA 198.6), 剔后基线 +$4.3340 ⇒ 干净地板 +$3.4672
-# (全量地板 +$2.7881 被低估 +$0.6791/笔 = 24.4%)。若开门后样本不含同类费用单而仍用
-# 全量地板比, 判据④ 偏松 ⇒ 门可能白过。故两个地板都输出, 裁决用剔后那个。
-# 阈值 100 与 §27 缺陷3 同口径 (= §30 已实装的 W8_fee_bps_anomaly), 不另造阈值防阈值购物。
-WINNER_MEAN_FLOOR = winner_floor(False)        # 2.7881
-WINNER_MEAN_FLOOR_CLEAN = winner_floor(True)   # 3.4672
+# 地板常量: 由 winner_floor 从 BASELINE 派生 (单一真源)。两端同尺的理由与 v1/v2 数值
+# 见上方 FEE_BPS_ANOMALY 注释块 + RFC-141 §4 判据④ + §5.6, 此处不重复 (防两处注释漂移)。
+WINNER_MEAN_FLOOR = winner_floor(False)        # v2: 7.79 (4位 7.7882)
+WINNER_MEAN_FLOOR_CLEAN = winner_floor(True)   # v2: 8.79 (4位 8.7883)
 
 
 def _day_clustered_t(daily_values):
@@ -308,13 +318,18 @@ def main():
               f"SL_INITIAL 族净均 {sl_mean} ≥ {SL_INIT_MAX_LOSS_PER_TRADE} "
               f"(基线 {BASELINE['sl_initial']['net_mean']})")
 
+    # 判据② 的 t 门槛取**两侧更严**者: v2 基线 t=−0.3849 比 v1 的 −0.3218 更负,
+    # 直接跟基线走会**放松**门槛 (挪门柱禁令: 改窗口只准收紧) ⇒ max() 取严。
+    # 净均门槛随 v2 收紧 (−4.1115 → −2.2632), 故判据② 整体只紧不松。
+    _ow_t_floor = max(BASELINE["open_win"]["t"], OPEN_WIN_T_FLOOR)
     c2 = (p_win["net_mean"] is not None
           and p_win["net_mean"] > BASELINE["open_win"]["net_mean"]
-          and p_win["t"] is not None and p_win["t"] > BASELINE["open_win"]["t"])
+          and p_win["t"] is not None and p_win["t"] > _ow_t_floor)
     c3 = (a_t["avoidance_rate"] is not None and a_t["avoidance_rate"] >= MIN_AVOID
           and a_t["opp_cost_mean_pct"] is not None and a_t["opp_cost_mean_pct"] < MAX_OPP)
-    # 判据④ 两端同尺 (RFC-141 §5.6 / DEB §33.3): 基线含 3 笔费用异常单, 若开门后
-    # 样本不含同类单而用全量地板比 ⇒ 判据偏松, 门可能白过。故:
+    # 判据④ 两端同尺 (RFC-141 §5.6 / DEB §33.3): 基线含 fee_bps>100 的费用异常单
+    # (v2 窗口 2 笔: CTNT 915.1 / GIPR 203.6), 若开门后样本不含同类单而用全量地板比
+    # ⇒ 判据偏松, 门可能白过。故:
     #   · 裁决口径 (c4) = 剔费样本 vs 剔费地板 (WINNER_MEAN_FLOOR_CLEAN, 两端同尺)
     #   · 并陈口径 (c4_full) = 全量样本 vs 全量地板 (供对照, 不单独裁决)
     p_rest_clean = _pnl_block(

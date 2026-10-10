@@ -603,8 +603,25 @@ def test_registered_in_shadow_registry_with_real_gate_key():
         "注册表仍写旧判据 (影子配对净差) ⇒ 与结算器实现漂移, 裁决会用错尺子"
     assert "holdout 真成交净均" not in (item.graduation_criteria or "")
     # 判据里的数字本体须真出现在注册表 (防文档与实现两张皮)
-    for needle in ("−$40", "−$4.1115", "+$2.79", "n≥60"):
+    # ⚠️ needle 必须是 **v2 现行判据**的数字。v1 值 (−$4.1115/+$2.79/−$157.9069) 已从
+    #   注册表移除, 故此处不会假绿; 但 RFC 里 v1 值以「留档」形式仍在 ⇒ RFC 侧 needle
+    #   另有防假绿断言 (见 test_rfc141_preregistration_exists_and_pins_criteria)。
+    for needle in ("−$40", "−$2.2632", "+$7.79", "+$8.79", "n≥60"):
         assert needle in item.graduation_criteria, f"注册表判据缺 {needle}"
+    # v1 判据数字若出现, 必须**就近标注 v1** (否则=现行判据仍在用旧基线尺子)
+    # 注: 不能简单断言 "v1 值 not in text" —— 留档对比 ("比 v1 地板 +$2.79 抬高 2.8×")
+    #     是合法的且有价值 (证明门槛只收紧)。故改为: 每个 v1 值出现的 40 字符窗口内须有 "v1"。
+    gc = item.graduation_criteria or ""
+    for v1 in ("−$4.1115", "+$2.79", "−$157.9069", "+$3.4852"):
+        idx = gc.find(v1)
+        while idx != -1:
+            ctx = gc[max(0, idx - 40):idx + len(v1)]
+            assert "v1" in ctx, (
+                f"注册表出现 v1 判据 {v1} 但就近未标注 v1 ⇒ 疑似当作现行判据: ...{ctx}...")
+            idx = gc.find(v1, idx + 1)
+    # 现行判据必须是 v2 值 (上面 needle 已验), 且 v2 地板严于 v1 (门槛只准收紧)
+    assert _st.WINNER_MEAN_FLOOR > 2.79 and _st.WINNER_MEAN_FLOOR_CLEAN > 3.47, (
+        "v2 地板必须严于 v1 (v1: 2.79/3.47) — 若更松 = 挪门柱")
     # config_key 真的门控写方: 门关闭 ⇒ 不 arm ⇒ 不落行
     db = _FakeDB()
     assert ecg.gate_at_execute(_inst(), db, {"entry_price": 100.0}, _now(), CFG_OFF) == "execute"
@@ -622,23 +639,39 @@ def test_rfc141_preregistration_exists_and_pins_criteria():
            / "RFC-141-entry-confirm-forward-live.md")
     assert rfc.exists()
     txt = rfc.read_text(encoding="utf-8")
+
+    # 📌 防假绿: RFC 里 v1 值以「留档」形式仍全文存在 ⇒ 只断言 "v1 数字 in txt" 会命中
+    #   留档行而非现行判据 (假绿)。故现行判据 needle 全部取 **v2 值**, 并要求留档段
+    #   显式自标 (v1 数字只能出现在标注了留档/变更依据的段落里)。
     for needle in (
         # 裁决源改口径的用户原话留痕 (禁悄悄改回影子攒样)
         "直接走 sim 交易链路",
-        # 判据1 病灶族收敛: 基线 + 阈值本体
-        "SL_INITIAL", "−$157.9069", "−$40/笔", "−10.6924",
-        # 判据2 开盘窗改善: 基线净均 + 基线 t
-        "−$4.1115", "−0.3246",
+        # v2 窗口变更的用户原话 (禁悄悄把窗口改回去 / 禁不留依据地挑窗口)
+        "从8月份开始统计",
+        # 判据1 病灶族收敛: v2 基线 + 阈值本体 (阈值刻意不随 v2 重算, 取严)
+        "SL_INITIAL", "−$162.3363", "−$40/笔", "−10.2418",
+        # 判据2 开盘窗改善: v2 基线净均 + 钉住的 v1 严 t 门槛
+        "−$2.2632", "−0.3218", "OPEN_WIN_T_FLOOR",
         # 判据3 机制量
         "≥30%", "<0.3%",
-        # 判据4 不伤赢家: 基线 + 80% 地板
-        "+$3.4852", "+$2.79",
+        # 判据4 不伤赢家: v2 基线 + 80% 地板 (全量/剔费两端同尺)
+        "+$9.7353", "+$7.79", "+$10.9854", "+$8.79",
         # 样本门
         "n≥60", "≥10 交易日",
         # 基线冻结声明 (禁事后挑窗口)
         "开门前定, 禁事后挑窗口",
+        # 基线生成器 (基线可复现, 非手抄)
+        "deb20261009_rfc141_baseline_gen.py",
     ):
         assert needle in txt, f"RFC-141 预注册缺关键判据: {needle}"
+
+    # v1 值只能出现在明确标注留档的上下文里 (出现即须有留档标签, 否则=两套判据并存)
+    for v1 in ("−$4.1115", "+$3.4852", "−$157.9069"):
+        assert v1 in txt, f"{v1} 应作为 v1 留档保留 (禁事后挑窗口 ⇒ 两版并存可查)"
+        # 留档段必须自标: 全文出现 "v1 值留档" 与 "不构成挪门柱" 说明
+        assert "v1 值留档" in txt, "RFC 缺 v1 留档标签 ⇒ v1/v2 数字并存但无归属说明"
+    assert "不构成挪门柱" in txt, "RFC 必须写明改窗为何不算挪门柱 (零读数 + 收紧方向)"
+    assert "verdict=TOO_EARLY" in txt, "RFC 必须留痕「改窗时门尚无读数」这一前置证据"
 
 
 # ══════════════════════════════════════════════════════════════
@@ -660,20 +693,23 @@ def test_settler_criteria_constants_match_rfc():
     # 判据3 机制量
     assert (st.MIN_AVOID, st.MAX_OPP) == (0.30, 0.3)
     # 判据4 不伤赢家地板 — 两端同尺 (RFC-141 §5.6 / DEB §33.3)
-    assert st.WINNER_MEAN_FLOOR == 2.79, "全量地板必须逐字等于预注册文本 (禁 4 位漂移)"
-    assert st.WINNER_MEAN_FLOOR_CLEAN == 3.47, "剔费地板 (裁决口径)"
+    # v2 窗口 (8/1 起): rest.net_mean +9.7353 ⇒ 全量地板 7.79; rest_clean +10.9854 ⇒ 剔费地板 8.79
+    assert st.WINNER_MEAN_FLOOR == 7.79, "全量地板必须逐字等于预注册文本 (禁 4 位漂移)"
+    assert st.WINNER_MEAN_FLOOR_CLEAN == 8.79, "剔费地板 (裁决口径)"
     assert st.WINNER_MEAN_FLOOR_CLEAN > st.WINNER_MEAN_FLOOR, (
-        "剔费地板必须**更高** (基线含 3 笔费用异常单被拖低) — 若反向 ⇒ 剔费口径失效, "
+        "剔费地板必须**更高** (基线含费用异常单被拖低) — 若反向 ⇒ 剔费口径失效, "
         "门会用松地板白过")
     # 地板必须从 BASELINE 派生 (单一真源), 不是硬编码字面量
     assert st.winner_floor(False) == round(st.BASELINE["rest"]["net_mean"] * 0.8, 2)
     assert st.winner_floor(True) == round(st.BASELINE["rest_clean"]["net_mean"] * 0.8, 2)
-    # 4 位精度会把全量地板降到 2.7882 < 2.79 = 放松门槛方向 ⇒ 钉住 2 位
+    # 4 位精度会把地板降到预注册文本以下 = 放松门槛方向 ⇒ 钉住 2 位
     assert round(st.BASELINE["rest"]["net_mean"] * 0.8, 4) < st.WINNER_MEAN_FLOOR, (
         "4 位派生值低于预注册门槛 ⇒ 若有人改成 4 位就是挪门柱, 本断言会红")
     # 费用异常单阈值沿用 §27/W8 同口径, 不另造
     assert st.FEE_BPS_ANOMALY == 100.0
-    assert st.BASELINE["rest_clean"]["fee_bps_anomaly_dropped"] == 3
+    assert st.BASELINE["rest_clean"]["fee_bps_anomaly_dropped"] == 2, (
+        "v2 窗口 [8/1,10/10) 内 fee_bps>100 的非SL笔数 = 2 (CTNT/GIPR, 均 9/17); "
+        "v1 是 3 (含 NVDA 7/9, 已落在窗口外)")
     # 开盘窗口径 (与 time_bucket_analysis 分桶一致)
     assert (st.OPEN_WIN_START, st.OPEN_WIN_END) == ("09:35", "09:45")
     # 旧常量必须已删除 (防有人拿废判据继续裁决)
@@ -717,10 +753,14 @@ def test_settler_baseline_reproducible_from_live_db():
     from scripts import settle_entry_confirm_forward as st
 
     if not st.DB.exists():
-        pytest.skip("生产 DB 不在本机 (基线冻结于 2026-10-10)")
+        pytest.skip("生产 DB 不在本机 (基线窗口见 st.BASELINE_SINCE/UNTIL)")
 
-    # 基线窗口 = 全窗起点 6/24 至开门前 (10-10 之前)
-    pre = [r for r in st.load_sim_pnl("2026-06-24") if r["trade_date"] < "2026-10-10"]
+    # 基线窗口从**结算器常量**读 (不硬编码日期) ⇒ 换窗只改一处, 本测试自动跟随。
+    # v2 (2026-10-10 用户裁「从8月份开始统计, 早期的策略和逻辑不够成熟」): [2026-08-01, 2026-10-10)
+    assert st.BASELINE_SINCE == "2026-08-01", (
+        f"基线窗口起点应为 2026-08-01 (用户裁 8 月起统计), 实得 {st.BASELINE_SINCE}")
+    pre = [r for r in st.load_sim_pnl(st.BASELINE_SINCE)
+           if r["trade_date"] < st.BASELINE_UNTIL]
     assert pre, "基线窗口无样本 — DB 口径变了?"
 
     b_all = st._pnl_block(pre)
@@ -761,10 +801,20 @@ def test_settler_baseline_reproducible_from_live_db():
                - st.SL_INIT_MAX_LOSS_PER_TRADE) < 1.0, "判据1 阈值与基线 75% 收敛不自洽"
     assert abs(st.BASELINE["rest"]["net_mean"] * 0.8
                - st.WINNER_MEAN_FLOOR) < 0.02, "判据4 地板与基线 80% 不自洽"
-    # SL_INITIAL 族亏掉的是全样本净亏的 1.85× (病灶定位依据, 也是本门存在的理由)
+    # 病灶集中度: SL_INITIAL 族亏掉的是全样本净亏的 N 倍 (门存在的理由)
+    # ⚠️ v2 窗口下 all.net_sum=−352.67 已接近 0 ⇒ 比值 12.4283 **不稳定** (分母趋零会爆/翻符号),
+    #   故不钉死数值, 只钉「方向 + 量级下界」: SL_INITIAL 净亏必须 ≥ 全样本净亏的 5×。
+    #   v1 是 1.8482× (分母 −2477.74 远离 0, 当时可钉死); v2 病灶更集中但比值失去可比性。
     ratio = st.BASELINE["sl_initial"]["net_sum"] / st.BASELINE["all"]["net_sum"]
-    assert abs(ratio - 1.8482) < 0.01, f"病灶倍数漂移: {ratio}"
+    assert ratio >= 5.0, f"病灶倍数漂移: {ratio} (应 ≥5×; v2 实测 12.4283)"
+    assert st.BASELINE["sl_initial"]["net_sum"] < 0 and st.BASELINE["all"]["net_sum"] < 0, \
+        "比值同号前提 (两者都亏) 不成立 ⇒ ratio 失去意义, 须重定判据"
     assert st.BASELINE["sl_initial"]["win_rate"] == 0.0, "SL_INITIAL 族胜率应为 0/n"
+    # 判据② 的 t 门槛必须**取严** (v2 基线 t 更负, 跟基线走会放松门槛 = 挪门柱)
+    assert st.OPEN_WIN_T_FLOOR == -0.3218, "v1 t 严值须钉住, 不得随 v2 基线放松"
+    assert st.OPEN_WIN_T_FLOOR > st.BASELINE["open_win"]["t"], (
+        f"OPEN_WIN_T_FLOOR ({st.OPEN_WIN_T_FLOOR}) 必须严于 v2 基线 t "
+        f"({st.BASELINE['open_win']['t']}), 否则取严逻辑失效")
 
 
 def test_settler_day_clustered_t_requires_three_days():

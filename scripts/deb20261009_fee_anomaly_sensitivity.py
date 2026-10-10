@@ -21,10 +21,15 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 DB = ROOT / "data" / "ftseek_us.db"
-BASELINE_END = "2026-10-10"      # 开门前 (基线窗口右开界)
-BASELINE_START = "2026-06-24"    # 与 RFC-141 §4 基线窗口一致
-FEE_BPS_THRESHOLD = 100.0        # §27 缺陷3 用的同一阈值 (915/204 与第三名断层明显)
+# 基线窗口从**结算器常量**读 (单一真源) ⇒ v1→v2 换窗只改结算器一处, 本脚本自动跟随。
+# 曾硬编码 "2026-06-24" (v1), v2 改 8/1 后会与裁决口径错相位 ⇒ 已改为导入。
+from scripts import settle_entry_confirm_forward as _st  # noqa: E402
+
+BASELINE_START = _st.BASELINE_SINCE
+BASELINE_END = _st.BASELINE_UNTIL
+FEE_BPS_THRESHOLD = _st.FEE_BPS_ANOMALY   # §27 缺陷3 同一阈值 (915/204 与第三名断层明显)
 QTY_COL = "quantity"             # 实测存在; position_size 不在 trade_records
 
 
@@ -102,13 +107,22 @@ def main() -> int:
     print(f"判据① 稳健 = {g_sl['n_hi_fee'] == 0}  "
           f"(SL族 fee_bps 最大 {max((b for _, b in sl if b is not None), default=0):.1f})")
     print(f"判据② 稳健 = {g_win['n_hi_fee'] == 0}  "
-          f"⇒ 开盘窗基线 −4.1115 不受费用异常单影响")
+          f"⇒ 开盘窗基线 {g_win['mean']:+.4f} 不受费用异常单影响")
     print(f"判据④ 地板: 全量 {g_rest['mean'] * 0.8:+.4f} → 剔>100bps {g_rest['mean_clean'] * 0.8:+.4f} "
           f"(被低估 {g_rest['mean_clean'] * 0.8 - g_rest['mean'] * 0.8:+.4f}/笔, "
           f"{(g_rest['mean_clean'] * 0.8 - g_rest['mean'] * 0.8) / (g_rest['mean'] * 0.8) * 100:.1f}%)")
-    print(f"全样本符号翻转 = {mean_all < 0 < clean_all}  (全量 {mean_all:+.4f} → 剔后 {clean_all:+.4f})")
-    print(f"  ⚠️ §27 缺陷3 的符号翻转发生在其自身窗口 (n=172), 在 RFC-141 基线窗 "
-          f"(n={len(rows)}) **不复现** ⇒ 该缺陷是窗口特异, 不是普遍结论")
+    flip = mean_all < 0 < clean_all
+    print(f"全样本符号翻转 = {flip}  (全量 {mean_all:+.4f} → 剔后 {clean_all:+.4f})")
+    # ⚠️ 叙述必须从 flip 派生, 禁硬编码 (v1 窗口 n=632 净均 −3.9205 剔费后仍负 ⇒ 当时
+    #   「不复现」为真; v2 窗口 n=441 净均 −0.7997 → 剔后 +0.3256 ⇒ **复现**。
+    #   字面量叙述 ≠ 计算值域 = 脚本同时打印两个互相矛盾的结论, 属死门形态)。
+    if flip:
+        print(f"  ⚠️ §27 缺陷3 的符号翻转在 RFC-141 基线窗 (n={len(rows)}) **复现** ⇒ "
+              f"全样本「净为负」由费用异常单决定, 不是策略整体亏损 ⇒ "
+              f"仙股/最小佣金准入门 (事前可算) 是本窗口第一杠杆, 优先于退出参数微调")
+    else:
+        print(f"  ⚠️ §27 缺陷3 的符号翻转在 RFC-141 基线窗 (n={len(rows)}) **不复现** ⇒ "
+              f"该缺陷是窗口特异, 不是普遍结论")
     return 0
 
 
