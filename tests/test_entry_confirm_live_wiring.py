@@ -1,0 +1,350 @@
+"""RFC-141 入场延迟确认门 — 端到端接线活体验证 (非合成替身)。
+
+为什么单独一个文件 (而不是塞进 test_entry_confirm_gate.py):
+  契约测试用 _FakeDB/_FakeSched 验**门自身语义**; 本文件用真 PlaybookDB (真 schema +
+  真 save_instruction 准入门) + 真 PlaybookConfig (生产 YAML) + 真结算器, 验**接线活**。
+  「fixture 全绿 ≠ 接线活」是本项目反复踩的坑 (2026-10-10 同批: _FakeDB 缺
+  mark_instruction_guardrail_skip ⇒ ABANDONED 落库静默走 except 分支, 36 例全绿却
+  从未验到 skip_reason 真写)。本文件就是那道防线。
+
+覆盖 (对应用户目标口径「SIM 盈亏在富途 app 可见」):
+  A. defer 期间不写 skip_reason / 不标 executed / 不碰 execution_state ⇒ 下轮仍被取到
+     (若这里漏, 指令会永久卡死, 富途 app 上永远看不到成交)
+  B. CONFIRMED 后 gate 返回 execute ⇒ 真能走到 execute_instruction (通往富途 SIM 唯一出口)
+  C. ABANDONED 落 guardrail SKIP + 前瞻行两臂齐全 (裁决样本完整)
+  D. 生产配置真值 / 浅合并不覆盖原 metadata / 孤儿自愈留痕 / holdout 分流
+"""
+from __future__ import annotations
+
+import json
+import sqlite3
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.playbook import entry_confirm_gate as ecg  # noqa: E402
+from app.playbook.db import PlaybookDB  # noqa: E402
+
+_ET = timezone(timedelta(hours=-4))
+_T0 = datetime(2026, 10, 12, 9, 40, 0, tzinfo=_ET)
+_DATE = "2026-10-12"
+
+
+class _Router:
+    """按 symbol 发价的假行情源 (真 Futu push 不可在测试里驱动)。"""
+
+    def __init__(self, prices):
+        self._p = prices
+
+    def get_full_market_context(self, symbol):
+        return {"price": self._p.get(symbol)}
+
+
+class _Sched:
+    def __init__(self, prices):
+        self.data_router = _Router(prices)
+
+
+@pytest.fixture()
+def env(tmp_path, monkeypatch):
+    """真 PlaybookDB (临时文件, 真 ensure_tables schema) + 产物重定向。
+
+    ⚠️ check_same_thread=False: 与生产连接池 db_pool.py:172 同策略
+    (thread-local cache handles safety)。漏掉它会在跨线程读库时抛
+    ProgrammingError, 而生产不会 ⇒ 探针假红。
+    """
+    conn = sqlite3.connect(str(tmp_path / "probe.sqlite"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    db = PlaybookDB(conn=conn)
+    db.ensure_tables()
+    monkeypatch.setattr(ecg, "_FORWARD_PATH", tmp_path / "entry_confirm_forward.jsonl")
+    ecg._PENDING.clear()
+    yield db, tmp_path
+    ecg._PENDING.clear()
+    conn.close()
+
+
+def _save(db, sym, direction, entry, size=50, did=None):
+    """走真 save_instruction (含真准入门) 并核验方向未被改写。"""
+    db.save_instruction({
+        "date": _DATE, "symbol": sym, "direction": direction, "entry_price": entry,
+        "stop_loss": entry * 0.97, "take_profit": entry * 1.06,
+        "position_size": size, "confidence": 80,
+        "decision_id": did or f"DA-{sym}",
+        "metadata_json": json.dumps({"original_instruction": {"keep": True}}),
+    })
+    row = [r for r in db.get_instructions_by_date(_DATE) if r["symbol"] == sym]
+    assert row, f"{sym} 未入库"
+    r = row[0]
+    assert r["direction"] == direction, (
+        f"{sym} 被准入门改写 direction={r['direction']} (skip={r['skip_reason']}) "
+        f"⇒ 探针人群不对, 需提高 confidence 或另选标的")
+    return r
+
+
+def _cfg_t():
+    """生产 cfg 但 holdout 显式置 0 (验 treatment 路径); holdout 臂另有专测。"""
+    from app.playbook.config import PlaybookConfig
+    return {**ecg.confirm_gate_config(PlaybookConfig()), "holdout_pct": 0}
+
+
+# ══════════════════════════════════════════════════════════════════
+# A. defer 不改变任何「可执行性」标志 ⇒ 指令不会永久卡死
+# ══════════════════════════════════════════════════════════════════
+def test_defer_keeps_instruction_pickable_next_cycle(env):
+    """用户目标口径: SIM 盈亏须在富途 app 可见 ⇒ defer 绝不能让指令消失。
+
+    三个标志任一被写坏, auto_execute 下轮就取不到它 (executed 过滤 /
+    direction=='SKIP' 分支 / INVALIDATED_SKIP_REASONS), 单子永远到不了富途。
+    """
+    db, _ = env
+    r = _save(db, "US.DEFER", "BUY", 100.0)
+    assert ecg.gate_at_execute(dict(r), db, {"entry_price": 105.9, "position_size": 55},
+                              _T0, _cfg_t()) == "defer"
+    r2 = [x for x in db.get_instructions_by_date(_DATE) if x["symbol"] == "US.DEFER"][0]
+    assert not r2["skip_reason"], f"defer 写了 skip_reason={r2['skip_reason']!r} ⇒ 下轮被过滤"
+    assert int(r2["executed"] or 0) == 0, "defer 标了 executed ⇒ 下轮被过滤"
+    assert str(r2["execution_state"]) == "PENDING", (
+        f"execution_state 被改成 {r2['execution_state']} ⇒ 违反 C3 (broker 镜像状态机)")
+    assert [x for x in db.get_instructions_by_date(_DATE) if x["id"] == r2["id"]], \
+        "下轮取数捞不到该指令"
+    assert ecg.defer_pending(dict(r2), _T0) is True, "pending 期间未拦住 ⇒ 锚会被 reprice 漂"
+
+
+def test_anchor_is_reprice_execution_anchor_not_plan_anchor(env):
+    """C1: 锚必须是 arm 时刻 reprice 执行锚。
+
+    dual_anchor 影子 573 行实测: 计划锚 vs 执行锚分歧中位 2.10%、60.4% 行分歧>2%、
+    trigger_divergent 38% ⇒ 用盘前计划锚 = 静默换尺子, 翻转超三分之一判定。
+    """
+    db, _ = env
+    r = _save(db, "US.ANCHOR", "BUY", 100.0)
+    ecg.gate_at_execute(dict(r), db, {"entry_price": 105.9}, _T0, _cfg_t())
+    iid = int(r["id"])
+    assert ecg._PENDING[iid]["anchor"] == 105.9, (
+        f"锚={ecg._PENDING[iid]['anchor']} 不是 reprice 执行锚 105.9 (盘前计划锚是 100.0)")
+
+
+def test_flag_lands_in_metadata_without_clobbering(env):
+    """旗标走 metadata_json.entry_confirm (零 schema 迁移) + 浅合并不覆盖原有键。
+
+    DEB-20260910 §18.3 教训: 整块覆盖 metadata 会静默丢掉别人写的字段。
+    """
+    db, _ = env
+    r = _save(db, "US.FLAG", "BUY", 100.0)
+    ecg.gate_at_execute(dict(r), db, {"entry_price": 105.9}, _T0, _cfg_t())
+    md = json.loads([x for x in db.get_instructions_by_date(_DATE)
+                     if x["symbol"] == "US.FLAG"][0]["metadata_json"])
+    assert md["entry_confirm"]["status"] == ecg.ST_PENDING
+    assert md["original_instruction"] == {"keep": True}, "浅合并覆盖了原有 metadata 键"
+
+
+# ══════════════════════════════════════════════════════════════════
+# B. CONFIRMED ⇒ 真能走到 execute_instruction (通往富途 SIM 的唯一出口)
+# ══════════════════════════════════════════════════════════════════
+def test_confirmed_reaches_execute_instruction_path(env):
+    """端到端: arm → 120s 后仍站锚同侧 → CONFIRMED → 下轮 gate 放行 → 调 service。
+
+    本测试不真下单 (周末休市且不该真触发 broker), 但验「gate 返回 execute」这个
+    唯一分支条件 —— auto_execute_flow 里 act=='execute' 才会调 execute_instruction。
+    """
+    db, _ = env
+    r = _save(db, "US.FUTU", "BUY", 100.0)
+    iid = int(r["id"])
+    assert ecg.gate_at_execute(dict(r), db, {"entry_price": 105.9, "position_size": 55},
+                              _T0, _cfg_t()) == "defer"
+
+    sw = ecg.sweep_entry_confirmations(_Sched({"US.FUTU": 107.2}), db,
+                                       _T0 + timedelta(seconds=122))
+    assert sw["confirmed"] == 1 and sw["abandoned"] == 0, f"sweep 判定不对: {sw}"
+    assert ecg.pending_count() == 0, "CONFIRMED 后未清 pending"
+
+    r2 = [x for x in db.get_instructions_by_date(_DATE) if x["symbol"] == "US.FUTU"][0]
+    ec = json.loads(r2["metadata_json"])["entry_confirm"]
+    assert ec["status"] == ecg.ST_CONFIRMED
+    assert ec["px_at_confirm"] == 107.2, "复核价未留痕 ⇒ 事后无法审计判定依据"
+    assert ec["delay_actual_sec"] == 122, "实际延迟未留痕 (契约: ≤10s 快循环误差)"
+    assert ec["opp_cost_pct"] == pytest.approx((107.2 - 105.9) / 105.9 * 100, abs=1e-4), \
+        "机会成本与影子判据公式不一致"
+    assert ecg.defer_pending(dict(r2), _T0) is False, "CONFIRMED 后仍被拦 ⇒ 永远无法执行"
+
+    act = ecg.gate_at_execute(dict(r2), db, {"entry_price": 107.2},
+                              _T0 + timedelta(seconds=180), _cfg_t())
+    assert act == "execute", f"CONFIRMED 后 gate 未放行 (返回 {act}) ⇒ 单子到不了富途 SIM"
+
+    # 真出口: auto_execute_flow 在 act=='execute' 时调的就是这个签名
+    calls = []
+
+    class _Svc:
+        def execute_instruction(self, **kw):
+            calls.append(kw)
+            return {"success": True}
+
+    _Svc().execute_instruction(instruction_id=iid, acknowledge_risk=True,
+                              custom_params={"entry_price": 107.2, "position_size": 55})
+    assert calls and calls[0]["instruction_id"] == iid
+
+
+def test_confirmed_never_marked_skip(env):
+    """⛔ 红线: CONFIRMED 绝不能落 SKIP (落了单子就到不了富途, app 上什么都看不见)。"""
+    db, _ = env
+    r = _save(db, "US.NOSKIP", "BUY", 100.0)
+    ecg.gate_at_execute(dict(r), db, {"entry_price": 100.0}, _T0, _cfg_t())
+    ecg.sweep_entry_confirmations(_Sched({"US.NOSKIP": 101.0}), db,
+                                 _T0 + timedelta(seconds=125))
+    r2 = [x for x in db.get_instructions_by_date(_DATE) if x["symbol"] == "US.NOSKIP"][0]
+    assert r2["direction"] == "BUY", f"确认单被改成 SKIP: {r2['direction']}"
+    assert not r2["skip_reason"]
+    assert json.loads(r2["metadata_json"])["entry_confirm"].get("skip_marked") in (None, False)
+
+
+# ══════════════════════════════════════════════════════════════════
+# C. ABANDONED: 唯一被拦路径, 且必须可追溯
+# ══════════════════════════════════════════════════════════════════
+def test_abandoned_marks_skip_and_keeps_forward_row(env):
+    """MDB 9/28 秒杀族靶形态: SHORT @306.46 → 318.43 (2min 内反抽)。
+
+    放弃单必须落 guardrail SKIP (reason=entry_confirm_reversed), 否则库里它仍是
+    「活跃待执行」却永不执行 ⇒ 复盘/app 分不清「没触发」与「被门放弃」, 误导性
+    比看不出来更糟。
+    """
+    db, tmp = env
+    _save(db, "US.KILL", "SELL_SHORT", 306.46, size=19)
+    _save(db, "US.LIVE", "BUY", 100.0, size=55)
+    cfg = _cfg_t()
+    r_kill = [x for x in db.get_instructions_by_date(_DATE) if x["symbol"] == "US.KILL"][0]
+    r_live = [x for x in db.get_instructions_by_date(_DATE) if x["symbol"] == "US.LIVE"][0]
+    ecg.gate_at_execute(dict(r_kill), db, {"entry_price": 306.46, "position_size": 19}, _T0, cfg)
+    ecg.gate_at_execute(dict(r_live), db, {"entry_price": 105.9, "position_size": 55}, _T0, cfg)
+
+    sw = ecg.sweep_entry_confirmations(
+        _Sched({"US.KILL": 318.43, "US.LIVE": 107.2}), db, _T0 + timedelta(seconds=122))
+    assert sw["abandoned"] == 1 and sw["confirmed"] == 1, f"sweep: {sw}"
+
+    rk = [x for x in db.get_instructions_by_date(_DATE) if x["symbol"] == "US.KILL"][0]
+    ec = json.loads(rk["metadata_json"])["entry_confirm"]
+    assert ec["status"] == ecg.ST_ABANDONED
+    assert rk["direction"] == "SKIP", "放弃单未落 guardrail SKIP ⇒ 不可追溯"
+    assert rk["skip_reason"] == ecg.SKIP_REASON_ABANDONED == "entry_confirm_reversed"
+    assert ec["skip_marked"] is True, "落 SKIP 成败未留痕"
+    assert ecg.defer_pending(dict(rk), _T0) is True, "ABANDONED 未终态拦住"
+
+    # 前瞻产物两臂齐全 (裁决样本完整性: 放弃与确认都留痕)
+    rows = [json.loads(x) for x in
+            (tmp / "entry_confirm_forward.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 2
+    by_sym = {r["symbol"]: r for r in rows}
+    assert by_sym["US.KILL"]["still_triggers"] is False
+    assert by_sym["US.LIVE"]["still_triggers"] is True
+    assert all(r["schema"] == "entry_confirm_forward_v1" for r in rows)
+    assert all(r["arm"] == "treatment" for r in rows), "holdout_pct=0 却出现 holdout 臂行"
+
+
+def test_gate_and_settler_share_one_artifact_path():
+    """⛔ 路径同一性契约: 门写 ecg._FORWARD_PATH, 结算器读 st.FWD。
+
+    两者若漂移 ⇒ 结算器读空文件、输出 INSUFFICIENT, 而门其实天天在拦
+    ⇒ 假「样本不够」(裁决永久卡住, 且看不出来是路径错)。
+    本测试不用 env fixture (它会把门的路径重定向到 tmp), 必须在生产真值上比。
+    """
+    from scripts import settle_entry_confirm_forward as st
+    from app.playbook.entry_confirm_gate import _FORWARD_PATH as _GATE_FWD
+    assert Path(st.FWD).resolve() == Path(_GATE_FWD).resolve(), (
+        f"结算器读 {st.FWD} 而门写 {_GATE_FWD} ⇒ 两把尺子 (结算恒读空)")
+    assert Path(st.OUT).parent == Path(st.FWD).parent, "结算产物与样本不同目录"
+    assert Path(st.DB).name == "ftseek_us.db", f"结算器读错库: {st.DB}"
+
+
+def test_settler_consumes_gate_artifact_without_change(env, monkeypatch):
+    """结算器与门同尺: 产物直接可吃, 不需任何适配 (否则=两把尺子)。"""
+    from scripts import settle_entry_confirm_forward as st
+    db, tmp = env
+    monkeypatch.setattr(st, "FWD", tmp / "entry_confirm_forward.jsonl")
+    _save(db, "US.SET", "BUY", 100.0, size=55)
+    r = [x for x in db.get_instructions_by_date(_DATE) if x["symbol"] == "US.SET"][0]
+    ecg.gate_at_execute(dict(r), db, {"entry_price": 105.9, "position_size": 55}, _T0, _cfg_t())
+    ecg.sweep_entry_confirmations(_Sched({"US.SET": 107.2}), db, _T0 + timedelta(seconds=122))
+
+    agg = st._agg(st.load_rows(), {})
+    assert agg["n"] == 1 and agg["n_confirmed"] == 1 and agg["n_abandoned"] == 0
+    assert agg["avoidance_rate"] == 0.0
+    # notional / session_min 供 R1 分层 (SHORT×开盘窗)
+    row = json.loads((tmp / "entry_confirm_forward.jsonl").read_text().splitlines()[0])
+    assert row["notional"] == round(105.9 * 55, 2), "notional 未用 reprice 后锚×仓位"
+    assert row["session_min"] == 10, "session_min 应为 09:40 − 09:30 = 10 分钟"
+
+
+# ══════════════════════════════════════════════════════════════════
+# D. 配置 / 孤儿自愈 / holdout 分流
+# ══════════════════════════════════════════════════════════════════
+def test_production_config_end_to_end():
+    """生产 YAML 真值 (不经替身) — 2026-10-10 用户裁 holdout 归零。"""
+    from app.playbook.config import PlaybookConfig
+    cfg = ecg.confirm_gate_config(PlaybookConfig())
+    assert cfg == {"enabled": True, "delay_sec": 120, "holdout_pct": 0, "ttl_sec": 600}, cfg
+
+
+def test_orphan_self_heals_after_restart_with_trace(env):
+    """C6: pending 是内存态 (~120s), 重启后旗标残留 PENDING 而内存空 ⇒ 必须放行。
+
+    若不自愈, 指令永久卡死 (富途 app 上永远看不到它) —— 这是本门最坏的失效模式。
+    """
+    db, _ = env
+    _save(db, "US.ORPH", "BUY", 50.0)
+    r = [x for x in db.get_instructions_by_date(_DATE) if x["symbol"] == "US.ORPH"][0]
+    assert ecg.gate_at_execute(dict(r), db, {"entry_price": 50.0}, _T0, _cfg_t()) == "defer"
+    ecg._PENDING.clear()                      # 模拟进程重启
+    r2 = [x for x in db.get_instructions_by_date(_DATE) if x["symbol"] == "US.ORPH"][0]
+    assert json.loads(r2["metadata_json"])["entry_confirm"]["status"] == ecg.ST_PENDING
+    assert ecg.gate_at_execute(dict(r2), db, {"entry_price": 50.0}, _T0, _cfg_t()) == "execute", \
+        "PENDING 孤儿未自愈 ⇒ 指令永久卡死"
+    r3 = [x for x in db.get_instructions_by_date(_DATE) if x["symbol"] == "US.ORPH"][0]
+    healed = json.loads(r3["metadata_json"])["entry_confirm"]
+    assert healed["status"] == ecg.ST_EXPIRED and healed.get("healed_at"), \
+        f"自愈未留痕: {healed}"
+
+
+def test_holdout_arm_split_is_deterministic_and_zero_in_production():
+    """holdout_pct=0 必须=全量走门, 绝不能反过来变成门整体失效。
+
+    边界陷阱: 若 _holdout_bucket 漏掉 pct<=0 短路 (或写成 `<= pct`), 0% 会命中全部
+    ⇒ 全部照常执行不设防 ⇒ 门看着开着 (enabled=true) 却零作用, 而 SIM 结果与基线
+    无差异会被误读成「门无效」而不是「门没生效」。
+    """
+    assert sum(1 for i in range(1, 501) if ecg._holdout_bucket(i, 0)) == 0
+    assert sum(1 for i in range(1, 501) if ecg._holdout_bucket(i, 100)) == 500
+    # 反向钉: 分流函数本身在工作 (不是恒 False 僵尸, 否则上面的 0% 断言无意义)
+    assert 60 < sum(1 for i in range(1, 501) if ecg._holdout_bucket(i, 20)) < 140
+    # 确定性: 同 inst_id 恒定同臂 (跨轮/跨重启一致, 否则人群会漂)
+    assert ecg._holdout_bucket(7, 20) == ecg._holdout_bucket(7, 20)
+
+
+def test_holdout_arm_executes_normally_and_logs_control_row(env):
+    """holdout 100% 臂: 照常执行 + 落对照行 (机制 inert 保留, 改配置值即恢复)。"""
+    db, tmp = env
+    _save(db, "US.HOLD", "BUY", 70.0)
+    r = [x for x in db.get_instructions_by_date(_DATE) if x["symbol"] == "US.HOLD"][0]
+    cfg = {**_cfg_t(), "holdout_pct": 100}
+    assert ecg.gate_at_execute(dict(r), db, {"entry_price": 70.0}, _T0, cfg) == "execute"
+    assert ecg.pending_count() == 0, "holdout 臂不应落 pending"
+    rows = [json.loads(x) for x in
+            (tmp / "entry_confirm_forward.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 1 and rows[0]["arm"] == "holdout"
+    r2 = [x for x in db.get_instructions_by_date(_DATE) if x["symbol"] == "US.HOLD"][0]
+    assert json.loads(r2["metadata_json"])["entry_confirm"]["status"] == ecg.ST_HOLDOUT
+
+
+def test_gate_off_is_true_noop(env):
+    """门关闭 ⇒ 恒 execute + 零产物 (回滚路径必须真是零行为变更)。"""
+    db, tmp = env
+    _save(db, "US.OFF", "BUY", 100.0)
+    r = [x for x in db.get_instructions_by_date(_DATE) if x["symbol"] == "US.OFF"][0]
+    cfg = {**ecg.confirm_gate_config(), "enabled": False}
+    assert ecg.gate_at_execute(dict(r), db, {"entry_price": 105.9}, _T0, cfg) == "execute"
+    assert ecg.pending_count() == 0
+    assert not (tmp / "entry_confirm_forward.jsonl").exists()
+    assert ecg.defer_pending(dict(r), _T0) is False

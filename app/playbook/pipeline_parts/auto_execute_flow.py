@@ -164,6 +164,22 @@ def run_playbook_auto_execute(
             if (inst.get("skip_reason") or "") in INVALIDATED_SKIP_REASONS:
                 continue
 
+            # ── [RFC-141] 入场延迟确认门 (D2' forward) — pending 拦截 ──
+            #   必须在 reprice **之前**: pending 期间若让 reprice 覆盖 DB entry_price,
+            #   锚会逐轮漂移 ⇒ 120s 后判定的就不是 arm 时刻那把尺子 (语义不可审计)。
+            #   终态 ABANDONED/EXPIRED 也在此拦 (跨重启有效, 靠 metadata 旗标)。
+            #   门关闭时 read_state 恒空 ⇒ 恒 False, 零行为变更。
+            try:
+                from app.playbook.entry_confirm_gate import defer_pending as _ec_defer
+                from app.utils.timezone import now_et as _ec_now_et_fn
+                if _ec_defer(inst, _ec_now_et_fn()):
+                    skipped_count += 1
+                    continue
+            except Exception as _ec_defer_err:
+                # fail-open: 门自身异常不得阻断正常执行 (拦普通单不是安全方向)
+                logger.warning(f"[EntryConfirm] pending 复检异常 (放行): {_ec_defer_err}",
+                                   exc_info=True)
+
             # 2026-06-29 P0: 执行前查broker持仓 — 有仓则跳过，防重复下单+孤儿仓循环
             # 根因: fill=0时playbook拒绝记账但broker已成交, 下次auto_execute又下单 → 仓位叠加
             # 2026-08-09 性能预审: 持仓已提到循环外查一次 (_broker_positions), 此处仅复用.
@@ -1050,6 +1066,34 @@ def run_playbook_auto_execute(
                                       size=_size, notional=_new_notional)
                 skipped_count += 1
                 continue
+
+            # ── [RFC-141] 入场延迟确认门 — arm / 放行 (execute 前最后一道) ──
+            #   放在全部预算 guardrail 之后: 只在「本轮真会下单」时才 arm,
+            #   否则被 BP/notional/单轮上限拦下的指令也会 arm ⇒ 白占 pending 名额
+            #   且把「预算不足」误记成「延迟确认」样本 (污染判据人群)。
+            #   锚取 reprice 后的执行锚 (_reprice_params.entry_price), 与影子裁决
+            #   基准同源; 实测两锚分歧中位 2.10% ⇒ 用盘前计划锚 = 静默换尺子。
+            try:
+                from app.playbook.entry_confirm_gate import (
+                    gate_at_execute as _ec_gate, confirm_gate_config as _ec_cfg)
+                from app.utils.timezone import now_et as _ec_now_fn
+                # pb_cfg 注入: 与同函数其它门 (blackout/cooldown/chase_cap) 同一配置接缝
+                _ec_act = _ec_gate(inst, db, _reprice_params, _ec_now_fn(), _ec_cfg(pb_cfg))
+                if _ec_act == "defer":
+                    _emit_exec_gate_audit(
+                        inst, action="deferred_entry_confirm",
+                        entry=float((_reprice_params or {}).get("entry_price")
+                                    or inst.get("entry_price") or 0),
+                        size=float((_reprice_params or {}).get("position_size")
+                                   or inst.get("position_size") or 0),
+                        notional=_new_notional,
+                        extra={"gate": "entry_confirm_d2_forward", "rfc": "RFC-141"})
+                    skipped_count += 1
+                    continue
+            except Exception as _ec_gate_err:
+                # fail-open: 门异常 ⇒ 照常执行 (维持基线, 不静默减少样本)
+                logger.warning(f"[EntryConfirm] arm 判定异常 (放行): {_ec_gate_err}",
+                               exc_info=True)
 
             # 自动执行
             _audit_action = "error"

@@ -229,6 +229,11 @@ class TestChainExecuteStage:
             #   yaml entry_open_blackout_enabled=true / hhmm=0935, ET 00:23 → 23<935 拦。
             #   生产语义正确 (00:23 ET 确在开盘禁触窗内), 泄漏的是夹具不是门。
             "entry_open_blackout_enabled": False,
+            # RFC-141 入场延迟确认门: 同类 wall-clock 门 (arm 后须真等 delay_sec=120s
+            #   才由 10s 快循环 sweep 判定, 本测试无快循环/无法推进时间 ⇒ 恒 arm-defer,
+            #   委托数归零)。生产语义正确, 泄漏的是夹具不是门。门自身 36 例见
+            #   tests/test_entry_confirm_gate.py (含 arm→sweep→CONFIRMED/ABANDONED 全路径)。
+            "entry_confirm_enabled": False,
             "earnings_blackout_gate_enabled": False,
             "low_atr_gate_enabled": True,
             "low_atr_gate_min_atr_pct": 0.03,

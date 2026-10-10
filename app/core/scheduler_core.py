@@ -2931,6 +2931,25 @@ class TradingScheduler:
 
                 from app.playbook.pipeline import monitor_playbook_exits
                 monitor_playbook_exits(self)
+
+                # ── [RFC-141] 入场延迟确认门 sweep (D2' forward) ──
+                #   挂这里而非 180s 主循环: 影子只裁过 2min/5min 两条腿
+                #   (DELAYS_MIN=(2,5)), 主循环 180s ⇒ 挂主循环 = 静默落地一个
+                #   3-5min 的未预注册变体。本循环 interval=10s ⇒ 确认时点 =
+                #   arm+delay_sec 后首次 sweep, 误差 ≤10s。
+                #   门关闭时 _PENDING 恒空 ⇒ 立即 return, 零开销零行为变更。
+                try:
+                    from app.playbook.entry_confirm_gate import (
+                        sweep_entry_confirmations as _ec_sweep, pending_count as _ec_n)
+                    if _ec_n() > 0:
+                        from app.playbook.db import route_playbook_db as _ec_route
+                        from app.utils.timezone import now_et as _ec_now
+                        _ec_r = _ec_sweep(self, _ec_route("sim"), _ec_now())
+                        if any(_ec_r.get(k) for k in ("confirmed", "abandoned", "expired")):
+                            logger.info(f"[EntryConfirm] sweep: {_ec_r}")
+                except Exception as _ec_sweep_err:
+                    logger.warning(f"[EntryConfirm] sweep 异常 (已隔离): {_ec_sweep_err}", exc_info=True)
+
             except Exception as _e:
                 logger.warning(f"[PlaybookExit] 快循环异常 (已隔离): {_e}")
 

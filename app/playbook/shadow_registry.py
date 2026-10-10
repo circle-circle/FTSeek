@@ -1822,6 +1822,53 @@ REGISTRY: list[ShadowItem] = [
               "合计, 每腿≈一半 (腿级 n 以 latest.json 为准)。cron 58 5 * * 2-6 (台账 "
               "crontab-entry-delay-confirm)。回滚=删本条目+删 cron 行+删两个 data/shadow 产物。",
         count_mode="where:status=ok",
+        # RFC-141 (2026-10-10): 与 live+holdout 前瞻环双向互引 (同轴不同形态 —
+        #   本环=历史 bar 回放影子, entry_confirm_forward=live 前瞻; 判据互不替代,
+        #   裁决日两边读数须并陈)。单向互引会被 check_intent_uniqueness 判红。
+        cross_ref=("entry_confirm_forward",),
+    ),
+
+    ShadowItem(
+        id="entry_confirm_forward",
+        name="RFC-141 入场延迟确认门 SIM 实弹前瞻 (D2' forward, 2026-10-10 用户裁)",
+        status=ShadowStatus.OBSERVING,
+        description="触发后 120s 复核: 价格仍站 reprice 执行锚同侧→放行, 反转→ABANDONED 放弃 "
+                    "(落 guardrail SKIP reason=entry_confirm_reversed 可追溯)。"
+                    "载体=10s 退出快循环 sweep (非 180s 主循环 — 防静默落地 3-5min 未预注册变体, "
+                    "DEB-20261009 §27 缺陷1)。锚冻结: pending 期间 defer_pending 拦在 reprice 之前。"
+                    "旗标走 metadata_json.entry_confirm (不碰 execution_state broker 镜像状态机)。"
+                    "重启孤儿自愈放行。",
+        data_path="data/shadow/entry_confirm_forward.jsonl",
+        config_key="playbook.execution_parameters.entry_confirm_enabled",
+        # 2026-10-10 用户裁改口径「直接走 sim 交易链路, 不用影子攒样看 sim 交易结果」:
+        #   min_n 从 20 (影子样本) 改 60 (开门后 SIM 真实成交笔数), 与 RFC-141 §4 样本门一致,
+        #   否则周检会用错的 n 驱动「到期未达标=治理缺口」告警。
+        min_n=60,
+        graduation_criteria="RFC-141 §4 逐字 (2026-10-10 读数前预注册, 基线同日冻结): "
+                            "裁决源=开门后 SIM 真实盈亏 (trade_records, source_type=PLAYBOOK_SIM) "
+                            "vs 门前基线, **不是**影子产物配对。样本门 n≥60 ∨ ≥10 交易日。"
+                            "①病灶族收敛: SL_INITIAL 族净均 ≥−$40/笔 (基线 −$157.9069, 即收敛≥75%) "
+                            "或该族 n≤1 ②开盘窗改善: 09:35–09:45 净均 >−$4.1115 ∧ 日聚类 t >−0.3218 "
+                            "③机制量: 避免率≥30% ∧ CONFIRMED opp_cost<0.3% ④不伤赢家: 非 SL_INITIAL "
+                            "族净均 ≥+$2.79 (基线 +$3.4852 的 80%)。分层 R1(SHORT×开盘窗)/LONG×开盘窗"
+                            "只印不判。jsonl 降级为机制留痕 (只证明门真在拦+拦的是反转单), 不独立裁决; "
+                            "历史回放 580 行不混入。裁决三态 PASS/OBSERVE/FAIL 见 RFC §4; "
+                            "PASS 后 REAL 转正另须 RFC 修订+用户签字, 不自动。",
+        eval_script="scripts/settle_entry_confirm_forward.py",
+        created="2026-10-10",
+        notes="形态=SIM 实弹全量 (holdout_pct=0, 2026-10-10 用户裁: 留对照臂会稀释 SIM 结果)。"
+              "强制披露: ①confirm_gate 反向先验 +0.50%/笔 t=5.67 (域不同, 盘前注入 vs 开盘窗微结构) "
+              "②ALL 人群历史回放平 (t=−0.16/误杀58%), 达标证据全在 SL_INITIAL 事后族 "
+              "(基线 29 笔 −$4,579.30 = 全样本净亏 1.8482×, 胜率 0/29, t=−10.4217), live 门无法事前"
+              "只对该族开 ⇒ 前瞻 ALL 可能同样平 = 实验真实风险 ③无同期对照臂 ⇒ 开门后 vs 开门前"
+              "受市况变化混淆, 缓解=判据1/3 是门自身机制量不随市况漂 (RFC §5.4) ④E3 PULLBACK_LIMIT "
+              "TTL 互斥当前不存在 (entry_archetype_routing_enabled=false), 启用限价路由前须先裁。"
+              "⑤键名与既有 entry_confirm_max_wait_s (下单后确认成交 30s 窗, playbook_service.py:1851) "
+              "无关, grep entry_confirm 同时命中两者, 改动须看清语义。"
+              "cron 37 6 * * 2-6 (ET 18:37 盘后结算, 台账 crontab-entry-confirm-forward)。"
+              "回滚=entry_confirm_enabled:false+restart (孤儿自愈零卡单)+删本条目+删 cron 行; 产物留档。",
+        count_mode="where:arm=treatment",
+        cross_ref=("entry_delay_confirm",),
     ),
 
     # ── 2026-09-11 断头传感器修复批 (用户裁「做」): 两个有写者无读者/无登记的影子补全判分侧 ──
