@@ -14,7 +14,7 @@ def j(expr: str) -> str:
 
 
 ROWS = [
-    ("E53", "探针八段结构完整 (A–H)",
+    ("E53", "探针十一段结构完整 (A–K)",
      j("print(len(S), ''.join(sorted(S)))")),
     ("E54", "KR1 冻结窗: status / 哈希数 / 已结算 / 目标",
      "./venv/bin/python -c \"import json;"
@@ -49,6 +49,21 @@ ROWS = [
     ("E64", "adaptive_trailing 参数实际所在行 (unified_config)",
      'grep -n "adaptive_trailing_target_capture_pct\\|adaptive_trailing_max_drawdown_pct" '
      'config/unified_config.yaml | cut -d: -f1 | tr "\\n" " "'),
+    ("E71", "candidate C: 历史锚样本/FADE_SHORT/RFC-123 matched",
+     j("i=S['I'];fa=i['by_archetype']['FADE_SHORT'];r=i['rfc123'];"
+       "print(i['historical_n'],i['historical_net'],fa['n'],fa['net'],fa['sl_initial_n'],"
+       "fa['graveyard_n'],r['unique_decisions'],r['matched_trade_decisions'])")),
+    ("E72", "candidate B: D2' 2min子集读数/宿主节奏/TTL",
+     j("j=S['J'];d=j['delays']['2']['SL_INITIAL'];"
+       "c=j['host_auto_execute_cadence'];"
+       "print(d['n'],d['net_value_usd'],d['day_clustered']['distinguishable'],"
+       "c['ftseek_us.log-20261009.gz']['median_min'],"
+       "c['ftseek_us.log-20261009.gz']['p90_min'],"
+       "j['ttl_conflict']['five_min_confirm_exceeds_ttl'])")),
+    ("E73", "candidate A: EOD时点反事实样本/误杀/Δ/gap分层",
+     j("k=S['K'];b=k['blocked'];g=k['blocked_by_gap'];"
+       "print(k['sample_n'],k['evaluated_n'],k['local_bar_missing_n'],"
+       "b['n'],b['false_kill_n'],b['delta'],g['gap']['delta'],g['non_gap']['delta'])")),
 ]
 
 

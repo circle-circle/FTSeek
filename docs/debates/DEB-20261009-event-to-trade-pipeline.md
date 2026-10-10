@@ -1,7 +1,7 @@
 ---
 title: 事件驱动的盘前/盘中/盘后采集-推理-交易链路设计
 date: 2026-10-09
-status: 方案 U 已采纳并已落地（§14 P0 前置 + §15 Phase 0 + §16–§18 Phase 1/1.5/1.6 + §19 Phase 1.7 UE 接入，§20/§22 两轮实测通过，§21 DA bridge 事故已修复恢复）· §23 主线程落地复查：记录全部属实 · §24 修复批已落地：F1 发现源多 query/term 化 + F2 EDGAR 取链 + F4/F5/F6 小修，生产 cron 已自动生效 · 通道 B / live 未开启
+status: 方案 U 已采纳并已落地 · §23/§26/§29 三轮复查全过 · §30 双裁决落地：W1 冻结窗方案 A 生效（post_ca4487 观测窗在跑）+ 费用护栏以 W8 监控形态实装（实施前核查发现硬门=死规则：CTNT/GIPR 走 EXT 通道且 9/17 当日已由 ce54f64eb 收口）· 遗留待裁：无新增；§12.6-3/4（通道 B 准入/盘后 SIM）维持未开
 trigger: 用户要求以 SpaceX/FCC/Grain 新闻为示例，泛化设计一条覆盖盘前、盘中、盘后的信息采集、关联推理与可验证交易链路，并强调如无必要不重复造轮子
 ---
 
@@ -692,6 +692,9 @@ event_stream:
 - 2026-10-09 v1.4：用户裁“按建议执行”。落地 §14 P0 前置：双向监管/频谱词表、telecom 传导、UE/gen_event_symbols 复用 sector_mapping、RSSHub 空结果陈旧告警、工作日采集 cron。未新建 Event Stream，未开启通道 B，未修改交易行为。
 - 2026-10-09 v1.5：追加 §23 主线程落地复查（§14–§21 全量实测复核；落档时编号 §22，后因 §22 被 21:10 premarket 实测占用而重编号）。复查动作仅 2 处 except:continue 棘轮清剿（`event_stream_ue_check.py` / `da_bridge_dingtalk_push.py` 坏行计数 + stderr 留痕，零控制流变更），其余零改动。新发现 F1–F10 见 §23.2。另补登记：§15–§21 落地批当时未写变更记录，本节一并追认。
 - 2026-10-09 v1.6：用户裁「请修复」。落地 §24 修复批：F1 发现源多 query/term 化（配置入 `event_stream.*`）+ F2 EDGAR href 取链 + F4 clue 路径同源 + F5 dedupe 时间口径 + F6 ticker 连字符守卫；F7 复核后撤回（非问题）。生产 cron 已自动生效，实测证据见 §24.2。
+- 2026-10-10 v1.7：追加 §26 对 §25（另一 agent 交易绩效画像）的复查：11 组读数逐字一致或漂移已归因（边界行 + UTC/ET 字符串比较），净/毛口径核验通过，archetype 行字段出处待钉；顺手更正 `exit_scorecard.py:16` 注释与代码口径不符（零行为变更）。§25 候选项 A–D 均未执行，仍待裁决。
+- 2026-10-10 v1.8：追加 §29 对 §27/§28（Hermes 前提检验 + P0 执行批）的落地复查：探针 E 表与独立复算全中，D2' min_n=20 更正确认为真，admission_replay 四口径修正与自述逐字对应；本批动作仅探针 2 处 except 棘轮清剿（计数留痕，E73 读数不变）；§26.3 对 candidate A 的排序撤回（E73 反事实更硬）。§25 候选项状态：A 否决、B 攒样待载体、C 升 P1 攒样、D 第3条划掉。
+- 2026-10-10 v1.9：用户双裁决落地（§30）：① W1_oct_cohort_broken 方案 A 追认生效（post_ca4487 观测窗已于 §28.11 在跑）；② 费用护栏实施前核查发现硬门前提不成立（CTNT/GIPR 走 EXT 通道且 9/17 当日已收口、playbook 路径算术封顶 ~50bps ⇒ 硬门=死规则），忠实落地为 W8 监控守卫（daily_invariant_check，只读，>200bps 次日告警，不追溯存量）。测试 48+5 passed，棘轮族全绿。
 
 
 ## 11. 主线程复查（Claude · 2026-10-09 · 只读实测）
@@ -1349,7 +1352,7 @@ P0 后复跑口径：事件样本 3/4 命中，阳性对照 2/2 命中；`Cataly
 | §17.3 cron `*/5` 挂载 + crontab 备份 | 均在（备份 57KB @19:30）；`source_health` 四源全 OK、last_success 新鲜 | ✅ |
 | §18.2 COST 假阳修复 / 保守去重 | relevance.py 独立大写 token 匹配实证；dedupe T0>T1>T2 主证据排序实证 | ✅ |
 | §19/§20 UE 接入与首轮实测 | `event_stream_ue_check.py` 复跑 `passed=true`；scan jsonl 实证 `event_stream=11 / 总材料91 / ASTS SHORT 0.55 / batch complete` | ✅ |
-| §21 DA bridge 修复 | `pipeline.py:1270` 本地派生 `_symbol_sectors` 实证；py_compile 通过；bridge `candidate_count=10` | ✅ |
+| §21 DA bridge 修复 | `pipeline.py:1874` 本地派生 `_symbol_sectors` 实证；py_compile 通过；bridge `candidate_count=10` | ✅ |
 | 方案 U 边界（§12） | 未建 signal_router/shadow_executor/独立毕业门；Playbook/DA 零改动；`llm.models` 零新增别名；crontab 仅 +1 采集行与 RSSHub dow 扩档 | ✅ |
 | §11.5 D2（采集侧不碰 futu 槽位） | 导入纯净实测：`app.event_stream.*` 全量 import 后 futu/market_hours/holiday_calendar 模块数 = **0** | ✅ |
 | §11.5 D1（时区纪律） | naive-now 棘轮 PASS；event_stream 全部 `datetime.now(timezone.utc)` | ✅ |
@@ -1383,7 +1386,7 @@ P0 后复跑口径：事件样本 3/4 命中，阳性对照 2/2 命中；`Cataly
 | E41 | `crontab -l \| grep -E "event_stream_ingest\|RSSHubUSNewsFetcher"` | `*/5` 采集行 + `15 */3 * * 1-5` 工作日行 |
 | E42 | `PYTHONPATH=. ./venv/bin/python -m pytest tests/test_event_pipeline_p0.py tests/test_event_source_phase0_audit.py tests/test_event_stream_phase1.py tests/test_event_stream_ue_integration.py -q` | 全 pass（本批实跑 130 passed 含触动件） |
 | E43 | `PYTHONPATH=. ./venv/bin/python -c "import sys, app.event_stream.store, app.event_stream.ue_clue_adapter; print([m for m in sys.modules if m.split('.')[0] in ('futu',)])"` | `[]` |
-| E44 | `grep -n "_symbol_sectors" ~/.hermes/skills/deep-stock-analysis/scripts/pipeline.py \| head -2` | `:1270` 本地派生（`_write_bridge_file` 内） |
+| E44 | `grep -n "_symbol_sectors" ~/.hermes/skills/deep-stock-analysis/scripts/pipeline.py \| head -2` | `:1874` 本地派生（`_write_bridge_file` 内） |
 
 ## 24. §23 发现修复批（2026-10-09 晚 · 用户裁「请修复」）
 
@@ -1412,4 +1415,646 @@ P0 后复跑口径：事件样本 3/4 命中，阳性对照 2/2 命中；`Cataly
 
 - 仍未开启通道 B；UE clue 开关 `event_stream_clue_enabled` 不变；Playbook/DA/风控零改动。
 - F8（UE 集成测试牵出 futu 线程，存量）/ F9（raw_artifact 内联增长）/ F10（ingest cron 整体死亡无告警）维持观察项，不随本批处理。
-- 全部改动仍在未提交工作树，待用户裁决后提交。
+- 该批修复已提交为 `fca5001d6`；后续未提交变更以当前工作树为准（§25–§28 及配套只读回放器）。
+
+## 25. 交易绩效画像与退出策略改进输入（2026-10-10 · 只读）
+
+> 目的：用户提出“当前胜率高但赢小输大，是否值得调整止损/止盈策略”。本节只做数据画像与候选方向登记，**不改配置、不改代码、不改变交易行为**，供下一 agent 独立复核后再提案。
+
+### 25.1 数据口径与总体画像
+
+- 主口径：`data/ftseek_us.db` 中 `trade_records` / `playbook_instructions`，近 30 日 `source_type='PLAYBOOK_SIM'` 已平仓交易。
+- `scripts/exit_scorecard.py --days 30` 读数：
+  - 样本 `n=175`，胜率 `77.1%`。
+  - 平均盈利 `+$26.15`，平均亏损 `-$101.87`，实际盈亏比 `0.26`。
+  - Profit Factor `0.87`，每笔期望 `-$3.11`。
+  - 尺寸归一：毛收益 `+9.64 bps/笔`，费用 `16.00 bps/笔`，净收益 `-6.36 bps/笔`；若再扣 `30 bps` 往返滑点，约 `-36.36 bps/笔`。
+- 直接 SQL 复核（仅 `PLAYBOOK_SIM`，近 30 日）：
+  - `n=172`，净额 `-$347.85`，胜率 `76.16%`。
+  - 平均盈利 `+$26.53`，平均亏损 `-$98.03`，Profit Factor `0.909`。
+- 判读：胜率不是当前瓶颈；瓶颈是左尾亏损、赢家捕获率不足、费用与滑点覆盖不足。
+
+### 25.2 亏损集中度
+
+近 30 日 `PLAYBOOK_SIM` 两个亏损族：
+
+| exit_reason | n | 净额 | 均额 | 平均亏损幅度 |
+|---|---:|---:|---:|---:|
+| `OVERNIGHT_GAP_STOP` | 5 | `-$1,607.88` | `-$321.58` | `-5.43%` |
+| `SL_INITIAL` | 8 | `-$1,177.88` | `-$147.24` | `-2.71%` |
+| 合计 | 13 | `-$2,785.76` | `-$214.29` | — |
+
+- 剔除上述两类后，同窗其余交易净额 `+$2,437.91`。
+- 关键结构性事实：这 13 笔全部来自 `playbook_instructions.horizon='short'`。
+  - `OVERNIGHT_GAP_STOP` 5 笔均为 short horizon，且全部 LONG。
+  - `SL_INITIAL` 8 笔均为 short horizon，其中 5 笔 SHORT、3 笔 LONG。
+- 说明：短周期信号被 W_WEEK / 隔夜豁免拖成多夜持仓，是左尾的主要来源；这不是简单的“止损太宽”。
+
+### 25.3 计划几何 vs 实际兑现
+
+以 `trade_records.decision_id = playbook_instructions.decision_id` 精确 join，过滤方向正确的计划 SL/TP 后：
+
+- 匹配样本 `n=161`。
+- 计划几何：平均 SL 距离约 `4.92%`，TP 距离约 `7.73%`，隐含 RR 约 `1.57`。
+- 实际兑现：盈利单平均约 `+0.56%`，亏损单平均约 `-1.55%`；若只看两个亏损族，`OVERNIGHT_GAP_STOP` 平均 `-5.43%`。
+- 现行退出原因分布（近 30 日直接 SQL）：
+  - `SL_BREAKEVEN`：`n≈86`，平均 `+0.22%`。
+  - `SL_TRAIL_LOCK`：`n≈49`，平均 `+0.83%`。
+  - 二者制造了高胜率，但单笔利润偏小，无法覆盖上述左尾。
+- 判读：执行层把“计划 RR 1.57”变成“实际 payoff 0.26”，主要是保本/锁利过早截断赢家，加上隔夜左尾放大亏损。
+
+### 25.4 隔夜豁免与 MFE 分层
+
+现行 W_WEEK：`playbook.loser_overnight_enabled=true`，`loser_overnight_max_hold_days=5`。见 `config/unified_config.yaml:1452`。
+
+以 2026-08-27 起的 short-horizon 隔夜仓分层：
+
+| MFE 分层 | n | 净额 | OVERNIGHT_GAP_STOP 笔数 | gap 净额 |
+|---|---:|---:|---:|---:|
+| `<0.2%` | 9 | `-$1,595.72` | 5 | `-$1,503.18` |
+| `0.2%-0.5%` | 10 | `-$987.52` | 3 | `-$1,015.91` |
+| `>=0.5%` | 20 | `+$827.25` | 0 | `$0` |
+
+同窗 short-horizon 隔夜仓整体：`n=39`，净 `-$1,755.99`；其中 8 笔 gap 止损净 `-$2,519.09`，非 gap 修复仓净 `+$763.10`。
+
+候选方向 A：**short-horizon EOD MFE 门**
+
+```text
+IF horizon == 'short'
+AND EOD 时仍水下
+AND 当前生命周期 MFE < 0.5%
+THEN 不给予 W_WEEK 隔夜豁免（或至少减半仓）
+```
+
+- 动机：8 笔 gap 止损全部落在 `MFE<0.5%`；`MFE>=0.5%` 的隔夜修复仓无 gap 止损且净额为正。
+- 边界：不能一刀切关闭 W_WEEK，因为非 gap 修复仓有正贡献；需先做 record-only 反事实。
+- 需要下一 agent 验证：该门会拦下多少浅水修复赢家、EOD 平仓反事实净差、误杀率、费用与滑点。
+
+### 25.5 D2' 延迟确认现成读数
+
+`data/shadow/entry_delay_confirm_latest.json` 当前读数：
+
+| 延迟 | 人群 | n | 避免率 | 避免价值 | 机会成本 | 净价值 | SL_INITIAL 误杀 |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 2min | ALL | 580 | 50.69% | `$2,154.63` | `$2,438.99` | `-$284.36` | — |
+| 2min | SL_INITIAL | 29 | 65.52% | `$3,037.14` | `$98.41` | `+$2,938.73` | 0 |
+| 5min | SL_INITIAL | 29 | 86.21% | `$3,999.53` | `$45.79` | `+$3,953.74` | 0 |
+
+- 判读：全局延迟不划算；但针对 `SL_INITIAL` 高风险人群，2 分钟延迟确认有强正向影子证据。
+- 状态：影子仍为 OBSERVING，见 `app/playbook/shadow_registry.py:1798`；不得直接全局转正。
+- 候选方向 B：只对“穿越触发/FADE_SHORT/开盘噪声窗”等可事前识别的子集做 2 分钟确认，并先解决 PULLBACK_LIMIT TTL 互斥问题。
+
+### 25.6 入场锚与来源分层
+
+- `SL_INITIAL` 中可匹配 raw `planned_entry` 的 6 笔，有 5 笔实际入场劣于计划锚，中位劣化约 `2.37%`。
+- 近 30 日按来源：
+  - DA：`n=136`，净 `+$720.79`，胜率 `82.35%`。
+  - UE：`n=22`，净 `-$534.37`，胜率 `63.64%`。
+  - OTHER：`n=14`，净 `-$534.27`，胜率 `35.71%`。
+- 近 30 日按 entry archetype：
+  - `PULLBACK_LIMIT`：`n=107`，净 `+$930.61`，胜率 `85.05%`。
+  - `FADE_SHORT`：`n=27`，净 `-$244.17`，胜率 `74.07%`。
+  - 缺失 archetype 的 UE/OTHER 类：`n=31`，净 `-$547.55`，胜率 `48.39%`。
+- 候选方向 C：利用 RFC-123 双锚影子，重点约束 `FADE_SHORT` 与 UE 入场锚漂移；不要让 reprice 把“反弹做空/回踩买入”变成追价。
+
+### 25.7 赢家捕获与 trailing
+
+- `playbook_exit_telemetry_report.py --days 30 --by regime,session` 显示整体 MFE 捕获率约 `53%`。
+- 现行 adaptive trailing 目标捕获率为 `60%`，但实际遥测约 `53%`，说明规则组合/费用/滑点仍在吞噬捕获。
+- trail-lock 金字塔影子：`n_executable=52`，腿净中位 `-$0.24`，腿净合计 `-$30.14`，verdict `KEEP_SAMPLING`，见 `data/shadow/trail_lock_pyramid_latest.json:1`。
+- 候选方向 D：只做影子 A/B：
+  - `adaptive_trailing_target_capture_pct: 60 vs 70`
+  - `adaptive_trailing_max_drawdown_pct: 1.2 vs 2.5`
+  - `+0.8%` 时部分止盈（如 1/3），其余仓位继续 trailing，而不是全仓保本。
+- 禁止直接加仓或放大名义额：净期望转正前，加仓只会放大负期望。
+
+### 25.8 建议优先级
+
+1. **P1：short-horizon EOD MFE 门影子**——直接攻击最大左尾，且已有清晰分层证据。
+2. **P1：D2' 2min 延迟确认裁决**——只针对 `SL_INITIAL` 人群，不全局启用。
+3. **P2：FADE_SHORT / UE 入场锚纪律**——防止实际入场价偏离计划锚后承担初始止损。
+4. **P2：赢家捕获 A/B**——目标是提高 MFE 捕获率，而非简单放宽止损或提高固定 TP。
+5. **P3：费用与滑点门**——继续用扣费扣滑后的 bps 作为主指标，胜率只作辅助。
+
+### 25.9 护栏
+
+- 不做全局“调宽止损/调紧止损/提高 TP”的参数拟合。
+- 不同时修改多个行为变量；每个提案必须预注册判据与回滚。
+- 不因单日样本改 W_WEEK、adaptive trailing、fee gate。
+- 不在 Profit Factor 未达正区间前放大仓位。
+- 所有新策略先 record-only / shadow，SIM 样本达标后再另行裁决。
+
+### 25.10 交下一 agent 的问题
+
+1. 复核 §25.1–§25.3 的 SQL 口径是否与 `exit_scorecard.py` 一致，解释 `n=175` 与直接 SQL `n=172` 的差异。
+2. 为“short-horizon EOD MFE<0.5% 不豁免”构造逐笔 EOD 平仓反事实，量化净差、误杀、费用与滑点。
+3. 判断 D2' 2min 是否达到预注册毕业线；若转正，给出最小适用人群与 TTL 冲突处理方案。
+4. 用 RFC-123 双锚数据检验 `FADE_SHORT` / UE 的计划锚与执行锚分歧是否显著影响 `SL_INITIAL`。
+5. 拆分“入场错” vs “退出错”贡献：MFE≈0 属入场问题，MFE 高但落袋低属退出问题。
+6. 对 trailing A/B 提出预注册判据，必须以扣费扣滑后的净 bps / Profit Factor 为主，不得只看胜率。
+
+## 26. §25 复查（Claude 主线程 · 2026-10-10 · 只读实测）
+
+> 方法：不信任 §25 读数，全部重跑/重算（scorecard 复跑 + 独立 SQL + 影子 json 直读 + config 钉行）。
+> 前置更正：用户消息指向的 `DEB-20261010-event-to-trade-pipeline.md` 不存在——§25 实际落在本文档（20261009），本节就此复核。
+> 本批动作：仅更正 `exit_scorecard.py:16` 一行注释（与代码净口径对齐，零行为变更）；其余零改动。
+
+### 26.1 逐条复核表
+
+| §25 声称 | 复测 | 判定 |
+|---|---|---|
+| §25.1 scorecard 读数（n=175 / 77.1% / +26.15 / -101.87 / RR 0.26 / -$3.11 / PF 0.87 / 毛+9.64−费16.00=净-6.36bps / 扣滑-36.36bps） | 原样复跑逐字一致 | ✅ |
+| §25.1 直接 SQL：n=172、净额 -$347.85、avg赢 +$26.53 | 复算 n=173、净额 -$599.67、avg赢 +26.53 精确一致；差额恰=边界行 SNDK 09-10（-$251.82），见 §26.2-1 | ✅ 漂移已解释 |
+| §25.2 `SL_INITIAL` 8 笔 / -$1,177.88 / 均 -$147.24 / -2.71% | 逐字一致 | ✅ |
+| §25.2 `OVERNIGHT_GAP_STOP` 5 笔 -$1,607.88 | 现 6 笔 -$1,859.70（QCOM 10-08 -$343.15 入窗 + 边界行）；结构不变：**全部 short horizon、全部 LONG、全部上午出场** | ✅ 数字已漂移 |
+| §25.2 两族全 `horizon='short'`；剔除后 +$2,437.91 | 14/14 全 short ✅；剔除后 +$2,437.91 逐字一致 | ✅ |
+| §25.3 计划几何 SL≈4.92% / TP≈7.73% / RR≈1.57；兑现 +0.56% / -1.55% | 复算 SL 4.88 / TP 7.59 / RR 1.56；赢 **+0.56% 精确一致**，亏 -1.45%（join 人群 174 vs 161 口径差） | ✅ 核心论断稳（计划 RR 1.57 → 兑现 payoff ≈0.39） |
+| §25.4 MFE 分层（9/10/20；gap 集中 <0.5%） | gap 行精确一致（5/-$1,503.18、3/-$1,015.91、≥0.5% 层零 gap 且净额为正）；分层 n 因"隔夜"定义差漂移（我 42 vs 其 39） | ✅ 结构论断稳 |
+| §25.5 D2' 读数（580 / 50.69% / $2,154.63 / $2,438.99 / -$284.36） | `entry_delay_confirm_latest.json` 逐字一致；注意其自带 `day_clustered t=-0.16, distinguishable=false` | ✅ |
+| §25.6 DA `136/+$720.79/82.35%`、UE `22/-$534.37/63.64%` | 逐字一致 | ✅ |
+| §25.6 OTHER `14/-$534.27/35.71%` | 15 / -$786.09 / 33.33%（同一边界行漂移） | ✅ 漂移已解释 |
+| §25.7 pyramid 影子（n=52 / 腿净中位 -$0.24 / 合计 -$30.14 / KEEP_SAMPLING） | 逐字一致 | ✅ |
+| §25.7 MFE 捕获率 ≈53% | 我按单位对齐复算 57.2%（加权）/ 56.4%（逐笔），同档，仍低于 60% 目标 | ✅ 量级一致 |
+| §25.4 W_WEEK `unified_config.yaml:1452` | 实证 `loser_overnight_enabled: true` / `max_hold_days: 5` 在该区域 | ✅ |
+
+### 26.2 口径发现（不推翻 §25 结论，但后续提案必须遵守）
+
+1. **§25.10 问题 1（n=175 vs 172）已解**：scorecard `--days 30` 自报 since 2026-09-09（含边界日 → n=175）；直接 SQL 用 `datetime('now','-30 days')` 是 UTC 时刻串，而 `exit_time` 存 ET ISO 字符串——边界行（SNDK 09-10T09:38 ET，pnl_net -$251.82）在不在窗内取决于运行时刻。172+1=173、-347.85+(-251.82)=-599.67 完全对上。**建议：后续"近 N 日"SQL 一律用 ET `trade_date` 列对齐，不用 ISO 字符串比 UTC 时刻**（时钟病灶台账同族）。
+2. **净/毛口径核验通过**（本仓最危险老坑，见 Trade Records Net PnL Convention）：scorecard 与 §25 直接 SQL 同为净口径（`COALESCE(pnl_net, realized_pnl)`，DEB-20260730 D1）。旁证增强：毛口径 PF=**1.244** vs 净 PF=**0.853**——费用（$1,454/173 笔 ≈ $8.4/笔）单因素把 PF 从 1.24 打到 0.85，与既有结论「费用吞毛是第一杠杆」互证。
+3. **单位地雷登记**：`trade_records.pnl_pct` 是小数（-0.05 = -5%），`mfe_pct` 是百分数（0.474 = 0.474%）——同库两列单位不同，复算 MFE 捕获率必须先对齐，否则得出 0.6% 的假读数。建议在 schema/口径文档登记。
+4. **§25.6 archetype 行可复现，但须钉真实字段**：`entry_archetype` 不在 `trade_records.signal_details/metadata_json`，也不在 `playbook_instructions.conditions_json/metadata_json`；实际位于 `playbook_instructions.raw_instruction_json` 顶层。以非空 `decision_id` 精确 join、`exit_time >= datetime('now','-30 days')` 复算：`PULLBACK_LIMIT n=107 / net +930.61 / win 85.05%`、`FADE_SHORT n=27 / net -244.17 / win 74.07%`，与 §25.6 逐字一致。注意 `trade_records` 无 `conditions_json` 列；若用错误列名会直接 SQL 报错，而不是得到 NULL。
+5. 顺手修正：`exit_scorecard.py:16` 注释原写 "realized_pnl 为 SSOT"，与代码 :229/:239 净口径矛盾，已更正（零行为变更）。
+
+### 26.3 对 §25.8 优先级的复核意见
+
+- 「费用与滑点门」不应只在 P3：§26.2-2 显示费用是把 PF 打穿 1.0 的单因素（16bps > 毛 9.64bps）。MFE 门攻击**集中左尾**（偶发可识别），费用攻击**每一笔**（系统性）。建议并列 P1，或在 MFE 门提案中显式声明费用口径不变。
+- §25.5 D2' 的 SL_INITIAL 子集读数（2min +$2,938.73 / 5min +$3,953.74）很亮，但 ALL 层 day_clustered 不可区分、子集 n=29；转正裁决前须补子集 day-cluster 功效检验（§25.10-3 已含，此处加重）。
+- 整体期望 -$3.11/笔在 scorecard 日聚类口径下 t=-0.35，**与零不可区分**。§25 的价值在结构性观察（左尾集中、兑现压缩、来源分层），不在"净为负"本身；候选 A–D 应以结构修复为目标，而非冲"期望转正"。
+- 候选 A（EOD MFE 门）的预注册判据须用 ET trade_date 口径 + 逐笔 EOD 反事实 + 费用滑点全扣，判据文本先落档再跑。
+
+### 26.4 E 表（本节证据，逐条可复跑）
+
+| # | 命令 | 期望输出 |
+|---|---|---|
+| E45 | `PYTHONPATH=. ./venv/bin/python scripts/exit_scorecard.py --days 30` | n=175 / 77.1% / PF 0.87 / 净 -6.36bps（窗口随时间漂移，数字以运行日为准） |
+| E46 | `sqlite3 data/ftseek_us.db "SELECT COUNT(*), ROUND(SUM(COALESCE(pnl_net, realized_pnl)),2) FROM trade_records WHERE source_type='PLAYBOOK_SIM' AND exit_time >= datetime('now','-30 days');"` | n≈172-173，净额与边界行归属对应 |
+| E47 | 46 同库：`SELECT ROUND(SUM(realized_pnl),2), ROUND(SUM(pnl_net),2), ROUND(SUM(fees_est),2) …` | 毛 +854.54 / 净 -599.67 / 费 1,454.21（运行时点口径） |
+| E48 | `… GROUP BY exit_reason` 过滤两族 | SL_INITIAL 8/-1,177.88；GAP_STOP 6/-1,859.70（§25 快照为 5/-1,607.88） |
+| E49 | `python3 -c "json.load(open('data/shadow/entry_delay_confirm_latest.json'))…"` | delays.2.ALL：n=580、net -284.36、day_clustered.distinguishable=false |
+| E50 | `python3 -c "…trail_lock_pyramid_latest.json…"` | n_executable=52、leg_net_median_usd=-0.24、leg_net_sum_usd=-30.14、verdict=KEEP_SAMPLING |
+| E51 | `sqlite3 data/ftseek_us.db "SELECT COALESCE(json_extract(pi.raw_instruction_json,'$.entry_archetype'),'<NULL>') AS entry_archetype, COUNT(*), ROUND(SUM(COALESCE(tr.pnl_net,tr.realized_pnl)),2), ROUND(100.0*SUM(CASE WHEN COALESCE(tr.pnl_net,tr.realized_pnl)>0 THEN 1 ELSE 0 END)/COUNT(*),2) FROM trade_records tr JOIN playbook_instructions pi ON pi.decision_id=tr.decision_id AND tr.decision_id<>'' AND pi.decision_id<>'' WHERE tr.source_type='PLAYBOOK_SIM' AND tr.exit_time>=datetime('now','-30 days') GROUP BY 1 ORDER BY 2 DESC;"` | `PULLBACK_LIMIT 107/+930.61/85.05%`；`FADE_SHORT 27/-244.17/74.07%`；NULL/BREAKOUT 为小样本层 |
+| E52 | `grep -n "COALESCE(pnl_net" scripts/exit_scorecard.py` | :239 净口径（:16 注释已对齐） |
+
+### 26.5 交下一 agent 的补充
+
+1. FADE_SHORT 约束提案可直接使用 `playbook_instructions.raw_instruction_json.$.entry_archetype`；不得把 `trade_records.signal_details/metadata_json` 或 `playbook_instructions.conditions_json/metadata_json` 误当字段出处。
+2. 候选 A 反事实与 D2' 子集功效检验统一用 ET `trade_date` 窗口。
+3. §25 候选项 A–D 全部维持**未执行**状态；任何一项开工前按 §25.9 护栏预注册判据。
+
+
+---
+
+## 27. 第三 Agent 独立复查：§25/§26「策略优化逻辑」前提检验（Hermes · 2026-10-10 · 只读实测）
+
+> 触发：用户问「请分析复查更新的 DEB-20261009-event-to-trade-pipeline.md 关于策略优化的逻辑」。
+> 方法：不复述 §25/§26 读数，只检验**四个 candidate 的立项前提是否成立** + **是否触既有裁决/冻结窗红线**。
+> 工具：`scripts/deb20261009_strategy_opt_probe.py`（只读，A–H 八段，入库可复跑）。
+> 本批动作：**零生产代码变更、零配置变更、零参数变更**；仅追加本节 + 入库探针。
+> 前置认可：§26 的复核质量高（净口径 ✓、JOIN 扇出 ✓、单位地雷 ✓、ET 窗口 ✓、毛/净 PF 对照 ✓），本节不重复其工作，只补它和 §25 都漏掉的三道闸。
+
+### 27.0 结论先行
+
+**§25 的数据画像基本可信，但它的「策略优化逻辑」有三处结构性缺陷，按现状推进会撞墙：**
+
+| # | 缺陷 | 证据段 | 后果 |
+|---|---|---|---|
+| **1** | **§25.8 的退出侧 candidate 触发 OKR-2026-10 KR1 冻结窗治理，而该窗已 `broken`** — §25/§26 通篇未提冻结窗 | §27.1 | candidate A（改 `loser_overnight_*`）实装会直接切第 3 个退出哈希；candidate D（改 `adaptive_trailing_*`）当前不在哈希，但若合规实装须先补入白名单，否则绕过冻结维；B/C为入场侧不切退出哈希，但仍须遵守 P0 治理与功效闸；且 3 条 P0 告警全部逾期未处置 |
+| **2** | **§25.2 的因果叙事对一半样本是错的** — 声称两族「被 W_WEEK/隔夜豁免拖成多夜」，但 `SL_INITIAL` 8 笔**均持 0.28h（17 分钟）、跨日 0/8** | §27.2 | candidate A（EOD 隔夜门）**物理上碰不到 SL_INITIAL 那 8 笔 −$1,177.88**；§25.2 报的「左尾 −$2,785.76」里只有 gap 那 5 笔归它管，覆盖率被高估一倍 |
+| **3** | **§25.1「每笔期望 −$3.11 / 净为负」由 2 笔仙股费用单决定** — 剔除 >100bps 的 2 笔后，净从 **−$347.85 翻正为 +$147.74**，符号翻转 | §27.3 | 「系统整体亏钱」这一立项前提**不成立**；§26.3 已建议费用并列 P1，但没做这个剔除敏感性 ⇒ 真正的第一杠杆是**仙股/最小佣金准入**，不是退出参数 |
+
+**另有一条红线命中**：candidate D 第 3 条「+0.8% 时部分止盈 1/3」= **DEB-20261008 已裁决否决的 `scale_out` 分批止盈**（B1 否决实装 + B2 不新开影子攒样 + `exit_policy.yaml:174` DEAD RULE 2026-06-21）。§25.7 把它当新候选提出，未查既有裁决 ⇒ 违反 `ADJUDICATED-CRITERIA` 防重复立案纪律（§27.4）。
+
+### 27.1 缺陷 1：冻结窗已 broken，A/D 触退出变更闸（§25/§26 均未提）
+
+`data/invariant_check_latest.json::config_freeze.oct_cohort`（mtime 10-10 05:05）：
+
+```json
+{"okr":"2026-10","window_start":"2026-09-17","n_unique":2,"status":"broken",
+  "versions":{"exit-34c7153088a1":106,"exit-ca4487172a6f":17},
+  "n_closed":123,"n_target":200,"hash_missing_rows":4}
+```
+
+- **KR1 要求窗内退出哈希唯一值数 = 1 且攒满 200 笔已结算**；实测 **2 个哈希、123/200** ⇒ `W1_oct_cohort_broken` 已触发。
+- **切换根因（git 复算，非推断）**：commit `410297295`（2026-10-08，RFC-106 §5.2）给 `config/playbook_horizon.yaml` 加了一行 `short_horizon.overnight_gap_stop_pct: 3.0`，commit message 自称「原代码默认, **零行为变更**」。
+  - 行为上确实等价（值同为 3.0，原由 `exit_engine.py:363` 代码默认兜底）；
+  - **但 `horizon_config` 整体进 exit hash 的 `_snapshot`**（`app/playbook/config.py:154`，实测 `horizon_config_in_hash=True`）⇒ 加一个键 = 切哈希。
+  - 复算：`410297295^` blob sha1=`53b7b803ae60`（len 8503）→ `410297295` blob sha1=`de761c083464`（len 8534），唯一变更键 `short_horizon.overnight_gap_stop_pct: <无> → 3.0`。
+  - ⚠️ **与既有 skill 记录的判据不同源，不可类推**：skill 记「改 `playbook_horizon.yaml` **注释**前先实测是否进哈希 ⇒ 实测注释不进（`safe_load` 后是 dict，安全）」。这次加的是**真键值**，进哈希 ⇒ 不安全。**判据是「键值 vs 注释」，不是「是否零行为变更」** —— 「零行为变更」这个自我定性恰恰是它躲过冻结窗审查的原因。
+- **3 条 P0 告警全部逾期**（`logs/meta_audit.log`）：`W1_oct_cohort_broken` due 10-09、`W1_kr2_cohort_broken` due 10-04、`intraday_health:rc64370b7228` due 09-29。
+- **对四个 candidate 的约束**（按 `_snapshot` 白名单逐键核）：
+
+| candidate | 拟改参数 | 在 exit hash 白名单？ | 冻结窗判定 |
+|---|---|---|---|
+| **A** EOD MFE 门 | `loser_overnight_enabled` / `_max_hold_days` / `_max_depth_pct` | **在**（`config.py:200-202`） | ⛔ 实装即第 3 个哈希；只允许 record-only / shadow variant |
+| **B** D2' 2min 延迟确认 | 入场侧延迟，不属退出链 | 不在 | ✅ 可影子攒样（但须先过 §27.5 的功效检验） |
+| **C** FADE_SHORT / UE 入场锚 | 入场侧 | 不在 | ✅ 可影子（RFC-123 双锚已在跑） |
+| **D** trailing A/B | `adaptive_trailing_target_capture_pct` / `_max_drawdown_pct` | **不在白名单**（`unified_config.yaml:1431/1433`，`config.py` 零命中） | ⚠️ 灰区：不在 exit hash，但同属退出行为参数 ⇒ 影子 A/B 安全，**实装前须先补进白名单或经开跑会裁决**，否则等于绕过冻结维 |
+
+⇒ **§25.8 的 P1「short-horizon EOD MFE 门影子」方向可以做，但必须显式声明 record-only（不碰 `loser_overnight_*` 三个键的生效值）**；§25.9 护栏写了「所有新策略先 record-only / shadow」，但没写「冻结窗内连影子实装都禁」这一层，容易被后人读成「影子做完就能上」。
+
+### 27.2 缺陷 2：§25.2 因果叙事对 SL_INITIAL 一半样本是错的
+
+§25.2 原文：「短周期信号被 W_WEEK / 隔夜豁免拖成多夜持仓，是左尾的主要来源」。实测两族的持仓形态**完全不同**：
+
+| exit_reason | n | 净额 | 均持 | 持仓区间 | 跨日 | avg MFE | MFE<0.3% |
+|---|---:|---:|---:|---|---:|---:|---:|
+| `OVERNIGHT_GAP_STOP` | 5 | −$1,607.88 | **10.48h** | [6.3, 19.4]h | **5/5** | 0.18 | 4/5 |
+| `SL_INITIAL` | 8 | −$1,177.88 | **0.28h** | [0.1, 0.5]h | **0/8** | 0.091 | 7/8 |
+
+- `SL_INITIAL` 8 笔 **全部当日 17 分钟内被杀、零跨日** ⇒ 与 W_WEEK / 隔夜豁免**无因果关系**，它是「入场即错、当日初始止损秒杀」，病灶在**入场侧**（avg MFE 0.091%，7/8 属墓地）。
+- 真正的「多夜拖成左尾」证据在 **`tighten` 族**（§25.2 完全未报）：n=3、净 −$451.58、**均持 69.45h、最长 138.4h**（`US.UBER` 09-11，MFE 0.0585%、MAE 2.97%、净 −$99.37）—— 这才是「短周期信号被拖成多夜」的实物。
+- **§25.2 左尾覆盖率被高估**：它只报了两族 −$2,785.76，实测同窗亏损族总额为 **−$3,425.56**（含 `tighten` −$451.58、`breakeven_lock` −$296.65），**§25.2 只覆盖 81.3%**。
+- **⇒ candidate A 的可拦截面比 §25.4 声称的小一半**：EOD 隔夜门只能作用于跨日仓，物理上碰不到 `SL_INITIAL` 那 −$1,177.88。§25.8 把 A 列为 P1 的理由是「直接攻击最大左尾」，但最大左尾里有一半不归它管。
+
+### 27.3 缺陷 3：「系统净为负」由 2 笔仙股费用单决定（符号翻转）
+
+| 口径 | n | 净额 | 均笔 | 胜率 |
+|---|---:|---:|---:|---:|
+| 全样本（§25.1 口径） | 172 | **−$347.85** | −$2.02 | — |
+| 剔除费用 >100bps 的 2 笔 | 170 | **+$147.74** | +$0.87 | 76.2% |
+
+**被剔除的 2 笔（同为 2026-09-17）：**
+
+| symbol | qty | 入场价 | notional | 费用 | **fee_bps** | 毛利 | 净额 | MFE | exit_reason |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| `US.CTNT` | 68,493 | **$0.072** | $4,931 | **$451.26** | **915.1** | +$136.99 | **−$314.27** | 2.78% | `breakeven_lock` |
+| `US.GIPR` | 11,494 | **$0.431** | $4,954 | **$100.86** | **203.6** | −$80.46 | **−$181.32** | 0.0 | `tighten` |
+
+- 这 2 笔占**全样本费用的 38.1%**（$552.12 / $1,450.10），n 只占 1.2%。
+- `CTNT` 是本仓已知的毛/净口径污染样本（§前批 PEP 复查同源）：**毛利 +$136.99、MFE 2.78%（曾浮盈 2.78%、从未水下 mae=0），却因 $451 费用净亏 −$314.27** —— 915bps 的费用率是「每单最低佣金 × 68,493 股仙股」的必然结果，与策略质量无关。
+- **⇒ §25.1「每笔期望 −$3.11」「净为负」的立项前提不成立**：真实结构性读数接近打平（+$0.87/笔）。§26.3 说「整体期望 −$3.11 在日聚类口径下 t=−0.35 与零不可区分」—— 这句是对的，但 §26 没做**剔除敏感性**，所以没发现「不可区分」的另一半原因是**两笔仙股把均值拖负**。
+- **⇒ 第一杠杆重排**：不是退出参数，是**仙股/最小佣金准入门**（低价高股数单的 fee_bps 事前可算：`min_commission × qty / notional`）。这条与用户既定裁决「费用 ≈ 毛利 42×、edge 必须 > ~10bps 费用线」同族，且**事前完全可观测**（不像 MFE 门要事后才知道），实施成本远低于 candidate A。
+
+**补充：墓地分解（skill 标准动作，§25 未做）**
+
+| MFE 桶 | n | 净额 | 胜率 | 均费 |
+|---|---:|---:|---:|---:|
+| **<0.3%（墓地）** | 24 | **−$2,637.44** | 29.2% | $8.80 |
+| 0.3–0.5% | 34 | −$325.51 | 79.4% | $6.86 |
+| 0.5–1% | 67 | +$589.80 | 85.1% | $4.99 |
+| ≥1% | 47 | +$2,025.30 | 85.1% | $14.92 |
+
+- 全样本净 −$347.85，墓地净 −$2,637.44 ⇒ **墓地是唯一亏损源，其余三桶合计为正**。
+- **这与 §25.3 的归因冲突**：§25.3 说「执行层把计划 RR 1.57 变成实际 payoff 0.26，主要是保本/锁利过早截断赢家」⇒ 病灶在**退出**。但墓地分解显示 24 笔 **MFE<0.3%（生下来就没浮盈过）** 承担了全部亏损 ⇒ 病灶在**入场**。
+- 按既有纪律（`exit-parameter-validation` skill：「MFE<0.3% 桶净亏 ≈ 全部亏损 = 漏在入场，退出线微调救不了」），**candidate A/D 都属退出侧微调，对墓地那 −$2,637.44 无能为力**。§25.7 自己也写了「MFE 捕获率 53% < 60% 目标」，但捕获率的分母是**已有浮盈的仓**，墓地仓 MFE≈0 ⇒ 捕获率这个指标对墓地天然失明。
+- **费用/毛利比 = 1.32×**（毛 +$1,102.25 / 费 $1,450.10），费/笔 $8.53。`SL_BREAKEVEN` 86 笔均费 $5.75、净 +$564.42（均笔 +$6.56）⇒ **保本腿净贡献为正但极薄，费用吃掉毛利的 45%**；§25.3 说 BE/TRAIL_LOCK「制造了高胜率但单笔利润偏小」—— 数字支持，但它没算费用占比，所以低估了「BE 族在给券商打工」的程度。
+
+### 27.4 缺陷 4：candidate D 第 3 条命中已裁决否决轴（防重复立案）
+
+§25.7 candidate D 第 3 条：「`+0.8%` 时部分止盈（如 1/3），其余仓位继续 trailing，而不是全仓保本」。
+
+**这等于 DEB-20261008 已裁决否决的 `scale_out` 分批止盈**，三重证据同向：
+
+1. **既有裁决**：`DEB-20261008` §9 用户裁「继续」⇒ **B1「否决 2%/3%/4% 分批止盈阶梯实装（全出与半仓同否）」+ B2「不新开影子攒样」**。B2 的理由是机制性的：「Δ 符号由『现状落袋 vs 阈值』决定、**不随样本积累翻转** ⇒ 攒样是浪费影子预算」。
+2. **历史 DEAD RULE**：`app/risk/exit_policy.yaml:174` `# ── DEAD RULE: scale_out (2026-06-21) ──`，理由「4 笔触发形同虚设，50% 锁利反而少赚 ORCL $2,258→$1,328」；`trade_records` 里 `SCALE_OUT` 恰 4 笔，注释与数据逐字吻合。
+3. **配置头部已登记**：`config/exit_profiles.yaml` 头部注释「⚠️ 已否决轴 (DEB-20261008 F4/B6, 2026-10-08 用户裁「继续」)」，且该文件自述「Harness/Shadow 影子系统专用」（死配置，生产零消费方）。
+
+- **0.8% 阈值比 DEB-20261008 测的 2%/3%/4% 更低 ⇒ Δ 更负**（阶梯类的 Δ = f×(阈值 − 现状落袋) − 增量费用；阈值越低，越可能低于现状落袋中位）。按 B1 的机制论证，**这不是「换个阈值再试」，是同一否决轴**。
+- 且 0.8% 档会命中 `SL_BREAKEVEN` 现役腿的武装区（be 0.4% 起武装）⇒ 与既有机制功能重叠，属 skill 明令的「贴成本线锁死是反直觉最差解」同族。
+- **⇒ candidate D 第 3 条应划掉**；D 的第 1、2 条（`target_capture_pct` 60 vs 70、`max_drawdown_pct` 1.2 vs 2.5 影子 A/B）不属已否决轴，但受 §27.1 冻结窗灰区约束。
+- **纪律缺口**：§25.9 护栏写了「不做全局参数拟合」「不同时改多个变量」，但**没写「提案前先查 `ADJUDICATED-CRITERIA` / 已否决轴清单」**。DEB-20261008 B5 已经给 `pending_adjudication_report.py` 加了「⑤ 已否决轴（防重复立案）」节 ⇒ **建议 §25.9 护栏补一条：任何 candidate 提出前先跑该报告的 ⑤ 节**。
+
+### 27.5 candidate B（D2' 2min）的独立意见：读数亮但功效不足
+
+§25.5 引 `entry_delay_confirm_latest.json`：`SL_INITIAL` 人群 2min 净价值 **+$2,938.73**、5min **+$3,953.74**、SL_INITIAL 误杀 0。§26.3 已正确指出「ALL 层 day_clustered 不可区分、子集 n=29」。补三点：
+
+1. **子集 n=29 < 既有 n≥30 门槛**，且 §26.1 自己登记了该产物自带 `day_clustered t=-0.16, distinguishable=false` ⇒ **按纪律「n 不足只报进度禁止决策」，当前不可裁决转正**，§25.8 把它列 P1「裁决」是超前了，应改为「继续攒样至 n≥30 + 补子集 day-cluster 功效检验」。
+2. **避免价值 $3,037/$3,999 是「回避掉的亏损」上界口径**，不是可实现收益 —— 按 skill 纪律（峰值/回避类字段是定义性上界，须找同批可实现对照），引用时必须与「机会成本」并报（§25.5 表格已并报，✓），但 §25.8 的 P1 表述只留了正向数字。
+3. **载体节奏未验**：2min 确认若挂到主触发循环（实测 5–6min/轮、历史单轮可达 58min）= **静默落地一个更粗的、已被预注册门否决的参数变体**。§25.10-3 提了「TTL 冲突处理」但没提载体节奏 ⇒ 提案前必须按 skill「延迟/计时类机制的落地载体必须用日志实测宿主循环真实节奏」核一遍。
+
+### 27.6 建议的优先级重排（取代 §25.8，供裁决）
+
+| 原 §25.8 | 复查后建议 | 理由 |
+|---|---|---|
+| P1 candidate A（EOD MFE 门影子） | **降 P2，且必须先修口径**：① 事前可观测性 —— 落库 `mfe_pct` 是**全生命周期峰值（含次日）**，门在 EOD 判时事前只有「EOD 时刻浮盈」，用 `mfe_pct` 分层 = 事后口径 ⇒ **误杀率被系统性低估**，须从 `metadata_json` / 1min bars 重算 EOD 时点峰值；② 只作用于跨日仓（§27.2），可拦截面是 §25.4 声称的一半 | 乐观上限也只 −$1,699.21（拦 11 笔，其中真左尾 gap 5 笔 −$1,607.88，非 gap 6 笔仅 −$91.33，**该层含 4 笔赢家 = 误杀候选**）；「拦下即归零」未扣 EOD 平仓反事实与多付一腿费 |
+| P1 candidate B（D2' 裁决） | **维持 P1 但改为「攒样 + 功效检验」，不作裁决** | n=29<30、day_clustered 不可区分（§27.5） |
+| P2 candidate C（入场锚纪律） | **升 P1** | 唯一直接攻击墓地（−$2,637.44，24 笔 MFE<0.3%）的候选；RFC-123 双锚影子已在跑，不新增基建；且不触冻结窗 |
+| P2 candidate D（trailing A/B） | **第 3 条划掉**（§27.4 已否决轴）；第 1、2 条保留为影子 A/B，实装前须裁冻结窗灰区 | 见 §27.1/§27.4 |
+| P3 费用与滑点门 | **升 P0（最高）** | ① 费用/毛利 1.32×，是把 PF 从 1.244 打到 0.853 的单因素（§26.2-2 已指出，但未升优先级）；② **2 笔仙股决定全样本净符号**（§27.3）；③ fee_bps **事前完全可算**（`min_commission×qty/notional`）， unlike MFE 门要事后才知道 ⇒ 最低成本、最高确定性 |
+
+**新增 P0（治理，不属策略但阻塞一切）**：处置 `W1_oct_cohort_broken` —— 按预注册回滚线**须 DEB 落档 + 开跑会级裁决，不得静默移窗**（移动 `_OCT_COHORT_START` = 改判据面）。同时把「`horizon_config` 整体进 exit hash ⇒ 加任何键（哪怕值等于代码默认）都切哈希」写进变更协议的前置检查，防 `410297295` 同型事故复发。
+
+### 27.7 E 表（本节证据，逐条可复跑）
+
+> 期望列**全部程序化取自实跑输出**（`gen_e27.py` 生成，禁手抄）。表形态遵守
+> `scripts/verify_deb20261009_event.py::parse_e_tables` 的 **3 列契约**
+> （`| # | 命令 | 期望输出 |`）—— 首版写成 4 列（多一列「断言」），验证器按位置取
+> `cells[1]` 当命令 ⇒ 12 条全红，已改回（见 §27.8-6）。断言描述列在表前，不塞进期望列
+> （期望必须是命令输出的字面子串）。
+> `grep -c` 零命中时 rc=1 属 grep 语义，故 E63 带 `|| true`（0 命中正是期望）。
+
+**各条断言内容**：
+
+- `E53` — 探针十一段结构完整 (A–K)
+- `E54` — KR1 冻结窗: status / 哈希数 / 已结算 / 目标
+- `E55` — meta_audit P0 逾期条数
+- `E56` — 410297295 新增键行数 (自称「零行为变更」)
+- `E57` — horizon_config 进 exit hash _snapshot 的命中数
+- `E58` — §25.2 因果检验: SL_INITIAL / GAP_STOP 的 n·均持·跨日
+- `E59` — 仙股剔除敏感性: n·净·剔除后 n·净·符号翻转·费用占比
+- `E60` — 墓地桶 + 全样本净 + 费用/毛利比
+- `E61` — candidate A 可拦截面: 拦/净/gap/非gap/误杀候选/放行
+- `E62` — candidate D 第3条命中已否决轴 (DEB-20261008 + DEAD RULE)
+- `E63` — adaptive_trailing 在 exit hash 白名单的命中数 (0=灰区)
+- `E64` — adaptive_trailing 参数实际所在行 (unified_config)
+- `E71` — candidate C: 历史锚样本/FADE_SHORT/RFC-123 matched
+- `E72` — candidate B: D2' 2min子集读数/宿主节奏/TTL
+
+| # | 命令 | 期望输出（2026-10-10 实跑） |
+|---|---|---|
+| E53 | `PYTHONPATH=. ./venv/bin/python scripts/deb20261009_strategy_opt_probe.py \| ./venv/bin/python -c "import json,sys; j=json.load(sys.stdin); S={s['segment']:s for s in j['segments']}; print(len(S), ''.join(sorted(S)))"` | `11 ABCDEFGHIJK` |
+| E54 | `./venv/bin/python -c "import json;oc=json.load(open('data/invariant_check_latest.json'))['config_freeze']['oct_cohort'];print(oc['status'],oc['n_unique'],oc['n_closed'],oc['n_target'])"` | `broken 2 123 200` |
+| E55 | `grep -c "P0 OPEN" logs/meta_audit.log` | `3` |
+| E56 | `git show 410297295 -- config/playbook_horizon.yaml \| grep -c "^+  overnight_gap_stop_pct: 3.0"` | `1` |
+| E57 | `grep -n '"horizon_config": self._horizon_config' app/playbook/config.py` | `154:                "horizon_config": self._horizon_config,` |
+| E58 | `PYTHONPATH=. ./venv/bin/python scripts/deb20261009_strategy_opt_probe.py \| ./venv/bin/python -c "import json,sys; j=json.load(sys.stdin); S={s['segment']:s for s in j['segments']}; f={x['exit_reason']:x for x in S['C']['families']};a=f['SL_INITIAL'];b=f['OVERNIGHT_GAP_STOP'];print(a['n'],a['avg_hold_h'],a['n_cross_day'],b['n'],b['avg_hold_h'],b['n_cross_day'])"` | `8 0.28 0 5 10.48 5` |
+| E59 | `PYTHONPATH=. ./venv/bin/python scripts/deb20261009_strategy_opt_probe.py \| ./venv/bin/python -c "import json,sys; j=json.load(sys.stdin); S={s['segment']:s for s in j['segments']}; d=S['D'];print(d['n_total'],d['all_net'],d['after_exclude_n'],d['after_exclude_net'],d['net_sign_flips'],d['high_fee_share_of_all_fees_pct'])"` | `172 -347.85 170 147.74 True 38.1` |
+| E60 | `PYTHONPATH=. ./venv/bin/python scripts/deb20261009_strategy_opt_probe.py \| ./venv/bin/python -c "import json,sys; j=json.load(sys.stdin); S={s['segment']:s for s in j['segments']}; e=S['E'];g=e['buckets'][0];print(g['n'],g['net'],g['wr'],e['sample_net'],e['graveyard_net'],e['fee_to_gross_ratio'])"` | `24 -2637.44 29.2 -347.85 -2637.44 1.32` |
+| E61 | `PYTHONPATH=. ./venv/bin/python scripts/deb20261009_strategy_opt_probe.py \| ./venv/bin/python -c "import json,sys; j=json.load(sys.stdin); S={s['segment']:s for s in j['segments']}; f=S['F'];print(f['blocked_n'],f['blocked_net'],f['blocked_gap_n'],f['blocked_gap_net'],f['blocked_nongap_n'],f['blocked_nongap_net'],f['blocked_winners_false_kill_candidates'],f['passed_n'],f['passed_net'])"` | `11 -1699.21 5 -1607.88 6 -91.33 4 15 619.98` |
+| E62 | `PYTHONPATH=. ./venv/bin/python scripts/deb20261009_strategy_opt_probe.py \| ./venv/bin/python -c "import json,sys; j=json.load(sys.stdin); S={s['segment']:s for s in j['segments']}; g=S['G'];print(g['deb_20261008_exists'],g['mentions_partial_take_profit'],len(g['verdict_lines']),g['scale_out_dead_rule'].split()[0])"` | `True True 3 exit_policy.yaml:174` |
+| E63 | `grep -c "adaptive_trailing" app/playbook/config.py \|\| true` | `0` |
+| E64 | `grep -n "adaptive_trailing_target_capture_pct\\|adaptive_trailing_max_drawdown_pct" config/unified_config.yaml \| cut -d: -f1 \| tr "\n" " "` | `1431 1433` |
+| E71 | `PYTHONPATH=. ./venv/bin/python scripts/deb20261009_strategy_opt_probe.py \| ./venv/bin/python -c "import json,sys; j=json.load(sys.stdin); S={s['segment']:s for s in j['segments']}; i=S['I'];fa=i['by_archetype']['FADE_SHORT'];r=i['rfc123'];print(i['historical_n'],i['historical_net'],fa['n'],fa['net'],fa['sl_initial_n'],fa['graveyard_n'],r['unique_decisions'],r['matched_trade_decisions'])"` | `133 46.38 26 -401.94 4 5 29 21` |
+| E72 | `PYTHONPATH=. ./venv/bin/python scripts/deb20261009_strategy_opt_probe.py \| ./venv/bin/python -c "import json,sys; j=json.load(sys.stdin); S={s['segment']:s for s in j['segments']}; x=S['J'];d=x['delays']['2']['SL_INITIAL'];c=x['host_auto_execute_cadence'];print(d['n'],d['net_value_usd'],d['day_clustered']['distinguishable'],c['ftseek_us.log-20261009.gz']['median_min'],c['ftseek_us.log-20261009.gz']['p90_min'],x['ttl_conflict']['five_min_confirm_exceeds_ttl'])"` | `29 2938.73 True 3.18 3.42 True` |
+
+### 27.8 复查自曝（本节我自己的测量错，已修）
+
+1. **探针首版把 2 笔未平仓当已平仓计入样本**：BASE 用 `exit_reason IS NOT NULL`，挡不住空串 —— 实测 10-09 有 `id=1647 SNDK` / `id=1652 AMD` 两笔 `exit_time IS NULL, exit_reason=''`（未平仓，非脏标签）⇒ n 虚增 174→172。修为 `exit_reason<>'' AND exit_time IS NOT NULL`，并在 H 段单列 `open_not_closed`。**金额结论未变**（未平仓笔 net=NULL 不参与求和），但 n 与「墓地桶 26→24」变了 ⇒ 已按修正后数字重写本节。
+2. **`net` 列 NULL 未防护**：首版 `sum(r["net"] …)` 撞 `TypeError: float + NoneType` 崩在 D 段。改 `COALESCE(...,0)` 并单列 `n_null_pnl` 计数（不静默丢样本）。
+3. **`P3_DUP_CLEANUP` 2 笔 net 为 NULL 仍进 `by_exit_reason`**：显示为 `net: None`。未剔除（它是真实标签，属对账清理腿），但**报数时必须说明这 2 笔不参与净额合计**，否则读者会以为「有 2 笔打平」。
+4. **§27.3 的「剔除 >100bps」是我自选的阈值，不是预注册判据** —— 属**阈值购物风险**。缓解：① 2 笔的 fee_bps 是 915 / 204，与第三名之间有明显断层（不是靠阈值精调挑出来的）；② 结论方向对阈值不敏感（任何 ≤200bps 的阈值都只剔这 2 笔）；③ **但「净翻正」不得当收益承诺** —— 绝对金额不作承诺是既有纪律，此处只用于推翻「系统整体亏钱」这个立项前提。
+5. **未做逐笔 EOD 平仓反事实**（§25.10-2 要求）：candidate A 的 −$1,699.21 是「拦下即归零」乐观上限，真实值须逐笔重放 + 扣多付一腿费。本节只判定「前提不成立/可拦截面被高估」，**不给出 A 的收益估计**。
+6. **⚠️ 本表首版把 E53–E64 的期望列写成了描述文字**（如「八段 A–H JSON；`A.status="broken"`…」），甚至 E58–E61 的命令列写的是「探针 C 段」而非可执行命令 ⇒ 被验证器计入 rc 后 **12 条全红**（`/bin/sh: 探针: command not found`）。这正是我在 §13.9 给上游 §11.7/§12.7 登记过的同一形态的错（「期望列是描述文字，不可机械比对」），**我自己又犯了一次**。已按纪律重写：期望列全部程序化取自实跑输出（`gen_e27.py`），命令列全部可 `bash -lc` 执行；`grep -c` 零命中时 rc=1 属 grep 语义 ⇒ E63 带 `|| true`。
+7. **验证器分区逻辑缺陷（只登记不代改，属他人批次）**：`scripts/verify_deb20261009_event.py::parse_e_tables` 在 §14 存在时走 `return _parse_e_rows(src[i14:]), _parse_e_rows(src[:i13])` —— 即把 **§14 之后到文件末尾的所有 E 行**（含 §26.4 的 E45–E52、§27.7 的 E53–E64）一律当 own 计入 rc，而不是按节归属。我提交的 `a32329e80` 原版是「§13.7 计入 rc、§11.7/§12.7 只报告」，`fca5001d6`（并行 agent）扩展成现形态。后果：**任何人追加新节都会把前人的 E 表拖进自己的 rc**。修法建议（留其作者裁）：按 `### N.M E 表` 标题分节归属，每节独立报 rc 或显式声明哪几节计入。
+
+### 27.9 交下一 agent
+
+1. **处置 `W1_oct_cohort_broken`（P0，阻塞一切退出侧变更）**：按预注册回滚线走 DEB 落档 + 开跑会裁决；**禁止移动 `_OCT_COHORT_START`**（= 改判据面）。裁决时须回答：`410297295` 这类「值等于代码默认的显式化」是否应豁免于哈希维（若豁免，须改哈希计算方式，本身也是变更）。
+2. **仙股/最小佣金准入门（新 P0 候选）**：`fee_bps = min_commission × qty / notional` 事前可算，提案前先用历史全样本回放「若拦下 fee_bps>X 的入场」的净效应与误杀（注意 X 须预注册，不得事后挑；建议按 fee_bps 分布断层取，并报敏感性）。
+3. **candidate A 若继续**：必须先从 `metadata_json` / 1min bars 重算 **EOD 时点**峰值（不用落库 `mfe_pct`），再做逐笔 EOD 平仓反事实；且显式声明 record-only（不碰 `loser_overnight_*` 三键生效值）。
+4. **candidate C 升 P1 的具体形态**：用 `playbook_instructions.raw_instruction_json.$.entry_archetype`（§26.2-4 已钉字段出处）分 `FADE_SHORT` / UE 两层，检验计划锚 vs 执行锚漂移对 `SL_INITIAL` 的贡献；**先查墓地 24 笔里有多少是锚漂移造成**（若墓地主要是锚漂移，C 就是唯一对症的候选）。
+5. **§25.9 护栏补一条**：任何 candidate 提出前先跑 `scripts/pending_adjudication_report.py` 的「⑤ 已否决轴」节（DEB-20261008 B5 已建），防 candidate D 第 3 条同型重复立案。
+6. **变更协议补前置检查**：改 `config/playbook_horizon.yaml` **任何键**（含值等于代码默认的显式化）前先复算 exit hash，若变则须走冻结窗裁决 —— 判据是「键值 vs 注释」，不是「是否零行为变更」。
+
+## 28. P0 执行批：冻结窗治理 + fee_bps 准入全历史回放（2026-10-10 · 只读）
+
+> 触发：用户对多 agent 共识裁「同意」。
+> 边界：**本批零生产配置、零交易行为、零cron、零live路由变更**。`W1_oct_cohort_broken` 仍为 OPEN，不移动 `_OCT_COHORT_START`，不关闭告警，不实装任何 fee gate。用户「同意」在本节语义为同意执行只读回放与治理落档，不等同于关闭冻结窗或启用准入门。
+
+### 28.1 冻结窗治理状态
+
+- `W1_oct_cohort_broken` 维持 P0 OPEN：KR1 窗内仍是 2 个退出哈希、123/200 笔，未做任何静默移窗。
+- 退出侧 candidate A/D 继续冻结；B/C为入场侧可继续只读/影子分析，但不得绕过 P0 治理。
+- 本批唯一代码变更是扩展既有 `scripts/admission_replay.py`（只读回放器）并新增契约测试；不触碰 `app/playbook/config.py`、`unified_config.yaml`、`playbook_horizon.yaml`、exit policy、DA/UE链路。
+- 后续若要实装 `max_fee_bps`，必须另行预注册阈值、误杀率、回滚条件与冻结窗裁决；本节只给证据，不给上线授权。
+
+### 28.2 回放器口径修正
+
+旧 `admission_replay.py` 有四个会影响结论的口径问题，本批已修正：
+
+1. 未过滤 `source_type='PLAYBOOK_SIM'`，混入 `MAIN_PIPELINE/POSITION_SYNC` 等非Playbook成交。
+2. 未过滤已平仓，`exit_reason=''` 的未平仓单会进入 n。
+3. 按 `date+symbol+direction` LEFT JOIN，实测存在扇出；现改为非空 `decision_id` 精确关联，同 ID 取最新 instruction。
+4. 净额用 `realized_pnl - fees_est` 重算；现改为 `COALESCE(pnl_net, realized_pnl)` 净额 SSOT，NULL 不静默丢弃并计数。
+
+`fee_bps` 判据使用 `app.execution.fee_model.estimate_round_trip()` 的**事前可计算费用**，不是事后 `fees_est`；`fees_est` 仅作为 ledger 对账口径。输出为剔除被拦交易的反事实（止漏上界），不计资金复用/机会成本，不作盈利预测。
+
+### 28.3 全历史与近窗敏感性
+
+样本：`PLAYBOOK_SIM`、已平仓、`quantity>0`、`entry_price>0`、ET `trade_date` 全历史。全历史 `n=634`，其中2笔 `P3_DUP_CLEANUP` 净额为 NULL，不参与净额但保留在 n。
+
+| 窗口 | baseline净额 | gate | 拦截n | 误杀n | 留存净额 | Δ净额 |
+|---|---:|---|---:|---:|---:|---:|
+| all-history | `-$2,478` | `fee_bps<=25` | 24 | 10 | `-$2,438` | `+$40` |
+| all-history | `-$2,478` | `fee_bps<=50` | 6 | 1 | `-$1,991` | `+$487` |
+| all-history | `-$2,478` | `fee_bps<=100` | 3 | 0 | `-$1,979` | `+$499` |
+| all-history | `-$2,478` | `fee_bps<=200` | 2 | 0 | `-$1,982` | `+$496` |
+| 35d | `-$309` | `fee_bps<=50/100/200` | 2 | 0 | `+$186` | `+$496` |
+| 60d | `-$214` | `fee_bps<=50/100/200` | 2 | 0 | `+$282` | `+$496` |
+
+判读：
+
+- 近35/60日与全历史中，`>200bps` 都只拦 `CTNT/GIPR` 两笔极端最低佣金污染单，且0误杀；这是最保守的“异常费率护栏”候选。
+- `50/100` 的额外拦截主要来自更早历史样本，全历史净改善略高，但属于更宽费用治理轴，不应与本次“最低佣金异常单”混为一个判据。
+- `200bps` 不能把全历史净额转正；它只是剔除已知结构性污染，不是盈利策略。
+- 25bps在35/60/全历史方向不一致且误杀较多，不作为候选。
+- 阈值选择存在事后数据风险。虽然200bps在全历史0误杀、且只拦两笔极端异常，但正式上线前仍须用户显式裁决并预注册：`blocked_n`、`false_kill_n`、净bps、按日聚类、回滚条件。
+
+### 28.4 Candidate C入场锚只读复核
+
+§27探针新增段I（不新增平行采集层），口径为：`PLAYBOOK_SIM`已平仓、精确`decision_id` join、`raw_instruction_json.planned_entry`、方向感知adverse drift（LONG买贵为正，SHORT卖低为正），窗口沿用§25。
+
+- 可匹配样本：`n=133`，净额`+$46.38`；join无扇出。
+- `FADE_SHORT`：`n=26`，净额`-$401.94`，`SL_INITIAL=4`，`MFE<0.3%=5`。
+- `UE/universe_expansion`：`n=19`，净额`-$441.78`，`SL_INITIAL=1`，`MFE<0.3%=2`。
+- `PULLBACK_LIMIT`：`n=86`，净额`+$855.75`，`SL_INITIAL=1`，`MFE<0.3%=10`。
+- adverse drift分层非单调：`2-3%`层`n=22 / -$920.46 / SL_INITIAL=4`，但`>3%`层`n=11 / +$436.14 / SL_INITIAL=0`。因此不能直接把“锚漂移>X%”立为门。
+- RFC-123双锚影子LIVE：573行、29个decision、missing率0%、|分歧|中位2.1053%、p90 4.9458%；已平仓matched decision=21，`insufficient_for_gate=true`。
+
+判读：FADE_SHORT/UE弱人群成立，Candidate C值得继续攒样；但历史锚漂移阈值不稳定，当前证据不足以立门。下一步只做RFC-123阶段1结算，不改入场带、确认位或reprice行为。
+
+### 28.5 Candidate B（D2' 2min）功效与载体复核
+
+最新`entry_delay_confirm_latest.json`（2026-10-10 05:58）：
+
+| delay | 人群 | n | 避免率 | 净价值 | 误杀 | day-cluster |
+|---|---|---:|---:|---:|---:|---|
+| 2min | ALL | 580 | 50.69% | `-$284.36` | 171 | `t=-0.16`，不可分辨 |
+| 2min | SL_INITIAL | 29 | 65.52% | `+$2,938.73` | 0 | `t=4.92`，可分辨 |
+| 5min | ALL | 580 | 48.28% | `+$234.97` | 137 | `t=0.21`，不可分辨 |
+| 5min | SL_INITIAL | 29 | 86.21% | `+$3,953.74` | 0 | `t=7.88`，可分辨 |
+
+关键更正：D2'原文预注册门槛是`n≥20`，不是§27.5后验提出的`n≥30`。当前SL_INITIAL `n=29`已满足原门槛；不能用后验加严直接否决。但**这不等于可实装**：
+
+1. **载体节奏不匹配**：10/07–10/09 `auto_execute`实际启动间隔中位3.05–3.18分钟、p90 3.08–3.42分钟、最大3.33–4.00分钟。挂到现有循环无法保证“2分钟后复核”，会变成未预注册的3–4分钟变体。
+2. **TTL冲突**：`entry_archetype_ttl_seconds=300`。2min确认后仅剩约180s成交窗；5min确认直接超过TTL。
+3. **人群适用面仍需最小化**：ALL读数为负，只能讨论SL_INITIAL/可事前识别子集，不得全局启用。
+
+结论：D2' 2min在原预注册判据下已达样本与功效读数，但工程载体不成立。若继续推进，必须另建专用计时载体（能精确到2min）并预注册最小适用人群、TTL处理、失败降级与回滚；不得挂现有3分钟循环冒充2min。
+
+### 28.6 E 表
+
+| # | 命令 | 期望输出 |
+|---|---|---|
+| E65 | `PYTHONPATH=. ./venv/bin/python -m pytest tests/test_admission_replay.py -q` | `4 passed` |
+| E66 | `PYTHONPATH=. ./venv/bin/python -c "from scripts.admission_replay import load,blocked; rows=load(); gate={'max_fee_bps':200.0}; blocked_rows=[r for r in rows if blocked(r,gate)]; kept=[r for r in rows if not blocked(r,gate)]; base=sum(r['net'] or 0 for r in rows); print(len(rows),len(blocked_rows),sum((r['net'] or 0)>0 for r in blocked_rows),round(sum(r['net'] or 0 for r in kept)-base,2))"` | `634 2 0 495.59` |
+| E67 | `printf '%s\n' 35 60 \| while read days; do PYTHONPATH=. ./venv/bin/python -c "import sys; from scripts.admission_replay import load,blocked; days=int(sys.argv[1]); gate={'max_fee_bps':200.0}; rows=load(days); blocked_rows=[r for r in rows if blocked(r,gate)]; kept=[r for r in rows if not blocked(r,gate)]; base=sum(r['net'] or 0 for r in rows); print(days,len(blocked_rows),sum((r['net'] or 0)>0 for r in blocked_rows),round(sum(r['net'] or 0 for r in kept)-base,2))" "$days"; done \| paste -sd' ' -` | `35 2 0 495.59 60 2 0 495.59` |
+| E68 | `./venv/bin/python -m py_compile scripts/admission_replay.py && echo py_compile_ok` | `py_compile_ok` |
+| E69 | `./venv/bin/python -c "import json; oc=json.load(open('data/invariant_check_latest.json'))['config_freeze']['oct_cohort']; print(oc['status'],oc['n_unique'],oc['n_closed'],oc['n_target'])"` | `broken 2 123 200` |
+| E70 | `test -z "$(git diff --name-only -- config app)" && echo no_production_diff` | `no_production_diff` |
+
+### 28.7 下一步裁决点
+
+1. **P0治理优先**：先裁决 `W1_oct_cohort_broken` 的处置方案；未裁决前不改任何退出侧参数。
+2. **fee gate候选**：若用户采纳保守异常护栏，建议只讨论 `max_fee_bps=200`，并预注册判据；不得直接改配置。
+3. **候选C并行**：继续只读分析 `FADE_SHORT/UE` 锚漂移与墓地仓关系，不触碰生产行为。
+4. **Candidate A全局门否决**：不推进“EOD水下+MFE<0.5%即平”；仅把“隔夜gap族EOD处置”登记为后续独立影子假设，先另做预注册与样本扩张。
+
+### 28.8 Candidate A EOD时点反事实
+
+§27.8-5登记的“未做逐笔EOD平仓反事实”已补齐。探针新增段K，样本为`PLAYBOOK_SIM`已平仓、`overnight_arm.source='w_week'`、精确`decision_id`取最新instruction且`horizon='short'`。判据不使用落库`mfe_pct`，而用`marked_at_et`当日本地`data/replay_bars`分钟bar重建：
+
+- LONG：`(max(high_before_eod) - entry_price) / entry_price`；
+- SHORT：`(entry_price - min(low_before_eod)) / entry_price`；
+- blocked：`EOD close净额<0 AND EOD时点MFE<0.5%`；
+- 反事实：blocked笔用EOD close净额替换actual净额，未blocked笔不变；费用沿用`fees_est`同口径扣减，不新增费用假设。
+
+| 口径 | n | actual净额 | EOD close净额 | Δ | 误杀 |
+|---|---:|---:|---:|---:|---:|
+| 可评估 | 36 | `-$1,359.52` | `-$3,571.97` | `-$2,246.95` | — |
+| blocked | 34 | `-$981.95` | `-$3,228.90` | `-$2,246.95` | 25 |
+| blocked / OVERNIGHT_GAP_STOP | 5 | `-$1,537.35` | `-$674.73` | `+$862.62` | 0 |
+| blocked / 非gap | 29 | `+$555.40` | `-$2,554.17` | `-$3,109.57` | 25 |
+
+补充口径：
+
+- 总样本39笔；本地mark-date分钟bar缺失3笔（`US_AVGO_2026-09-28`、`US_ALK_2026-10-01`、`US_QCOM_2026-10-07`），单列不猜。
+- 36笔可评估bar均为全天覆盖；join无扇出（39行/39 ID）。
+- 按日聚类：19天，blocked逐日均值`-$73.27`，`t=-3.86`，可分辨为负。
+
+判读：Candidate A的“事前可见EOD门”按真实EOD平仓后显著恶化，且25/34为误杀。旧口径的“拦下即归零”高估收益。**全局Candidate A否决，不进入实装或影子门。** gap族虽改善`+$862.62`，但仅5笔且与现有`OVERNIGHT_GAP_STOP`语义/时点强耦合，只能作为独立假设另案预注册，不得借A门混入。
+
+### 28.9 E表追加
+
+| # | 命令 | 期望输出 |
+|---|---|---|
+| E73 | `PYTHONPATH=. ./venv/bin/python scripts/deb20261009_strategy_opt_probe.py \| ./venv/bin/python -c "import json,sys; j=json.load(sys.stdin); S={s['segment']:s for s in j['segments']}; x=S['K'];b=x['blocked'];g=x['blocked_by_gap'];print(x['sample_n'],x['evaluated_n'],x['local_bar_missing_n'],b['n'],b['false_kill_n'],b['delta'],g['gap']['delta'],g['non_gap']['delta'])"` | `39 36 3 34 25 -2246.95 862.62 -3109.57` |
+| E74 | `PYTHONPATH=. ./venv/bin/python -m pytest tests/test_deb20261009_strategy_opt_probe.py -q` | `6 passed` |
+| E75 | `./venv/bin/python -m py_compile scripts/deb20261009_strategy_opt_probe.py && echo py_compile_ok` | `py_compile_ok` |
+
+### 28.10 W1冻结窗处置包
+
+**事实链**：
+
+1. `W1_oct_cohort_broken`状态为BROKEN：窗内2个退出哈希、已平仓123/200、4笔hash缺失。
+2. 第二哈希`exit-ca4487172a6f`来自commit `410297295`（2026-10-08 22:04 +08:00）。该commit在`short_horizon`新增`overnight_gap_stop_pct: 3.0`。
+3. 行为面：新增前后消费端均为`_horizon_cfg.get("overnight_gap_stop_pct", 3.0)`，生效阈值仍是3.0；因此这是配置显式化，不是退出策略变更。
+4. 判分面：`get_exit_config_version()`按整本`playbook_horizon.yaml`快照入哈希。R-4b的设计目标是防止漏键假绿，代价就是同值新增键也会切换哈希。
+5. 影响样本：`34c7`为106笔、净额`+$54.14`、SL_INITIAL 5、GAP_STOP 4；`ca4487`为17笔、净额`+$74.08`、SL_INITIAL 1、GAP_STOP 0。不能据此推断行为差异，样本过小且非随机对照。
+
+**处置选项**：
+
+| 方案 | 内容 | 优点 | 代价/风险 | 建议 |
+|---|---|---|---|---|
+| A | 维持OKR-2026-10 KR1 BROKEN终局，不移动`_OCT_COHORT_START`，不豁免`ca4487`；另立“post-ca4487清洁观测窗”攒新样本 | 完全遵守预注册判据，保留事故证据，不伪造单版本窗口 | 10月KR1不能宣称达标；需另行预注册新观测窗 | **推荐** |
+| B | 将“同代码默认值显式化”视为no-op豁免，并让新旧哈希等效 | 保留123笔样本，表面继续追赶200笔 | 需要事后改哈希语义/回写历史标签；把破窗变绿，损害KR1可信度 | 不推荐 |
+| C | 回滚YAML新增键，恢复旧哈希 | 生效参数仍为3.0，后续样本回到`34c7` | 冻结期内再改一次配置；历史`ca4487`17笔仍在窗内，KR1仍BROKEN | 不推荐 |
+| D | 静默或显式把`_OCT_COHORT_START`移到10/08后 | 可得到当前单哈希新窗 | 直接改判据面，违反“不得静默移窗”，且丢失9/17–10/07样本 | 不推荐 |
+
+**推荐裁决**：选择A。KR1按预注册规则终局BROKEN；不得用“代码默认值显式化”作为事后豁免。后续若需要清洁功效样本，应新增独立`post_ca4487`观测窗并预注册起点、目标n、退出哈希、禁止变更条款与DEB引用，不得替换或移动`oct_cohort`。
+
+**防复发**：冻结期内，即使自称“零行为变更”，任何`config/playbook_horizon.yaml` diff都必须先跑`get_exit_config_version()`并输出旧/新哈希；若哈希变化，必须先落DEB并获用户裁决。不得在冻结期以“只是显式化/只是注释/只是顺序调整”为由跳过哈希预检。
+
+| # | 命令 | 期望输出 |
+|---|---|---|
+| E76 | `PYTHONPATH=. ./venv/bin/python scripts/deb20261009_strategy_opt_probe.py \| ./venv/bin/python -c "import json,sys; j=json.load(sys.stdin); S={s['segment']:s for s in j['segments']}; x=S['B']; print(x['blob_changed'],x['changed_keys']['short_horizon.overnight_gap_stop_pct']['before'],x['changed_keys']['short_horizon.overnight_gap_stop_pct']['after'])"` | `True <无> 3.0` |
+| E77 | `PYTHONPATH=. ./venv/bin/python -c "import sqlite3; connection=sqlite3.connect('file:data/ftseek_us.db?mode=ro', uri=True); rows=connection.execute(\"SELECT json_extract(metadata_json,'$.config_version'),COUNT(*),ROUND(SUM(COALESCE(pnl_net,realized_pnl)),2),SUM(CASE WHEN exit_reason='SL_INITIAL' THEN 1 ELSE 0 END),SUM(CASE WHEN exit_reason='OVERNIGHT_GAP_STOP' THEN 1 ELSE 0 END) FROM trade_records WHERE source_type='PLAYBOOK_SIM' AND exit_time IS NOT NULL AND exit_reason<>'' AND trade_date>='2026-09-17' AND json_extract(metadata_json,'$.config_version') LIKE 'exit-%' GROUP BY 1 ORDER BY 1\").fetchall(); print(' '.join('\|'.join(map(str,row)) for row in rows))"` | `exit-34c7153088a1\|106\|54.14\|5\|4 exit-ca4487172a6f\|17\|74.08\|1\|0` |
+
+### 28.11 方案A执行：post_ca4487清洁观测面
+
+用户已确认方案A。`scripts/daily_invariant_check.py`新增独立`config_freeze.post_ca4487`块：
+
+- 起点：`2026-10-09`。10/08为`34c7/ca4487`同日交错日，不能作为清洁边界。
+- 期望哈希：`exit-ca4487172a6f`；目标提示：200笔。
+- 只读观测：不调用`rec()`、不产生新W1键、不参与`status`取劣、不改`oct_cohort`。
+- 当前读数：已闭合7笔、唯一哈希1个、`expected_hash_only=true`、hash缺失0、`status=single_version`。
+- 语义边界：该块带`not_okr_2026_10_kr1_verdict=true`；若未来出现新哈希，仅显示`hash_drift`，不得替代或改写`oct_cohort` BROKEN终局。
+
+| # | 命令 | 期望输出 |
+|---|---|---|
+| E78 | `PYTHONPATH=. ./venv/bin/python -m pytest tests/test_w1_exit_version_guard.py -q` | `43 passed` |
+| E79 | `sqlite3 -readonly data/ftseek_us.db "SELECT COUNT(*), COUNT(DISTINCT json_extract(metadata_json,'$.config_version')), MIN(trade_date), MAX(trade_date), SUM(json_extract(metadata_json,'$.config_version')='exit-ca4487172a6f') FROM trade_records WHERE source_type='PLAYBOOK_SIM' AND exit_price>0 AND trade_date>='2026-10-09';"` | `7\|1\|2026-10-09\|2026-10-09\|7` |
+
+## 29. §27/§28 落地复查（Claude 主线程 · 2026-10-10 · 只读实测 + 棘轮清剿）
+
+> 方法：不信任 §27/§28 记录——探针全量重跑（`deb20261009_strategy_opt_probe.py`）、E 表抽查复跑、冻结窗/哈希/commit 独立复算、棘轮族全跑、新增测试实跑、工作树 diff 全读（admission_replay / daily_invariant_check / probe +455 / test_w1 +58 / gen_e27）。
+> 本批动作：探针 2 处 except:continue 棘轮清剿（坏 bar/坏 jsonl 行计数留痕，零控制流变更，E73 复跑读数逐字不变）；其余零改动。
+
+### 29.1 复核总表：全部成立
+
+| 项 | 实测 |
+|---|---|
+| 探针 E 表抽查 | E53/E58/E59/E60/E61/E62/E71/E72/E73/E76 重跑**逐字一致**（11 段结构、SL_INITIAL 8×0.28h 零跨日、仙股剔除翻正 +147.74、墓地 -2,637.44=唯一亏损源、A 门乐观上限 -1,699.21、scale_out 已否决轴、锚样本 133/FADE_SHORT -401.94、D2' 29/2938.73/可分辨/载体 3.18min、A 反事实 Δ-2,246.95 误杀 25、commit 410297295 键 <无>→3.0） |
+| 独立复算（不经过探针） | E54 冻结窗 `broken 2 123 200` ✅；E56 commit diff 恰 1 行新键且 commit message 自称「零行为变更」✅；E57 `config.py:154` horizon_config 进哈希 ✅；E66 回放 `634 2 0 495.59` ✅；E79 post_ca4487 `7\|1\|…\|7` ✅；E55 meta_audit P0 OPEN ×3 ✅ |
+| §28.5 更正核验 | `entry_delay_confirm` 预注册门槛实钉 `min_n=20`（shadow_registry.py:1795 区域，类默认 30 被该条目显式覆盖）⇒ §28.5 对 §27.5 的更正确认为真；`entry_archetype_ttl_seconds: 300`（config:1596）✅ TTL 冲突成立 |
+| §28.2 口径修正 vs 代码 | 四条逐字对应：PLAYBOOK_SIM 过滤、已平仓过滤（`exit_reason<>'' AND exit_time IS NOT NULL`）、decision_id 精确 join（`MAX(id)` 子查询替换 date/symbol 扇出 join）、`COALESCE(pnl_net, realized_pnl)` + NULL 计数；另见 fee_bps（事前 fee_model）与 ledger_fee_bps（事后 fees_est）双列分离 ✅ |
+| §28.11 post_ca4487 只读性 | 代码零 `rec()` 调用；`test_w1_exit_version_guard.py` 新增钉死（常量钉 + not_a_verdict 标记钉 +「不产生 W1_post_ca4487 键」反向钉）✅ |
+| 测试 | 新增/触动三件 = **53 passed**（4+6+43）；棘轮族全绿（清剿后） |
+| E70 语境 | `git diff --name-only -- config app` 当前为空 ✅（本批零生产配置变更属实） |
+
+### 29.2 发现
+
+- **F11（P2，已清剿）：except 棘轮同形态三连犯**。昨天 ue_check/da_bridge 两处、今天探针工作树版又两处（`_candidate_a_eod_metrics` 坏 bar、RFC-123 jsonl 坏行），棘轮 921→923。已按 R5 修复（计数进返回字典/stderr，E73 读数不变）。**建议登记纪律：任何新脚本/新段落落地前必跑 except 棘轮**（成本 10 秒，三连犯的教训）。
+- **F12（P3，确认 §27.8-7 并登记波及面）**：`verify_deb20261009_event.py` 的 E 表分区缺陷确认波及 §26.4（E45–E52 会被「§14 之后全量」分区计入）。维持原作者裁决，不修。
+- **F13（观察）**：E79 显示 post_ca4487 窗首日攒 7 笔；按近期节奏（~5-7 笔/交易日）达标 200 约需 30-40 交易日，登记备查，届时若 KR2 窗口安排冲突须提前预注册。
+
+### 29.3 立场（对我 §26.3 的修正）
+
+1. **撤回 §26.3 对 candidate A 的相对乐观排序**——§28.8 的逐笔 EOD 反事实（E73：Δ -$2,246.95、误杀 25/34、日聚类 t=-3.86 可分辨为负）比我基于「拦下即归零」上限的判断更硬，candidate A 全局否决成立。
+2. §27.6 的优先级重排（费用门升 P0、C 升 P1、A 降 P2 后于 §28.7-4 否决、D 第 3 条划掉）与我的复算一致，**认可**。
+3. §28.5 对 D2' 的处置（n≥20 预注册已达 + 工程载体不成立 ⇒ 另建专用计时载体或不做）双向核验为真，**认可**；§27.5 的「n<30 不可裁决」确属后验加严，更正得当。
+4. §28.10 方案 A（KR1 终局 BROKEN + 独立 post_ca4487 观测窗）符合「不得静默移窗」纪律，**认可**；防复发条（冻结期内任何 horizon yaml 改动先跑 `get_exit_config_version()` 预检）建议并入变更协议。
+
+### 29.4 E 表（本节新增证据）
+
+| # | 命令 | 期望输出 |
+|---|---|---|
+| E80 | `PYTHONPATH=. ./venv/bin/python -m pytest tests/test_except_pass_ratchet.py tests/test_deb20261009_strategy_opt_probe.py -q` | `8 passed`（清剿后） |
+| E81 | `git diff --name-only -- config app` | 空输出（本复查批零生产配置/代码变更） |
+| E82 | `grep -n "min_n=20" app/playbook/shadow_registry.py` | `entry_delay_confirm` 条目处命中（类默认 30 被显式覆盖） |
+
+## 30. 双裁决落地（2026-10-10 · 用户裁「1. 同意 2. 费用护栏同意」）
+
+### 30.1 裁决记录
+
+| # | 事项 | 裁决 | 落地 |
+|---|---|---|---|
+| 1 | `W1_oct_cohort_broken` 处置（§28.10） | **方案 A**：KR1 终局 BROKEN，不豁免、不移窗、不回滚 YAML | 已于 §28.11 落地（`daily_invariant_check.py` post_ca4487 只读观测窗，首日 7 笔），本节追认生效 |
+| 2 | 费用护栏（§28.3 回放候选） | **同意** | 形态经实施前核查修正为 **W8 监控守卫**（见 §30.2），已实装 |
+
+### 30.2 实施前核查：硬门会是不触发死规则 ⇒ 改监控形态（用户意图的忠实落地）
+
+裁决后的实施前路径核查（E83–E85）发现 §28.3 回放的隐含前提不成立：
+
+1. **两笔仙股单不走 playbook admission**：CTNT/GIPR 的 `decision_id = EXT-2026-09-17-*-premarket`、`strategy_id=extended_hours_entry`——延长时段 EXT 通道，不经过 `app/playbook/admission.py`。
+2. **损伤路径当日已收口**：commit `ce54f64eb`（2026-09-17，DEB-20260917 §15.5 用户裁方案A）已给 EXT 加 `$5` 价格地板（`EXT_ENTRY_MIN_PRICE`）+ `MAX_ROUND_TRIP_FEE_PCT=1.0%`（100bps）费用闸——比提案的 200bps **更严**。CTNT（$0.072 / 915bps）在今天会被两道闸各拦一次。
+3. **playbook 准入算术封顶 ~50bps**：`min_notional_usd=2500` + `min_entry_price=5.0` 双地板下，最坏组合（$5.00×500股=$2500）往返费 ≈$10 ⇒ ~40bps；**max_fee_bps=200 在该路径永不触发 = 死规则**（本仓纪律所禁）。
+
+⇒ 忠实落地用户意图（护栏 = 防 CTNT/GIPR 同型再发生）的正确形态不是新硬门，而是**全路径监控**：任何未来新入场路径绕过地板时次日告警。
+
+### 30.3 实装：W8 费用异常单守卫
+
+- `scripts/daily_invariant_check.py` 新增 `_check_fee_bps_anomaly`（W8 族）：
+  - 只读扫描裁决日（`2026-10-10`，常量钉死）起所有已平仓单；
+  - 用 `fee_model.estimate_round_trip` 重算**事前** fee_bps（与 §28.3 回放判据同源），`>200bps` 即 `rec("W8_fee_bps_anomaly")`；
+  - 不拦单、不追溯存量（CTNT/GIPR 已由 EXT 地板收口）、detector 自身异常走 `W8_detector_error`；
+  - cron 既有挂载（`5 5 * * 2-6`）自动生效，无需新增调度。
+- **预注册升级条件**：任一 30 日内新增触发 ≥1 笔 ⇒ 自动升级为「硬门提案」重新裁决（届时须回答门落在哪条路径）。
+- **回滚**：删 main() 注册行 + 本函数 + 常量（全独立，零耦合）。
+- 测试 `tests/test_fee_bps_anomaly_guard.py`：5 passed（常量钉死 / 仙股检出 / 正常费率不拦 / 存量不追溯 / 未平仓不计）。
+- 生产库实测：`scanned=0, anomalies=0`（裁决日后尚无已平仓单，预期内）。
+
+### 30.4 自曝
+
+- 实施中途一次编辑事故致 `_check_field_cardinality` 缩进塌陷（py_compile 抓出即修）；再次实证「改完必跑编译+测试」纪律的价值。
+- §29 的 F11 教训（新代码先跑 except 棘轮）本批已执行：棘轮族 46 passed 全绿。
+
+### 30.5 E 表（本节证据，逐条可复跑）
+
+| # | 命令 | 期望输出 |
+|---|---|---|
+| E83 | `sqlite3 -readonly data/ftseek_us.db "SELECT symbol, decision_id, strategy_id FROM trade_records WHERE symbol IN ('US.CTNT','US.GIPR') AND trade_date='2026-09-17';"` | 两行均为 `EXT-2026-09-17-…-premarket` / `extended_hours_entry` |
+| E84 | `git log -S "EXT_ENTRY_MIN_PRICE" --oneline -- scripts/extended_hours_entry_executor.py \| tail -1` | `ce54f64eb …加价格下限闸 $5 挡仙股 (实盘 CTNT/GIPR 教训)` |
+| E85 | `grep -n "MAX_ROUND_TRIP_FEE_PCT = " scripts/extended_hours_entry_executor.py` | 默认 `1.0`（100bps，严于提案 200bps） |
+| E86 | `PYTHONPATH=. ./venv/bin/python -m pytest tests/test_fee_bps_anomaly_guard.py tests/test_w1_exit_version_guard.py -q` | `48 passed` |
+| E87 | `PYTHONPATH=. ./venv/bin/python -c "from scripts.daily_invariant_check import _check_fee_bps_anomaly as f; print(f(lambda *a: None))"` | `scanned≥0, anomalies=0`（裁决日后无异常单） |

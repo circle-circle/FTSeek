@@ -146,6 +146,8 @@ _SUB_COHORT_START = "2026-09-10"
 # 移动本常量 = 改判据面, 必须先落 DEB + 改 OKR (与 _FREEZE_COHORT_START 同纪律),
 # 并由 tests/test_w1_exit_version_guard.py 字面钉死强制留痕。
 _OCT_COHORT_START = "2026-09-17"
+_POST_CA4487_START = "2026-10-09"
+_POST_CA4487_HASH = "exit-ca4487172a6f"
 # ── W1_* 关键违反直推 (2026-09-11, DEB-20260909 §7.7 清单⑤(i), 用户裁选项(d) 同批落地) ──
 #    断链根因 (§7.2): 事件型告警 (判据破, 一违反即关键) vs error_alert 的速率型行数阈值
 #    (地板 3) 结构性不兼容 — 调低阈值只会让日常噪声刷屏, 不是解法。W1_* 是"零违反=判据
@@ -212,6 +214,16 @@ def _check_config_freeze(rec) -> dict:
                 if not _is_structural_error(_oe):
                     raise
                 oct_cohort_pairs = None
+            try:
+                post_ca4487_pairs = conn.execute(
+                    "SELECT COALESCE(json_extract(metadata_json,'$.config_version'),''), COUNT(*), "
+                    "MIN(trade_date), MAX(trade_date) "
+                    "FROM trade_records WHERE trade_date >= ? AND source_type='PLAYBOOK_SIM' "
+                    "AND exit_price > 0 GROUP BY 1", (_POST_CA4487_START,)).fetchall()
+            except Exception as _pe:
+                if not _is_structural_error(_pe):
+                    raise
+                post_ca4487_pairs = None
         finally:
             conn.close()
         versions = {str(v): n for v, n in pairs}
@@ -306,6 +318,37 @@ def _check_config_freeze(rec) -> dict:
                     f"OKR-2026-10 KR1 功效窗 ({_OCT_COHORT_START}→) 出现 {oct_n_unique} 个退出哈希 "
                     f"⇒ 判据 **BROKEN** (变更预算 0, P0 豁免通道对本维关闭); 按预注册回滚线须 "
                     f"DEB 落档 + 开跑会级裁决, **不得静默移窗** (移动 _OCT_COHORT_START = 改判据面)")
+            if post_ca4487_pairs is None:
+                info["post_ca4487"] = {
+                    "window_start": _POST_CA4487_START,
+                    "expected_hash": _POST_CA4487_HASH,
+                    "status": "skipped_old_schema",
+                    "not_okr_2026_10_kr1_verdict": True,
+                }
+            else:
+                post_versions = {str(v): {"n": n, "first": f, "last": la}
+                                 for v, n, f, la in post_ca4487_pairs
+                                 if str(v).startswith("exit-")}
+                post_n_unique = len(post_versions)
+                expected_only = list(post_versions) == [_POST_CA4487_HASH]
+                info["post_ca4487"] = {
+                    "window_start": _POST_CA4487_START,
+                    "expected_hash": _POST_CA4487_HASH,
+                    "versions": post_versions,
+                    "n_unique": post_n_unique,
+                    "n_closed": sum(d["n"] for d in post_versions.values()),
+                    "n_target": 200,
+                    "hash_missing_rows": sum(n for v, n, _, _ in post_ca4487_pairs
+                                             if not str(v).startswith("exit-")),
+                    "expected_hash_only": expected_only,
+                    "status": ("single_version" if expected_only else
+                               "hash_drift" if post_n_unique > 1 else
+                               "unexpected_single_version" if post_n_unique == 1 else "no_rows"),
+                    "not_okr_2026_10_kr1_verdict": True,
+                    "note": ("DEB-20261009 §28.10 方案A清洁观测面: 2026-10-08新旧哈希同日交错, "
+                             "故从2026-10-09起观测ca4487; 只报告不判分不告警, "
+                             "不得替代或改写oct_cohort BROKEN终局"),
+                }
         if not versions:
             info["status"] = "no_rows_in_window"
             return info
@@ -481,6 +524,55 @@ def _check_env_demix(rec) -> dict:
     except Exception as e:
         if not _is_structural_error(e):
             rec("W3_demix_check_error", "-", "-", f"{type(e).__name__}: {e}")
+    return out
+
+
+# ── W8 费用异常单守卫 (2026-10-10, DEB-20261009-event §30, 用户裁「费用护栏同意」) ──
+#   形态 = 监控非硬门: 损伤路径 (EXT) 已于 9/17 当日由 $5 地板 + 100bps 闸收口
+#   (ce54f64eb), playbook 准入 $5/$2500 双地板算术封顶 ~50bps ⇒ 新硬门是死规则。
+_FEE_BPS_WATCH_START = "2026-10-10"   # 裁决日起生效; 存量 CTNT/GIPR (9/17) 不追溯
+_FEE_BPS_MAX = 200.0                  # 预注册阈值 (§28.3 回放: 全历史拦 2 误杀 0)
+
+
+def _check_fee_bps_anomaly(rec, db_path=None) -> dict:
+    """W8: 仙股/最低佣金异常单守卫 (只读, 次日发现, 不拦单).
+
+    对裁决日起所有已平仓单用 fee_model.estimate_round_trip 重算**事前** fee_bps,
+    >_FEE_BPS_MAX 即告警 — 防未来新入场路径绕过既有价格/费用地板 (CTNT/GIPR 同型)。
+    与 §28.3 回放判据同源同阈值; 预注册升级条件: 任一 30 日内新增触发 ≥1 笔
+    ⇒ 自动升级为「硬门提案」重新裁决。回滚: 删 main() 注册行 + 本函数。
+    """
+    out = {"scanned": -1, "anomalies": -1, "watch_start": _FEE_BPS_WATCH_START,
+           "max_fee_bps": _FEE_BPS_MAX}
+    db = Path(db_path) if db_path else (REPO / "data" / "ftseek_us.db")
+    try:
+        from app.execution.fee_model import estimate_round_trip
+        if not db.exists():
+            return out
+        c = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        rows = c.execute(
+            "SELECT symbol, direction, entry_price, quantity, trade_date "
+            "FROM trade_records "
+            "WHERE exit_time IS NOT NULL AND exit_reason <> '' "
+            "AND quantity > 0 AND entry_price > 0 AND trade_date >= ?",
+            (_FEE_BPS_WATCH_START,)).fetchall()
+        c.close()
+        out["scanned"] = len(rows)
+        hits = []
+        for symbol, direction, ep, qty, td in rows:
+            fee = estimate_round_trip(qty, ep, ep, direction, td)
+            notional = qty * ep
+            fee_bps = 10000.0 * fee["total"] / notional if notional > 0 else None
+            if fee_bps is not None and fee_bps > _FEE_BPS_MAX:
+                hits.append(f"{symbol}@{td}({fee_bps:.0f}bps)")
+        out["anomalies"] = len(hits)
+        if hits:
+            rec("W8_fee_bps_anomaly", "-", ",".join(hits[:5]),
+                f"裁决日({_FEE_BPS_WATCH_START})后已平仓单出现 {len(hits)} 笔 "
+                f"fee_bps>{_FEE_BPS_MAX:g} (仙股/最低佣金异常, CTNT/GIPR 同型)")
+    except Exception as e:
+        if not _is_structural_error(e):
+            rec("W8_detector_error", "-", "-", f"{type(e).__name__}: {e}")
     return out
 
 
@@ -1176,6 +1268,10 @@ def main(push_enabled: bool = True) -> int:
     # ── W7 昨收分母哨兵 (2026-09-11, DEB-20260911 共识 N1/N3): 分母口径分叉当天告警 ──
     chg_denominator = _check_chg_denominator(rec)
 
+    # ── W8 费用异常单守卫 (2026-10-10, DEB-20261009-event §30, 用户裁「费用护栏同意」):
+    #    仙股/最低佣金异常 (>200bps) 次日告警; 只读监控, 不拦单 ──
+    fee_bps_anomaly = _check_fee_bps_anomaly(rec)
+
     # ── W1_* 关键违反直推: **必须在覆写 OUT 之前** (防刷屏判据读的是上一轮 OUT 里的
     #    w1_direct_push 状态; 先覆写就永远读到本轮自己 ⇒ 首次告警即被自我抑制)。──
     if push_enabled:
@@ -1195,6 +1291,7 @@ def main(push_enabled: bool = True) -> int:
         "env_demix": env_demix,
         "log_hygiene": log_hygiene,           # W4 debug吞异常 / W5 裸名logger / W6 无栈告警
         "chg_denominator": chg_denominator,   # W7 两影子昨收分母口径分叉 (pmi 快照 vs ctx 缓存)
+        "fee_bps_anomaly": fee_bps_anomaly,   # W8 仙股/最低佣金异常 (>200bps, DEB-20261009-event §30)
         "w1_direct_push": w1_push,            # W1 事件型直推回执 (DEB-20260909 §7.7⑤)
         "settled_all_sources": settled_all,   # I11~I14 覆盖面 (全部 source_type)
         "settled_exempt_marked": exempt,      # data_quality 已标记坏行 (豁免告警, 数量增长需人工看)

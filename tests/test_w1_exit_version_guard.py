@@ -527,6 +527,7 @@ def test_main_push_enabled_flag_gates_external_side_effect(tmp_path, monkeypatch
 # 主 cohort 判定/全窗 status (口径并列不冒充) ③not_kr2_09_verdict 防误读标记必在。
 _OCT_CUR = "exit-34c7153088a1"   # OKR-2026-10 KR1 现行版本 (DEB-20260917, 用户裁+豁免在册)
 _OCT_NEW = "exit-dddddddddddd"   # 假想的 10 月违规换版
+_POST_CA4487 = "exit-ca4487172a6f"
 
 
 def test_oct_cohort_start_is_pinned_and_documented():
@@ -612,4 +613,61 @@ def test_oct_cohort_no_rows_distinguishable(tmp_path, monkeypatch):
     info, hits = _run(tmp_path, monkeypatch, db, _baseline(tmp_path, exit_versions=(_CUR,)))
     assert info["oct_cohort"]["status"] == "no_rows"
     assert info["oct_cohort"]["n_closed"] == 0
+    assert hits == []
+
+
+def test_post_ca4487_window_is_pinned_and_not_a_verdict():
+    src = (PROJECT_ROOT / "scripts" / "daily_invariant_check.py").read_text(encoding="utf-8")
+    assert '_POST_CA4487_START = "2026-10-09"' in src
+    assert '_POST_CA4487_HASH = "exit-ca4487172a6f"' in src
+    assert '"post_ca4487"' in src and '"not_okr_2026_10_kr1_verdict"' in src
+    assert 'rec("W1_post_ca4487' not in src
+
+
+def test_post_ca4487_excludes_mixed_2026_10_08_boundary(tmp_path, monkeypatch):
+    db = _mk_db_closed(tmp_path)
+    _row_closed(db, exit_hash=_OCT_CUR, n=3, day="2026-10-08")
+    _row_closed(db, exit_hash=_POST_CA4487, n=10, day="2026-10-08")
+    _row_closed(db, exit_hash=_POST_CA4487, n=7, day="2026-10-09")
+    info, hits = _run(tmp_path, monkeypatch, db,
+                      _baseline(tmp_path, exit_versions=(_OCT_CUR, _POST_CA4487)))
+    post = info["post_ca4487"]
+    assert post["window_start"] == "2026-10-09"
+    assert post["n_closed"] == 7 and post["n_unique"] == 1
+    assert post["expected_hash_only"] is True and post["status"] == "single_version"
+    assert post["not_okr_2026_10_kr1_verdict"] is True
+    assert {hit[0] for hit in hits} == {"W1_kr2_cohort_broken", "W1_oct_cohort_broken"}
+
+
+def test_post_ca4487_hash_drift_observed_without_new_w1_alarm(tmp_path, monkeypatch):
+    db = _mk_db_closed(tmp_path)
+    _row_closed(db, exit_hash=_POST_CA4487, n=7, day="2026-10-09")
+    _row_closed(db, exit_hash=_OCT_NEW, n=2, day="2026-10-09")
+    info, hits = _run(tmp_path, monkeypatch, db,
+                      _baseline(tmp_path, exit_versions=(_POST_CA4487, _OCT_NEW)))
+    post = info["post_ca4487"]
+    assert post["status"] == "hash_drift"
+    assert post["expected_hash_only"] is False
+    assert {hit[0] for hit in hits} == {"W1_kr2_cohort_broken", "W1_oct_cohort_broken"}
+
+
+def test_post_ca4487_hashless_rows_are_counted_not_versioned(tmp_path, monkeypatch):
+    db = _mk_db_closed(tmp_path)
+    _row_closed(db, exit_hash=_POST_CA4487, n=6, day="2026-10-09")
+    _row_closed(db, exit_hash=None, n=1, day="2026-10-09")
+    info, hits = _run(tmp_path, monkeypatch, db,
+                      _baseline(tmp_path, exit_versions=(_POST_CA4487,)))
+    post = info["post_ca4487"]
+    assert post["hash_missing_rows"] == 1
+    assert post["n_unique"] == 1 and post["status"] == "single_version"
+    assert hits == []
+
+
+def test_post_ca4487_no_rows_distinguishable(tmp_path, monkeypatch):
+    db = _mk_db_closed(tmp_path)
+    _row_closed(db, exit_hash=_POST_CA4487, n=2, day="2026-10-08")
+    info, hits = _run(tmp_path, monkeypatch, db,
+                      _baseline(tmp_path, exit_versions=(_POST_CA4487,)))
+    post = info["post_ca4487"]
+    assert post["status"] == "no_rows" and post["n_closed"] == 0
     assert hits == []

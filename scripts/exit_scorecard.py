@@ -13,8 +13,8 @@ Exit Scorecard — 退出纪律周度判分器 (只读)
 每周五盘后跑一次, 只改一个退出参数, 下周同一张表对比: 变好→保留, 变差→回滚。
 
 口径 (与 scripts/okr_status.py 对齐):
-  - $ 层面 (R:R / expectancy): trade_records.realized_pnl 为 SSOT
-    (playbook_instructions.pnl 会被 ORPHAN_CLEANUP 幽灵单污染, 不用)。
+  - $ 层面 (R:R / expectancy): trade_records COALESCE(pnl_net, realized_pnl) 为 SSOT
+    (净口径, DEB-20260730 D1; playbook_instructions.pnl 会被 ORPHAN_CLEANUP 幽灵单污染, 不用)。
   - 混淆矩阵 (收盘方向 vs 实际结局): playbook_instructions
     (outcome=win/loss 是分类, 不涉 $, 不受幽灵单影响) join fwd_return_intraday。
   - 尺寸归一 (2026-09-06 新增, 与 $ 口径**并列不替代**): bps of notional。美元口径跨
