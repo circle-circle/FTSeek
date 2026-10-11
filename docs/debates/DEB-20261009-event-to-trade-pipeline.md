@@ -2545,3 +2545,70 @@ or_low 限价 + TTL 分钟过期回退市价（所有笔都进场）：
 | E122 | `./venv/bin/python scripts/rfc123_l2_archetype_ttl_sweep.py 2>&1 \| grep "BREAKOUT        LONG"` | 含 `or_low` `✗ 应反向用 or_high` |
 | E123 | `./venv/bin/python scripts/rfc123_l2_archetype_ttl_sweep.py 2>&1 \| grep "US.TTI LONG BREAKOUT"` | 含 `开盘区间[6.10,6.17]` `实际成交=6.15` |
 | E124 | `./venv/bin/python scripts/rfc123_l2_archetype_ttl_sweep.py 2>&1 \| grep -c "净vs实际"` | `2`（②表头 + ②结论各一次，证明 TTL 表与污染批注都在） |
+
+## 36. 门台账（Gate Ledger）：拦截门统一视图 + 供应约束定位（Hermes · 2026-10-11 · 只读）
+
+> 触发：用户「拦截门的设定和统一…提升合理有质量标的供应」+「继续」。
+> 载体：`scripts/gate_ledger.py`（只读生成器，可重跑刷新；零行为变更）。
+> 动机：门景观极度碎片化，stale_quote 事故（无裁决/无DEB/无测试的门悄悄毙33只好票）
+> 根因即【无台账】——加门时无人核供应冲击、无预注册出处。
+
+### 36.1 碎片化铁证：25 个独立门审计 jsonl，横跨 2 仓
+
+`scripts/gate_ledger.py` 枚举出 **25 个独立门审计落点**（da_gate_decisions / exec_gate_audit /
+edge_gate_shadow / fee_gate_shadow / falsification_gate / reentry_gate / kr3_direction_runup /
+eod_depth_gate / vwap_gate / vol_gate / 4 个 extended_hours_*_gate / 3 个 ue_*_gate /
+short_funnel / trigger_gate / skew_gate / gate_cf_history / gate_liveness…），各有 schema，
+**无任何统一视图**。最大的 gate_cf_history 5.3MB、extended_hours_price_gate_rejects 4.5MB。
+
+### 36.2 ⚠️ 口径纪律：exec_gate_audit 被轮询放大 8.3×（禁用原始分布）
+
+exec_gate_audit 是**按指令-评估轮**记录，同一 decision_id 被快循环重复评估
+（实测每指令中位1/均值8.3/max76轮）。**原始 action 分布是假象**：
+
+| 口径 | 执行率 | chase_cap | 唯一指令 |
+|---|---:|---:|---:|
+| 原始(4961行,轮询放大8.3×) | 10.5% | 38.8% | — |
+| **去重(按decision_id终局)** | **85.7%** | 6.2% | **600** |
+
+去重后每指令终局（n=600）：曾执行 **514（85.7%）**；被拦 86（14.3%），其中
+**预算帽类 74（chase_cap 37 / notional_cap 22 / max_positions 15）= 86% of 被拦**，
+质量/风控门仅 12（knife_gate 6 / fail 5 / cooldown 1）。
+⇒ **FTSeek 执行层非供应瓶颈**（85.7% 放行）；帽 = 必要预算纪律，非供应敌对。
+**教训登记**：门命中率必须先按唯一键去重看终局，原始轮询级分布一律禁用（telemetry-caliber 陷阱）。
+
+### 36.3 真供应约束在上游 DA 质量门（BLOCK 61%）
+
+da_gate_decisions：2017 决策行 / 344 唯一(symbol,date)候选（5.9 行/候选）。
+decision 分布 **BLOCK 1225（61%）/ WARN 346（17%）/ PASS 446（22%）**。
+⚠️ 该 61% 是**行级**（未对每候选终局去重，344 候选各被评 ~6 次）；per-candidate 终局 BLOCK 率
+须另行去重，但方向明确：**DA 质量门是主供应约束（~61% 拦），远大于执行层帽（12%）**。
+⇒ 「提升有质量标的供应」的杠杆在 **DA 质量门判准**（拦的是垃圾还是好票？stale_quote 即误杀好票），
+不在执行层加门。
+
+### 36.4 ⚠️ 2 道门无预注册出处（stale_quote 式违规风险）
+
+扫描 27 道门，**archetype_conflict、bad_direction 无 RFC/DEB 出处**。
+（注：stale_quote 所在的 candidate_eligibility 已由 §27/ebc16e4 回退处置。）
+**治理规则建议**：任何新门上线前必须在台账登记（门名 / reason码 / 触发条件 / 预注册出处 /
+供应冲击估计）；无出处的门 = 违规，须补 RFC/DEB 或下线。`scripts/gate_ledger.py` §D 段
+自动扫描并标红无出处门，作为常设守门。
+
+### 36.5 立场与核心结论
+
+1. **门台账 = 常设治理基建**：`scripts/gate_ledger.py` 可重跑刷新；建议挂周检 cron 监控
+   ①无出处门数量 ②各门去重命中率漂移 ③DA BLOCK 率（供应健康度）。
+2. **供应杠杆定位**：执行层已 85.7% 放行（勿再加执行门）；真约束在 DA 质量门判准 +
+   入场价质量。入场价优化（candidate C/第2层）是**不砍供应的质量杠杆**（同批票进得更便宜），
+   优于加拦截门（砍供应，有 stale_quote 风险）——与 §27/§35 一致。
+3. **零行为变更**：纯只读枚举，不改任何门逻辑/阈值/开关。
+
+### 36.6 E 表（本节新增证据，期望为实跑抽出的字面量）
+
+| # | 命令 | 期望输出 |
+|---|---|---|
+| E125 | `./venv/bin/python scripts/gate_ledger.py 2>&1 \| grep "唯一指令"` | 含 `600` `514 (85.7%)` |
+| E126 | `./venv/bin/python scripts/gate_ledger.py 2>&1 \| grep "decision 分布"` | 含 `BLOCK 1225 (61%)` `PASS 446 (22%)` |
+| E127 | `./venv/bin/python scripts/gate_ledger.py 2>&1 \| grep "无 RFC/DEB 出处"` | 含 `archetype_conflict, bad_direction` |
+| E128 | `./venv/bin/python scripts/gate_ledger.py 2>&1 \| grep -c "碎片化证据"` | `1` |
+| E129 | `./venv/bin/python scripts/gate_ledger.py 2>&1 \| grep "轮询放大"` | 含 `8.3×` |
