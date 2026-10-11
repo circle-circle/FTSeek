@@ -245,11 +245,13 @@ def seg_e_penetration() -> dict:
     out["n_lines"] = len(lines)
     import collections as _c
     objs = []
+    n_bad = 0
     for ln in lines:
         try:
             objs.append(json.loads(ln))
         except json.JSONDecodeError:
-            continue
+            n_bad += 1  # 坏行计数留痕 (R5): "文件损坏" 与 "查了没查出" 必须可区分
+    out["n_bad_json"] = n_bad
     # 行分两类: type=penetration(触发) / type=outcome(结算); labeled 在 **status** 字段
     out["type_dist"] = dict(_c.Counter(o.get("type") for o in objs).most_common())
     out["status_dist"] = {str(k): v for k, v in _c.Counter(o.get("status") for o in objs).most_common()}
