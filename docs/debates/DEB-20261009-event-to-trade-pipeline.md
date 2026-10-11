@@ -1,7 +1,7 @@
 ---
 title: 事件驱动的盘前/盘中/盘后采集-推理-交易链路设计
 date: 2026-10-09
-status: 方案 U 已采纳并已落地 · §23/§26/§29 三轮复查全过 · §30 双裁决落地：W1 冻结窗方案 A 生效（post_ca4487 观测窗在跑）+ 费用护栏以 W8 监控形态实装（实施前核查发现硬门=死规则：CTNT/GIPR 走 EXT 通道且 9/17 当日已由 ce54f64eb 收口）· 遗留待裁：无新增；§12.6-3/4（通道 B 准入/盘后 SIM）维持未开
+status: 方案 U 已采纳并已落地 · §23/§26/§29 三轮复查全过 · §30 双裁决落地：W1 冻结窗方案 A 生效（post_ca4487 观测窗在跑）+ 费用护栏以 W8 监控形态实装（实施前核查发现硬门=死规则：CTNT/GIPR 走 EXT 通道且 9/17 当日已由 ce54f64eb 收口）· §31 修正 D2'/R1 读数 · §32 盈利建议复核：200bps playbook 硬门撤回，仓位/日亏熔断已存在，优先复用 Candidate C 与既有组合影子 · §33 RFC-141 SIM 实弹门已部署，§33.12 复核修复 PENDING 孤儿卡单缺陷 · §34 主线程复查 RFC-141 全过（E 表全中/棘轮绿/接线语句级审读通过；F14 接受 §31 口径更正作废我的初版读数）· 下一里程碑：10-12 周一开盘产出首批 forward 行，裁决按 RFC-141 §4 三态 · 遗留待裁：§12.6-3/4（通道 B 准入/盘后 SIM）维持未开
 trigger: 用户要求以 SpaceX/FCC/Grain 新闻为示例，泛化设计一条覆盖盘前、盘中、盘后的信息采集、关联推理与可验证交易链路，并强调如无必要不重复造轮子
 ---
 
@@ -695,6 +695,8 @@ event_stream:
 - 2026-10-10 v1.7：追加 §26 对 §25（另一 agent 交易绩效画像）的复查：11 组读数逐字一致或漂移已归因（边界行 + UTC/ET 字符串比较），净/毛口径核验通过，archetype 行字段出处待钉；顺手更正 `exit_scorecard.py:16` 注释与代码口径不符（零行为变更）。§25 候选项 A–D 均未执行，仍待裁决。
 - 2026-10-10 v1.8：追加 §29 对 §27/§28（Hermes 前提检验 + P0 执行批）的落地复查：探针 E 表与独立复算全中，D2' min_n=20 更正确认为真，admission_replay 四口径修正与自述逐字对应；本批动作仅探针 2 处 except 棘轮清剿（计数留痕，E73 读数不变）；§26.3 对 candidate A 的排序撤回（E73 反事实更硬）。§25 候选项状态：A 否决、B 攒样待载体、C 升 P1 攒样、D 第3条划掉。
 - 2026-10-10 v1.9：用户双裁决落地（§30）：① W1_oct_cohort_broken 方案 A 追认生效（post_ca4487 观测窗已于 §28.11 在跑）；② 费用护栏实施前核查发现硬门前提不成立（CTNT/GIPR 走 EXT 通道且 9/17 当日已收口、playbook 路径算术封顶 ~50bps ⇒ 硬门=死规则），忠实落地为 W8 监控守卫（daily_invariant_check，只读，>200bps 次日告警，不追溯存量）。测试 48+5 passed，棘轮族全绿。
+- 2026-10-10 v1.10（追认，Hermes/夜间批次当时未登记）：§32 盈利建议复核（撤回 200bps 硬门、仓位/日亏熔断已存在、Candidate C 优先）+ §31 口径修正（SSOT 对齐）+ §33 RFC-141 SIM 实弹门落地（部署 21:36，孤儿自愈 P0 修复 10-11 08:59 已重启加载）+ RFC-141 文档 + CONTROL-LOOP-LEDGER 同步。
+- 2026-10-11 v1.11：追加 §34 主线程复查（RFC-141 落地）：E 表抽样全中（56/110 passed、基线常量逐字、判据②④接线真实、孤儿自愈活体正确、棘轮族 46 绿、服务/调度在位）；接受 §31 口径更正（F14：我的初版 t=2.06/20.7% 作废，SSOT 口径 t=1.91–1.94/误杀≈40%）；§5.7 主判读口径 fail 登记诚实须带进裁决日叙事。本批零代码改动。
 
 
 ## 11. 主线程复查（Claude · 2026-10-09 · 只读实测）
@@ -2058,3 +2060,418 @@ THEN 不给予 W_WEEK 隔夜豁免（或至少减半仓）
 | E85 | `grep -n "MAX_ROUND_TRIP_FEE_PCT = " scripts/extended_hours_entry_executor.py` | 默认 `1.0`（100bps，严于提案 200bps） |
 | E86 | `PYTHONPATH=. ./venv/bin/python -m pytest tests/test_fee_bps_anomaly_guard.py tests/test_w1_exit_version_guard.py -q` | `48 passed` |
 | E87 | `PYTHONPATH=. ./venv/bin/python -c "from scripts.daily_invariant_check import _check_fee_bps_anomaly as f; print(f(lambda *a: None))"` | `scanned≥0, anomalies=0`（裁决日后无异常单） |
+
+## 31. D2' 融合分层分析（2026-10-10 · 用户问「如何取长补短，按标的/分层融合」）
+
+> 触发：用户问延迟确认如何按标的/分层融合。
+> 方法：对 `entry_delay_confirm.jsonl` 2min 臂的 `status=ok` 行按**入场时刻可见**特征分层；MFE 等事后标签不入选。主口径沿用 `_agg_block`：580 行全入，5 笔 `pnl_net=NULL` 按0贡献，日聚类用“日内均值/笔”。
+> 复核结论：**方向有假设价值，但原增补的 R1 读数不确认**。初版剔除5笔NULL后得n=575，LONG开盘格从 `-$1,034.42` 变 `-$363.19`，与全局 `-$284.36` 不可加；其 t=2.06 是按日总净额算，而现行 SSOT 是日均值/笔；误杀率分母也未冻结。以下为修正后口径。
+
+### 31.1 方向 × 时段 2×2（主口径）
+
+| cell | n | 净价值 | 均笔 | 回避n | 误杀n | 误杀/回避 | 日均值t |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| SHORT × `entry_min≤09:45` | 58 | **+$800.73** | +$13.81 | 29 | 12 | 41.38% | 1.91 |
+| SHORT × 其余时段 | 40 | -$186.75 | -$4.67 | 18 | 12 | 66.67% | -1.07 |
+| LONG × `entry_min≤09:45` | 284 | -$1,034.42 | -$3.64 | 147 | 92 | 62.59% | -0.59 |
+| LONG × 其余时段 | 198 | +$136.08 | +$0.69 | 100 | 55 | 55.00% | -0.62 |
+| 合计 | 580 | -$284.36 | -$0.49 | 294 | 171 | 58.16% | -0.16 |
+
+边界注记：`entry_min≤09:45` 不是纯开盘窗，含1笔SHORT 08:10与5笔LONG盘前；若收窄为 `09:30≤entry_min≤09:45`，SHORT格为 n57 / `+$820.17` / t=1.94 / 误杀11 / 39.29%。
+
+### 31.2 其他维度（主口径，供参考）
+
+- 方向：SHORT `+$613.98`（n98）/ LONG `-$898.34`（n482）。
+- 来源：DA `-$816.91`（n421）/ UE `+$308.29`（n84）/ `?` `+$611.25`（n36，源覆盖缺口，不是可交易特征）/ OTHER `-$407.66`（n16）/ REENTRY `+$20.67`（n23）。
+- archetype：FADE_SHORT `+$185.40`（n31）/ PULLBACK_LIMIT `-$774.50`（n140）/ NONE `+$339.09`（n407）/ BREAKOUT `-$34.35`（n2）。
+- 标的分散，无单标的集中效应 ⇒ 按个股定制无依据。
+- NULL敏感性（非主口径）：剔除5笔`pnl_net=NULL`后 n575 / `+$386.87`，与全局 `-$284.36`不可混算；差异主要来自CTNT delayed机会成本 `-$671.23`。
+
+### 31.3 R1候选与B/D分流复核
+
+**候选**：`direction=SHORT ∧ 09:30≤entry_min≤09:45`（显式排除盘前）。全人群 n57、净 `+$820.17`、日均值t=1.94、误杀11/28=39.29%。
+
+按 RFC-081既有分流纪律，B案只管非可路由B_only；R1全人群若换算：
+
+| 人群 | n | 净价值 | 日均值t | 误杀n | 误杀/回避 |
+|---|---:|---:|---:|---:|---:|
+| R1 B_only | 38 | +$466.03 | 1.31 | 6 | 33.33% |
+| R1 D_candidate | 20 | +$334.70 | 1.26 | 6 | 54.55% |
+
+判读：R1是后验假设，**当前不满足“t≥2且误杀率≤25%”的候选前置读数**；若要用“误杀/总命中”作分母，必须另行预注册命名，不得与现行`miskill_rate=误杀/回避`混用。
+
+### 31.4 不变卡点
+
+1. 载体仍是硬卡点：主循环中位3.18min/轮 + TTL300s；R1落地同样须专用精确计时载体。
+2. 选择偏差：R1来自同一份历史数据挖掘，前瞻预期必须打折；须新影子变体前瞻攒样。
+3. 与candidate C边界：R1治假触发，C治锚漂移；同命中时优先级须预注册，不得隐式叠加。
+
+### 31.5 E表（机械可复跑）
+
+| # | 命令 | 期望输出 |
+|---|---|---|
+| E88 | `PYTHONPATH=. ./venv/bin/python -c 'import json; from scripts.entry_delay_confirm_shadow import _agg_block; rows=[json.loads(x) for x in open("data/shadow/entry_delay_confirm.jsonl") if json.loads(x).get("delay_min")==2 and json.loads(x).get("status")=="ok"]; cells=[_agg_block([r for r in rows if r["direction"]==direction and (r["entry_min"]<="09:45")==opening]) for direction in ("SHORT","LONG") for opening in (True,False)]; print(" ".join("{0}/{1}/{2}/{3}".format(x["n"],x["net_value_usd"],x["n_miskilled"],x["day_clustered"]["t"]) for x in cells))'` | `58/800.73/12/1.91 40/-186.75/12/-1.07 284/-1034.42/92/-0.59 198/136.08/55/-0.62` |
+| E89 | `PYTHONPATH=. ./venv/bin/python -c 'import json; from scripts.entry_delay_confirm_shadow import _agg_block; rows=[json.loads(x) for x in open("data/shadow/entry_delay_confirm.jsonl") if json.loads(x).get("delay_min")==2 and json.loads(x).get("status")=="ok"]; x=_agg_block([r for r in rows if r["direction"]=="SHORT" and r["entry_min"]<="09:45"]); print(x["n"],x["net_value_usd"],x["day_clustered"]["n_days"],x["day_clustered"]["t"],x["n_miskilled"],x["miskill_rate"])'` | `58 800.73 34 1.91 12 0.4138` |
+| E90 | `PYTHONPATH=. ./venv/bin/python -c 'import json; from scripts.entry_delay_confirm_shadow import _agg_block; rows=[json.loads(x) for x in open("data/shadow/entry_delay_confirm.jsonl") if json.loads(x).get("delay_min")==2 and json.loads(x).get("status")=="ok"]; x=_agg_block([r for r in rows if r["direction"]=="SHORT" and "09:30"<=r["entry_min"]<="09:45"]); print(x["n"],x["net_value_usd"],x["day_clustered"]["n_days"],x["day_clustered"]["t"],x["n_miskilled"],x["miskill_rate"])'` | `57 820.17 34 1.94 11 0.3929` |
+| E91 | `PYTHONPATH=. ./venv/bin/python -c 'import json,sqlite3; from scripts.entry_delay_confirm_shadow import _agg_block,_load_routable_map; con=sqlite3.connect("file:data/ftseek_us.db?mode=ro",uri=True); branch=_load_routable_map(con); rows=[json.loads(x) for x in open("data/shadow/entry_delay_confirm.jsonl") if json.loads(x).get("delay_min")==2 and json.loads(x).get("status")=="ok"]; r1=[r for r in rows if r["direction"]=="SHORT" and r["entry_min"]<="09:45"]; b=_agg_block([r for r in r1 if branch.get(r["trade_id"]) is False]); d=_agg_block([r for r in r1 if branch.get(r["trade_id"]) is True]); print(b["n"],b["net_value_usd"],b["day_clustered"]["t"],b["n_miskilled"],b["miskill_rate"],d["n"],d["net_value_usd"],d["day_clustered"]["t"],d["n_miskilled"],d["miskill_rate"])'` | `38 466.03 1.31 6 0.3333 20 334.7 1.26 6 0.5455` |
+| E92 | `PYTHONPATH=. ./venv/bin/python -c 'import json; d=json.load(open("data/shadow/entry_delay_confirm_latest.json")); s=d["delays"]["2"]["by_source"]; print(s["DA"]["net_value_usd"],s["UE"]["net_value_usd"],s["?"]["net_value_usd"],s["OTHER"]["net_value_usd"],s["REENTRY"]["net_value_usd"])'` | `-816.91 308.29 611.25 -407.66 20.67` |
+
+## 32. 盈利优化建议复核与修正（2026-10-10 · 主线程自纠）
+
+> 触发：用户要求先核查上一轮“提升盈利”建议，确认后再写入 DEB。
+> 方法：逐条对照 §30 裁决、现有源码/配置、既有测试与影子资产；本节只落档，不改生产配置或交易行为。
+> 结论：可推进方向不是新增通用硬门或重复仓位风控，而是**先复用已有采集面**，针对弱人群做前瞻影子；一次只引入一个行为变量。
+
+### 32.1 撤回与更正
+
+1. **撤回“预注册并实装 `max_fee_bps=200` admission gate”**。§30 已裁决：CTNT/GIPR 走 EXT 通道，不经 playbook admission；EXT 已有 `$5` 价格地板与 100bps 费用闸；playbook 路径算术封顶约 50bps。正确形态是已实装的 `W8_fee_bps_anomaly` 只读监控；若 30 日内新增触发，再按 §30.3 升级硬门提案。
+2. **更正“引入风险预算仓位”**。仓位并非缺失：`compute_position_size()` 已按 `risk_base × risk_pct / 止损距离` 计算，并受 `max_position_pct` 截断；当前 playbook 参数为 `$82,000 / 0.5% / 6%`。无需重复造轮子。
+3. **更正“引入单日亏损熔断”**。日亏熔断已存在：阈值 `-3%`，滞回释放线 `-2%`；触发后停新开、平仓照常。需要的是持续跑 invariant/test，不是新增机制。
+4. **组合集中度不立即升硬帽**。方向/行业 guardrail 本体与影子审计已存在，但 `portfolio_guardrail_enabled=false`，即用户裁决后的摘闸状态。下一步只消费 `skew_gate_vision` / `portfolio_execution_guardrail` 既有影子，评估 would-skip 的真实损益；证据成立后另立提案，不得因“赢小输大”直接打开硬闸。
+
+### 32.2 复核后的推进路线
+
+1. **Candidate C（双锚/入场锚纪律）优先**：复用 RFC-123 双锚影子，先做阶段1结算，不新增基建。理由：直接指向墓地仓与 `FADE_SHORT/UE` 弱人群，且不触碰 W1 冻结窗。判读仍以净额、扣费扣滑净bps、Profit Factor、day-cluster、误杀为主，不用胜率。
+2. **`FADE_SHORT/UE` 只作为弱人群标签**：历史读数为 `FADE_SHORT n26 / -$401.94`、`UE n19 / -$441.78`，可并入 Candidate C 的分层结算；但 adverse drift 非单调，不能直接改成降权或硬拒单。
+3. **R1/D2' 保持前瞻影子**：§31 修正后 R1 全人群 t=1.94、误杀率39.29%，且为后验分层；即使显式开盘窗也未达 t≥2 与误杀≤25%。若继续，须独立预注册新样本和专用精确计时载体，不得与 D2' 旧样本混算。
+4. **组合集中度只做既有影子复盘**：优先评估现有 would-skip 审计与实际成交后的相对净额，不新开平行采集层；若拟恢复硬闸，必须证明不是 2026-10-08 已裁决摘闸的断崖副作用复发。
+5. **trailing A/B 后置**：candidate D 仅保留 `target_capture_pct 60 vs 70`、`max_drawdown_pct 1.2 vs 2.5` 两个影子轴；必须等 `post_ca4487` 冻结/单哈希治理满足前置条件后再提案，禁止绕过 W1 退出侧纪律。
+
+### 32.3 边界
+
+- 本节不新增任何配置、代码、调度或交易行为；`config/` 与 `app/` 必须保持零 diff。
+- 不把 §28/§31 的历史改善值相加当作未来收益；所有候选先在前瞻样本攒证。
+- UE 不直接写交易；任何候选若转正，最终仍走 DA 辩论、风控 gate 与用户裁决。
+
+### 32.4 E表（本节复核证据）
+
+| # | 命令 | 期望输出 |
+|---|---|---|
+| E93 | `PYTHONPATH=. ./venv/bin/python -m pytest tests/test_playbook_position_sizing.py tests/test_daily_loss_circuit.py tests/playbook/test_daily_loss_circuit_hysteresis.py -q` | `29 passed` |
+| E94 | `PYTHONPATH=. ./venv/bin/python -m pytest tests/test_direction_skew_guardrail.py tests/test_portfolio_execution_guardrail.py -q` | `15 passed` |
+| E95 | `./venv/bin/python -c "import yaml; c=yaml.safe_load(open('config/unified_config.yaml')); p=c['playbook']; r=c['risk']['circuit_breaker']['strategy']; print(p['risk_parameters']['risk_base_capital'],p['risk_parameters']['risk_pct'],p['risk_parameters']['max_position_pct'],p['portfolio_guardrail_enabled'],r['daily_loss_threshold'],r['daily_loss_release_threshold'])"` | `82000.0 0.5 0.06 False -0.03 -0.02` |
+| E96 | `test -z "$(git diff --name-only -- config app \| grep -v '^app/playbook/entry_confirm_gate.py$')" && echo no_unrelated_production_diff` | `no_unrelated_production_diff` |
+| E97 | `git diff --check && echo CLEAN` | `CLEAN` |
+
+## 33. RFC-141 入场延迟确认门落地与口径变更（Hermes · 2026-10-10 · 实弹 SIM，非影子）
+
+> 触发：用户批准 candidate B（D2' 入场延迟确认）后，两次纠正口径：①「目标可见」= **富途 app 上的 SIM 盈亏**，不是 dashboard（dashboard 是 live 实盘交易面）；②「**直接走 sim 交易链路，不用影子攒样看 sim 交易结果**」。
+> 方法：门按 §27 建议落地为 SIM 实弹全量（`holdout_pct=0`），裁决源改为「开门后 SIM 真实盈亏 vs 门前预注册基线」；`entry_confirm_forward.jsonl` 降级为机制留痕。所有数字现算，禁口算。
+> 结论：门已落地并端到端验证（42 契约例 + 13 接线活体例），但**尚未部署**（未 restart），且 §27 缺陷3 在本基线窗**不复现**，判据①②对费用异常单稳健、判据④地板被低估 24.4%。
+
+### 33.0 通俗版：这次到底改了什么、为什么
+
+**门的机制（一句话）**：股票触发买入信号后，**不立刻下单，等 2 分钟再看一眼**——价格还站在触发方向的那一侧就照原计划下单；已经翻过去了就放弃这笔。
+
+**为什么要等这 2 分钟**：开门前的 SIM 数据里有一族单子叫 `SL_INITIAL`（进场后直接打到初始止损），29 笔**全亏**、平均每笔亏 $157.91、总亏 $4,579 —— 而整个系统 3.5 个月的总净亏只有 $2,478。也就是说：**这一族亏掉的钱，比系统总亏损还多 1.85 倍**（其他所有单子合起来其实是赚的）。这 29 笔就是「一进去就被反手打脸」的形态，等 2 分钟正是为了在下单前把已经反转的那部分筛掉。
+
+**为什么要动口径（用户两次纠正）**：
+1. 我一开始把「结果可见」做成了 dashboard 上的卡片。用户纠正：要看的是**富途 app 里 SIM 账户的真实盈亏**，dashboard 是给 live 实盘用的 ⇒ 已全部还原。
+2. 我原本留了 20% 单子不走门当对照组（影子攒样）。用户纠正：**直接全量走 SIM 链路，看真实交易结果** ⇒ `holdout_pct` 改 0，裁决标准改成「开门后 SIM 真实盈亏 vs 开门前冻结的基线」。
+
+**代价（必须说清）**：没有对照组，就等于「开门后 vs 开门前」的跨期比较 —— 如果开门那几周大盘正好转好，改善可能不是门的功劳。已写入 RFC §5.4，并规定：判据①③是**门自己的机制量**（病灶族有没有收敛、避免率多少），不随市况漂 ⇒ 算强证据；判据②④受市况混淆 ⇒ 算弱证据，裁决时必须并陈当期市况。
+
+**本轮唯一的判据缺陷（§33.3）**：判据④「不能伤到赢家」的及格线是「开门后每笔至少赚 $2.79」，这个 $2.79 是从历史基线 $3.4852 打八折来的。但历史基线里**混进了 3 笔手续费异常的单子**（最夸张的 CTNT：6.8 万股 × $0.072 的仙股，手续费 $451 = 915bps，毛利是正的却被费用吃成净亏）。把这 3 笔剔掉后基线其实是 $4.3340 ⇒ 真正的及格线应是 **$3.47**，比原来高了 24.4%。**如果不修，门只要做到 $2.79 就算「没伤赢家」，实际却可能已经伤到了** —— 这是判据偏松，门会白过。修法是两端同尺：比的时候两边都剔费用单。
+
+**判据①②不受这个影响**（实测 SL_INITIAL 族和开盘窗里 fee_bps>100 的笔数都是 **0**），所以核心的病灶判据是干净的。
+
+### 33.1 §27 三条建议的处置
+
+| §27 建议 | 处置 | 依据 |
+|---|---|---|
+| P0 处置 `W1_oct_cohort_broken` 冻结窗 | **不涉本批**：candidate B 属入场侧，`entry_confirm_*` 四键**不在** exit hash 白名单（§27 缺陷1 表已判定「不在 ✅ 可影子」）⇒ 不产生第 3 个哈希 | 实测 `git diff --name-only -- config app` 只含入场侧文件 + `shadow_registry.py`（注册表非 exit hash 输入） |
+| P1 candidate B 改「攒样+功效检验，不作裁决」 | **已按用户口径升级为实弹裁决**：用户明确「不用影子攒样看 sim 交易结果」⇒ 裁决源 = SIM 真实盈亏。但保留 §27 的两条硬要求：①载体节奏已验（挂 10s 退出快循环，非 5–6min 主循环）②判据读数前预注册 | §33.2 载体证明；§33.4 预注册 |
+| candidate D 第 3 条（+0.8% 部分止盈）划掉 | **认同，未实现**：命中 DEB-20261008 已裁否决的 scale_out + `exit_policy.yaml:174` DEAD RULE；0.8% 比已测 2%/3%/4% 更低 ⇒ Δ 更负 | 本批零退出侧改动 |
+
+### 33.2 载体节奏：§27 的硬卡点已解
+
+§27/§31.4 指出「2min 确认若挂主触发循环（实测 3.18–6min/轮）= 静默落地一个更粗的、已被门否决的变体」。本批实测处置：
+
+- 判定挂 **10s 退出快循环**（`scheduler_core.py` 的 sweep），不是 180s 主循环 ⇒ 确认时点误差 ≤10s；
+- `delay_actual_sec` 逐笔落盘（实测 122/123/125s），事后可审计实际节奏是否漂移；
+- 锚 = **arm 时刻 reprice 执行锚**且 pending 期间冻结（`defer_pending` 拦在 reprice **之前**）。dual_anchor 影子 573 行实测计划锚 vs 执行锚分歧中位 2.10%、60.4% 行分歧 >2%、trigger_divergent 38% ⇒ 用盘前计划锚 = 静默换尺子。
+
+### 33.3 门前基线的费用异常单敏感性（§27 缺陷3 的针对性检验）
+
+§27 缺陷3 实测「系统净为负由 2 笔仙股决定，剔除后符号翻转」。RFC-141 四条判据全挂在门前基线上 ⇒ 必须先证明基线不被同一批费用单主导。`scripts/deb20261009_fee_anomaly_sensitivity.py`（只读）实测：
+
+| 判据 | 人群 | n | fee_bps>100 笔数 | 结论 |
+|---|---|---:|---:|---|
+| ① 病灶族收敛 | SL_INITIAL | 29 | **0** | 稳健（该族 fee_bps 最大仅 19.9）⇒ −$157.9069 基线不被费用单决定 |
+| ② 开盘窗改善 | 09:35–09:45 | 324 | **0** | 稳健 ⇒ −$4.1115 基线不被费用单决定 |
+| ③ 机制量 | — | — | — | 避免率/opp_cost 是门自身机制量，与费用无关 |
+| ④ 不伤赢家 | 非 SL_INITIAL | 603 | **3** | **地板被稀释 24.4%**（见下） |
+
+三笔费用异常单（均在**非** SL_INITIAL 族、且**不在**开盘窗）：`US.CTNT` 9/17 bps=915.1 net=−314.27 exit=breakeven_lock；`US.GIPR` 9/17 bps=203.6 net=−181.32 exit=tighten；`US.NVDA` 7/9 bps=198.6 net=−3.26 exit=BROKER_GHOST_CLOSE。
+
+**判据④ 的地板必须两端同尺**（这是本轮唯一的判据缺陷）：
+- 现地板 +$2.79 = 基线 +$3.4852 的 80%，而基线**含**这 3 笔；
+- 若开门后样本不含同类费用单，比较就变成「干净值 vs 被 3 笔拖低的基准」⇒ 判据④ **偏松**，门可能白过；
+- 剔 fee_bps>100 后基线净均 +$4.3340 ⇒ 干净地板 **+$3.47**，全量地板被低估 +$0.68/笔（24.4%）。
+- **处置（已实装）**：不改已冻结的 +$2.79（读数前写死，挪门柱禁令），而是结算器 `main()` 里判据④ **用剔费口径裁决**（`p_rest_clean` 剔费样本 vs `WINNER_MEAN_FLOOR_CLEAN=+$3.47` 剔费地板），同时输出 `c4_full_caliber_also_printed`（全量样本 vs +$2.79）**只并陈不裁决**。两端同尺规则写入 RFC-141 §5.6，契约钉「剔费地板必须 > 全量地板」（反向即红）。
+- **精度纪律**：地板一律 round 到 **2 位**（+$2.79 / +$3.47），与 RFC §4 预注册文本逐字一致。4 位精确值是 2.7881 / 3.4672 —— 若有人改成 4 位，全量地板会变成 2.7882 < 2.79 = **放松门槛方向**（挪门柱），已有断言钉住会红。
+- §27 建议的 fee_bps 准入门仍是独立 P0 事项（事前可算、决定净符号），不因本节而免。
+
+**符号敏感性（复现检验）**：§27 的符号翻转（−$347.85 → +$147.74）发生在**其自身窗口 n=172**；在 RFC-141 基线窗（n=632）**不复现**（全量 −$3.9205 → 剔后 −$3.1461，仍为负）。⇒ §27 缺陷3 是**窗口特异**结论，不能推广成「系统净为负全由仙股决定」。费用/毛利 = **3.1847×**（毛利 +$1,134.12、费用 $3,611.86）——这与用户 8/22 已证伪的「执行纪律可保底」同向：edge 必须 > 费用线，退出参数微调救不回费用。
+
+### 33.4 预注册判据（读数前写死，基线同日冻结）
+
+裁决源 = `trade_records` WHERE `source_type='PLAYBOOK_SIM' AND COALESCE(exit_price,0)>0 AND COALESCE(pnl_net, realized_pnl) IS NOT NULL AND trade_date >= 开门日`。开门日取 forward 产物**首行 date**（不硬编码 ⇒ 重启延后不会让基线窗口错位）。样本门 n≥60 ∨ ≥10 交易日。
+
+| # | 判据 | 基线（2026-10-10 冻结） | 门槛 |
+|---|---|---|---|
+| ① | SL_INITIAL 族收敛 | n=29 净均 −$157.9069 t=−10.4217 胜率 0/29 | 净均 ≥ −$40/笔（=基线 25%，收敛≥75%）**或** 族 n≤1 |
+| ② | 开盘窗改善 | n=324 净均 −$4.1115 t=−0.3218 | 净均 > −$4.1115 **且** t > −0.3218 |
+| ③ | 机制量达标 | — | 避免率 ≥30% **且** CONFIRMED opp_cost 均值 <0.3% |
+| ④ | 不伤赢家 | 非SL族 n=603 净均 +$3.4852（剔 3 笔 fee_bps>100 后 n=600 净均 +$4.3340） | **裁决口径**：剔费样本净均 ≥ +$3.47（剔费地板）；并陈全量口径 ≥ +$2.79（不单独裁决） |
+
+裁决三态：1∧2∧3∧4 全过 → PASS（呈用户裁 SIM 常态化，REAL 另须签字）；仅①过 → OBSERVE；①明确不过 → FAIL（KILLED + enabled=false）。
+
+**基线尺子自洽**：t 一律用 `statistics.stdev`（样本标准差 ddof=1），与 `_day_clustered_t` 同尺。首版基线脚本误用 `pstdev` ⇒ sl_initial t 写成 −10.6924（应为 −10.4217）。两把尺子比 t = 错相位对比（死门形态），已统一重算并加「基线可从真库逐字复现」契约测试（E100）。
+
+**限速环节（不得用「样本不够」当通过）**：SL_INITIAL 族基线仅 29 笔/3.5 月（≈0.4 笔/日），而样本门 n≥60 约 2 周即到 ⇒ 会出现「总量样本够而病灶族样本不够」的相位。结算器如实输出 INSUFFICIENT/OBSERVE，不得提前改用其它判据替代。
+
+### 33.5 无同期对照臂的代价（用户裁 holdout=0 的对价，非重开辩论）
+
+`entry_confirm_holdout_pct: 20 → 0`（留对照臂会稀释 SIM 结果，与「看 sim 交易结果」冲突）。代价 = 裁决变成「开门后 vs 开门前」，若开门那几周大盘转好，SIM 改善可能不是门的功劳。处置（RFC-141 §5.4）：判据①③是**门自身机制量**（不随市况漂）⇒ 列为强证据；判据②④受混淆 ⇒ 弱证据，裁决时须并陈当期市况。若要更硬的因果证据，唯一低成本做法是把 holdout 改回 5–10（机制 inert 保留），**需用户再裁，不自动开**。
+
+### 33.6 本轮抓到的真缺陷（全部已修 + 已钉测试）
+
+| # | 缺陷 | 后果 | 修法 |
+|---|---|---|---|
+| 1 | **falsy-0 吃掉用户意图**：`int(get(k, default) or default)` 里 `0 or 20 → 20` | 用户裁 holdout=0，生产实际 20% 单子绕过门，而 YAML 看着已生效 ⇒ **静默违背用户意图** | `_int_or` 只认 None 为缺键；E102 钉住 |
+| 2 | ABANDONED 只写 metadata 旗标，不落 `skip_reason` | 库里该指令仍是「活跃待执行」却永不执行 ⇒ 复盘/app 分不清「没触发」与「被门放弃」，误导性比看不出来更糟 | 复用 `mark_instruction_guardrail_skip`（WHERE 带 `executed=0 AND execution_state='PENDING'`，不碰已成交行），reason=`entry_confirm_reversed`；红线测试钉「CONFIRMED 绝不落 SKIP」（落了单子到不了富途 = 门把交易掐死） |
+| 3 | 基线 t 用 `pstdev` 而结算器用 `stdev` | 判据② 两把尺子比 t = 假阳/假阴 | 统一 stdev 重算基线，加真库复现契约（E100） |
+| 4 | 判据④ 地板含 3 笔费用异常单 | 门可能白过（偏松 24.4%） | 结算器并陈两地板，裁决以剔后为准（§33.3） |
+| 5 | 契约测试 `_FakeDB` 缺 `mark_instruction_guardrail_skip` | ABANDONED 落库静默走 except 分支 ⇒ **36 例全绿却从未验到 skip_reason 真写**（fixture 全绿 ≠ 接线活） | 补真替身 + 新增 `tests/test_entry_confirm_live_wiring.py`（13 例，真 PlaybookDB/真 PlaybookConfig/真结算器） |
+| 6 | **PENDING 孤儿自愈不可达（§33.12 复核发现）**：`defer_pending` 对所有 `PENDING` 都返回 True，而 auto_execute 在 reprice 前先调它 | 重启/回滚后残留 PENDING 旗标的指令会被永久拦死，`gate_at_execute` 里的孤儿自愈永远执行不到 | `defer_pending` 只拦“内存中仍活跃”的 pending；孤儿转 `HEALED` 留痕并放行，补接线顺序测试 |
+
+### 33.7 自曝（本节自身的问题）
+
+1. **我把「可见」误解成 dashboard**：先写了 `/api/playbook/entry-confirm` 端点 + 卡片徽章，用户纠正后 `git checkout` 完全还原（E107 实测残留 0），并删掉为它加的公开路径常量。教训：用户说「目标可见」时先问清是哪个界面/哪个账户口径，别默认自己那套。
+2. **我在代码注释里写了虚构断言**：注释称「auto_execute 取数按 `direction!='SKIP'` 过滤」，实测 `get_instructions_by_date` **不过滤** SKIP（只有 `get_recent_instructions` 有），真正拦截靠循环内 `auto_execute_flow.py:160` 分支。已按事实改写。
+3. **我引用了不存在的小节**：注册表 notes 与结算器都写了「见 RFC §5.4」，而当时 §5 只有 3 条。已补建 §5.4/§5.5/§5.6 后才让引用成立。
+4. **探针首版两处自错**：①调 `db.insert_instruction`（真名 `save_instruction`）②硬编码 notional 期望 5745.0（真值 105.9×55=5824.5，笔误）⇒ 改为程序化算期望。教训：探针自己也要「禁口算字面量」。
+5. **孤儿自愈测试首版是废断言**：用 ABANDONED 行验孤儿，`status==PENDING` 恒假 ⇒ 永不失败。已改为真造 PENDING 残留后清内存。
+6. **判据④ 的稀释我一开始算错了**：首版用硬编码 symbol+date 过滤，混进一笔 9/17 的 NVDA **正收益**单（+13.55），得出「地板被低估 23.8%」；改用 fee_bps>100 精确条件后是 **24.4%**（+0.6791/笔）。§33.3 用的是修正后数字。
+7. **键名撞车已登记未改名**：既有 `entry_confirm_max_wait_s`（下单**后**确认成交的 30s 等待窗，消费点 `playbook_service.py:1851`）与我的 `entry_confirm_*`（入场**前**延迟确认）同前缀不同语义，grep `entry_confirm` 同时命中两者。已在 config/注册表双侧登记警示，未改名（改名要动 4 个文件 + 测试，且撞车不影响运行）。
+
+### 33.8 只登记不代改（属他人批次）
+
+1. **§32.4 E96 已被本批弄红**（非逻辑错误，是并行批次断言冲突）：E96 断言 `test -z "$(git diff --name-only -- config app)"`，即工作区 config/app 零 diff。§32 写作时成立；本批按用户批准改了 `config/unified_config.yaml` + 3 个 app 文件 ⇒ 该断言现必红。**按归属纪律不代改他人节**：处置建议是由 §32 作者把 E96 收窄为「§32 自身涉及的文件零 diff」，或改成 `git diff --name-only -- config app | grep -v entry_confirm` 类可区分断言。
+2. **§32.4 E97 是恒红断言**（与批次无关）：期望列写的是「空输出」这三个字，而 `git diff --check` 真实输出为空 ⇒ 子串比对必然 missing（已实证：输出字节数=0，missing=['空输出']）。任何工作区状态下都红。修法是把期望列改成可字面命中的串（如让命令输出 `git diff --check && echo CLEAN` → 期望 `CLEAN`）。
+3. **验证器红单口径澄清（更正本节首版自曝）**：验证器汇总 §13.7 报 **56/84 通过 = 计 rc 红单 28 条**；另 §11.7/§12.7 **上游 16 条「不可机械比对」不计 rc**（期望列是描述文字形态，§11.7/§12.7 已登记）。两者相加 = 44 条 ❌ 行，但**只有 28 条计 rc**。本节首版误把「44 条」当成红单总数、且把不计 rc 的上游 E1–E16 列进红单区间 ⇒ 口径混淆，现更正。
+   - **计 rc 红单 28 条（精确列举，不用连续区间）**：E31、E33、E37–E42、E44–E52、E64、E70、E80–E85、E87、E96、E97。注意 **E32/E34/E35/E36/E43/E86 是绿的**（首版「E31–E52」「E80–E87」区间表述把它们误算成红）。
+   - **不计 rc 上游 16 条**：E1–E16（§11.7/§12.7 系，描述文字期望）。
+   - `parse_e_tables` 在 `## 14.` 存在时把 `src[i14:]` 全部 E 行计入 rc ⇒ 任何人追加新节都会把前人 E 行拖进自己的 rc（§27.8 已登记，本轮再证）。
+   - **本节 E98–E109 零红**（12/12 绿，用验证器同一把尺子复跑，见 §33.10）。
+
+### 33.9 提交边界与部署状态
+
+- **全量回归（有效轮，2026-10-10）**：`pytest tests/ -q -p no:randomly` ⇒ **7092 passed, 1 failed, 70 skipped**（413s）。唯一失败 `tests/test_intraday_diagnose_semantic_silence.py::test_replay_real_deliveries_shows_majority_suppressed` **base 侧同有**（存量，非本批引入）；`comm -13 /tmp/ec_base.txt /tmp/ec_now5.txt` = **空 ⇒ 零新增失败**。
+  ⚠️ **自曝**：本节首版之前那一轮全量回归**无效** —— 命令带了 `--timeout=120`，该 pytest 插件未安装 ⇒ pytest 直接 usage error 退出、**一个测试都没跑**，而当时把 usage 错误行误读成「失败数: 1」。已重跑（不带 `--timeout`）得到上述有效结果。教训：`grep -E "^FAILED|^ERROR"` 会把 usage 错误行也算进失败数 ⇒ 回归结论必须先看 `passed/failed` 汇总行确认测试真跑了。
+- **已部署**：`ftseek-us` 于 2026-10-10 21:36:00 CST 重启，晚于 RFC-141 首个提交 `a388dced2`（21:30:28 CST）；当前进程读取生产配置 `enabled=true / delay=120 / holdout=0 / ttl=600`。因 10/10 为周六，`entry_confirm_forward.jsonl` 尚未产生首行，结算器保持 `TOO_EARLY`，属预期。
+- **孤儿修复已加载**：2026-10-11 08:59:44 CST 再次重启（ET 周六非交易时段；仅 10/09 两笔 SIM 持仓 AMD/SNDK），新进程 PID `452989` 晚于 `entry_confirm_gate.py` 修改时间；`systemctl is-active=active`，启动后日志未见 ERROR/Traceback。
+- **未提交**（`git status --short` 实测 13 项）：
+  - 新增 6 文件：`app/playbook/entry_confirm_gate.py`、`docs/decisions/RFC-141-entry-confirm-forward-live.md`、`scripts/settle_entry_confirm_forward.py`、`scripts/deb20261009_fee_anomaly_sensitivity.py`、`tests/test_entry_confirm_gate.py`、`tests/test_entry_confirm_live_wiring.py`；
+  - 修改 7 文件：`app/core/scheduler_core.py`、`app/playbook/pipeline_parts/auto_execute_flow.py`、`app/playbook/shadow_registry.py`、`config/unified_config.yaml`、`docs/CONTROL-LOOP-LEDGER.md`、`tests/playbook/test_offline_full_chain.py`、`docs/debates/DEB-20261009-event-to-trade-pipeline.md`（本 §33）。
+  - `DEB-20261009-*.md` 含另一 agent 未提交的 §25/§26 WIP ⇒ 按归属纪律**不代提交该文件**（本节内容随其批次或用户裁后一并入库）。
+- cron 已挂：`37 6 * * 2-6`（ET 18:37 盘后结算）；台账行 `crontab-entry-confirm-forward` 已随口径变更同步。
+- 回滚：`entry_confirm_enabled: false` + restart（孤儿自愈 ⇒ 零卡单），产物留档不删。
+
+### 33.10 E表（机械可复跑，期望列=实跑字面输出）
+
+| # | 命令 | 期望输出 |
+|---|---|---|
+| E98 | `PYTHONPATH=. ./venv/bin/python -m pytest tests/test_entry_confirm_gate.py -q 2>&1 \| tail -1` | `43 passed` |
+| E99 | `PYTHONPATH=. ./venv/bin/python -m pytest tests/test_entry_confirm_live_wiring.py -q 2>&1 \| tail -1` | `13 passed` |
+| E100 | `PYTHONPATH=. ./venv/bin/python -m pytest tests/test_entry_confirm_gate.py -q -k baseline_reproducible 2>&1 \| tail -1` | `1 passed` |
+| E101 | `PYTHONPATH=. ./venv/bin/python -c "from app.playbook.config import PlaybookConfig; from app.playbook.entry_confirm_gate import confirm_gate_config as c; d=c(PlaybookConfig()); print(d['enabled'], d['delay_sec'], d['holdout_pct'], d['ttl_sec'])"` | `True 120 0 600` |
+| E102 | `PYTHONPATH=. ./venv/bin/python -c "from app.playbook.entry_confirm_gate import confirm_gate_config as c; Z=type('Z',(),{'get':lambda s,k,d=None:{'entry_confirm_enabled':True,'entry_confirm_holdout_pct':0,'entry_confirm_delay_sec':0,'entry_confirm_ttl_sec':0}.get(k,d)}); z=c(Z()); print('zero-kept', z['holdout_pct'], z['delay_sec'], z['ttl_sec'])"` | `zero-kept 0 0 0` |
+| E103 | `PYTHONPATH=. ./venv/bin/python -c "from app.playbook.entry_confirm_gate import _holdout_bucket as h; print('pct0', sum(1 for i in range(1,501) if h(i,0)), 'pct100', sum(1 for i in range(1,501) if h(i,100)))"` | `pct0 0 pct100 500` |
+| E104 | `PYTHONPATH=. ./venv/bin/python scripts/settle_entry_confirm_forward.py && PYTHONPATH=. ./venv/bin/python -c "import json; print('verdict', json.load(open('data/shadow/entry_confirm_forward_latest.json'))['verdict'])"` | `verdict TOO_EARLY` |
+| E105 | `PYTHONPATH=. ./venv/bin/python scripts/deb20261009_fee_anomaly_sensitivity.py` | `判据① 稳健 = True` 与 `判据② 稳健 = True` 与 `被低估 +1.0001/笔, 12.8%` 与 `全样本符号翻转 = True` |
+| E106 | `PYTHONPATH=. ./venv/bin/python -c "from app.playbook.shadow_registry import REGISTRY; from scripts.settle_entry_confirm_forward import MIN_SIM_N; it=[s for s in REGISTRY if s.id=='entry_confirm_forward'][0]; print(it.min_n, MIN_SIM_N, it.config_key)"` | `60 60 playbook.execution_parameters.entry_confirm_enabled` |
+| E107 | `grep -c "entry-confirm\|entryConfirmBadge\|EC_BADGE" app/web_dashboard/routes/playbook.py app/web_dashboard/static/js/playbook.js \| cut -d: -f2 \| tr '\n' ' '` | `0 0` |
+| E108 | `PYTHONPATH=. ./venv/bin/python -c "from scripts.settle_entry_confirm_forward import BASELINE as B, MIN_SIM_N, SL_INIT_MAX_LOSS_PER_TRADE, WINNER_MEAN_FLOOR; b=B['sl_initial']; w=B['open_win']; print(b['n'], b['net_mean'], b['t'], w['net_mean'], w['t'], B['rest']['net_mean'], MIN_SIM_N, SL_INIT_MAX_LOSS_PER_TRADE, WINNER_MEAN_FLOOR)"` | `27 -162.3363 -10.2418 -2.2632 -0.3849 9.7353 60 -40.0 7.79` |
+| E109 | `PYTHONPATH=. ./venv/bin/python -c "import inspect; from scripts import settle_entry_confirm_forward as st; src=inspect.getsource(st.main); print('c4_clean_floor', st.WINNER_MEAN_FLOOR_CLEAN, 'c4_full_floor', st.WINNER_MEAN_FLOOR); print('c4_uses_clean', 'p_rest_clean[\"net_mean\"] >= WINNER_MEAN_FLOOR_CLEAN' in src); print('c4_full_also', 'c4_full' in src and 'is_fee_anomaly' in src)"` | `c4_clean_floor 8.79 c4_full_floor 7.79` 与 `c4_uses_clean True` 与 `c4_full_also True` |
+| E110 | `PYTHONPATH=. ./venv/bin/python scripts/deb20261009_rfc141_baseline_gen.py --since 2026-08-01 --until 2026-10-10` | `"n": 441` 与 `"net_mean": -162.3363` 与 `"net_mean": 10.9854` 与 `剔费地板 = 8.79` 与 `fee_bps=  915.1` |
+| E111 | `PYTHONPATH=. ./venv/bin/python -c "from scripts import settle_entry_confirm_forward as st; import inspect; src=inspect.getsource(st.main); print('t_floor', st.OPEN_WIN_T_FLOOR, 'base_t', st.BASELINE['open_win']['t'], 'strict', st.OPEN_WIN_T_FLOOR > st.BASELINE['open_win']['t']); print('wired', 'max(BASELINE[\"open_win\"][\"t\"], OPEN_WIN_T_FLOOR)' in src)"` | `t_floor -0.3218 base_t -0.3849 strict True` 与 `wired True` |
+
+> E109 验的是**接线**而非仅常量存在：判据④ 的裁决表达式必须真用剔费地板比剔费样本（`p_rest_clean[...] >= WINNER_MEAN_FLOOR_CLEAN`），且全量口径确实并陈。若只加常量不接线 = 死门（§33.3 声称与代码不符）。
+---
+
+### 33.11 基线窗口 v1→v2 重算（2026-10-10 22:37，用户裁「从8月份开始统计」）
+
+**触发**：用户在 §33 交付后裁「从8月份开始统计，早期的策略和逻辑不够成熟」⇒ RFC-141
+判据基线窗口从 `[2026-06-24, 2026-10-10)` 改 `[2026-08-01, 2026-10-10)`，n 632→441。
+
+**为何不构成挪门柱**（三条前置证据，全部实跑）：
+
+| 证据 | 实测 | 含义 |
+|---|---|---|
+| forward 产物文件 | **不存在**（0 行） | 门从未 arm 过任何指令 |
+| 结算器 verdict | `TOO_EARLY` | 无任何读数 |
+| `playbook_instructions` 含 `entry_confirm` 旗标 | **0 条** | 无已结算案例可反推 |
+
+挪门柱的定义是「拿已结算案例反推阈值」；零读数下按用户口径修正窗口 = **修口径错误**。
+且判据④ 地板是**收紧**（+$2.79→+$7.79，对门更不利），不是放松。
+
+**v2 基线**（生成器 `scripts/deb20261009_rfc141_baseline_gen.py`，调用结算器自己的
+`_pnl_block`/`_day_clustered_t` ⇒ 生成尺子 = 裁决尺子，非手抄）：
+
+| 人群 | n | 净额 | 净均 | 日聚类 t | 胜率 | v1 对照 |
+|---|---:|---:|---:|---:|---:|---|
+| all | 441 | −$352.67 | −$0.7997 | −0.1499 | 66.4% | 632 / −$3.9205 / 59.2% |
+| open_win 09:35–09:45 | 214 | −$484.33 | −$2.2632 | −0.3849 | 66.8% | 324 / −$4.1115 |
+| **sl_initial** | 27 | **−$4,383.08** | −$162.3363 | −10.2418 | **0/27** | 29 / −$157.9069 |
+| rest（非SL） | 414 | +$4,030.41 | **+$9.7353** | **+2.4673** | 70.8% | 603 / +$3.4852 / t+0.21 |
+| rest_clean（剔 fee_bps>100） | 412 | +$4,526.00 | **+$10.9854** | — | 71.1% | 600 / +$4.3340 |
+
+**三个改变判读方向的结果**：
+
+1. **判据④ 门槛抬高 2.8 倍**（+$2.79→+$7.79，剔费 +$3.47→+$8.79）。v1 窗口的 rest 是
+   +$3.4852（t=+0.21 不显著），地板严重低估「不伤赢家」的真实要求 —— 门只要做到 +$2.79
+   就算过 = **允许把赢家表现打掉 71% 仍判通过**。v2 下这条判据才真正咬合。
+2. **病灶集中度上升 6.7 倍**：SL_INITIAL 族净亏 = 全样本净亏 **12.43×**（v1 1.85×）。
+   ⚠️ 但分母（all.net_sum −$352.67）已接近 0 ⇒ **比值不稳定**（分母趋零会爆/翻符号），
+   故契约测试只钉「≥5×」下界 + 同号前提，不钉死 12.4283。
+3. **系统其余部分显著赚钱**：rest +$9.7353/笔 t=+2.4673（显著正）⇒ 全部亏损由
+   SL_INITIAL 一族贡献，门靶向正确。
+
+**判据② 出现混合方向 ⇒ 按「只准收紧」拆开处理**（新增 `OPEN_WIN_T_FLOOR`）：
+
+| 分项 | v1 | v2 基线 | 跟基线走的后果 | 处理 |
+|---|---|---|---|---|
+| 净均门槛 | > −$4.1115 | −$2.2632 | **收紧 $1.85/笔** ✅ | 跟随 v2 |
+| t 门槛 | > −0.3218 | −0.3849 | **放松**（更易通过）⛔ | **钉住 v1 严值 −0.3218** |
+
+结算器取 `max(BASELINE["open_win"]["t"], OPEN_WIN_T_FLOOR)` ⇒ 两侧取严，判据② 整体只紧不松。
+判据① 阈值 −$40 同理**刻意不重算**：v2 的 25% 收敛线是 −$40.58，比 −$40 **松** ⇒ 保持 −$40
+（对应 v2 收敛率 75.4%，≥75% 语义仍成立）。
+
+**⚠️ 决定性发现：§27 缺陷3 的符号翻转在 v2 窗口复现**
+
+| 口径 | n | 净均 |
+|---|---:|---:|
+| 全样本 | 441 | **−$0.7997** |
+| 剔除 fee_bps>100 的 2 笔 | 439 | **+$0.3256（转正）** |
+
+被剔的是 9/17 的 CTNT（915.1bps，毛利 +$136.99 却净亏 −$314.27）与 GIPR（203.6bps）。
+v1 窗口（n=632，净均 −$3.9205）剔费后仍负 ⇒ 当时「不复现」为真；v2 窗口下**「系统净亏」
+完全由 2 笔仙股决定，策略其余部分微正**。
+
+⇒ **优先级反转**：§27 缺陷3 建议的仙股/最小佣金准入门（`fee_bps = min_commission × qty
+/ notional`，**事前完全可算**，不像 MFE 门要事后才知道）从 P3 抬到**第一杠杆**，优先于
+一切退出参数微调。这也解释了为何 RFC-141 判据④ 必须两端同尺（§33.3）：若基线含异常单
+而开门后样本不含，判据会偏松。
+
+**顺带修掉的死门**：`deb20261009_fee_anomaly_sensitivity.py` 原打印「符号翻转在基线窗
+**不复现**」是 v1 窗口下写死的字面量叙述 ⇒ v2 下与它上一行自己算出的 `符号翻转 = True`
+**互相矛盾**（同一脚本打印两个对立结论）。已改为从 `flip` 派生分支。这是「判据字面量
+≠ 生产值域 ⇒ 恒 False」的镜像形态：**叙述字面量 ≠ 计算值域 ⇒ 输出自相矛盾**。
+
+**同步面（5 处，防文档与实现两张皮）**：
+
+| 文件 | 改动 |
+|---|---|
+| `scripts/settle_entry_confirm_forward.py` | BASELINE→v2；新增 `BASELINE_SINCE/UNTIL`、`OPEN_WIN_T_FLOOR`；删死字段 `recent`/`recent_win`（全仓零消费方） |
+| `scripts/deb20261009_rfc141_baseline_gen.py` | **新增**基线生成器（可复现，禁手抄） |
+| `scripts/deb20261009_fee_anomaly_sensitivity.py` | 窗口改从结算器常量导入（单一真源）；符号翻转叙述改派生 |
+| `docs/decisions/RFC-141-entry-confirm-forward-live.md` | §4 基线表 v2 + v1 留档 + 改窗依据；判据①②④ 文本同步；修 v1 表格 pstdev 旧值（−0.3284/−0.3246/−10.6924，与结算器 stdev 不同尺） |
+| `app/playbook/shadow_registry.py` | `graduation_criteria` → v2 逐字（周检/裁决读的就是它） |
+| `tests/test_entry_confirm_gate.py` | 地板 7.79/8.79；病灶倍数改「≥5×」下界；剔费笔数 3→2；窗口从常量读；新增 `OPEN_WIN_T_FLOOR` 取严断言 |
+
+**防假绿处理**：RFC 里 v1 值以留档形式仍全文存在 ⇒ 若 needle 仍断言「v1 数字 in txt」会
+命中**留档行**而非现行判据（假绿）。故现行判据 needle 全换 v2 值，另加：v1 值出现处
+**40 字符窗口内必须有 "v1" 标签**（留档对比合法，当作现行判据则红）+ `WINNER_MEAN_FLOOR
+> 2.79` 断言门槛只准收紧。
+
+**E 表**：E105/E108/E109 期望值按实跑输出重写；新增 E110（基线生成器可复现）、
+E111（`OPEN_WIN_T_FLOOR` 取严且真接线，验 `wired True`）⇒ §33 共 **14 条**。
+
+### 33.12 主线程复核：Hermes 落地合理性与修正（2026-10-11）
+
+> 触发：用户要求复核 Hermes 的盈利优化落地与其他调整点，确保无逻辑冲突、无重复和异常。
+> 方法：对比 `e31e6139a..HEAD` 四个提交、生产配置、RFC/DEB/台账、服务进程与 E98–E111；重点读 `defer_pending → reprice → gate_at_execute → execute` 的真实调用顺序。
+
+**合理性确认**：
+
+1. **不重复造轮子**：RFC-141 的 `entry_confirm_*` 是入场前 120 秒延迟确认；既有 `entry_confirm_max_wait_s` 是下单后 30 秒成交确认。二者前缀相近但语义、消费点和状态面不同，保留现名并在配置/注册表登记撞车警示是可接受处置。
+2. **载体不冲突**：新门挂 10 秒退出快循环，不挂 180 秒主循环；pending 拦截在 reprice 前，arm 在预算闸后、真实下单前，符合 RFC C1–C4。
+3. **退出侧不冲突**：只写 `metadata_json.entry_confirm`，不碰 `execution_state`；`entry_confirm_*` 键不在 exit hash 输入面，未引入第 3 个 W1 哈希。
+4. **判据接线成立**：v2 基线、`OPEN_WIN_T_FLOOR` 取严、判据④剔费两端同尺在结算器中真实接线，shadow registry 与 RFC 同步；E108–E111 复跑全绿。
+5. **候选边界不冲突**：§32 的“D2'/R1 保持前瞻影子”被用户 2026-10-10 的“直接走 SIM 实弹链路”显式升级为 RFC-141；不是绕裁。Candidate C/R1/trailing 的既有顺序未被本批混入。
+
+**发现并修正**：
+
+1. **P0：PENDING 孤儿自愈不可达**。`auto_execute_flow` 先调用 `defer_pending`，而旧实现对任何 `PENDING_CONFIRM` 都返回 True；进程重启后内存 `_PENDING` 已空，但 DB 旗标仍是 PENDING，指令在进入 `gate_at_execute` 前就被拦死，与 C6“重启/回滚零卡单”直接冲突。旧测试只直调 `gate_at_execute`，未测真实顺序，故全绿。
+   - 修复：`defer_pending` 只拦“内存中仍活跃”的 pending；孤儿进入 `gate_at_execute` 后转 `HEALED` 留痕并放行，后续轮次不再被终态拦截。
+   - 测试：契约测试与真 DB 接线测试均先断言 `defer_pending(orphan)=False`，再验 `HEALED` 与重复放行。
+2. **文档状态过期**：DEB §33 首版写“未部署”，但服务实际在 2026-10-10 21:36:00 CST 重启，晚于 `a388dced2` 提交；因当日周六无 forward 首行，`TOO_EARLY` 属预期。已改为“已部署”，并保留零样本事实。
+3. **E 表漂移**：E98 期望 `42 passed`，后续提交新增测试后实际为 `43 passed`；已按实跑更新。§32 E96/E97 原为恒红/过期断言，已改为可机械命中且只排除 RFC-141 相关生产 diff。
+4. **注释/台账 v1 残留**：结算器头部与控制环台账仍写 v1 判据数字，而代码/RFC/shadow registry 已是 v2；已同步为 v2，避免“代码行为正确但文档读数错误”的双面口径。
+
+**剩余观察**：
+
+- `analyze_code_quality.py` 是未纳入 Git 的独立多模型代码审查脚本，环境变量取 key、无硬编码密钥；未接入生产或调度。保留不影响交易链路，但应在入库前补归属说明或删除。
+- 修复后的 `entry_confirm_gate.py` 已于 2026-10-11 08:59:44 CST 重启加载；启动后服务 active，未见 ERROR/Traceback。
+
+#### 33.12.1 E 表（本节复核证据）
+
+| # | 命令 | 期望输出 |
+|---|---|---|
+| E112 | `PYTHONPATH=. ./venv/bin/python -m pytest tests/test_entry_confirm_gate.py tests/test_entry_confirm_live_wiring.py -q 2>&1 \| tail -1` | `56 passed` |
+| E113 | `PYTHONPATH=. ./venv/bin/python -c "from app.playbook import entry_confirm_gate as g; from datetime import datetime,timezone; g._PENDING.clear(); m=[]; D=type('D',(),{'merge_instruction_metadata':lambda self,i,p: m.append((i,p)) or True}); d=D(); x={'id':999,'direction':'BUY','metadata_json':'{\"entry_confirm\":{\"status\":\"PENDING_CONFIRM\"}}'}; first=g.defer_pending(x,datetime.now(timezone.utc)); act=g.gate_at_execute(x,d,{'entry_price':100.0},datetime.now(timezone.utc),{'enabled':True,'delay_sec':120,'holdout_pct':0,'ttl_sec':600}); print(first,act,m[0][1]['entry_confirm']['status'],g.defer_pending(x,datetime.now(timezone.utc)))"` | `False execute HEALED False` |
+| E114 | `git diff --check && echo CLEAN` | `CLEAN` |
+| E115 | `PYTHONPATH=. ./venv/bin/python -m pytest tests/test_entry_confirm_gate.py tests/test_entry_confirm_live_wiring.py tests/test_w1_exit_version_guard.py tests/test_fee_bps_anomaly_guard.py tests/test_deb20261009_strategy_opt_probe.py -q 2>&1 \| tail -1` | `110 passed` |
+
+## 34. RFC-141 落地复查（Claude 主线程 · 2026-10-11 · 只读实测）
+
+> 触发：用户令「另外的agent已经完成了盈利优化落地和更新，请复查」。
+> 范围：`e31e6139a..HEAD` 四提交 + 未提交工作树（孤儿自愈修复批）+ RFC-141 + 生产配置/服务/cron。
+> 方法：不信任 §33/§33.12 记录——E 表抽样复跑 + 接线 diff 语句级审读 + 生产状态实查 + 棘轮族全跑。本批零代码改动。
+
+### 34.1 复核总表：全部成立
+
+| 项 | 实测 |
+|---|---|
+| E112 契约+接线 | **56 passed** ✅ |
+| E115 五件组合 | **110 passed** ✅ |
+| E101 生产配置 | `True 120 0 600`（enabled/delay/holdout/ttl）✅ 且已在提交内（非工作树漂移） |
+| E104 结算器 | `verdict TOO_EARLY`（周末零样本，预期）✅ |
+| E108 基线常量 | `27 / -162.3363 / -10.2418 / -2.2632 / -0.3849 / 9.7353 / 60 / -40.0 / 7.79` 逐字一致 ✅ |
+| E109 判据④接线 | `clean 8.79 / full 7.79`、剔费口径真实接线、全量并陈 ✅（验接线而非仅常量，防死门） |
+| E111 判据②取严 | `t_floor -0.3218 > base_t -0.3849` 且真接线（`max()` 调用在源码中）✅ |
+| E110 基线可复现 | 生成器重跑 n=441、sl_initial 净均 -162.3363、剔费地板 8.79、CTNT 915.1bps 全中 ✅ |
+| E105 费用敏感性 | 判据①②稳健=True；④低估 +1.0001/笔（12.8%）；v2 窗符号翻转=True ✅ |
+| E113 孤儿自愈（活体） | `defer_pending(孤儿)=False → gate_at_execute→HEALED → 再 defer=False` 全链符合 C6 ✅ |
+| 棘轮族 | 46 passed 全绿（本批新增代码含 except 但全部 `logger.warning(exc_info=True)` 留痕，未踩 F11 形态）✅ |
+| 服务/调度 | `ftseek-us` active since 10-11 08:59:44 CST（晚于孤儿修复落地）；cron `37 6 * * 2-6` 已挂 ✅ |
+
+### 34.2 接线质量（语句级审读 `a388dced2` diff）
+
+- `defer_pending` 在 reprice **之前**（锚冻结防漂移）✅；`gate_at_execute` 在全部预算闸之后、execute 之前（不污染判据人群）✅；sweep 挂 10s 快循环且 `_PENDING` 空时早退（门关闭零开销）✅；两处异常路径均 `logger.warning(exc_info=True)` fail-open ✅。
+- 工作树修正批（§33.12 的 P0）：`defer_pending` 改为只拦内存中活跃 pending——**这是真 P0**：旧实现下重启后孤儿 PENDING 旗标会把指令永久拦死在 reprice 前，自愈代码永远执行不到。E113 活体验证修复正确。
+
+### 34.3 发现与登记
+
+- **F14（P2，我的 §31 初版读数被更正，接受更正）**：我 §31 初版自创口径（滤掉 `status!='ok'` 与 NULL 行得 n=575；t 按日总净额算；误杀率分母用 n）三处偏离 SSOT。夜间修正版 §31 与官方快照逐字一致（合计行 580/-284.36/-0.16 精确命中）⇒ 更正成立：**R1 cell 真实读数是 t=1.91–1.94、误杀/回避 ≈40%，不是我报的 t=2.06/20.7%**。结论方向不变且更硬：R1 未达任何预注册门槛（t≥2、误杀≤25%），维持「只印不判」正确。教训登记：**分层分析必须用结算器同一把尺子（宪章第9律日等权 t、快照同口径人群），自创口径的后验分层读数一律作废**。
+- **F15（P3，沿 §33.12 登记）**：`analyze_code_quality.py` 仍未入库、无归属说明。维持原处置建议（补归属或删除）。
+- **F16（观察）**：判据① 限速真实存在——SL_INITIAL 族 0.4 笔/日 ⇒ 即使 n≥60 两周达标，族收敛读数也要更久；结算器已如实设计 INSUFFICIENT/OBSERVE 输出，纪律上不得催。
+- **正面确认**：§33.7 自曝 7 条全部属实且修复有测试钉住（falsy-0 陷阱、_FakeDB 假绿、pstdev/stdev 双尺、地板精度挪门柱方向断言等）；RFC §5.7 把「主判读口径 fail」如实登记而非藏起，符合披露纪律。
+
+### 34.4 立场
+
+1. **认可落地形态**：载体选择（10s 快循环 sweep + 锚冻结 + metadata 旗标不碰 execution_state）正面回应了 §27/§31.4 的全部硬卡点；§31 的 R1 分层以「只印不判」并入结算器 = 正确的纪律位置。
+2. **§5.7 的 fail 登记必须带进裁决日叙事**：回放臂（SL_INITIAL +$2,938.73）与前向臂（B_only -$769.28、机会成本超门 3.42×）符号相反——若开门后判据②④不达标，按 §5.7 指引优先归因「等确认的机会成本结构」，而非样本不足。
+3. **周一（10-12）开盘即首批 forward 行**；裁决按 RFC §4 三态走，PASS 也只到「呈用户裁 SIM 常态化」，REAL 另行签字。
+
+### 34.5 E 表（本节新增证据）
+
+| # | 命令 | 期望输出 |
+|---|---|---|
+| E116 | `PYTHONPATH=. ./venv/bin/python -m pytest tests/ -k ratchet -q 2>&1 \| tail -1` | `46 passed, 1 skipped` |
+| E117 | `systemctl status ftseek-us.service --no-pager \| head -4` | `active (running) since Sun 2026-10-11 08:59:44 CST` |
+| E118 | `crontab -l \| grep settle_entry_confirm_forward` | `37 6 * * 2-6` 已挂 |
+| E119 | `git show a388dced2 --format= -- app/playbook/pipeline_parts/auto_execute_flow.py \| grep -c "logger.warning"` | ≥2（两处接线均 fail-open 留痕，非 except:pass） |
