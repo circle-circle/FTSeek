@@ -674,6 +674,43 @@ def test_rfc141_preregistration_exists_and_pins_criteria():
     assert "verdict=TOO_EARLY" in txt, "RFC 必须留痕「改窗时门尚无读数」这一前置证据"
 
 
+def test_rfc141_discloses_replay_arm_main_caliber_fail():
+    """§5.7 对照环主判读口径 fail 的披露不得被删 (裁决日须并陈, shadow_registry:1827)。
+
+    钉数字本体而非关键词: 前向 B_only 是**主判读口径**且已 fail
+    (机会成本 1.0253% ≥ 0.3% 门), 而回放 SL_INITIAL t=4.92 很好看 ⇒ 单引回放给门背书
+    是这条披露要防的具体误用。删掉披露不会让任何其它测试变红, 故须单独钉住。
+    """
+    rfc = (Path(__file__).resolve().parents[1] / "docs" / "decisions"
+           / "RFC-141-entry-confirm-forward-live.md")
+    txt = rfc.read_text(encoding="utf-8")
+
+    for needle in (
+        # 主判读口径及其 fail 状态 (数字本体)
+        "forward_B_only_pass: false",
+        "1.0253%",                      # 机会成本率 (超 0.3% 门 3.42 倍)
+        "−$769.28",                     # 前向 B_only 净价值
+        # 回放臂的漂亮读数 (必须与上面并陈, 不得只引这一条)
+        "+$2,938.73", "+4.92",
+        # 成本/收益结构反转 (同量纲美元口径)
+        "$3,037.14", "$98.41", "$122.25", "$891.53", "7.29×",
+        # 量纲陷阱批注 (防后人重犯: 成本率 vs 命中率不可相减)
+        "量纲不同",
+        # 并陈义务与不得回滚的界定
+        "两边读数须并陈", "这不是要求回滚本门",
+        # 载体卡点更正 (§27 担忧成立但已被 10s sweep 载体绕开)
+        "sweep_entry_confirmations", "five_min_confirm_exceeds_ttl=true",
+    ):
+        assert needle in txt, f"RFC-141 §5.7 披露缺关键读数: {needle}"
+
+    # 📌 防假绿: 该披露必须是**编号条目 7** 且落在 §5 内 (而非塞进留档段当装饰)
+    assert "7. **对照环主判读口径已 fail" in txt, \
+        "披露须作为 §5 强制披露第 7 条存在 (编号缺失=可能被挪进非强制段)"
+    sec5 = txt.split("## 5. 强制披露", 1)[1].split("## 6. 回滚", 1)[0]
+    assert "forward_B_only_pass: false" in sec5, "披露必须在 §5 强制披露节内"
+
+
+
 # ══════════════════════════════════════════════════════════════
 # 12. 结算器常量 = 预注册值
 # ══════════════════════════════════════════════════════════════
