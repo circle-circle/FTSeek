@@ -717,6 +717,41 @@ def test_rfc141_discloses_replay_arm_main_caliber_fail():
     assert "forward_B_only_pass: false" in sec5, "披露必须在 §5 强制披露节内"
 
 
+def test_rfc141_discloses_precise_coverage_is_pseudo_goal():
+    """§5.8 精准覆盖伪目标的披露不得被删 (防裁决日重提"收窄作用域就行")。
+
+    钉数字本体: 三条收窄路各被一个**实值**堵死 — 路A=预注册纪律+forward-B已FAIL、
+    路B=ADR-035路由影子 fill_rate 0.323<0.50 且 sign_test p=1.0、路C=T19红线。
+    外加隔夜地平线错配的 52% 实测量。删掉披露不会让其它测试变红, 故单独钉住。
+    """
+    rfc = (Path(__file__).resolve().parents[1] / "docs" / "decisions"
+           / "RFC-141-entry-confirm-forward-live.md")
+    txt = rfc.read_text(encoding="utf-8")
+
+    for needle in (
+        # 三圈错配 (live 作用域 ⊋ 裁决人群)
+        "圈3=100%", "entry_archetype_routing_enabled=false",
+        # 路 B 堵死的实值 (ADR-035 路由影子自身 FAIL)
+        "fill_rate=0.323", "sign_test_p_one_sided=1.0", "paired_diff_median=−10.77",
+        # 路 C 堵死的红线
+        "T19", "t=1.94",
+        # 隔夜地平线错配的实测量 (2min 门只接住一半)
+        "2min 门只接到隔夜跳空亏损的 52%", "−$1,315.72", "−$1,203.37",
+        # 结论: 精准杠杆在入场质量不在本门收窄
+        "candidate C 生成锚", "+$137.20",
+    ):
+        assert needle in txt, f"RFC-141 §5.8 披露缺关键读数: {needle}"
+
+    # 📌 防假绿: 必须是**编号条目 8** 且落在 §5 内 (而非塞进留档段当装饰)
+    assert "8. **精准覆盖是伪目标" in txt, \
+        "披露须作为 §5 强制披露第 8 条存在 (编号缺失=可能被挪进非强制段)"
+    sec5 = txt.split("## 5. 强制披露", 1)[1].split("## 6. 回滚", 1)[0]
+    assert "精准覆盖是伪目标" in sec5, "披露必须在 §5 强制披露节内"
+    # 三条路必须都在 (防只删一条让披露失去"全堵死"力度)
+    for path in ("路 A", "路 B", "路 C"):
+        assert path in sec5, f"§5.8 缺 {path} — 三条收窄路须全部登记堵死依据"
+
+
 
 # ══════════════════════════════════════════════════════════════
 # 12. 结算器常量 = 预注册值

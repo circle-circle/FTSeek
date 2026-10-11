@@ -203,6 +203,54 @@ LONG×开盘窗 —— 只印读数, 不作独立裁决依据。
    (剩余 TTL 180s); 5min 臂则与 TTL 直接互斥 (`five_min_confirm_exceeds_ttl=true`)
    ⇒ 只做 2min 是对的, 不得升 5min。
 
+8. **精准覆盖是伪目标 — 三圈错配 + 三条收窄路全堵死 (2026-10-11 登记, 防裁决日重提"精准覆盖一下就行")**:
+
+   本门涉及三个互不重合的人群圈:
+
+   | 圈 | 是谁 | 怎么定 | 大小 | 可事前识别? |
+   |---|---|---|---|---|
+   | 圈1 设计靶 | SL_INITIAL 出血族 | **事后** exit_reason 标签 | 近窗 8 笔 | ❌ T19 红线禁止 |
+   | 圈2 裁决人群 | forward-B = `routable_candidate=False` | 影子按 archetype **事后**分类 | ~28% 成交 | ✅ (archetype+price_level 事前可知) |
+   | 圈3 live 作用域 | **所有**过预算闸的触发单 | `gate_at_execute` 无人群过滤 | ~100% | — |
+
+   **live 实值核链** (config 实值, 非代码默认):
+   `entry_confirm_enabled=true` (unified_config.yaml:1266) ∧ `holdout_pct=0` (:1271)
+   ⇒ 全量走门、无对照臂; `entry_archetype_routing_enabled=false` (:1610) ⇒ D 分支限价路由
+   **未启用**, `resolve_route` 返回 None (entry_routing.py:156) ⇒ PULLBACK_LIMIT/FADE_SHORT
+   回退市价路径 (auto_execute_flow.py:441 限价分支不走); `gate_at_execute` 在
+   auto_execute_flow.py:1081 **无条件**调用, 前无 archetype/direction/session 过滤
+   ⇒ **圈3=100% 把 72% 的 D 分支单也延迟了, 而圈2 裁决把这 72% 排除在外**。
+
+   **三条收窄路, 全堵死**:
+   - **路 A** (给门加 archetype 过滤 → 圈3=圈2): 技术可行 (routable_candidate 事前可算),
+     但 ①门已预注册 (§4), SIM 攒样期改作用域=改判据=重新裁决; ②forward-B 本身 FAIL
+     (披露 7: opp 1.0253%≥0.3%、误杀 43.75%) ⇒ 精准罩住一个亏钱机制, 无意义。
+   - **路 B** (启用 ADR-035 限价路由 → D 分支走被动限价自然绕过门 → 圈3 收窄到 B):
+     架构最干净, 但**路由影子自己没过预注册判据** (`pullback_limit_replay_v2_latest.json`,
+     窗 09-08~10-09, n_paired=141): `fill_rate=0.323` < 判据 0.50 ❌;
+     `sign_test_p_one_sided=1.0` (限价路由更优完全不显著) ❌; `paired_diff_median=−10.77`
+     (中位交易在限价路由下更差); `cf_better_count=38/141` (仅 27% 配对更优)。
+     ⇒ 启用路由的依据不足, 此路被其自身影子数据堵死。
+   - **路 C** (直接瞄 SL_INITIAL → 圈1): **结构性不可能** — exit_reason 事后才知,
+     T19 红线禁其进门前置; 最好事前代理 R1 (SHORT×开盘窗) t=1.94 未达门, 属后验假设,
+     拿它当门=阈值购物。
+
+   **隔夜跳空地平线错配** (核 8 笔 OVERNIGHT_GAP_STOP 实物 × 2min 门反事实):
+   该族全部 LONG、全部开盘进场 (09:35–09:49)、MFE 0~0.474% (从未真正盈利)、
+   MAE 4.6~6.7% (立刻 deeply 水下)、均持 6.3~19.4h。2min 门反事实 (entry_delay 影子):
+   **会被放弃 4 笔** (GAP/SNDK/ORCL/SNDK, 避免 −$1,315.72) / **仍会进场 4 笔**
+   (UBER/CRM/RIVN/QCOM, 漏掉 −$1,203.37) ⇒ **2min 门只接到隔夜跳空亏损的 52%, 漏 48%**。
+   根因=地平线错配: 漏掉的 4 笔在 +2min 时价格还站锚正确侧 (看着没事), 恶化发生在
+   **之后 6–19 小时**, 2 分钟的尺子量不到 10 小时的烂掉。⇒ "2min 门治愈隔夜跳空"
+   只对被放弃的那半成立; 隔夜跳空的**直接**解药在退出侧 (EOD 平仓/隔夜豁免收紧, 触冻结窗),
+   **上游**解药在入场质量 (candidate C 锚定价, 不触冻结窗)。
+
+   **结论**: 本门是"广撒网 (圈3=100%) + 事后分族裁决 (§4 判据①量 SL_INITIAL 族、
+   判据④守非 SL_INITIAL 族)"的自洽设计, **圈3≠圈1 是 T19 下的故意选择, 非缺陷**。
+   裁决日**不得**把"精准覆盖一下"当改进项 — 三条收窄路已被预注册纪律/路由影子 FAIL/T19
+   分别堵死, 且 forward-B 已判负。真正的精准杠杆在**入场质量** (candidate C 生成锚,
+   事前可识别、方向性预读 +$137.20/8 笔 7 优、直接打墓地桶), 不在本门的作用域收窄。
+
 ## 6. 回滚
 
 `playbook.execution_parameters.entry_confirm_enabled: false` + `systemctl restart ftseek-us` (前置: 核未平仓+改动归属)。已 arm 未判定的 pending 随重启清空, 旗标残留由孤儿自愈放行 ⇒ 回滚零卡单。产物 jsonl 留档不删。
