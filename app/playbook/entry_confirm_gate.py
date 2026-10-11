@@ -42,7 +42,7 @@ scripts/entry_delay_confirm_shadow.py) 实测「触发后延迟 2min 复核, 价
    成交用延迟后市价, opp_cost = 两者差)。
 
 5. **重启孤儿自愈**: pending 表是进程内存态 (生命周期仅 ~120s), 重启即空。
-   metadata 旗标若残留 PENDING_CONFIRM 而内存无对应项 ⇒ 视为过期, 清旗标
+   metadata 旗标若残留 PENDING_CONFIRM 而内存无对应项 ⇒ 转 HEALED 留痕并
    恢复正常执行。绝不因重启把指令永久卡死 (失败路径纪律)。
 
 6. **fail-open 到「照常执行」**: 本门任何异常 ⇒ 放行原路径, 不下单不是
@@ -52,10 +52,11 @@ scripts/entry_delay_confirm_shadow.py) 实测「触发后延迟 2min 复核, 价
 判据 (预注册于 docs/decisions/RFC-141 §4, 读数前写死, 裁决日不挪):
   裁决源 = **开门后 SIM 真实盈亏 vs 门前预注册基线** (2026-10-10 用户裁改口径,
   jsonl 降级为机制留痕, 不独立裁决)。样本门 n≥60 ∨ ≥10 交易日。
-  ①病灶族收敛: SL_INITIAL 族净均 ≥−$40/笔 (基线 −$157.9069, 收敛≥75%) 或族 n≤1
-  ②开盘窗改善: 09:35–09:45 净均 >−$4.1115 ∧ 日聚类 t >−0.3218
+  ①病灶族收敛: SL_INITIAL 族净均 ≥−$40/笔 (v2 基线 −$162.3363, −$40 取严) 或族 n≤1
+  ②开盘窗改善: 09:35–09:45 净均 >−$2.2632 ∧ 日聚类 t >−0.3218
   ③机制量: 避免率 ≥30% ∧ CONFIRMED opp_cost <0.3%
-  ④不伤赢家: 非 SL_INITIAL 族净均 ≥+$2.79 (基线 +$3.4852 的 80%)
+  ④不伤赢家: 非 SL_INITIAL 族全量净均 ≥+$7.79 (v2 基线 +$9.7353 的 80%),
+    裁决口径为剔费净均 ≥+$8.79 (v2 基线 +$10.9854 的 80%)
   R1 分层 (SHORT×09:35-09:45) / LONG×开盘窗 只印不判。
   ⚠️ 基线数字由 scripts/settle_entry_confirm_forward.BASELINE 冻结, t 用
   statistics.stdev (ddof=1) 与 _day_clustered_t 同尺; 改动须先改 RFC 预注册文本。
@@ -92,6 +93,7 @@ ST_CONFIRMED = "CONFIRMED"
 ST_ABANDONED = "ABANDONED"
 ST_EXPIRED = "EXPIRED"
 ST_HOLDOUT = "HOLDOUT"
+ST_HEALED = "HEALED"
 
 # 放弃单落库用的 skip_reason (进 dashboard「已跳过」区, 与 guardrail 拦截同表现)
 SKIP_REASON_ABANDONED = "entry_confirm_reversed"
@@ -266,12 +268,12 @@ def _gate_inner(inst, db, reprice_params, now_et, cfg):
     if not cfg.get("enabled") or inst_id <= 0:
         return "execute"
 
-    # ── 孤儿自愈: 旗标说 pending 但内存无 (重启/超期) ⇒ 清旗标照常执行 ──
+    # ── 孤儿自愈: 旗标说 pending 但内存无 (重启/超期) ⇒ 转 HEALED 照常执行 ──
     if st == ST_PENDING and inst_id not in _PENDING:
         logger.warning(
             f"[EntryConfirm] {inst.get('symbol')} 旗标 PENDING 但内存无记录 "
-            f"(重启/超期) → 清旗标照常执行 (孤儿自愈)", exc_info=True)
-        _write_state(db, inst_id, {**state, "status": ST_EXPIRED,
+            f"(重启/超期) → 转 HEALED 并照常执行 (孤儿自愈)")
+        _write_state(db, inst_id, {**state, "status": ST_HEALED,
                                    "healed_at": now_et.isoformat()})
         return "execute"
 
@@ -328,7 +330,7 @@ def _gate_inner(inst, db, reprice_params, now_et, cfg):
             f"锚=${anchor:.2f} → {int(cfg['delay_sec'])}s 后复核 (RFC-141 前瞻)")
         return "defer"
 
-    # 其他状态 (ABANDONED/EXPIRED/HOLDOUT 重入) ⇒ 照常执行, 不重复 arm
+    # 其他状态 (ABANDONED/EXPIRED/HOLDOUT/HEALED 重入) ⇒ 照常执行, 不重复 arm
     return "execute"
 
 
@@ -336,13 +338,14 @@ def defer_pending(inst: Dict[str, Any], now_et: datetime) -> bool:
     """reprice **之前**调用: True ⇒ 该指令本轮跳过 (pending 中, 不 reprice 防锚漂;
     或已终态 ABANDONED/EXPIRED, 不再执行)。
 
-    终态拦截靠 metadata 旗标 (跨重启有效), pending 拦截靠内存表 (快路径)。
+    终态拦截靠 metadata 旗标 (跨重启有效), 活跃 pending 拦截靠内存表;
+    PENDING 孤儿必须放行到 gate_at_execute 自愈, 不得在此永久拦截。
     """
     state = read_state(inst)
     st = str(state.get("status") or "")
     if st in (ST_ABANDONED, ST_EXPIRED):
         return True
-    if st == ST_PENDING:
+    if st == ST_PENDING and int(inst.get("id") or 0) in _PENDING:
         return True
     return False
 

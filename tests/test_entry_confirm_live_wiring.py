@@ -300,11 +300,13 @@ def test_orphan_self_heals_after_restart_with_trace(env):
     ecg._PENDING.clear()                      # 模拟进程重启
     r2 = [x for x in db.get_instructions_by_date(_DATE) if x["symbol"] == "US.ORPH"][0]
     assert json.loads(r2["metadata_json"])["entry_confirm"]["status"] == ecg.ST_PENDING
+    assert ecg.defer_pending(dict(r2), _T0) is False, (
+        "auto_execute 的第一道 defer_pending 已把孤儿拦死, gate_at_execute 自愈不可达")
     assert ecg.gate_at_execute(dict(r2), db, {"entry_price": 50.0}, _T0, _cfg_t()) == "execute", \
         "PENDING 孤儿未自愈 ⇒ 指令永久卡死"
     r3 = [x for x in db.get_instructions_by_date(_DATE) if x["symbol"] == "US.ORPH"][0]
     healed = json.loads(r3["metadata_json"])["entry_confirm"]
-    assert healed["status"] == ecg.ST_EXPIRED and healed.get("healed_at"), \
+    assert healed["status"] == ecg.ST_HEALED and healed.get("healed_at"), \
         f"自愈未留痕: {healed}"
 
 

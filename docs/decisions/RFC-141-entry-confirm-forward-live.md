@@ -37,7 +37,7 @@ DEB-20261009 §32.2-3 原裁「保持前瞻影子」。本 RFC 是对该条的**
 | C3 | 不碰 execution_state (broker 镜像状态机) | position_sync._reconcile_playbook_execution_states 按它账实对账 (幽灵仓根因修复); 用 metadata_json.entry_confirm 旗标, 零 schema 迁移 |
 | C4 | arm 点 = 全部预算 guardrail 之后、execute 之前 | 被 BP/notional/单轮上限拦下的指令不 arm ⇒ 不污染判据人群、不白占 pending |
 | C5 | fail-open 到照常执行 | 本门拦的是普通单不是危险单; 门异常静默减样 = 改变基线 (与 chase_cap fail-close 相反, 各自方向正确) |
-| C6 | 重启孤儿自愈 | pending 是内存态 (~120s 生命周期); 旗标残留 PENDING 而内存无 ⇒ 清旗标放行, 绝不永久卡死指令 |
+| C6 | 重启孤儿自愈 | pending 是内存态 (~120s 生命周期); 旗标残留 PENDING 而内存无 ⇒ 转 `HEALED` 留痕并放行, 绝不永久卡死指令 |
 | C7 | CONFIRMED 后下轮 auto_execute 按当时市价 reprice 成交 | 与影子口径一致: 判定用原锚, 成交用延迟后市价, opp_cost=两者差 |
 | C8 | PULLBACK_LIMIT 限价路由当前 disabled (entry_archetype_routing_enabled=false) | E3 披露的 TTL=300s 互斥当前不存在; 若未来启用限价路由, 须先裁互斥 (二选一或 TTL 重议) 再同开 |
 

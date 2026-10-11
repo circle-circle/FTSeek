@@ -450,14 +450,21 @@ def test_ttl_expiry_marks_expired_and_not_counted():
 # 7. 孤儿自愈 (重启不得永久卡死指令)
 # ══════════════════════════════════════════════════════════════
 def test_orphan_flag_self_heals_to_execute():
-    """旗标 PENDING 但内存无 (重启/超期) ⇒ 清旗标照常执行, 绝不永久卡死。"""
+    """旗标 PENDING 但内存无 (重启/超期) ⇒ 自愈留痕且照常执行, 绝不永久卡死。"""
     db = _FakeDB()
     stale = {"status": ecg.ST_PENDING, "armed_at": "2026-10-12T09:40:00-04:00"}
     inst = _inst(meta={"entry_confirm": stale})
     assert ecg.pending_count() == 0
+    assert ecg.defer_pending(inst, _now()) is False, (
+        "auto_execute 先调 defer_pending; 孤儿若在此被拦, gate_at_execute 的自愈永远不可达")
     assert ecg.gate_at_execute(inst, db, {"entry_price": 100.0}, _now(), CFG_ON) == "execute"
-    assert db.merged[-1][1]["entry_confirm"]["status"] == ecg.ST_EXPIRED
+    assert db.merged[-1][1]["entry_confirm"]["status"] == ecg.ST_HEALED
     assert db.merged[-1][1]["entry_confirm"]["healed_at"]
+    healed = db.merged[-1][1]["entry_confirm"]
+    assert ecg.defer_pending(_inst(meta={"entry_confirm": healed}), _now()) is False
+    assert ecg.gate_at_execute(
+        _inst(meta={"entry_confirm": healed}), db, {"entry_price": 100.0},
+        _now(), CFG_ON) == "execute"
 
 
 def test_orphan_heal_survives_db_failure():
