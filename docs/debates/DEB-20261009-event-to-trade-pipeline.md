@@ -2475,3 +2475,73 @@ E111（`OPEN_WIN_T_FLOOR` 取严且真接线，验 `wired True`）⇒ §33 共 *
 | E117 | `systemctl status ftseek-us.service --no-pager \| head -4` | `active (running) since Sun 2026-10-11 08:59:44 CST` |
 | E118 | `crontab -l \| grep settle_entry_confirm_forward` | `37 6 * * 2-6` 已挂 |
 | E119 | `git show a388dced2 --format= -- app/playbook/pipeline_parts/auto_execute_flow.py \| grep -c "logger.warning"` | ≥2（两处接线均 fail-open 留痕，非 except:pass） |
+
+## 35. 第2层入场锚补充回测：archetype 分条件 + TTL 扫参（Hermes · 2026-10-11 · 只读）
+
+> 触发：用户裁「需要」（§27 重排建议2 的扩展）+「请更新deb」。
+> 载体：`scripts/rfc123_l2_archetype_ttl_sweep.py`（**独立新脚本**，只读 DB mode=ro；
+> 不碰另一 agent 未提交 WIP `rfc123_planned_entry_anchor_backtest.py`，已内化其 P0 跨日修复）。
+> 样本：双锚影子 21 笔匹配成交 / 3 交易日 [10-07,10-08,10-09]，冻结窗 `--until 2026-10-09`。
+> 实际全追高 21 笔 pnl_net 合计 = **+$184.33** = baseline。
+
+### 35.1 archetype 分条件锚：原理成立，但当前样本**不可回测**
+
+§27/RFC-123 附节曾提「锚应按 archetype 分条件」（BREAKOUT 追强势应锚 or_high，非等回踩 or_low）。
+实测 archetype 分布后**削弱了该盲区的当前重要性**：
+
+| archetype | 向 | n | 现方案锚 | 成交率 | 改善$/股 | 锚是否正确 |
+|---|---|---:|---|---:|---:|---|
+| PULLBACK_LIMIT | LONG | 14 | or_low | 50% | +1.45 | ✓ 正确（均值回归=低吸） |
+| FADE_SHORT | SHORT | 6 | or_high | 50% | +1.50 | ✓ 正确（均值回归=反抽） |
+| BREAKOUT | LONG | **1** | or_low | 100% | +0.05 | ✗ 应反向用 or_high |
+
+⇒ **20/21（95%）是均值回归型，现 or_low/or_high 方案已经正确**；分条件锚只对 BREAKOUT
+relevant，而 BREAKOUT **n=1（US.TTI）⇒ 无法回测，只能单例示意 + 列为观察轨预注册假设**。
+**更正 §27 措辞**：原「最大盲区」言过其实——盲区原理成立，但当前仅影响 1/21 笔，
+须待 G 节观察轨攒到足量 BREAKOUT 才可裁，**不得现在当发现登记**。
+
+单例（n=1，仅说明语义错配，非证据）：US.TTI LONG BREAKOUT，开盘区间 [6.10,6.17]，
+实际成交 6.15；or_low（现方案，错）会等回踩成交 @6.10，or_high（分条件，对）@6.13。
+BREAKOUT 本该追强势，现方案让它等回踩 = 语义错配；但 n=1 不足裁。
+
+### 35.2 TTL 扫参：稳健信号是「改善 vs 错过」权衡，**无清晰赢家**
+
+or_low 限价 + TTL 分钟过期回退市价（所有笔都进场）：
+
+| TTL(min) | 限价成交 | 市价回退 | TTL>持仓(错过) | 改善$/股 | 净vs实际⚠️ |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 4 | 17 | 0 | −0.03 | +112.02 |
+| 5 | 5 | 16 | 0 | +0.17 | +61.48 |
+| 10 | 8 | 12 | 1 | +0.34 | +64.54 |
+| 15 | 9 | 8 | 4 | +0.38 | −4.51 |
+| 30 | 10 | 2 | 9 | +0.63 | +101.77 |
+
+**稳健读数**（不依赖退出假设）：改善$/股 随 TTL 单调升（−0.03→+0.63，等越久限价成交越便宜），
+但 TTL>持仓错过笔也单调升（0→9，等越久越多笔因 TTL 晚于实际平仓而整笔错过）。
+**短 TTL（1-5）不错过任何笔但改善~0**（基本都市价回退，等于现状追高）；**长 TTL（15-30）
+改善大但错过 4-9 笔**；TTL=15 净vs实际转负。
+
+⚠️ **「净vs实际」列不可靠**：反事实在 `trigger首评估轮+TTL` 进场，实际在 `entry_time` 进场，
+两者时点不同（如 META 首评估 09:38 vs 实际成交 09:45）⇒ 该列混入「更早进场」的时点收益，
+非纯 TTL/限价机制效果。**只有「改善$/股」与「TTL>持仓」是稳健轴**。
+⇒ 结论修正：诊断3 曾示「TTL5 净+79 > TTL15 净−19」，本扫参证明该「净」受时点污染，
+**第3层 TTL 设计的真实收益是 modest 且需权衡错过成本，无清晰最优 TTL**，不可据「净」列定 TTL。
+
+### 35.3 立场与纪律
+
+1. **分条件锚 = 观察轨预注册假设，非当前发现**：BREAKOUT n=1，G 节观察轨（RFC-123 §G，
+   cron `53 5 * * 2-6`）须显式按 archetype 分组攒样，攒到 BREAKOUT ≥20 才可裁分条件锚。
+2. **TTL 不据「净vs实际」定参**：该列时点污染；定 TTL 须用「改善$/股 vs 错过笔」双轴 + 扩窗。
+3. **第2层仍独立于 candidate C 阶段1**：须等阶段0 攒满 10 交易日（~10-20）裁判据3 后，
+   再独立预注册第2层（改 planned_entry 生成），防「拆锚/换锚基」变量纠缠（RFC-123 附节 E）。
+4. **本批零行为变更**：纯只读回测，不改 planned_entry 生成 / 不触阶段0 影子 / 不翻执行开关。
+
+### 35.4 E 表（本节新增证据，期望为实跑抽出的字面量）
+
+| # | 命令 | 期望输出 |
+|---|---|---|
+| E120 | `./venv/bin/python scripts/rfc123_l2_archetype_ttl_sweep.py 2>&1 \| grep "archetype 分布"` | `archetype 分布 = {'PULLBACK_LIMIT': 14, 'FADE_SHORT': 6, 'BREAKOUT': 1}` |
+| E121 | `./venv/bin/python scripts/rfc123_l2_archetype_ttl_sweep.py 2>&1 \| grep "PULLBACK_LIMIT  LONG"` | 含 `or_low` `50%` `+1.45` `✓ 正确(均值回归)` |
+| E122 | `./venv/bin/python scripts/rfc123_l2_archetype_ttl_sweep.py 2>&1 \| grep "BREAKOUT        LONG"` | 含 `or_low` `✗ 应反向用 or_high` |
+| E123 | `./venv/bin/python scripts/rfc123_l2_archetype_ttl_sweep.py 2>&1 \| grep "US.TTI LONG BREAKOUT"` | 含 `开盘区间[6.10,6.17]` `实际成交=6.15` |
+| E124 | `./venv/bin/python scripts/rfc123_l2_archetype_ttl_sweep.py 2>&1 \| grep -c "净vs实际"` | `2`（②表头 + ②结论各一次，证明 TTL 表与污染批注都在） |
