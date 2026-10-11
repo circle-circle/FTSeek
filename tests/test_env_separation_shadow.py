@@ -288,8 +288,24 @@ def test_live_db_legacy_pnl_rows_still_fall_back_to_realized_pnl():
         finally:
             c.close()
 
-    backups = sorted(Path(ess.SIM_DB).parent.glob(
-        "backups/*-rfc080-demix*/ftseek_us.db"))
+    # 2026-10-11 修: glob 原先硬编码 `backups/*-rfc080-demix*/ftseek_us.db`, 但该目录会被
+    #   scripts/db_backup.sh:35 的 `find backups/ -maxdepth 1 -type d -mtime +7 -exec rm -rf`
+    #   在 7 天后删除 ⇒ demix 链一过期, 本例就从「溯源位置转移」退化成假红
+    #   (实测: 链删除后 US.PDD 2026-07-10T14:41:12.708227 转红, 而同一逐字源行仍存在于
+    #   10 个其它备份里 — 3 个 loose `_before_*` 快照 + 7 个日期目录 live 快照)。
+    #   docstring 已写明「溯源语义不变, 变的是溯源位置」⇒ 按原意搜全部历史快照,
+    #   不钉某一个会被轮转的目录名。证伪力不削弱: 判据仍是四元组
+    #   (symbol + entry_time + realized_pnl + pnl_net) **逐字一致**, 且所有快照都是改写前的,
+    #   真改写了历史数值 ⇒ 改写后的值在任何快照里都不存在, 照样转红。
+    _p = Path(ess.SIM_DB).parent
+    backups = sorted(set(
+        list(_p.glob("backups/*-rfc080-demix*/ftseek_us.db"))   # 原 demix 链 (未被轮转时仍在)
+        + list(_p.glob("backups/*_before_*.db"))                 # 改动前 loose 快照
+        + list(_p.glob("backups/*/ftseek_us_live.db"))           # 日期目录 live 快照
+        + list(_p.glob("backups/*/ftseek_us.db"))                # 日期目录 sim 快照
+    ))
+    assert backups, ("backups/ 下无任何历史快照可溯源 — 本例的证伪前提 (逐字源行留档) "
+                     "已失效; 若确系全量轮转清空, 须改为从其它权威留档溯源, 不得放宽判据")
     for symbol, entry_time, _mode, realized_pnl, pnl_net in dirty:
         if _has_verbatim_source(ess.SIM_DB, symbol, entry_time, realized_pnl, pnl_net):
             continue
