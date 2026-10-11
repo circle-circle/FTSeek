@@ -20,6 +20,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 BASE = Path(__file__).parent.parent
+# 2026-10-11: DB 路径提为模块级变量 — test_db_connection_chokepoint 守卫只捕捉
+#   **字面路径**形态的连接调用 (正则要求 connect( 后紧跟引号且串内含 .db 或 /);
+#   其 docstring 明定「变量路径连接 (含 file:{var}?mode=ro 这一 SSOT 形态) 静态不可判,
+#   不在捕捉面」。本文件首版把 f-string 直接内联 BASE/'data'/... ⇒ 命中该正则,
+#   新增 3 处违规。现按守卫认可的 SSOT 形态: 路径先落变量, 连接处只引用变量,
+#   并保留 mode=ro 只读。
+#   ⚠️ 本注释不得原样抄写违规字面量 — 守卫是纯文本扫描, 注释里的示例同样计数。
+_SNAP_DB = BASE / "data" / "signal_snapshots.db"
 try:
     from app.utils.timezone import now_et as _now_et
     TODAY = _now_et().strftime("%Y-%m-%d")
@@ -59,7 +67,7 @@ def _window_ic(strategy=None, direction=None, days_back=30, offset_days=0):
     「持续」必须两窗同号才算, 故本函数供建议门做双窗检验。
     """
     try:
-        db = sqlite3.connect(f"file:{BASE / 'data' / 'signal_snapshots.db'}?mode=ro", uri=True)
+        db = sqlite3.connect(f"file:{_SNAP_DB}?mode=ro", uri=True)
         w = ("trade_date < date('now', ?) AND trade_date >= date('now', ?)"
              if offset_days else "trade_date >= date('now', ?)")
         args = (f"-{offset_days} days", f"-{offset_days + days_back} days") if offset_days \
@@ -117,7 +125,7 @@ def get_signal_stats(days_back=30):
     现默认与 IC 段同窗 (30 天), 另带全史对照列, 两窗都显式标注。
     """
     try:
-        db = sqlite3.connect(f"file:{BASE / 'data' / 'signal_snapshots.db'}?mode=ro", uri=True)
+        db = sqlite3.connect(f"file:{_SNAP_DB}?mode=ro", uri=True)
         db.row_factory = sqlite3.Row
         base_sql = """
             SELECT strategy_id, direction,
@@ -462,7 +470,7 @@ def generate_report():
 
         # 补报: 全史口径下显著但近30天无样本的项 (修复前这类被静默漏掉)
         try:
-            db = sqlite3.connect(f"file:{BASE / 'data' / 'signal_snapshots.db'}?mode=ro", uri=True)
+            db = sqlite3.connect(f"file:{_SNAP_DB}?mode=ro", uri=True)
             strats = [r[0] for r in db.execute(
                 "SELECT DISTINCT strategy_id FROM signal_snapshots "
                 "WHERE strategy_id IS NOT NULL AND fwd_ret_t1 IS NOT NULL")]
@@ -478,8 +486,16 @@ def generate_report():
                     suggestions.append(
                         f"  📌 {s}: 近30天无样本(n=0)故不进上表, 但**全史 IC={h['ic']:+.4f} "
                         f"p={h['pval']:.3f} n={h['n']} 显著** ⇒ 修复前此类被静默漏报")
-        except Exception:
-            pass
+        except Exception as _e:
+            # 2026-10-11: 首版此处是 `except Exception: pass` — 撞两道纪律:
+            #   ① test_except_pass_ratchet 棘轮 (基线只降不升, 我这一处把 921 顶到 922);
+            #   ② 更实质的: 补报段是唯一能捞出「近窗零样本但全史显著」项的通道
+            #      (本次实测 unknown IC=-0.1433 p=0.000 / voting_llm IC=+0.1013 p=0.008),
+            #      静默吞掉 = 报告少一节却与「查了没有」输出同形 ⇒ 集体假绿。
+            #   改 fail-loud: 异常进报告正文, 读者能看出这一节是**没跑成**而非**没内容**。
+            suggestions.append(
+                f"  ⚠️ 全史补报段执行失败 ({type(_e).__name__}: {_e}) — "
+                "『近窗零样本但全史显著』的策略本次未能列出, 非『无此类项』")
     if not suggestions:
         suggestions.append("  (样本不足, 暂无建议)")
 
