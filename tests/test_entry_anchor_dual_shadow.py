@@ -173,3 +173,49 @@ def test_injected_entry_price_fallback_must_fail():
     # 真实现的契约: source ∈ 三级枚举 且 missing 时 anchor is None
     assert source not in ("planned_entry", "band_edge", "missing") or anchor is not None, (
         "负向样例竟然满足契约 — 说明 test_priority3 没有牙")
+
+
+# ── 5. 附节(第2层): planned_entry 生成质量诊断的披露与时序纪律不得被删 ──────────
+
+def test_rfc123_registers_planned_entry_quality_diagnostic():
+    """RFC-123 附节(第2层立项依据)不得被静默删 (2026-10-11 登记)。
+
+    钉两类内容:
+      ① 病灶与回测数字本体 — LLM 计划价 76% 够不到、or_low 双轴完胜(48%vs29% / +1.43vs+0.94)、
+        与 ADR-035 fill_rate=0.323 互证。删掉披露不会让其它测试变红, 故单独钉住。
+      ② 【最关键】时序纪律 E 节 — "现在改 planned_entry 生成 = 阶段0 影子作废"。
+        这条若被删, 后人可能在阶段0 攒样期改生成逻辑, 换掉被测量变量 ⇒ 3天影子白攒、
+        两变量(拆锚/换锚基)纠缠归因不了。这是本测试存在的首要理由。
+    """
+    from pathlib import Path
+    rfc = (Path(__file__).resolve().parents[1] / "docs" / "decisions"
+           / "RFC-123-entry-anchor-lifecycle-separation.md")
+    txt = rfc.read_text(encoding="utf-8")
+
+    # 附节必须存在且可复现脚本被引用
+    assert "planned_entry 生成质量诊断" in txt, "RFC-123 附节(第2层)缺失"
+    assert "rfc123_planned_entry_anchor_backtest.py" in txt, "附节须引用可复现脚本"
+
+    for needle in (
+        # ① 病灶数字本体
+        "够不到 = 16/21 (76%)",          # LLM 计划价可达性
+        "fill_rate=0.323",                # ADR-035 独立互证
+        # ① 回测核心结论 (or_low 双轴完胜)
+        "or_low", "48%", "29%", "+1.43", "+0.94",
+        # 权衡曲线 (回踩越深成交率崩)
+        "0% 成交", "甜点",
+        # 第2层方案三层
+        "opening_low", "k×ATR", "TTL 回退市价",
+    ):
+        assert needle in txt, f"RFC-123 附节缺关键读数: {needle}"
+
+    # ② 时序纪律 (最关键, 防阶段0 影子被作废)
+    sec_e = txt.split("### E. 纪律", 1)
+    assert len(sec_e) == 2, "附节 E (时序纪律) 缺失"
+    e = sec_e[1]
+    for needle in ("阶段0", "作废", "变量纠缠", "10 交易日", "独立"):
+        assert needle in e, f"附节 E 时序纪律缺关键约束: {needle}"
+
+    # 📌 防假绿: 附节局限必须声明"不得当裁决" (防被误用为转正依据)
+    assert "不得当裁决" in txt or "只筛方向" in txt, \
+        "附节须声明 n=21/3天 只筛方向、不得当裁决 (防阈值购物/误用)"
