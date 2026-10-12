@@ -314,3 +314,43 @@
   定向测试 4 文件 **48 passed**；通知脚本第 1 跑输出（签名升级触发一次）、第 2 跑 0 字节静默。
 - 未动：`app/review/bundle_render.py` 仍按 `ready` 显示 READY/OBSERVING
   （它已可取 `needs_adjudication` 改显示，属另一处消费面，留给该面负责人）。
+
+## 11. 追记 (2026-10-11): tier 影子去重 — conf-only A/B 走回溯, 不新增 emitter
+
+> 触发呼应本 RFC 原始问题「现有门禁和预注册是否过于叠加 / 有没有已存在的门禁能力」。
+> 用户 2026-10-11 Q2: 「预注册 tier 影子是否重复造影子 / 如何基于现有检查和推送」。
+> 背景: DEB-20261009 §37 实测 signal_gate 真驱动 tier_score 零预测力 (Spearman −0.000)、
+> decision_conf 弱但真 (+0.159) ⇒ 提议预注册「conf-only vs score+conf」tier A/B 验证 score 轴是否该退役。
+
+### 11.1 判定: 新 live tier 影子 = 重复造, 应走回溯
+
+- **现有能力已足够**: `data/da_gate_decisions.jsonl` 已逐候选记录 `score(0-10) + decision_conf + decision`,
+  实测覆盖 **92% (1855/2017)、59 天 (2026-07-20~10-09)** ⇒ conf-only vs score+conf 的决策翻转 + 已成交结局差异
+  可**纯回溯重算** (读现有日志 + trade_records), **零新 emitter、零新 jsonl、零新载体**。
+- **减法先例 (本仓既有纪律)**: crontab `[2026-07-26 减法R2] atr_gate_shadow 产出零消费(45KB/日无人读), 停`
+  ⇒ 造了无人消费的新影子必被停。tier live 影子若无人读, 同命; 回溯法复用既有消费面, 不增此风险。
+- 与本 RFC §1 一致: 影子注册表是 record-only 事项 SSOT, 但**「能回溯既有日志就不新开 record-only 事项」**
+  是清账批的同轴精神 (不叠加)。
+
+### 11.2 预注册 (回溯分析器, 无阈值购物)
+
+- **假设**: ① conf-only tier (score 轴退役) 会翻转多少决策? ② 翻转的决策与已成交结局 (pnl_net) 是否相关
+  (验证 §37「score 零预测力 / conf 有预测力」)? ③ 翻转是否系统性放进/挡掉某类标的 (供应冲击)?
+- **方法**: 回溯 replay — 对每条 da_gate_decisions 行, 用 conf-only 规则 (conf≥0.5→中, ≥0.6→良, ≥0.7→优)
+  重判 tier, 与实际 (score+conf) tier 比对; 翻转集 join trade_records 看结局。
+- **判据阈值**: **现在不设** (防阈值购物); 攒够回溯样本 + 出翻转分布后, 于裁决日按预注册程序定 (仿本 RFC §8-§10)。
+- **产物归宿**: 写 `data/loops/` 或作为 meta_audit 源 (RFC-091 §15), **不新建影子 jsonl**。
+
+### 11.3 推送/通知: 复用现有, 但接前必须活体验证
+
+- 复用 **PushHub (`app/push`) + 钉钉 webhook** (`da_bridge_dingtalk_push.py`) + meta_audit digest, 不新建推送面。
+- ⚠️ **已知断裂 (接前必须活体探针, 否则纸面告警)**:
+  ① cron 自曝「不变量自检违反→推钉钉 自 7/28 是纸面的」(daily_invariant_check 写 `invariant_check.log`,
+  告警链只读 `ftseek_us.log`); ② PushHub dedup 是进程内 60s 表、不跨进程 (实测 05:15 钉钉两条同文);
+  ③ 冷却键全局小时级, 压制第二类错误。⇒ 分析器/台账 finding 接推送前, 先发测试 finding 验证真到钉钉。
+
+### 11.4 边界
+
+- **L1 只读**: 回溯分析器纯读 da_gate_decisions + trade_records (mode=ro), 不改 signal_gate、不翻 tier 逻辑、不新 emitter。
+- 实装 conf-only tier (若回溯支持退役 score 轴) 是**另一独立预注册**, 须开跑会裁 + 影子攒样, 不在本追记范围。
+- 关联: DEB-20261009 §37 (预测效度) / §39 (治理决策); RFC-091 §15 (台账接入); `scripts/da_gate_block_audit.py`。

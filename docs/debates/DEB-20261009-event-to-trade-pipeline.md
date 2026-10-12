@@ -2730,3 +2730,45 @@ SKIP（n=986）按 tier_score 分桶：**差(<5，正确跳过) 644（65%）** |
 | E138 | `./venv/bin/python scripts/da_gate_block_audit.py 2>&1 \| grep "无证据过度保守"` | 含 `2.24%` `2.47%` |
 | E139 | `./venv/bin/python scripts/da_gate_block_audit.py 2>&1 \| grep "apples-to-oranges"` | 含 `debunk` |
 | E140 | `./venv/bin/python scripts/da_gate_block_audit.py 2>&1 \| grep "高分SKIP>=6"` | 含 `2.04%` |
+
+## 39. 门治理决策记录：台账归宿 + tier 影子去重（Hermes · 2026-10-11）
+
+> 触发：用户两问 —— Q1「门台账是否有合适插入和筛选检查的位置？是否有必要全部统一」；
+> Q2「预注册 tier 影子是否重复造影子，如何基于现有检查和推送通知机制」。
+> 本节是**决策记录**，设计细节落 RFC-091 §15（台账接入）+ RFC-092 §11（tier 影子去重）。
+> 贯穿原则：**做减法——复用现有基建，不新建载体/影子/推送面**（用户 Q2 正是担心重复造）。
+
+### 39.1 Q1 决策：台账归宿 = meta_audit_loop 源；不全部物理统一
+
+| 子问 | 决策 | 落点 |
+|---|---|---|
+| 插入位置 | 台账治理 finding 作为 **meta_audit_loop 结构化源**（加 `_extract_gate_ledger` + `STRUCTURED_SOURCES` 加 `gate_ledger`），不另建载体 | RFC-091 §15.1 |
+| 筛选检查位置 | 「新门上线须登记预注册出处+供应冲击」= 本环一类**未决 finding**，挂现有「每 finding 须裁决」收敛流 ⇒ 从纸面规则变硬约束 | RFC-091 §15.1 |
+| 是否全部统一 | **否**。不物理合并 25 个审计 jsonl（大迁移零收益）；统一只在**注册表+监控层**；权威注册范围=影响供应+需预注册的门（DA signal_gate/candidate_eligibility/执行帽），退出侧/纯影子门只登记元数据+复用 gate_liveness_probe | RFC-091 §15.2 |
+
+依据：meta_audit_loop 已是门元监控收敛环（读 gate_liveness 测死门、每 finding 须裁决、L1 只读写 `data/loops/meta_audit/`），是台账 finding 的天然归宿。
+
+### 39.2 Q2 决策：tier A/B 走回溯，不新增影子 emitter
+
+| 子问 | 决策 | 落点 |
+|---|---|---|
+| 是否重复造影子 | **是**——新 live tier 影子=重复造。`da_gate_decisions` 已录 score+conf+decision（**92%/1855行/59天**）⇒ conf-only A/B 是**纯回溯重算**，零新 emitter/jsonl/载体 | RFC-092 §11.1 |
+| 减法先例 | crontab `[2026-07-26 减法R2] atr_gate_shadow 产出零消费(45KB/日无人读), 停` ⇒ 无人读的新影子必被停 | RFC-092 §11.1 |
+| 基于现有检查 | 回溯分析器挂现有周期（周检/meta_audit 源），产物写 `data/loops/`，不新建载体 | RFC-092 §11.2 |
+| 基于现有推送 | 复用 PushHub（`app/push`）+钉钉（`da_bridge_dingtalk_push.py`）+meta_audit digest；**⚠️接前必须活体探针**（已知断裂：不变量→钉钉自7/28纸面、PushHub dedup不跨进程、冷却键压制） | RFC-092 §11.3 |
+
+预注册纪律：conf-only A/B 现在**不设判据阈值**（防阈值购物），攒够回溯样本+出翻转分布后于裁决日定；实装 conf-only tier 是另一独立预注册（须开跑会裁）。
+
+### 39.3 立场
+
+1. **不新建任何载体/影子/推送面**：台账→meta_audit 源、tier A/B→回溯既有日志、推送→复用 PushHub。全部做减法。
+2. **实现前置（归属纪律）**：meta_audit_loop 是共享治理脚本，接入前须核归属+无他人 WIP+配契约测试；本批仅文档登记，零代码改动。
+3. **推送不可假设通**：接前活体验证（本仓有「纸面告警」前科）。
+
+### 39.4 E 表（本节新增证据，期望为实跑抽出的字面量）
+
+| # | 命令 | 期望输出 |
+|---|---|---|
+| E141 | `grep -n "STRUCTURED_SOURCES = " scripts/meta_audit_loop.py \| head -1` | 含 `("invariant", "watchdog", "gate_liveness")`（接入点存在） |
+| E142 | `crontab -l 2>/dev/null \| grep "atr_gate_shadow" \| grep -oE "减法R2.*停"` | 含 `产出零消费` `停`（减法先例） |
+| E143 | `./venv/bin/python -c "import json,re; rows=[json.loads(l) for l in open('data/da_gate_decisions.jsonl',errors='replace') if l.strip()]; pat=re.compile(r'score=([\d.]+)/10 decision_conf=([\d.]+)'); has=sum(1 for r in rows if pat.search(' '.join(str(x) for x in (r.get('reasons') or []))) and r.get('decision')); print(f'含score+conf+decision: {has}/{len(rows)} ({has/len(rows)*100:.0f}%)')"` | 含 `1855/2017 (92%)` |

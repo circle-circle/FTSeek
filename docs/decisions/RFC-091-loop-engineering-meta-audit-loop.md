@@ -358,3 +358,36 @@ ACCEPT_RISK / DEFER / RETIRE / OUT_OF_SCOPE / INVALID_SOURCE
   3 条守卫 (`tests/test_router_prev_close_injection.py`), 相关面回归 281 passed。
   **教训 (已入 skill)**: 同一次口径修复只修了半个字典 (RFC-068 8/29 只修 `prev_close`), 派生量漏在门外 ⇒ 覆盖基准量时必须扫同族派生字段。
 - **月环不是载体缺口, 是本体未实现**: `review_bundle.py --period month` 直接 `error: … arrive with P5` ⇒ 只能在 "单开一批实现月度双窗口+判据总账" 与 "把 §7/§16 该行标注未实现" 之间选。台账已加显式注释行防误读。
+
+## 15. 门台账作为 meta_audit 结构化源 (2026-10-11, 用户裁「写入deb和rfc」)
+
+> 触发: DEB-20261009 §36 门台账 (`scripts/gate_ledger.py`) 实测 25 个碎片化门审计 jsonl +
+> 2 道无预注册门 (archetype_conflict / bad_direction)。用户问「门台账有无合适插入位置 / 是否全部统一」。
+> 归宿判定: 本环 (meta_audit_loop) 已是门元监控收敛环 (读 gate_liveness 测死门/陈旧门, 每 finding 须裁决,
+> L1 只读写 `data/loops/meta_audit/`) ⇒ 台账治理 finding 的**天然归宿是本环, 不另建载体**。
+
+### 15.1 接入方式 (源模式, 非新环)
+
+- 加 `_extract_gate_ledger(doc)` (仿现有 `_extract_gate_liveness`), 吐两类 finding:
+  ① **无预注册门**: 门在 GATE_PREREG 注册表值为 None ⇒ finding「须补 RFC/DEB 或下线」(强制裁决, 制度化防 stale_quote)。
+  ② **命中率漂移**: 各门去重命中率 vs 基线偏移 ⇒ observation finding (供应健康度)。
+- `STRUCTURED_SOURCES` 加 `"gate_ledger"`; 台账 finding 自动进 STATE.md / digest / LOOP_DONE 收敛,
+  被现有消费面 (daily_invariant_check / intraday_health_snapshot) 接走。
+- **「新门上线筛选检查」= 本环一类 finding**: 门存在但注册表无出处 = 未决 finding, 挂现有裁决流
+  ⇒「加门必须登记预注册出处 + 供应冲击」从纸面规则变成收敛环硬约束。
+
+### 15.2 统一范围 (做减法, 不过度统一)
+
+- **不物理合并 25 个审计 jsonl** (大迁移、零收益、违反减法)。统一只在**注册表 + 监控层**:
+  `gate_ledger.py` = 注册表 (元数据 + 源文件指针, 不搬原始产物); 本环 = 监控。
+- **权威注册范围 = 影响供应 + 需预注册追踪的门**: DA signal_gate / candidate_eligibility /
+  执行帽 (chase/notional/max_pos/bp/cycle)。退出侧 + 纯影子门 (fee/reentry/eod_depth/kr3) 只登记
+  元数据 + 复用现有 `gate_liveness_probe.py` 测活性, **不深度纳入** (它们不影响候选供应)。
+- 判据: 一门是否进权威注册 = 是否影响候选供应 OR 是否新/改 (需预注册)。
+
+### 15.3 边界与纪律
+
+- **L1 只读**: 接入只加 `_extract_*` + 源元组, 不触交易执行链、不改任何门逻辑/阈值。
+- **实现前置**: meta_audit_loop 是共享治理脚本, 动前须核归属 + 无他人 WIP (归属纪律); 接入须配契约测试
+  (仿本环现有 21 例契约钉) 证明 gate_ledger 源被正确解析 + finding 进收敛。
+- 关联: DEB-20261009 §36 (台账实测) / §39 (治理决策记录); `scripts/gate_ledger.py`; `docs/CONTROL-LOOP-LEDGER.md`。
