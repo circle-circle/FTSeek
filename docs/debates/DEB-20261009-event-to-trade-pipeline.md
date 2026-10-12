@@ -2612,3 +2612,65 @@ decision 分布 **BLOCK 1225（61%）/ WARN 346（17%）/ PASS 446（22%）**。
 | E127 | `./venv/bin/python scripts/gate_ledger.py 2>&1 \| grep "无 RFC/DEB 出处"` | 含 `archetype_conflict, bad_direction` |
 | E128 | `./venv/bin/python scripts/gate_ledger.py 2>&1 \| grep -c "碎片化证据"` | `1` |
 | E129 | `./venv/bin/python scripts/gate_ledger.py 2>&1 \| grep "轮询放大"` | 含 `8.3×` |
+
+## 37. DA signal_gate 61% BLOCK 审计：拦垃圾还是误杀好票（Hermes · 2026-10-11 · 只读）
+
+> 触发：用户「继续」（§36 门台账定位真供应约束在 DA signal_gate BLOCK 61% 后的深挖）。
+> 载体：`scripts/da_gate_block_audit.py`（只读，可重跑；零行为变更）。
+> 方法：三层递进，**每层都更正上一层的原始数**（telemetry-caliber + 量纲纪律）。
+
+### 37.1 第一层：「61% BLOCK」误导——80.5% 是分析自身 SKIP，非门拦截
+
+BLOCK 的 `direction` 字段分布（n=1225）：
+
+| direction | n | 占比 | 含义 |
+|---|---:|---:|---|
+| **SKIP** | 986 | **80.5%** | DA 分析自身未给交易信号（非质量门拦截） |
+| BUY | 194 | 15.8% | 真方向被门拦 |
+| SELL_SHORT | 45 | 3.7% | 真方向被门拦 |
+
+⇒ **真方向被门拦仅 239 笔**（11.8% of 全体决策；23.2% of 有方向候选 1031）。
+驱动：**G1 破位硬买 88**（bearish 动量 + BUY，防接飞刀，用户裁保留）+ **tier=差 145**
+（score<5 或 conf<0.5）+ 旧格式 6。**门非主供应杀手**——80.5% 的「BLOCK」其实是分析没找到交易。
+
+### 37.2 第二层：量纲更正——quality_score 字段 ≠ 门驱动变量
+
+`da_gate_decisions.quality_score`（0-100）**不是**门决策驱动！真驱动 = **tier_score（0-10，
+"分析结论排序=X(score=Y/10)"）+ decision_conf（辩论一致度）**。
+实测 quality_score/tier_score 比值中位 **7.50**，仅 **11%（218/2011）** 等于 ×10 ⇒ 两个不同变量。
+（前轮我误把预测效度算在 quality_score 上，已更正为 tier_score。）
+
+### 37.3 第三层：预测效度——tier_score 零预测力，decision_conf 弱但真
+
+已成交已平仓匹配 n=440（真驱动 vs pnl_net）：
+
+| 变量 | Spearman | 分桶 | 判定 |
+|---|---:|---|---|
+| **tier_score** | **−0.000** | 良6-7:WR74%/+5.02 · **良优7-8:WR44%/−6.17(最差)** · 优8+:WR80%/+8.32 | **零预测力(非单调)** |
+| **decision_conf** | **+0.159** | conf.5-.6:WR54%/−4.44 · conf.7+:WR72%/+6.51 | **弱但真(单调)** |
+
+⇒ **门拦在 tier_score 上无预测效度依据**（score 在已成交[6,8]区间不预测 PnL，7-8 桶反而最差）；
+**拦在 decision_conf 上有依据**（conf≥0.7 显著优于 conf 0.5-0.6）。tier=差（score<5 **或** conf<0.5）
+的拦截 **一半合理（conf 轴）一半可疑（score 轴）**。
+
+### 37.4 局限与立场（不据本审计改门）
+
+1. **根本局限**：被拦候选无可观测结局 ⇒ tier_score 零预测力只在已成交[6,8]区间成立，
+   **不能证明被拦的 score<5 是好票**，只证 score 非可靠质量轴。不可据此断言「门误杀」。
+2. **不据本审计改门**：改 tier 逻辑须预注册影子 A/B（conf-only tier vs score+conf tier）攒样再裁，
+   防阈值购物 + 防重蹈 stale_quote（无预注册改门）。
+3. **供应杠杆再定位**：门非主杀手（80.5% 是分析 SKIP）⇒「提升有质量标的供应」的真杠杆是
+   **让 DA 分析浮现更多有方向候选**（降 80.5% SKIP 率）+ **入场价质量**（§35/RFC-123 第2层，不砍供应），
+   而非松门或加门。
+4. **零行为变更**：纯只读审计，不改 signal_gate 任何逻辑/阈值。
+
+### 37.5 E 表（本节新增证据，期望为实跑抽出的字面量）
+
+| # | 命令 | 期望输出 |
+|---|---|---|
+| E130 | `./venv/bin/python scripts/da_gate_block_audit.py 2>&1 \| grep "direction=SKIP"` | 含 `986 (80.5%)` |
+| E131 | `./venv/bin/python scripts/da_gate_block_audit.py 2>&1 \| grep "真方向被门拦"` | 含 `239` |
+| E132 | `./venv/bin/python scripts/da_gate_block_audit.py 2>&1 \| grep "Spearman(tier_score"` | 含 `-0.000` |
+| E133 | `./venv/bin/python scripts/da_gate_block_audit.py 2>&1 \| grep "Spearman(decision_conf"` | 含 `+0.159` |
+| E134 | `./venv/bin/python scripts/da_gate_block_audit.py 2>&1 \| grep "良/优7-8"` | 含 `-6.17` `44%` |
+| E135 | `./venv/bin/python scripts/da_gate_block_audit.py 2>&1 \| grep "比值中位"` | 含 `7.50` `11%` |
