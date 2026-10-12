@@ -251,6 +251,15 @@ LONG×开盘窗 —— 只印读数, 不作独立裁决依据。
    分别堵死, 且 forward-B 已判负。真正的精准杠杆在**入场质量** (candidate C 生成锚,
    事前可识别、方向性预读 +$137.20/8 笔 7 优、直接打墓地桶), 不在本门的作用域收窄。
 
+9. **路径判据变体回放：无变体胜出真2min端点 + 旧结算腿语义漂移 (2026-10-13 登记, 防裁决日重提"多探测/路径判定改善一下就行")**:
+
+   `scripts/entry_confirm_variant_replay.py` (另一 agent 2026-10-12 预注册冻结, **untracked WIP**; 人群 n=580/64 交易日, 价值模型用 **trade_records 真实盘中退出 pnl_net** 非收盘 hold) 测 7 判据腿:
+   - 现役真2min端点 (V0_true2min) netVal **+$1798 最优**; V1 窗口均价 / V2 全票(=多探测) / V3 会话均价 / V4 斜率 / V0_true3(延3min) **全部 meanΔ<0、CI95 含 0(excl0=False)、IS/OOS 符号翻转(不过 G4) ⇒ 无一可分辨** (distinguishable=False)。
+   - **"多探测"(V2_unanim)**: avoid 50.9→65.5%(多抓输家) **但** miskill 50.0→55.3%(也多杀赢家), 净值原地(+$1787 vs +$1798)。延长窗口(V0_true3)更差, 空头翻负(−$165)。⇒ 多探测=抓更多输家也杀更多赢家, **无净 edge**。
+   - **语义漂移(关键)**: 旧"已结算腿"实际测 **~30s 有效延迟**(mean 29.9s, 因老影子 `_price_at` 采样在 tgt−60s), **非名义 2min**。~30s 净负(全体 −$284 / LONG −$898 / miskill 59.5%); 真 2min 净正(+$1798 / miskill 50.0%)。⇒ **历史"已结算"读数不能当本门的反对证据**(它测的是 ~30s 腿, 不是现役 2min); 现役 live 门 = delay_sec 120 + 10s 快循环 = 真 2min, 处回放最优点。
+   - ⚠️ **T14 回放≠前向**: 本回放(历史 n=580 净正) **不推翻** forward-B(live n=33) FAIL; 两源不混算, forward 仍是门 go/no-go 权威。本回放只答"有无更好 v2 判据"(答: 无), **不改 §4 预注册判据、不动现役门**。
+   - **裁决日不得把"多探测/路径判定"当改进项** — 预注册回放已判无一可分辨, 冻结腿维持, forward 照跑。全链复盘 + 隔夜 gap P0 详见 DEB-20261009 §40。
+
 ## 6. 回滚
 
 `playbook.execution_parameters.entry_confirm_enabled: false` + `systemctl restart ftseek-us` (前置: 核未平仓+改动归属)。已 arm 未判定的 pending 随重启清空, 旗标残留由孤儿自愈放行 ⇒ 回滚零卡单。产物 jsonl 留档不删。

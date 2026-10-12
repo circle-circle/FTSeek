@@ -2772,3 +2772,73 @@ SKIP（n=986）按 tier_score 分桶：**差(<5，正确跳过) 644（65%）** |
 | E141 | `grep -n "STRUCTURED_SOURCES = " scripts/meta_audit_loop.py \| head -1` | 含 `("invariant", "watchdog", "gate_liveness")`（接入点存在） |
 | E142 | `crontab -l 2>/dev/null \| grep "atr_gate_shadow" \| grep -oE "减法R2.*停"` | 含 `产出零消费` `停`（减法先例） |
 | E143 | `./venv/bin/python -c "import json,re; rows=[json.loads(l) for l in open('data/da_gate_decisions.jsonl',errors='replace') if l.strip()]; pat=re.compile(r'score=([\d.]+)/10 decision_conf=([\d.]+)'); has=sum(1 for r in rows if pat.search(' '.join(str(x) for x in (r.get('reasons') or []))) and r.get('decision')); print(f'含score+conf+decision: {has}/{len(rows)} ({has/len(rows)*100:.0f}%)')"` | 含 `1855/2017 (92%)` |
+
+---
+
+## 40. 今日（2026-10-12）全链复盘 + entry-confirm 变体裁决 + 隔夜 gap P0 诚实结论（Hermes · 2026-10-13 · 只读）
+
+> 触发：用户「基于今日表现，从指令和方向产出再到门拦截策略复盘，看是否有需调整优化的问题」+「entry-confirm 多几次探测有无改善」+「不仅按收盘价定盈亏，可能盘中止盈止损」。全部数字来自实跑 DB/日志/预注册回放；方法论自纠见 40.4。
+
+### 40.1 全链流向与 PnL 归因（今日净亏全在隔夜，日内是赚的）
+
+20 DA 候选去向：6 指令 executed（AMD 为 10-09 carried no-op；今日实际新开 5 = 4 LONG（CAT/HUM/MU/SNOW）+ 1 SHORT（MRNA））/ 12 entry-confirm reversed / 1 chase_cap（CIEN）/ 1 falsification（META）。
+
+| 口径 | 净额 |
+|---|---|
+| 日内交易（MRNA/CAT/HUM/MU 4 笔了结） | **+$59.51（盈利）** |
+| SNDK 隔夜 gap stop（1 笔，carried 10-09 跨周末） | **−$293.03** |
+| 今日实现净 | **−$233.52** |
+
+⇒ **今日全部亏损来自 SNDK 一笔隔夜跳空；日内入场/门/退出链净正。** 优化火力应对隔夜 gap，不是日内门。
+
+方向产出：DA gate PASS 3 空头（CIEN 50良 / MRNA 50良 / RIVN 80优），仅 MRNA 执行（+$10.55 scalp）；RIVN（80优，最佳空头）被 entry-confirm reversed，CIEN 被 chase_cap（方向适配正确：$424 已跌破禁追线=空头追低）。今日空头产出薄（1/3 PASS 空头成交）。
+
+### 40.2 entry-confirm「多探测/路径判据」变体裁决（预注册回放：无一胜出）
+
+仪器 `scripts/entry_confirm_variant_replay.py`（**另一 agent 今日新建 untracked WIP，预注册 2026-10-12 读数前冻结**；我只读实跑验证，不提交它）。人群 n=580（64 交易日 07-13~10-09），价值模型用 **trade_records 真实盘中退出 pnl_net**（非收盘 hold）。
+
+| 判据腿 | 全体 netVal | LONG | SHORT | 可分辨? |
+|---|---|---|---|---|
+| V0_settled（旧~30s） | −$284 | −$898 | +$614 | — |
+| **V0_true2min（现役真2min）** | **+$1798** | **+$1339** | **+$459** | 基准 |
+| V0_true3（延3min） | +$288 | +$453 | −$165 | 否 |
+| V1_win_avg（窗口均价） | +$1783 | +$1348 | +$435 | 否 |
+| V2_unanim（全票=多探测） | +$1787 | +$1368 | +$419 | 否 |
+| V3_sess_avg | +$1401 | +$1055 | +$346 | 否 |
+| V4_slope10 | +$1426 | +$1183 | +$243 | 否 |
+
+配对 Δ vs 真2min：**全部 meanΔ<0、CI95 含 0（excl0=False）、IS/OOS 符号翻转（不过 G4）⇒ 无一可分辨**。
+
+- 「多探测」（V2_unanim）把 avoid 50.9%→65.5%（多抓输家）**但** miskill 50.0%→55.3%（也多杀赢家），净值原地（+$1787 vs +$1798）。**多探测=抓更多输家也杀更多赢家，无净 edge。**
+- 延长窗口（V0_true3）更差，空头直接翻负（−$165）。
+- 空头层（n=97）：真2min +$459 最优，所有多探测变体更低。今日 ARM/RIVN（门杀的慢确认赢家）是 47.5% miskill 的固有代价，多探测接住它们但别处杀更多盈利空头，净更差。
+- **冻结判读规则**：「无变体与真2min端点可分辨 ⇒ 冻结腿维持，forward 照跑，不预注册 v2」。
+
+### 40.3 语义漂移发现（对 RFC-141 证据解读关键，已登记 RFC-141 §5 item 9）
+
+旧「已结算腿」实际测 **~30s 有效延迟**（mean 29.9s，因老影子 `_price_at` 采样在 tgt−60s），**非名义 2min**。~30s 净负（全体 −$284 / LONG −$898 / miskill 59.5%）；真 2min 净正（+$1798 / miskill 50.0%）。现役 live 门 = delay_sec 120 + 10s 快循环 = 真 2min，处回放最优点。⚠️ **T14 回放≠前向**：回放（历史 n=580）净正 **不推翻** forward-B（live n=33）FAIL；两源不混算，forward 仍权威。
+
+### 40.4 方法论自纠（撤回盘中反事实）
+
+我盘中用「锚→收盘 hold」判 reversed 盈亏（−0.31%）= **错**（hold-to-close 上界，忽略盘中 SL/TP/trailing 退出）。**撤回。** 正确口径 = variant replay 的 pnl_net（trade_records 真实盘中退出实现净额）。此偏差 skill `data-claim-verification` §38 规则 30.4 自记过（「反事实错失机会对比的上界 vs 实际」），又犯——用户当场纠正。
+
+### 40.5 隔夜 gap P0：RFC-079 深水闸会接住 SNDK 但 live 净亏 → 无现成 fix
+
+**更正 framing**：RFC-079 settler 用 `decision_price`（EOD 时刻价）− `exit_price`，**本就是事前 EOD 正确口径，不用 mfe_pct**。我先前「RFC-079 candidate A 口径修正」framing **错**（混淆了已正确的 RFC-079 与有 lookahead 的 candidate A EOD MFE 门）。
+
+- SNDK 今日：周五 EOD `depth_net_pct=−2.5294%`（刚过 −2.5% 闸）→ `would_revoke=True` → 门若 live 周五平 @1584.44，Δ=+(1584.44−1527.84)×3=**+$169.79**（避开周一 gap exit@1527.84）。**门确实会接住 SNDK。**
+- **但** RFC-079 live 记录：n=7、ΣΔ=**−$629.01**、miskill=**5**；加 SNDK（avoid 非 miskill）→ n=8、ΣΔ=**−$459.22**、miskill 仍 5。
+- B19 判据（n≥8 ∧ ΣΔ>0 ∧ 误杀≤1）**不 met**（ΣΔ 负、误杀 5≫1）→ verdict **KEEP_SAMPLING**。
+- 回测（8/1-9/8：−2.5% 中 3/3 灾难、ΣΔ+$410、误杀 0）vs live（误杀 5/7）**分歧**；−2.5% 阈值 live 偏松（接住几个 gap 但误杀更多隔夜修复赢家）。
+- RFC-141 §5 item 8 已登记：2min 门只接隔夜 gap 52% 漏 48%；**直接解药在退出侧（EOD/隔夜豁免，触冻结窗），上游解药在入场质量（candidate C 锚，不触冻结窗）**。
+
+⇒ **P0 诚实结论**：隔夜 gap 风险真实（SNDK −$293 = 今日全部亏损），但 RFC-079 深水闸 **live 净亏（误杀 5 修复赢家换接几个 gap），非现成 fix**。纪律：**不实装硬闸（B19 远未 met + 触冻结窗）、不调 −2.5% 阈值（n=1 SNDK 调阈值=购物）、继续攒样**。真正杠杆在**入场质量（candidate C 锚，stage-0 攒样中，不触冻结窗）**——与 §27 优先级重排（candidate C → P1）一致。
+
+### 40.6 E 表（实跑抽出字面量）
+
+| # | 命令 | 期望输出 |
+|---|---|---|
+| E144 | `./venv/bin/python -c "import json; d=json.load(open('data/shadow/eod_depth_gate_report_latest.json')); print(d['trigger_settled_n'], d['trigger_sum_delta'], d['trigger_miskill_n'], d['verdict'])"` | 含 `7 -629.01 5 KEEP_SAMPLING` |
+| E145 | `grep SNDK data/shadow/eod_depth_gate_shadow.jsonl \| grep 2026-10-09 \| ./venv/bin/python -c "import sys,json; r=json.loads(sys.stdin.readline()); print(round(r['depth_net_pct'],4), r['would_revoke'])"` | 含 `-2.5294 True` |
+| E146 | `./venv/bin/python -c "import sqlite3; c=sqlite3.connect('file:data/ftseek_us.db?mode=ro',uri=True); q=lambda s:c.execute(s).fetchone()[0]; tot=q(\"SELECT ROUND(SUM(COALESCE(pnl_net,realized_pnl)),2) FROM trade_records WHERE substr(exit_time,1,10)='2026-10-12'\"); ov=q(\"SELECT ROUND(SUM(COALESCE(pnl_net,realized_pnl)),2) FROM trade_records WHERE substr(exit_time,1,10)='2026-10-12' AND exit_reason='OVERNIGHT_GAP_STOP'\"); print('total',tot,'overnight',ov,'intraday',round(tot-ov,2))"` | 含 `total -233.52` `overnight -293.03` `intraday 59.51` |
+| E147 | `./venv/bin/python -c "import json; d=json.load(open('data/reports/entry_confirm_variants_20261012.json')); a=d['arms']['V0_true2min']; print(round(a['net_value_usd']), a['day_clustered']['distinguishable'])"` | 含 `1798 False`（untracked WIP 产物，盘内可读）|
