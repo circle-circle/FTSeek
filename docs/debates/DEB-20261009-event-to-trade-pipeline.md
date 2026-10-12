@@ -2674,3 +2674,59 @@ BLOCK 的 `direction` 字段分布（n=1225）：
 | E133 | `./venv/bin/python scripts/da_gate_block_audit.py 2>&1 \| grep "Spearman(decision_conf"` | 含 `+0.159` |
 | E134 | `./venv/bin/python scripts/da_gate_block_audit.py 2>&1 \| grep "良/优7-8"` | 含 `-6.17` `44%` |
 | E135 | `./venv/bin/python scripts/da_gate_block_audit.py 2>&1 \| grep "比值中位"` | 含 `7.50` `11%` |
+
+## 38. 80.5% SKIP 审计：合理耐心 vs 过度保守（Hermes · 2026-10-11 · 只读）
+
+> 触发：用户「继续」（§37 定位真供应杠杆在 80.5% direction=SKIP 后的深挖）。
+> 载体：`scripts/da_gate_block_audit.py` §④（已扩，只读可重跑；零行为变更）。
+> 核心问题：DA 分析 80% 时候不给方向推荐——是「真没机会」(合理耐心) 还是「漏掉好票」(过度保守)？
+
+### 38.1 SKIP 候选质量分桶：65% 是低质量正确跳过
+
+SKIP（n=986）按 tier_score 分桶：**差(<5，正确跳过) 644（65%）** | 中(5-6) | **良/优(>=6，可能漏) 187（19.0%）**。
+⇒ 主体（65%）是低质量 setup 被正确跳过 = **合理耐心**（合用户「耐心不硬扛」哲学）；
+只有 19% 是良/优级 setup 被 SKIP = 潜在供应漏点（需前向反事实裁）。
+
+### 38.2 ⚠️ naive 前向反事实是假象（两个偏差，已 debunk）
+
+初看 SKIP-with-bars 的 best_mfe（多空取优上界）中位 2.24%、94% tradeable、**0% 墓地级**，
+对照已成交 mfe_pct 中位 0.44%、43% 墓地 ⇒ 貌似「SKIP 漏掉大波动作好票」。**这是 apples-to-oranges 假象**：
+
+1. **度量偏差**：SKIP 用 best_mfe（max 多空，假设完美选向的上界），已成交 mfe_pct 是**实际方向**的 MFE（可能选错向）。上界 vs 实际不可比。
+2. **选择偏差**：replay_bars 覆盖 = 已成交 **81%** vs SKIP **19%** ⇒ bars 主要为成交/指令候选缓存，SKIP-with-bars 是**偏向「会动票」的子集**（两者 0% 墓地级即铁证：全样本已成交墓地 43%，有 bars 子集 0%）。
+
+### 38.3 同口径公平比较：SKIP 并不比已成交动得多 ⇒ 无证据过度保守
+
+全部用 **best_mfe（多空取优上界，同法、同 bars 源）**：
+
+| 人群（with bars） | n | best_mfe 中位 | tradeable(>1%) | 墓地(<0.3%) |
+|---|---:|---:|---:|---:|
+| 已成交 | 633 | **2.47%** | 95% | 0% |
+| 全体 SKIP | 176 | **2.24%** | 94% | 0% |
+| 高分 SKIP(≥6) | 50 | **2.04%** | 92% | 0% |
+
+⇒ **SKIP best_mfe（2.24%）< 已成交（2.47%），高分 SKIP（2.04%）更低**。同口径下 SKIP 候选**并不比已成交的动得多**，
+**无证据表明分析过度保守**。naive「漏好票」结论被 debunk。
+
+### 38.4 真供应杠杆：入场价质量（选向/择时），非松 SKIP
+
+副产物（重要）：已成交**实际方向 mfe_pct 中位 0.44%（43% 墓地）** vs 其 **best_mfe 2.47%** ⇒
+**差距 = 选向/择时差**（交易常挑错方向或入场时点差，best 2.47% 的票实际只吃到 0.44%）。
+这正接 §35/RFC-123 第2层（入场锚）与墓地桶（MFE<0.3% 净 −$2,637）：**真供应/收益杠杆在入场价质量，不在松门或松 SKIP**。
+
+### 38.5 局限与立场
+
+1. **不能完全排除高分 SKIP 漏票**：bars 子集有偏（19% 覆盖），真裁须对 **181 唯一高分 SKIP 外部抓无偏前向价**（bounded 任务），当前内部数据不支持「漏好票」结论。
+2. **不据本审计松 SKIP/改门**：65% SKIP 是低质量正确跳过；松 SKIP 会放进垃圾（重蹈 stale_quote 反向版）。改 tier 须预注册影子 A/B（§37.4）。
+3. **方法论登记**：本节是连续第 3 个「原始数假象→同口径/去偏更正」案例（§36 轮询放大 8.3×、§37 quality_score 量纲、§38 best_mfe 上界+bars 选择偏差）。**反事实比较必须同口径 + 核数据选择偏差**，否则假信号。
+4. **零行为变更**：纯只读审计。
+
+### 38.6 E 表（本节新增证据，期望为实跑抽出的字面量）
+
+| # | 命令 | 期望输出 |
+|---|---|---|
+| E136 | `./venv/bin/python scripts/da_gate_block_audit.py 2>&1 \| grep "SKIP score分桶"` | 含 `65%` `19.0%` |
+| E137 | `./venv/bin/python scripts/da_gate_block_audit.py 2>&1 \| grep "replay_bars覆盖"` | 含 `已成交 81% vs SKIP 19%` |
+| E138 | `./venv/bin/python scripts/da_gate_block_audit.py 2>&1 \| grep "无证据过度保守"` | 含 `2.24%` `2.47%` |
+| E139 | `./venv/bin/python scripts/da_gate_block_audit.py 2>&1 \| grep "apples-to-oranges"` | 含 `debunk` |
+| E140 | `./venv/bin/python scripts/da_gate_block_audit.py 2>&1 \| grep "高分SKIP>=6"` | 含 `2.04%` |

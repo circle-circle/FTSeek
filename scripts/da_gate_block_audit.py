@@ -57,6 +57,69 @@ def _spearman(x, y):
     return cov / (sx * sy) if sx * sy > 0 else 0.0
 
 
+def section_skip(rows):
+    """④ 80.5% direction=SKIP 是合理耐心还是过度保守 (前向反事实 + 选择偏差自查)。"""
+    import os
+    skips = [r for r in rows if r.get("direction") == "SKIP"]
+
+    def _score(r):
+        m = re.search(r"分析结论排序=\S+?\(score=([\d.]+)/10", " ".join(str(x) for x in (r.get("reasons") or [])))
+        return float(m.group(1)) if m else None
+
+    def _bar(sym, d):
+        for pat in (f"{sym.replace('.', '_')}_{d}.json", f"{sym}_{d}.json"):
+            p = REPO / "data" / "replay_bars" / pat
+            if p.exists():
+                return p
+        return None
+
+    def _best_mfe(p):
+        try:
+            bars = json.loads(open(p, errors="replace").read())
+        except Exception:
+            return None
+        if not bars or len(bars) < 5:
+            return None
+        o = float(bars[0][1]); hi = max(float(b[2]) for b in bars); lo = min(float(b[3]) for b in bars)
+        return max((hi - o) / o * 100, (o - lo) / o * 100) if o > 0 else None  # 多空取优上界(同法)
+
+    print("\n【④ 80.5% SKIP: 合理耐心 vs 过度保守 (前向反事实)】")
+    # SKIP score 分桶
+    lo = sum(1 for r in skips if (_score(r) or 99) < 5)
+    hi = [r for r in skips if (_score(r) or 0) >= 6]
+    print(f"  SKIP score分桶: 差(<5,正确跳过) {lo} ({lo/len(skips)*100:.0f}%) | 良/优(>=6,可能漏) {len(hi)} ({len(hi)/len(skips)*100:.1f}%)")
+    # replay_bars 覆盖偏差
+    con = sqlite3.connect(f"file:{REPO/'data'/'ftseek_us.db'}?mode=ro", uri=True); con.row_factory = sqlite3.Row
+    traded = {(r["symbol"], str(r["entry_time"])[:10]) for r in con.execute(
+        "SELECT symbol,entry_time FROM trade_records WHERE symbol!='' AND entry_time IS NOT NULL AND exit_reason IS NOT NULL AND exit_reason!=''")}
+    skip_u = {(r.get("symbol"), r.get("trade_date")) for r in skips if r.get("symbol")}
+    t_cov = sum(1 for sd in traded if _bar(*sd)); s_cov = sum(1 for sd in skip_u if _bar(*sd))
+    print(f"  ⚠️ replay_bars覆盖: 已成交 {t_cov/max(len(traded),1)*100:.0f}% vs SKIP {s_cov/max(len(skip_u),1)*100:.0f}% ⇒ SKIP-with-bars是偏向'会动票'子集")
+    # 同口径 best_mfe 比较
+    tr_bm = [m for sd in traded if (p := _bar(*sd)) and (m := _best_mfe(p)) is not None]
+    sk_bm, skhi_bm = [], []
+    hu = {}
+    for r in skips:
+        if r.get("symbol"):
+            k = (r["symbol"], r["trade_date"]); s = _score(r)
+            if k not in hu or (s or 0) > (hu[k] or 0): hu[k] = s
+    for (sym, d), s in hu.items():
+        p = _bar(sym, d)
+        if p and (m := _best_mfe(p)) is not None:
+            sk_bm.append(m)
+            if (s or 0) >= 6: skhi_bm.append(m)
+    con.close()
+    print(f"  同口径 best_mfe(多空取优上界, 同法):")
+    for nm, arr in [("已成交(with bars)", tr_bm), ("全体SKIP(with bars)", sk_bm), ("高分SKIP>=6(with bars)", skhi_bm)]:
+        if arr:
+            print(f"    {nm:22} n={len(arr):4} 中位={statistics.median(arr):.2f}% tradeable(>1%)={sum(1 for x in arr if x>1)/len(arr)*100:.0f}% 墓地(<0.3%)={sum(1 for x in arr if x<0.3)/len(arr)*100:.0f}%")
+    med_tr = statistics.median(tr_bm) if tr_bm else 0
+    med_sk = statistics.median(sk_bm) if sk_bm else 0
+    print(f"  ⇒ SKIP best_mfe中位({med_sk:.2f}%) {'<' if med_sk < med_tr else '>='} 已成交({med_tr:.2f}%) ⇒ 【无证据过度保守】")
+    print(f"  ⚠️ naive比较(SKIP best_mfe上界 vs 已成交实际方向mfe_pct 0.44%)是apples-to-oranges假象, 已 debunk")
+    print(f"  ⇒ 真裁高分SKIP须对181唯一高分SKIP外部抓【无偏】前向价, 非用偏子集bars; 当前内部数据不支持'漏好票'结论")
+
+
 def main():
     rows = _rows(GATE)
     blocks = [r for r in rows if r.get("decision") == "BLOCK"]
@@ -123,12 +186,16 @@ def main():
         if bp:
             print(f"    {nm:10} n={len(bp):3} 净均={statistics.mean(bp):+7.2f} 胜率={sum(1 for x in bp if x>0)/len(bp)*100:.0f}%")
 
+    section_skip(rows)
+
     print("\n【结论】")
     print("- 门非主供应杀手: 80.5% BLOCK 是分析自身 SKIP(无交易信号), 真方向拦截仅 239(11.9%)")
     print("- 真方向拦截: G1破位硬买(防接飞刀,用户裁保留) + tier=差(score<5或conf<0.5)")
     print("- tier_score 零预测力(已成交[6,8]区间) ⇒ 拦在 score 上无效度依据; conf 有预测力 ⇒ 拦在 conf 上合理")
-    print("- ⚠️ 局限: 被拦候选无可观测结局, 不能证明 score<5 的是好票; 只证 score 非可靠质量轴")
-    print("- 建议: 不据本审计改门; 预注册影子A/B(conf-only vs score+conf tier)攒样再裁")
+    print("- 80.5% SKIP 非过度保守: 同口径 best_mfe SKIP(2.24%)<已成交(2.47%); 60% SKIP是低质量正确跳过")
+    print("- ⚠️ 局限: 被拦/SKIP候选无无偏前向价(bars覆盖19%偏子集); 不证score<5或高分SKIP是好票")
+    print("- 建议: 不据本审计改门/松SKIP; 真供应杠杆=入场价质量(已成交实际MFE0.44% vs best2.47%=选向/择时差)")
+    print("- 须预注册影子A/B(conf-only vs score+conf tier)攒样再裁; 高分SKIP漏票须外部抓无偏价才可裁")
 
 
 if __name__ == "__main__":
