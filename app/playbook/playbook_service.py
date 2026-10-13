@@ -241,6 +241,40 @@ class PlaybookService:
         from app.risk.capital_safety import get_capital_safety_system
         return get_capital_safety_system()
 
+    def _evaluate_live_execution_gate(self, direction: str) -> Dict[str, Any]:
+        """Evaluate the shared LIVE arm gate for one execution attempt."""
+        import os as _os
+
+        arm_cfg = self._get_live_arm_config()
+        market_phase = ""
+
+        try:
+            from app.core.scheduler_triggers import get_market_phase
+            market_phase = get_market_phase().value
+        except Exception as error:
+            logger.error(f"[playbook] LIVE market phase read failed: {error}")
+
+        return evaluate_live_arm_gate(
+            arm_cfg,
+            allow_real_trading=_os.getenv("ALLOW_REAL_TRADING", "false").strip().lower() == "true",
+            real_account_id=_os.getenv("REAL_ACCOUNT_ID", ""),
+            lane_db_name=getattr(self.db, "db_name", ""),
+            instruction_direction=str(direction or ""),
+            market_phase=market_phase,
+            open_live_positions=count_open_live_positions(
+                core_paths.get_trade_records_db_for_arm("real")
+            ),
+            halted=bool(read_live_arm_halt().get("halted")),
+        )
+
+    def _get_live_arm_config(self) -> Dict[str, Any]:
+        try:
+            from app.core.config_container import get_config
+            return get_config().get_dotted("playbook.live_manual_arm", None) or {}
+        except Exception as error:
+            logger.error(f"[playbook] LIVE arm config read failed (fail-closed): {error}")
+            return {}
+
     def _refresh_live_capital_context(self):
         """Refresh LIVE capital from the real broker before any risk gate."""
         from app.execution.dual_broker import get_dual_broker
@@ -992,6 +1026,20 @@ class PlaybookService:
                     "message": f"[LIVE_CAPITAL_FAIL_CLOSE] {_live_capital_error}",
                 }
 
+            live_gate = self._evaluate_live_execution_gate(str(inst.get("direction") or ""))
+            if not live_gate.get("allowed"):
+                reason_text = "; ".join(
+                    reason.get("message", "unknown") for reason in live_gate.get("reasons", [])
+                )
+                logger.critical(
+                    f"🚫 [playbook] LIVE arm gate rejected {inst.get('symbol')}: {reason_text}"
+                )
+                return {
+                    "success": False,
+                    "message": f"[LIVE_ARM_GATE] {inst.get('symbol')} {reason_text}",
+                    "reasons": live_gate.get("reasons", []),
+                }
+
         # 风控分级复权缩放 (2026-09-05, 用户裁"按照建议执行"): 两个半仓来源取 min —
         #   ① OKR 账户熔断的 REDUCE_50 档 (此前**无任何消费方**, 见下方接线);
         #   ② 绝对熔断连亏冷静期到期后的"观察期"(AbsoluteCircuitBreaker.get_position_scale)。
@@ -1396,34 +1444,7 @@ class PlaybookService:
         _is_live = (target_env == "real")
 
         if _is_live:
-            _arm_cfg = {}
-            try:
-                from app.core.config_container import get_config as _get_cfg_arm
-                _arm_cfg = _get_cfg_arm().get_dotted("playbook.live_manual_arm", None) or {}
-            except Exception as _ae:
-                logger.error(f"[playbook] LIVE 臂开关读取异常 (fail-closed 拒绝): {_ae}")
-                _arm_cfg = {}
-
-            import os as _os_live
-            try:
-                from app.core.scheduler_triggers import get_market_phase
-                _market_phase = get_market_phase().value
-            except Exception as _phase_error:
-                logger.error(f"[playbook] LIVE market phase read failed: {_phase_error}")
-                _market_phase = ""
-
-            _gate = evaluate_live_arm_gate(
-                _arm_cfg,
-                allow_real_trading=_os_live.getenv("ALLOW_REAL_TRADING", "false").strip().lower() == "true",
-                real_account_id=_os_live.getenv("REAL_ACCOUNT_ID", ""),
-                lane_db_name=getattr(self.db, "db_name", ""),
-                instruction_direction=str(direction or ""),
-                market_phase=_market_phase,
-                open_live_positions=count_open_live_positions(
-                    core_paths.get_trade_records_db_for_arm("real")
-                ),
-                halted=bool(read_live_arm_halt().get("halted")),
-            )
+            _gate = self._evaluate_live_execution_gate(direction)
             if not _gate.get("allowed"):
                 _reason_text = "; ".join(
                     reason.get("message", "unknown") for reason in _gate.get("reasons", [])
@@ -1437,6 +1458,7 @@ class PlaybookService:
                     "reasons": _gate.get("reasons", []),
                 }
 
+            _arm_cfg = self._get_live_arm_config()
             _probe = _arm_cfg.get("probe") if isinstance(_arm_cfg.get("probe"), dict) else {}
             _max_qty = 1
             if not position_size:

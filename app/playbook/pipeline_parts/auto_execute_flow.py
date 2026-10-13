@@ -1160,16 +1160,47 @@ def run_playbook_auto_execute(
                                     )
                                 else:
                                     live_skipped_count += 1
+                                    live_failure_marked = False
                                     if live_result.get("stop_protection_failed"):
                                         errors.append(
                                             f"{inst['symbol']}: LIVE C-lite 已成交但 STOP 保护失败 — "
                                             f"{live_result.get('message', 'unknown')}"
                                         )
                                     else:
+                                        failure_reason = (
+                                            f"LIVE_EXECUTION_REJECTED: "
+                                            f"{live_result.get('message', 'unknown')}"
+                                        )
+                                        try:
+                                            live_failure_marked = bool(
+                                                live_context["db"].mark_instruction_guardrail_skip(
+                                                    live_instruction_id,
+                                                    failure_reason,
+                                                )
+                                            )
+                                            live_context["db"].merge_instruction_metadata(
+                                                live_instruction_id,
+                                                {
+                                                    "live_execution_failure": {
+                                                        "reason": failure_reason,
+                                                        "source_instruction_id": inst.get("id"),
+                                                    }
+                                                },
+                                            )
+                                        except Exception as mark_error:
+                                            logger.error(
+                                                f"[playbook] LIVE failure state mark failed "
+                                                f"{inst['symbol']} id={live_instruction_id}: {mark_error}",
+                                                exc_info=True,
+                                            )
                                         errors.append(
                                             f"{inst['symbol']}: LIVE C-lite skipped — "
                                             f"{live_result.get('message', 'unknown')}"
                                         )
+                                        if not live_failure_marked:
+                                            errors.append(
+                                                f"{inst['symbol']}: LIVE failure row not marked SKIP"
+                                            )
                                     try:
                                         from app.push import get_push_hub
                                         from app.push.message import Level

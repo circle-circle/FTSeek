@@ -143,6 +143,27 @@ def test_live_stop_failure_is_fail_close_and_halt_new_live():
     assert "既有仓位不平仓" in source
 
 
+def test_live_arm_gate_runs_before_account_circuit_breaker():
+    source = inspect.getsource(PlaybookService.execute_instruction)
+
+    gate_index = source.index("_evaluate_live_execution_gate")
+    breaker_index = source.index("check_circuit_breaker")
+    assert gate_index < breaker_index, (
+        "LIVE authorization/waiver failures must be visible before the broader "
+        "account circuit breaker masks their root cause"
+    )
+
+
+def test_live_mirror_execution_failure_is_marked_skip_with_reason():
+    from app.playbook.pipeline_parts import auto_execute_flow
+
+    source = inspect.getsource(auto_execute_flow.run_playbook_auto_execute)
+    assert "mark_instruction_guardrail_skip" in source
+    assert "LIVE_EXECUTION_REJECTED" in source
+    assert "live_execution_failure" in source
+    assert "live_failure_marked" in source
+
+
 def _broker_stop_reconciliation_ledger(path: Path):
     connection = sqlite3.connect(path)
     connection.execute(
