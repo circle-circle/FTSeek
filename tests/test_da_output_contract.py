@@ -20,6 +20,9 @@
 import json
 import os
 import sys
+import contextlib
+import io
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -113,6 +116,50 @@ def _seq_stub(responses, log):
         n["i"] += 1
         return json.loads(json.dumps(r))
     return stub
+
+
+def test_transient_retry_diagnostics_do_not_pollute_json_stdout(monkeypatch):
+    calls = []
+    sleeps = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def read(self):
+            return json.dumps(self.payload).encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+    def fake_urlopen(request, timeout=60):
+        calls.append(timeout)
+        if len(calls) == 1:
+            raise urllib.error.URLError("ssl timeout")
+        return FakeResponse({
+            "choices": [{
+                "message": {"content": json.dumps({"ok": True})},
+                "finish_reason": "stop",
+            }],
+            "model": "test-model",
+            "usage": {},
+        })
+
+    monkeypatch.setattr(L.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(L.time, "sleep", sleeps.append)
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        result = L._call_llm("system", "user")
+
+    assert result["ok"] is True
+    assert stdout.getvalue() == ""
+    assert "瞬态故障重试成功" in stderr.getvalue()
+    assert sleeps == [8]
 
 
 # ── 1. 安全不变量: 补全不改交易决策 ────────────────────────────────────────
@@ -750,7 +797,7 @@ class TestRound14:
         # 2026-09-14 v0.79 盘前数据有效性批 (VIX 代理 / 覆盖审计子项 / 板块脉搏日期守卫 /
         #   快照 T-1 口径标注): 三处版本号同步升, 本行是同步棘轮 (历史漏更两次, 见
         #   CHANGELOG 头注 "改 skill 代码的提交必须同步改 SKILL.md 的 version:")。
-        assert frontmatter_version == latest_changelog_version == "0.94"
+        assert frontmatter_version == latest_changelog_version == "0.95"
         assert '.Path(__file__).resolve().parents[1] / "SKILL.md"' in pipeline
         assert "^version:" in pipeline
 

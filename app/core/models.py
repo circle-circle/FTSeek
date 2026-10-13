@@ -266,6 +266,7 @@ class Order:
     symbol: str = ""
     direction: Direction = Direction.LONG
     order_type: OrderType = OrderType.LIMIT
+    trd_side: Optional[str] = None
     
     quantity: float = 0.0
     price: float = 0.0             # 限价单价格

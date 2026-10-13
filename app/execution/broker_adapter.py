@@ -19,6 +19,10 @@ from app.execution.futu_accounting import normalize_futu_account
 logger = logging.getLogger(__name__)
 
 
+class BrokerUnavailableError(RuntimeError):
+    """Raised when broker state or positions cannot be determined."""
+
+
 class FutuBrokerAdapter:
     """富途券商适配器（支持模拟和真实环境）"""
 
@@ -34,10 +38,14 @@ class FutuBrokerAdapter:
         trade_env: int = 1,    # 0=真实，1=模拟
         account_id: str = "",
         on_disconnect_callback=None,
+        allow_offline_simulated_fill: bool = False,
     ):
+        if trade_env not in (0, 1):
+            raise ValueError(f"Invalid trade_env: {trade_env!r}; expected 0 (real) or 1 (simulate)")
         self.host = host
         self.port = port
         self.trade_env = trade_env
+        self.allow_offline_simulated_fill = allow_offline_simulated_fill
         self.account_id = account_id
         self.connected = False
         self.quote_ctx = None
@@ -474,21 +482,35 @@ class FutuBrokerAdapter:
             {"order_id": str, "status": str, "futu_order_id": str}
         """
         # 2. 提交订单
+        requested_side = getattr(order, "trd_side", None)
+        if requested_side is None:
+            logger.error(f"[富途] 订单 {order.symbol} 缺少显式 trd_side, 拒绝提交")
+            return {"success": False, "error": "missing_trd_side", "order_id": ""}
+
         if not self.is_connected():
-            # DEB-20260903 #97: 实盘判定按 self.trade_env 而非环境变量 —
-            # 防止实盘适配器在 AUTO_TRADE_ACCOUNT 未同步时断连返回虚假模拟成交
-            if self.trade_env == 0:
+            if self.trade_env == 0 or not self.allow_offline_simulated_fill:
                 raise RuntimeError(
-                    f"[实盘安全] Broker 未连接, 拒绝提交 {order.symbol} 订单 — "
-                    f"请勿在断连状态下交易"
+                    f"[实盘安全] Broker 未连接, 拒绝提交 {order.symbol} 订单 "
+                    f"(trade_env={self.trade_env}, offline_simulated_fill={self.allow_offline_simulated_fill})"
                 )
             return self._simulate_fill(order)
 
         try:
             from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, RET_OK, TimeInForce, Session
 
-            # 转换方向 (确保 Order 对象有 direction 或从 action 推断)
-            trd_side = order.trd_side if hasattr(order, 'trd_side') else (TrdSide.BUY if order.direction == Direction.LONG else TrdSide.SELL)
+            side_name = str(requested_side).upper().replace("TRDSIDE.", "")
+            trd_side = {
+                "BUY": TrdSide.BUY,
+                "SELL": TrdSide.SELL,
+                "SELL_SHORT": TrdSide.SELL_SHORT,
+                "BUY_BACK": TrdSide.BUY_BACK,
+            }.get(side_name)
+            if trd_side is None:
+                logger.error(
+                    f"[富途] 订单 {order.symbol} trd_side 非法: {requested_side!r}, 拒绝提交"
+                )
+                return {"success": False, "error": "invalid_trd_side", "order_id": ""}
+
             # 转换订单类型
             futu_order_type = FutuOrderType.NORMAL
             if order.order_type == OrderType.MARKET:
@@ -499,12 +521,6 @@ class FutuBrokerAdapter:
             # 2026-04-26: 移除 TWAP 拆单逻辑，统一单笔提交
             # 风控层已充分约束订单规模 (PositionLimits / CapitalSafety / RiskStateMachine)
             # 移动止损策略 (Chandelier/ATR/Flash Exit) 独立于下单方式，不受影响
-            is_sell = False
-            if hasattr(order, 'trd_side'):
-                is_sell = (order.trd_side == TrdSide.SELL)
-            elif hasattr(order, 'direction'):
-                is_sell = (order.direction != Direction.LONG)
-
             # 兜底门禁 (2026-06-06): broker 前最后一道墙
             # P0 (2026-06-16): 平仓单 (is_exit=True) 绕过门禁 — 紧急退出不能被阻断
             _order_meta = getattr(order, 'metadata', None) or {}
@@ -589,10 +605,10 @@ class FutuBrokerAdapter:
                 raise RuntimeError(f"下单失败: {data}")
 
         except ImportError:
-            # DEB-20260903 #97: 实盘判定按 self.trade_env 而非环境变量
-            if self.trade_env == 0:
+            if self.trade_env == 0 or not self.allow_offline_simulated_fill:
                 raise RuntimeError(
-                    f"[实盘安全] futu-api 未安装, 拒绝提交 {order.symbol} 订单"
+                    f"[实盘安全] futu-api 未安装, 拒绝提交 {order.symbol} 订单 "
+                    f"(trade_env={self.trade_env}, offline_simulated_fill={self.allow_offline_simulated_fill})"
                 )
             return self._simulate_fill(order)
         except Exception as e:
@@ -792,8 +808,7 @@ class FutuBrokerAdapter:
             [{"symbol", "qty", "cost_price", "current_price", "unrealized_pnl"}, ...]
         """
         if not self.is_connected():
-            logger.debug("[富途] 未连接，返回空持仓")
-            return []
+            raise BrokerUnavailableError("Broker is not connected; positions are unknown")
 
         try:
             from futu import TrdEnv, RET_OK
@@ -846,11 +861,11 @@ class FutuBrokerAdapter:
                 return positions
             return []
 
-        except ImportError:
-            return []
+        except ImportError as e:
+            raise BrokerUnavailableError("futu-api is unavailable; positions are unknown") from e
         except Exception as e:
             logger.error(f"[富途] 查询持仓异常: {e}")
-            return []
+            raise BrokerUnavailableError(f"Broker position query failed: {e}") from e
 
     # ------------------------------------------------------------------
     # 实时报价
@@ -1172,10 +1187,10 @@ class FutuBrokerAdapter:
         # 新逻辑：统一走 API，trd_env=TrdEnv.SIMULATE 自动路由到模拟盘
         # 优势：验证期权代码有效性、获取真实成交状态、避免虚假持仓
         if not self.is_connected():
-            # DEB-20260903 #97/#98: 实盘判定按 self.trade_env — 断连时禁止虚假模拟成交
-            if self.trade_env == 0:
+            if self.trade_env == 0 or not self.allow_offline_simulated_fill:
                 raise RuntimeError(
-                    f"[实盘安全] Broker 未连接, 拒绝期权订单 {option_code}"
+                    f"[实盘安全] Broker 未连接, 拒绝期权订单 {option_code} "
+                    f"(trade_env={self.trade_env}, offline_simulated_fill={self.allow_offline_simulated_fill})"
                 )
             logger.info(
                 f"[期权·模拟] {direction} {option_code} qty={qty} price={price}"

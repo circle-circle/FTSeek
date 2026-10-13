@@ -12,7 +12,11 @@ from scripts.extended_hours_exit_cron import (
 )
 
 
-def test_next_open_window_is_bound_and_exclusive():
+def test_next_open_window_is_bound_exclusive_and_legacy_only(monkeypatch):
+    monkeypatch.delenv("EXT_AFTERHOURS_HOLD_TO_OPEN", raising=False)
+    assert get_exit_cron_session(datetime(2026, 9, 18, 9, 30)) is None
+
+    monkeypatch.setenv("EXT_AFTERHOURS_HOLD_TO_OPEN", "true")
     assert get_exit_cron_session(datetime(2026, 9, 18, 9, 30)) == "next_open"
     assert get_exit_cron_session(datetime(2026, 9, 18, 9, 35)) == "next_open"
     assert get_exit_cron_session(datetime(2026, 9, 18, 9, 45)) is None
@@ -20,6 +24,7 @@ def test_next_open_window_is_bound_and_exclusive():
 
 
 def test_next_open_reuses_premarket_collector(monkeypatch, tmp_path):
+    monkeypatch.setenv("EXT_AFTERHOURS_HOLD_TO_OPEN", "true")
     monkeypatch.setattr(
         "scripts.extended_hours_exit_cron.get_exit_cron_session",
         lambda now=None: "next_open",
@@ -31,6 +36,10 @@ def test_next_open_reuses_premarket_collector(monkeypatch, tmp_path):
     # 孤儿单检测走真实账本/券商 ⇒ 测试里桩掉, 保持用例无副作用
     monkeypatch.setattr(
         "scripts.extended_hours_exit_cron.scan_orphan_orders",
+        lambda dry=False: {"ok": True, "skip": "stubbed"},
+    )
+    monkeypatch.setattr(
+        "scripts.extended_hours_exit_cron.scan_closekey_health",
         lambda dry=False: {"ok": True, "skip": "stubbed"},
     )
 
@@ -46,3 +55,25 @@ def test_next_open_reuses_premarket_collector(monkeypatch, tmp_path):
     assert result["session"] == "next_open"
     assert calls[0][1].endswith("premarket_exit_shadow.py")
     assert collector_command("next_open")[1].endswith("premarket_exit_shadow.py")
+
+
+def test_next_open_collector_is_off_by_default(monkeypatch, tmp_path):
+    monkeypatch.delenv("EXT_AFTERHOURS_HOLD_TO_OPEN", raising=False)
+    monkeypatch.setattr(
+        "scripts.extended_hours_exit_cron.scan_orphan_orders",
+        lambda dry=False: {"ok": True, "skip": "stubbed"},
+    )
+    monkeypatch.setattr(
+        "scripts.extended_hours_exit_cron.scan_closekey_health",
+        lambda dry=False: {"ok": True, "skip": "stubbed"},
+    )
+    monkeypatch.setattr(
+        "scripts.extended_hours_exit_cron.subprocess.run",
+        lambda command, **kwargs: (_ for _ in ()).throw(AssertionError(command)),
+    )
+
+    result = run_once(now=datetime(2026, 9, 18, 9, 35))
+
+    assert result["ok"] is True
+    assert result["session"] is None
+    assert result["skip"] == "outside_extended_hours"

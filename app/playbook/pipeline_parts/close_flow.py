@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from typing import Any, Callable, Optional
 
+from app.risk.exit_reasons import normalize_exit_reason
+
 
 def _close_trade_record(
     conn,
@@ -49,6 +51,7 @@ def _close_trade_record(
     2026-07-09: 从 metadata_json 提取 mfe_pct/mae_pct 写入独立列 (MFE/MAE采集).
     """
     # 2026-07-03 fix: 用 ET 时区写入 exit_time, 与 entry_time 格式对齐 (均 tz-aware)
+    exit_reason = normalize_exit_reason(exit_reason)
     try:
         now_iso = datetime_cls.now(_now_et()).isoformat()
     except Exception:
@@ -398,11 +401,18 @@ def _close_trade_record(
         #   三态只升不降 (broker/reconciled 不被 est 覆盖); 旧库/测试库无列 → 静默跳过。
         if _fees_total is not None:
             try:
+                _net_pnl = round(round(pnl, 2) - _fees_total, 2)
+                _fee_notional = float(_tr[2] or 0) * float(_tr[4] or 0)
+                _net_pnl_pct = (
+                    round(_net_pnl / _fee_notional, 4)
+                    if _fee_notional > 0 else None
+                )
                 conn.execute(
-                    "UPDATE trade_records SET fees_est=?, pnl_net=?, "
+                    "UPDATE trade_records SET fees_est=?, pnl_net=?, net_pnl_pct=?, "
                     "fees_source=CASE WHEN fees_source IN ('broker','reconciled') "
-                    "THEN fees_source ELSE 'est' END WHERE id=?",
-                    (_fees_total, round(round(pnl, 2) - _fees_total, 2), trade_id))
+                    "THEN fees_source ELSE 'est' END "
+                    "WHERE id=?",
+                    (_fees_total, _net_pnl, _net_pnl_pct, trade_id))
             except Exception as _fee_col_err:
                 logger.debug(f"[_close_trade_record] 费用列写入跳过 trade_id={trade_id}: {_fee_col_err}")
         # instruction 表的 MFE/MAE 列历史语义是【美元金额】(shadow_tracker 写 (high-price)*size,

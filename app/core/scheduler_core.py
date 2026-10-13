@@ -58,7 +58,7 @@ class PositionStore:
         # 订单提交/失败后释放. 纯内存操作, 零 IO 开销.
         self._pending: Set[str] = set()
 
-    def add(self, symbol: str, position: Position):
+    def add(self, symbol: str, position: Position) -> bool:
         # Critical #3 修复 (2026-06-02):
         # 内存写入 + daily_active_pool 同步必须在同一锁内, 否则
         # scan_loop / monitor_loop 并发调用时可能出现:
@@ -67,6 +67,13 @@ class PositionStore:
         # 锁顺序: PositionStore._lock → DailyActivePool._lock
         # (DailyActivePool 不会回调 PositionStore, 因此不存在循环依赖)
         with self._lock:
+            existing = self._positions.get(symbol)
+            if existing is not None and existing.direction != position.direction:
+                logger.critical(
+                    f"[PositionStore] {symbol} 方向冲突: "
+                    f"existing={existing.direction}, incoming={position.direction} — 拒绝覆盖"
+                )
+                return False
             self._positions[symbol] = position
             self._pending.discard(symbol)  # 开仓成功，清除pending标记
 
@@ -82,6 +89,7 @@ class PositionStore:
             except Exception as e:
                 logger.error(f"[daily_active_pool] {symbol} 添加同步失败: {e}")
                 # 不中断主流程 (内存持仓已写入), 但异常向监控系统暴露
+        return True
 
     def get(self, symbol: str) -> Optional[Position]:
         with self._lock:

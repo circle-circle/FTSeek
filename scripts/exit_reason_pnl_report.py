@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-F13/F22 (2026-05-14): Exit Reason × PnL 分布报告
+F13/F22 (2026-05-14): Exit Reason × Net PnL 分布报告
 
-按 exit_reason × session × direction 分组的 PnL 分布。
+按 exit_reason × session × direction 分组的净 PnL 分布。
 让"哪条退出规则真正赚钱 / 哪条该禁用"可量化。
 
 用法:
@@ -28,6 +28,8 @@ from typing import Dict, List, Optional
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from app.risk.exit_reasons import normalize_exit_reason  # noqa: E402
+
 
 def _load_trades(db_path: str, days: int) -> List[Dict]:
     """读取最近 N 天有 exit_reason 的成交记录"""
@@ -39,10 +41,16 @@ def _load_trades(db_path: str, days: int) -> List[Dict]:
     from app.utils.timezone import now_et
     cutoff = (now_et() - timedelta(days=days)).strftime("%Y-%m-%d")
 
+    metric_columns = [
+        name for name in ("pnl_net", "fees_est", "net_pnl_pct")
+        if name in {row[1] for row in conn.execute("PRAGMA table_info(trade_records)")}
+    ]
+    metric_select = f", {', '.join(metric_columns)}" if metric_columns else ""
     rows = conn.execute(
-        """
+        f"""
         SELECT exit_reason, direction, realized_pnl, pnl_pct, entry_price, quantity,
                entry_time, exit_time, holding_hours, symbol, source_type, trade_date
+               {metric_select}
         FROM trade_records
         WHERE exit_reason IS NOT NULL
           AND exit_time IS NOT NULL
@@ -83,8 +91,8 @@ def _classify_session(exit_time_str: str) -> str:
     return "post_close"
 
 
-def _compute_pnl_pct(t: Dict) -> Optional[float]:
-    """统一返回百分比 (0.01 = 1%)"""
+def _compute_gross_pnl_pct(t: Dict) -> Optional[float]:
+    """返回毛收益率 (0.01 = 1%)"""
     p = t.get("pnl_pct")
     if p is not None:
         return float(p)
@@ -99,25 +107,69 @@ def _compute_pnl_pct(t: Dict) -> Optional[float]:
     return None
 
 
+def _compute_net_pnl_usd(t: Dict) -> Optional[float]:
+    net = t.get("pnl_net")
+    if net is not None:
+        return float(net)
+    gross = t.get("realized_pnl")
+    fees = t.get("fees_est")
+    if gross is not None and fees is not None:
+        return float(gross) - float(fees)
+    return None
+
+
+def _compute_net_pnl_pct(t: Dict) -> Optional[float]:
+    """返回净收益率 (0.01 = 1%); 没有净额/费用证据时返回 None."""
+    stored = t.get("net_pnl_pct")
+    if stored is not None:
+        return float(stored)
+    net = _compute_net_pnl_usd(t)
+    qty = float(t.get("quantity") or 0)
+    entry = float(t.get("entry_price") or 0)
+    if net is not None and qty > 0 and entry > 0:
+        return net / (qty * entry)
+    return None
+
+
+def _compute_pnl_pct(t: Dict) -> Optional[float]:
+    """兼容旧函数名: 主聚合口径为净收益率."""
+    return _compute_net_pnl_pct(t)
+
+
 def _aggregate(trades: List[Dict]) -> Dict[str, Dict]:
-    """按 exit_reason 聚合"""
-    groups: Dict[str, List[float]] = {}
+    """按 exit_reason 聚合; avg_pnl_pct 为净口径, avg_gross_pnl_pct 为毛口径."""
+    groups: Dict[str, List[Dict]] = {}
     sessions: Dict[str, Dict[str, List[float]]] = {}
     directions: Dict[str, Dict[str, List[float]]] = {}
 
     for t in trades:
-        r = t.get("exit_reason") or "UNKNOWN"
-        pct = _compute_pnl_pct(t)
+        r = normalize_exit_reason(t.get("exit_reason") or "UNKNOWN")
+        pct = _compute_net_pnl_pct(t)
         if pct is None:
             continue
-        groups.setdefault(r, []).append(pct)
+        gross_pct = _compute_gross_pnl_pct(t)
+        net_usd = _compute_net_pnl_usd(t)
+        gross_usd = t.get("realized_pnl")
+        fees_usd = t.get("fees_est")
+        groups.setdefault(r, []).append({
+            "net_pct": pct,
+            "gross_pct": gross_pct,
+            "net_usd": net_usd,
+            "gross_usd": float(gross_usd) if gross_usd is not None else None,
+            "fees_usd": float(fees_usd) if fees_usd is not None else None,
+        })
         sess = _classify_session(t.get("exit_time"))
         sessions.setdefault(r, {}).setdefault(sess, []).append(pct)
         dir_ = (t.get("direction") or "UNKNOWN").upper()
         directions.setdefault(r, {}).setdefault(dir_, []).append(pct)
 
     out: Dict[str, Dict] = {}
-    for r, vals in groups.items():
+    for r, records in groups.items():
+        vals = [record["net_pct"] for record in records]
+        gross_vals = [record["gross_pct"] for record in records if record["gross_pct"] is not None]
+        gross_usd_vals = [record["gross_usd"] for record in records if record["gross_usd"] is not None]
+        fees_usd_vals = [record["fees_usd"] for record in records if record["fees_usd"] is not None]
+        net_usd_vals = [record["net_usd"] for record in records if record["net_usd"] is not None]
         n = len(vals)
         wins = sum(1 for v in vals if v > 0)
         avg = statistics.mean(vals) if vals else 0.0
@@ -131,6 +183,7 @@ def _aggregate(trades: List[Dict]) -> Dict[str, Dict]:
             "n": n,
             "win_rate": wins / n if n else 0.0,
             "avg_pnl_pct": avg,
+            "avg_gross_pnl_pct": statistics.mean(gross_vals) if gross_vals else None,
             "median_pnl_pct": med,
             "p25_pnl_pct": p25,
             "p75_pnl_pct": p75,
@@ -138,6 +191,9 @@ def _aggregate(trades: List[Dict]) -> Dict[str, Dict]:
             "sharpe_proxy": sharpe,
             "min_pnl_pct": min(vals) if vals else 0.0,
             "max_pnl_pct": max(vals) if vals else 0.0,
+            "gross_pnl_usd": sum(gross_usd_vals) if gross_usd_vals else None,
+            "fees_usd": sum(fees_usd_vals) if fees_usd_vals else None,
+            "net_pnl_usd": sum(net_usd_vals) if net_usd_vals else None,
             "by_session": {
                 s: {
                     "n": len(svs),
@@ -173,22 +229,25 @@ def _recommendation(stats: Dict) -> str:
 def _format_markdown(stats: Dict[str, Dict], days: int) -> str:
     rows = sorted(stats.items(), key=lambda kv: kv[1]["avg_pnl_pct"], reverse=True)
     out = []
-    out.append(f"# Exit Reason × PnL Distribution Report")
+    out.append(f"# Exit Reason × Net PnL Distribution Report")
     out.append("")
     out.append(f"- 周期: 最近 **{days}** 天")
     out.append(f"- 生成时间: {datetime.now().isoformat(timespec='seconds')}")
     out.append(f"- 总规则数: {len(stats)}")
+    out.append("- 口径: `avg_pnl_pct`/`win_rate`/建议=净额；`avg_gross_pnl_pct`=毛价差；金额单位=USD")
     out.append("")
     out.append("## 主表 (按 avg_pnl_pct 降序)")
     out.append("")
-    out.append("| exit_reason | n | win_rate | avg_pnl% | median% | p25/p75% | sharpe | min/max% | recommendation |")
-    out.append("|-------------|---:|---------:|---------:|--------:|---------:|-------:|---------:|----------------|")
+    out.append("| exit_reason | n | win_rate | avg_gross% | avg_net% | median_net% | gross$ | fees$ | net$ | min/max_net% | recommendation |")
+    out.append("|-------------|---:|---------:|-----------:|---------:|------------:|-------:|------:|-----:|-------------:|----------------|")
     for r, s in rows:
         out.append(
             f"| `{r}` | {s['n']} | {s['win_rate']:.0%} | "
+            f"{(s['avg_gross_pnl_pct'] or 0)*100:+.2f} | "
             f"{s['avg_pnl_pct']*100:+.2f} | {s['median_pnl_pct']*100:+.2f} | "
-            f"{s['p25_pnl_pct']*100:+.2f} / {s['p75_pnl_pct']*100:+.2f} | "
-            f"{s['sharpe_proxy']:+.2f} | "
+            f"{(s['gross_pnl_usd'] or 0):+.2f} | "
+            f"{(s['fees_usd'] or 0):.2f} | "
+            f"{(s['net_pnl_usd'] or 0):+.2f} | "
             f"{s['min_pnl_pct']*100:+.1f} / {s['max_pnl_pct']*100:+.1f} | "
             f"{_recommendation(s)} |"
         )

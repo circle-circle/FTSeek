@@ -16,7 +16,7 @@ import pytest
 from futu import TrdEnv
 
 from app.core.models import Direction, Order, OrderType
-from app.execution.broker_adapter import FutuBrokerAdapter
+from app.execution.broker_adapter import BrokerUnavailableError, FutuBrokerAdapter
 
 
 @pytest.fixture
@@ -28,6 +28,7 @@ def _mk_order(symbol="US.AAPL", qty=10, price=100.0, is_exit=False):
     meta = {"is_exit": True} if is_exit else {}
     return Order(symbol=symbol, direction=Direction.LONG,
                  order_type=OrderType.LIMIT, quantity=qty, price=price,
+                 trd_side="BUY",
                  metadata=meta)
 
 
@@ -122,13 +123,21 @@ class TestNotionalSanityCheck:
 # ----------------------------------------------------------------------
 
 class TestSubmitOrderDisconnected:
-    def test_sim_account_falls_back_to_simulated_fill(self, adapter, monkeypatch):
-        """sim 断连 → 模拟成交 (保持链路可跑), 不抛异常."""
-        monkeypatch.setenv("AUTO_TRADE_ACCOUNT", "sim")
+    def test_sim_account_rejects_implicit_offline_fill(self, adapter):
+        adapter.connected = False
+        with pytest.raises(RuntimeError, match="offline_simulated_fill=False"):
+            adapter.submit_order(_mk_order())
+
+    def test_sim_account_allows_explicit_offline_fill(self):
+        adapter = FutuBrokerAdapter(
+            host="127.0.0.1",
+            port=11111,
+            trade_env=1,
+            allow_offline_simulated_fill=True,
+        )
         adapter.connected = False
         result = adapter.submit_order(_mk_order())
         assert result["status"] == "simulated_fill"
-        assert result["order_id"]
         assert str(result["futu_order_id"]).startswith("SIM_")
 
     def test_real_account_refuses_when_disconnected(self, monkeypatch):
@@ -156,6 +165,11 @@ class TestSimulateFillContract:
 
 
 class TestCrossMarketPositionIsolation:
+    def test_get_positions_disconnected_raises_unavailable(self, adapter):
+        adapter.connected = False
+        with pytest.raises(BrokerUnavailableError, match="positions are unknown"):
+            adapter.get_positions()
+
     def test_get_positions_filters_non_us_rows(self):
         adapter = _connected_adapter()
         adapter.trade_ctx = _FakePositionCtx([

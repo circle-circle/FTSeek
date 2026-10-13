@@ -2,8 +2,8 @@
 """费用净额历史回填 (DEB-20260730-fee-net-pnl D3, 用户裁"执行" 2026-07-30)。
 
 做什么:
-  1. trade_records 幂等 ALTER 加三列: fees_est REAL / pnl_net REAL / fees_source TEXT
-  2. 全部已平仓行按 fee_model 回填 fees_est + pnl_net (=realized_pnl − fees_est);
+  1. trade_records 幂等 ALTER 加四列: fees_est / pnl_net / fees_source / net_pnl_pct
+  2. 全部已平仓行按 fee_model 回填 fees_est + pnl_net + net_pnl_pct;
      fees_source='est' (仅当现值非 broker/reconciled 时覆盖 — 三态只升不降)
   3. 白名单行 (source_type IN PLAYBOOK_SIM/PLAYBOOK_LIVE) 额外写 metadata.fee_breakdown 审计明细
   4. 报告只出白名单口径 (§九.2 正向白名单, 防跨引擎拼接事故第四次重演): 月度汇总 + 假盈利单清单
@@ -39,7 +39,10 @@ REPORT = REPO / "data" / "fee_backfill_report.json"
 def ensure_columns(conn: sqlite3.Connection) -> list[str]:
     cols = [x[1] for x in conn.execute("PRAGMA table_info(trade_records)")]
     added = []
-    for name, ddl in (("fees_est", "REAL"), ("pnl_net", "REAL"), ("fees_source", "TEXT")):
+    for name, ddl in (
+        ("fees_est", "REAL"), ("pnl_net", "REAL"), ("fees_source", "TEXT"),
+        ("net_pnl_pct", "REAL"),
+    ):
         if name not in cols:
             conn.execute(f"ALTER TABLE trade_records ADD COLUMN {name} {ddl}")
             added.append(name)
@@ -49,6 +52,7 @@ def ensure_columns(conn: sqlite3.Connection) -> list[str]:
 def repair_duplicate_external_close_rows(conn: sqlite3.Connection) -> int:
     cursor = conn.execute(
         "UPDATE trade_records SET fees_est=NULL, pnl_net=NULL, fees_source=NULL "
+        ", net_pnl_pct=NULL "
         "WHERE data_quality='duplicate_external_close' AND realized_pnl IS NULL"
     )
     return cursor.rowcount
@@ -92,13 +96,15 @@ def main() -> int:
         fees = round(rt["total"], 2)
         gross = float(r["realized_pnl"] or 0)
         net = round(gross - fees, 2)
+        notional = float(r["quantity"]) * float(r["entry_price"])
+        net_pct = round(net / notional, 4) if notional > 0 else None
         if args.apply:
             # 三态只升不降: broker/reconciled 不被 est 覆盖
             conn.execute(
-                "UPDATE trade_records SET fees_est=?, pnl_net=?, "
+                "UPDATE trade_records SET fees_est=?, pnl_net=?, net_pnl_pct=?, "
                 "fees_source=CASE WHEN fees_source IN ('broker','reconciled') "
                 "THEN fees_source ELSE 'est' END WHERE id=?",
-                (fees, net, r["id"]))
+                (fees, net, net_pct, r["id"]))
             n_upd += 1
         if r["source_type"] in WHITELIST:
             mo = str(r["trade_date"])[:7]

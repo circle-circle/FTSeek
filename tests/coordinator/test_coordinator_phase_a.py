@@ -9,6 +9,9 @@ Coordinator Phase A 核心冲突场景单测 (2026-05-14).
 5. Coordinator pre_trade_arbitrate: 三道闸联动
 """
 import os
+import sqlite3
+import threading
+import time
 import tempfile
 import pytest
 
@@ -19,6 +22,7 @@ from app.coordinator import (
     ExitDispatcher,
 )
 from app.coordinator.strategy_coordinator import StrategyCoordinator
+import app.coordinator.capital_allocator as capital_allocator_module
 
 
 # ─── 测试用 mock ────────────────────────────────────────────────
@@ -42,8 +46,8 @@ def test_capital_allocator_observe_mode_records_but_allows():
     assert cap.try_reserve("main", 0.50) is True
     assert cap.try_reserve("main", 0.30) is True  # 总 0.80 > cap 0.65, observe 放行
     snap = cap.snapshot()
-    # H7 (2026-06-03): BLOCKED 事件不再记账 (防账本透支失真) — 只记 0.50
-    assert snap.by_strategy["main"] == pytest.approx(0.50)
+    # observe 放行即形成真实敞口; BLOCKED 事件必须同步记录, 供 enforce 切换前评估
+    assert snap.by_strategy["main"] == pytest.approx(0.80)
     # 但事件标 BLOCKED
     events = cap.get_recent_events(10)
     assert any(e["decision"] == "BLOCKED_STRATEGY_CAP" for e in events)
@@ -56,6 +60,26 @@ def test_capital_allocator_enforce_mode_rejects_over_cap():
     assert cap.try_reserve("main", 0.20) is False
     # 账本仍是 0.50, 没记进去
     assert cap.snapshot().by_strategy["main"] == pytest.approx(0.50)
+
+
+def test_capital_allocator_enforce_rejects_zero_and_unknown_buckets():
+    cap = CapitalAllocator(
+        caps={"main": 0.65, "llm_plan": 0.0},
+        observe_only=False,
+    )
+    assert cap.try_reserve("llm_plan", 0.10) is False
+    assert cap.try_reserve("unknown_strategy", 0.10) is False
+    assert all(value == 0.0 for value in cap.snapshot().by_strategy.values())
+    assert "unknown_strategy" not in cap.snapshot().by_strategy
+
+
+def test_capital_allocator_scale_factor_rejects_zero_and_unknown_buckets():
+    cap = CapitalAllocator(
+        caps={"main": 0.65, "llm_plan": 0.0},
+        observe_only=False,
+    )
+    assert cap.compute_scale_factor("llm_plan", 0.10) == 0.0
+    assert cap.compute_scale_factor("unknown_strategy", 0.10) == 0.0
 
 
 def test_capital_allocator_enforce_total_cap():
@@ -75,6 +99,119 @@ def test_capital_allocator_release():
     # 释放过头不会变负
     cap.release("main", 1.0)
     assert cap.snapshot().by_strategy["main"] == pytest.approx(0.0)
+
+
+def test_capital_allocator_rejects_invalid_position_pct():
+    cap = CapitalAllocator(caps={"main": 0.65}, observe_only=True)
+
+    for invalid_value in (float("nan"), float("inf"), -0.1, 0.0, "bad"):
+        assert cap.try_reserve("main", invalid_value) is False
+        assert cap.compute_scale_factor("main", invalid_value) == 0.0
+
+    with pytest.raises(ValueError):
+        cap.release("main", float("nan"))
+
+    assert cap.snapshot().by_strategy["main"] == pytest.approx(0.0)
+
+
+def test_capital_allocator_reset_blocks_reservations_until_reconciled():
+    cap = CapitalAllocator(caps={"main": 0.65}, observe_only=False)
+    assert cap.try_reserve("main", 0.50) is True
+
+    entered = threading.Event()
+    release_reset = threading.Event()
+
+    def blocking_reconcile(positions):
+        entered.set()
+        assert release_reset.wait(2)
+        CapitalAllocator.reconcile_with_positions(cap, positions)
+
+    cap.reconcile_with_positions = blocking_reconcile
+    reset_thread = threading.Thread(
+        target=cap.reset_and_reconcile,
+        args=({"main": 0.30},),
+    )
+    reset_thread.start()
+    assert entered.wait(1)
+
+    reserve_result = {}
+
+    def reserve_during_reset():
+        reserve_result["value"] = cap.try_reserve("main", 0.10)
+
+    reserve_thread = threading.Thread(target=reserve_during_reset)
+    reserve_thread.start()
+    reserve_thread.join(0.1)
+    assert reserve_thread.is_alive()
+
+    release_reset.set()
+    reset_thread.join(2)
+    reserve_thread.join(2)
+
+    assert reserve_result["value"] is True
+    assert cap.snapshot().by_strategy["main"] == pytest.approx(0.40)
+
+
+def test_capital_allocator_singleton_is_thread_safe(monkeypatch):
+    monkeypatch.setattr(capital_allocator_module, "_singleton", None)
+    barrier = threading.Barrier(8)
+    allocators = []
+
+    def create_allocator():
+        barrier.wait()
+        allocators.append(capital_allocator_module.get_capital_allocator(caps={"main": 0.65}))
+
+    threads = [threading.Thread(target=create_allocator) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(2)
+
+    assert len({id(allocator) for allocator in allocators}) == 1
+
+
+def test_capital_allocator_persists_asynchronously_outside_hot_path(tmp_path):
+    db_path = tmp_path / "capital_allocator.db"
+    allocator = CapitalAllocator(
+        caps={"main": 0.65},
+        observe_only=False,
+        db_path=str(db_path),
+    )
+
+    assert allocator.try_reserve("main", 0.30) is True
+    for _ in range(100):
+        if allocator._persistence_queue.empty():
+            break
+        time.sleep(0.02)
+    assert allocator._persistence_queue.empty()
+
+    with sqlite3.connect(db_path) as conn:
+        bucket_value = conn.execute(
+            "SELECT value FROM capital_state WHERE kind='bucket' AND key='main'"
+        ).fetchone()[0]
+        event_count = conn.execute("SELECT COUNT(*) FROM capital_ledger").fetchone()[0]
+
+    assert bucket_value == pytest.approx(0.30)
+    assert event_count >= 1
+
+
+def test_auto_capacity_report_degrades_when_position_value_is_unknown():
+    class InvalidPosition:
+        metadata = {"source": "auto_main"}
+
+        @property
+        def size(self):
+            raise ValueError("size unavailable")
+
+    allocator = CapitalAllocator(caps={"main": 0.65}, observe_only=True)
+
+    report = allocator.auto_capacity_report(100_000.0, [InvalidPosition()])
+
+    assert report.unknown_count == 1
+    assert report.unknown_value is None
+    assert report.degraded is True
+    assert report.auto_headroom == 0.0
+    assert report.auto_headroom_pct == 0.0
 
 
 def test_capital_allocator_reconcile():

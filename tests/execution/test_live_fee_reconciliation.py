@@ -34,6 +34,7 @@ def _connection():
             realized_pnl REAL,
             fees_est REAL,
             pnl_net REAL,
+            net_pnl_pct REAL,
             fees_source TEXT,
             metadata_json TEXT,
             entry_price REAL,
@@ -77,6 +78,7 @@ def _insert_trade(conn, **overrides):
         "realized_pnl": 1.34,
         "fees_est": 4.01,
         "pnl_net": -2.67,
+        "net_pnl_pct": -0.0092,
         "fees_source": "est",
         "metadata_json": json.dumps(metadata),
         "entry_price": 289.9999,
@@ -85,9 +87,9 @@ def _insert_trade(conn, **overrides):
     row.update(overrides)
     conn.execute(
         "INSERT INTO trade_records (source_type, trade_mode, symbol, "
-        "futu_order_id, close_futu_order_id, realized_pnl, fees_est, pnl_net, "
+        "futu_order_id, close_futu_order_id, realized_pnl, fees_est, pnl_net, net_pnl_pct, "
         "fees_source, metadata_json, entry_price, quantity) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         tuple(row.values()),
     )
     conn.commit()
@@ -107,9 +109,9 @@ def test_reconcile_live_fees_upgrades_net_pnl_and_preserves_estimate():
     assert broker.calls == [(["ENTRY-1", "EXIT-1"], "real")]
 
     row = conn.execute(
-        "SELECT fees_est, pnl_net FROM trade_records WHERE id=1"
+        "SELECT fees_est, pnl_net, net_pnl_pct FROM trade_records WHERE id=1"
     ).fetchone()
-    assert row == (3.99, -2.65)
+    assert row == (3.99, -2.65, -0.0091)
     source = conn.execute(
         "SELECT fees_source FROM trade_records WHERE id=1"
     ).fetchone()[0]

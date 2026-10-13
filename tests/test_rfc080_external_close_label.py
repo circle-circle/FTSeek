@@ -48,11 +48,7 @@ class TestExternalCloseLabel:
         """查重守卫按自然键+exit_price>0 判重, 不得引入 trade_mode 条件
         (标签变更不得破坏 executor↔position_sync 双端去重)."""
         src = PS.read_text(encoding="utf-8")
-        match = re.search(
-            r"closed = conn\.execute\(\n(.*?)\n    \)\.fetchone\(\)\n    if closed:",
-            src,
-            re.DOTALL,
-        )
-        assert match, "external_close closed-row 查重未找到"
-        assert "trade_mode" not in match.group(1), \
+        assert "closed_rows = conn.execute(\n        EXTERNAL_CLOSE_DUP_SQL," in src, \
+            "external_close closed-row 查重未找到"
+        assert "trade_mode" not in PS.read_text(encoding="utf-8").split("EXTERNAL_CLOSE_DUP_SQL = (")[1].split(")\n")[0], \
             "查重守卫出现 trade_mode 条件 — 会因两端口径差异漏判重"

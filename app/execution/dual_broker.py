@@ -399,7 +399,7 @@ class DualBrokerAdapter:
 
         2026-07-19: 同时返回真实成交量 (dealt_qty), 供上游识别部分成交 —
             此前只取价格, 部分成交时上游按下单量记账 → 幽灵仓.
-            同一 order_id 可能有多笔成交, price 用最后一笔, qty 累加.
+            同一 order_id 可能有多笔成交, price 按数量加权, qty 累加.
         """
         from futu import RET_OK
         import time
@@ -424,7 +424,7 @@ class DualBrokerAdapter:
                         start=start, end=end, trd_env=trd_env,
                     )
                 if ret == RET_OK and data is not None and not data.empty:
-                    _last_price = 0.0
+                    _notional = 0.0
                     _sum_qty = 0.0
                     for _, deal in data.iterrows():
                         deal_order_id = str(deal.get("order_id", ""))
@@ -432,10 +432,10 @@ class DualBrokerAdapter:
                             price = float(deal.get("price", 0))
                             dealt_qty = float(deal.get("qty", 0) or 0)
                             if price > 0 and dealt_qty > 0:
-                                _last_price = price
+                                _notional += price * dealt_qty
                                 _sum_qty += dealt_qty
-                    if _last_price > 0 and _sum_qty > 0:
-                        return _last_price, _sum_qty
+                    if _notional > 0 and _sum_qty > 0:
+                        return _notional / _sum_qty, _sum_qty
             except Exception as e:
                 logger.debug(f"[DualBroker] history_deal_list_query 失败 {futu_order_id}: {e}")
             if _attempt < 2:

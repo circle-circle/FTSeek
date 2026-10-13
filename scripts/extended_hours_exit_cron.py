@@ -13,6 +13,13 @@ ROOT = Path(__file__).resolve().parent.parent
 os.chdir(str(ROOT))
 sys.path.insert(0, str(ROOT))
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(ROOT / ".env.us")
+except Exception as _dotenv_err:
+    print(f"[extended_hours_exit_cron] dotenv 加载失败 (忽略, 仅用进程 env): {_dotenv_err}",
+          file=sys.stderr)
+
 from scripts.extended_hours_market_session import get_extended_hours_session
 from scripts.orphan_ext_order_watch import scan as scan_orphan_orders
 from scripts.exit_closekey_health import scan as scan_closekey_health
@@ -42,6 +49,10 @@ def is_next_open_window(now):
     )
 
 
+def legacy_next_open_enabled():
+    return os.getenv("EXT_AFTERHOURS_HOLD_TO_OPEN", "false").lower() == "true"
+
+
 def get_exit_cron_session(now=None):
     if now is None:
         from app.utils.timezone import now_et
@@ -49,7 +60,7 @@ def get_exit_cron_session(now=None):
     session = get_extended_hours_session(now)
     if session is not None:
         return session
-    return "next_open" if is_next_open_window(now) else None
+    return "next_open" if legacy_next_open_enabled() and is_next_open_window(now) else None
 
 
 def run_once(dry=False, timeout_s=240, now=None):

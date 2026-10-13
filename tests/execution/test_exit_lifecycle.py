@@ -129,6 +129,21 @@ def adapter(tmp_path, ctx=None, clock=None):
     return broker
 
 
+def test_history_deal_fill_price_is_quantity_weighted(tmp_path):
+    ctx = Context()
+    ctx.history_deal_list_query = lambda **kwargs: (
+        0,
+        pd.DataFrame([
+            {"order_id": "42", "price": 100.0, "qty": 2.0},
+            {"order_id": "42", "price": 103.0, "qty": 1.0},
+            {"order_id": "other", "price": 999.0, "qty": 100.0},
+        ]),
+    )
+    broker = adapter(tmp_path, ctx)
+
+    assert broker._query_fill(ctx, "42", "SIMULATE", threading.Lock()) == (101.0, 3.0)
+
+
 def close(broker, **kwargs):
     return broker.close_position('US.TEST', 10, 'LONG',
                                  exit_owner=kwargs.pop('exit_owner', owner()),

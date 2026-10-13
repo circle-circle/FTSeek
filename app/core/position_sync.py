@@ -30,7 +30,7 @@ _SELF_MANAGED_SKIP_LOGGED: set = set()
 # 执行 → 该笔平仓在系统里彻底消失。改按全仓统一的已平仓口径 exit_price > 0 判定。
 # 抽为模块常量: 守卫本体深在 ~500 行同步方法内不可单测, 由 tests 直接对该 SQL 钉不变量。
 EXTERNAL_CLOSE_DUP_SQL = (
-    "SELECT id, entry_time FROM trade_records WHERE symbol=? AND direction=? "
+    "SELECT id, entry_time, quantity, close_futu_order_id FROM trade_records WHERE symbol=? AND direction=? "
     "AND exit_price > 0"
 )
 
@@ -68,18 +68,53 @@ def is_system_order_remark(remark) -> bool:
     return any(r.startswith(p) for p in _SYSTEM_ORDER_REMARK_PREFIXES)
 
 
+def _entry_time_epoch(entry_time) -> Optional[float]:
+    try:
+        parsed = datetime.fromisoformat(str(entry_time).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return None
+        return parsed.timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
 def upsert_external_close_trade_record(
     conn, *, symbol, direction, entry_time, entry_price, exit_price, quantity,
     realized_pnl, pnl_pct, trade_mode, created_at, trace_id=None, signal_id=None,
     futu_order_id=None, close_order_id=None,
 ):
-    closed = conn.execute(
-        "SELECT id FROM trade_records WHERE symbol=? AND direction=? AND exit_price > 0 "
-        "ORDER BY id DESC LIMIT 1",
+    closed_rows = conn.execute(
+        EXTERNAL_CLOSE_DUP_SQL,
         (symbol, direction),
-    ).fetchone()
-    if closed:
-        return {"action": "duplicate_skip", "trade_id": closed[0]}
+    ).fetchall()
+    close_order_id_value = str(close_order_id or "") or None
+    current_entry_epoch = _entry_time_epoch(entry_time)
+
+    for row in closed_rows:
+        trade_id, closed_entry_time, closed_quantity, closed_order_id = row
+        if (
+            close_order_id_value is not None
+            and str(closed_order_id or "") == close_order_id_value
+        ):
+            return {"action": "duplicate_skip", "trade_id": trade_id}
+
+        closed_entry_epoch = _entry_time_epoch(closed_entry_time)
+        if current_entry_epoch is None or closed_entry_epoch is None:
+            continue
+        if abs(current_entry_epoch - closed_entry_epoch) > 1:
+            continue
+        if closed_quantity is not None and quantity is not None:
+            try:
+                if int(closed_quantity) != int(quantity):
+                    continue
+            except (TypeError, ValueError):
+                logger.warning(
+                    f"[外部平仓去重] {symbol} quantity 不可比较 "
+                    f"(closed={closed_quantity!r}, new={quantity!r}), 跳过该候选",
+                    exc_info=True,
+                )
+                continue
+        return {"action": "duplicate_skip", "trade_id": trade_id}
 
     open_trade = conn.execute(
         "SELECT id FROM trade_records WHERE symbol=? AND direction=? "

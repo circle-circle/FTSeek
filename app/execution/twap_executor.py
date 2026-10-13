@@ -196,6 +196,7 @@ class TWAPExecutor:
             symbol=symbol,
             direction=direction,
             order_type=order_type,
+            trd_side="SELL_SHORT" if direction == Direction.SHORT else "BUY",
             quantity=float(qty),
             price=float(price),
         )

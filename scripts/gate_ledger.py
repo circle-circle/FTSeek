@@ -21,6 +21,7 @@ import glob
 import os
 import re
 import subprocess
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -66,8 +67,10 @@ def _grep_prereg(gate_name: str) -> str:
             try:
                 if re.search(gate_name, open(f, errors="replace").read()):
                     hits.append(os.path.basename(f).replace(".md", ""))
-            except Exception:
-                pass
+            except Exception as _read_err:
+                # 读失败 ≠ 无出处 — 留痕防"门出处缺失"判定失真 (R5)
+                print(f"[gate_ledger] 读取 {f} 失败, 该文件未参与出处检索: {_read_err}",
+                      file=sys.stderr)
     if not hits:
         return "⚠️无出处"
     hits.sort(key=lambda x: (not x.startswith("RFC"), x))

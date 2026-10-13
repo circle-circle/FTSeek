@@ -77,6 +77,33 @@ def test_closed_trade_is_not_duplicated():
     assert conn.execute("SELECT COUNT(*) FROM trade_records").fetchone()[0] == 1
 
 
+def test_second_round_external_close_is_booked():
+    conn = _create_conn()
+    conn.execute(
+        "INSERT INTO trade_records (id, trade_date, symbol, direction, entry_time, exit_time, "
+        "entry_price, exit_price, quantity, source_type, created_at, close_futu_order_id) VALUES "
+        "(1526,'2026-09-17','US.GIPR','LONG','2026-09-17T04:15:19-04:00',"
+        "'2026-09-17T04:25:00-04:00',0.431,0.424,11494,'PLAYBOOK_SIM',"
+        "'2026-09-17T04:15:19-04:00','8185461')"
+    )
+    result = upsert_external_close_trade_record(
+        conn,
+        symbol="US.GIPR",
+        direction="LONG",
+        entry_time="2026-09-18T04:15:19-04:00",
+        entry_price=0.500,
+        exit_price=0.480,
+        quantity=10000,
+        realized_pnl=-200.0,
+        pnl_pct=-0.04,
+        trade_mode="simulate",
+        created_at="2026-09-18T04:27:01-04:00",
+        close_order_id="8199999",
+    )
+    assert result["action"] == "inserted"
+    assert conn.execute("SELECT COUNT(*) FROM trade_records").fetchone()[0] == 2
+
+
 def test_missing_trade_is_inserted_once():
     conn = _create_conn()
     result = _book(conn)

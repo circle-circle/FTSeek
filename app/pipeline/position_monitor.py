@@ -175,8 +175,11 @@ def _partial_close_position(scheduler, position: Position, current_price: float,
                 )
                 return
     except Exception as _precheck_err:
-        # 预检失败不阻断 — 宁可多发一单也不能因为网络问题卡住
-        logger.debug(f"[分批止盈·预检异常] {position.symbol}: {_precheck_err}")
+        logger.warning(
+            f"[分批止盈·预检异常] {position.symbol}: 中止 scale-out",
+            exc_info=True,
+        )
+        return
 
     if close_qty <= 0 or close_qty >= position.size:
         _close_position(scheduler, position, current_price, exit_reason)
@@ -210,6 +213,7 @@ def _partial_close_position(scheduler, position: Position, current_price: float,
         symbol=position.symbol,
         direction=Direction.SHORT if position.direction == Direction.LONG else Direction.LONG,
         order_type=OrderType.MARKET,
+        trd_side="SELL" if position.direction == Direction.LONG else "BUY_BACK",
         quantity=close_qty,
         price=current_price,
     )

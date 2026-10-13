@@ -3,12 +3,14 @@ CapitalAllocator — 实时资金账本 (Phase A 2026-05-14)
 
 强制每个 strategy 的 capital_pct 上限. 取代当前"软约束"。
 
-观察模式 (observe_only=True): 记录所有 reserve/release, 但永远 return True
+观察模式 (observe_only=True): 记录所有 reserve/release (含会被阻断的影子敞口), 但永远 return True
 强制模式 (observe_only=False): 超限直接拒绝
 """
 from __future__ import annotations
 import logging
+import math
 import os
+import queue
 import sqlite3
 import threading
 import time
@@ -55,6 +57,9 @@ class AutoCapacityReport:
     manual_count: int = 0
     auto_count: int = 0
     manual_orphan_count: int = 0
+    unknown_count: int = 0
+    unknown_value: Optional[float] = None
+    degraded: bool = False
 
 
 @dataclass
@@ -103,12 +108,14 @@ class CapitalAllocator:
         self._legacy_protected_reserved: float = 0.0
         # Task #35: 最近一次 auto 容量报告 (供 dashboard / daily_review 读)
         self._last_auto_report: Optional[AutoCapacityReport] = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._events: List[_ReserveEvent] = []
         self._max_event_history = 500
         # P1-7 (2026-06-12): persistent ledger
         self._db_path: Optional[str] = None
         self._db_lock = threading.Lock()
+        self._persistence_queue: "queue.Queue" = queue.Queue()
+        self._persistence_thread: Optional[threading.Thread] = None
         if self._persist_init_db_path is not None:
             try:
                 self._init_persist_db(self._persist_init_db_path)
@@ -120,9 +127,30 @@ class CapitalAllocator:
             except Exception as _e:
                 logger.error(f"[CapitalAllocator] persist init failed (fallback to memory): {_e}")
                 self._db_path = None
+        if self._db_path:
+            self._persistence_thread = threading.Thread(
+                target=self._persistence_worker,
+                name="capital-allocator-persistence",
+                daemon=True,
+            )
+            self._persistence_thread.start()
 
     def _bucket_for(self, strategy: str) -> str:
         return self._bucket_map.get(strategy, strategy)
+
+    @staticmethod
+    def _coerce_position_pct(position_pct: float) -> float:
+        try:
+            value = float(position_pct)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                f"position_pct must be a positive finite number: {position_pct!r}"
+            ) from error
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(
+                f"position_pct must be a positive finite number: {position_pct!r}"
+            )
+        return value
 
     def set_observe_only(self, observe: bool):
         """运行时切换 (灰度)"""
@@ -135,20 +163,25 @@ class CapitalAllocator:
 
         ⚠️ 当前限制:
         - observe_only=True 模式下永远返回 True (仅记录不阻断)
-        - 主订单路径 (order_executor._submit_order) 尚未在下单前调用此方法
-        - signal.position_pct 默认为 0.0, 导致预留金额为 0
-        以上问题计划在 Phase B 修复, 届时将:
-        1. _submit_order 下单前调用 try_reserve
-        2. 从 _get_order_qty 结果计算 position_pct
-        3. observe_only 切为 False
+        已接入 (2026-10-12): 主订单路径在下单点强制预留 — order_executor
+        `_reserve_capital_for_order` 在 _execute_long/_execute_stock_short 下单前
+        以真实 quantity×price/equity 计算 position_pct 调用本方法;
+        释放经平仓路径 on_position_closed → release(position.position_pct)。
+        Phase B 剩余项: observe_only 切为 False。
 
         资金记账走 bucket (B.3 2026-05-14): 多策略共享 bucket 时, 占用计入同一桶.
         例 strategy=fast_lane, bucket_map={"fast_lane":"main"} → 实际记到 main 桶, 受 main 的 cap 限制.
 
         Returns:
-            True: 预留成功 (observe 模式总是 True, 但 BLOCKED 事件仍记录)
+            True: 预留成功 (observe 模式总是 True, 且记录实际放行敞口)
             False: 强制模式下被拒
         """
+        try:
+            position_pct = self._coerce_position_pct(position_pct)
+        except ValueError as error:
+            logger.error(f"[CapitalAllocator] invalid reserve rejected: {error}", exc_info=True)
+            return False
+
         with self._lock:
             bucket = self._bucket_for(strategy)
             current = self._allocations.get(bucket, 0.0)
@@ -159,14 +192,16 @@ class CapitalAllocator:
                      + self._legacy_protected_reserved)
 
             decision = "ALLOWED"
-            if cap > 0 and current + position_pct > cap:
+            if bucket not in self._caps:
+                decision = "BLOCKED_UNKNOWN_BUCKET"
+            elif cap <= 0:
+                decision = "BLOCKED_STRATEGY_CAP"
+            elif current + position_pct > cap:
                 decision = "BLOCKED_STRATEGY_CAP"
             elif total + position_pct > self._max_total:
                 decision = "BLOCKED_TOTAL_CAP"
 
-            allowed = (decision == "ALLOWED")
-            if allowed:
-                # H7 (2026-06-03): 只有 allowed 才记账, 避免 BLOCKED 事件累加导致账本失真
+            if decision == "ALLOWED" or self._observe_only:
                 self._allocations[bucket] = current + position_pct
                 self._by_strategy[strategy] = self._by_strategy.get(strategy, 0.0) + position_pct
                 snapshot_after = self._allocations[bucket]
@@ -181,7 +216,7 @@ class CapitalAllocator:
                 logger.warning(
                     f"[CapitalAllocator·OBSERVE] {strategy}->{bucket} reserve {position_pct:.3f} "
                     f"would have been {decision} (current={current:.3f}, cap={cap:.3f}, "
-                    f"total={total:.3f}, max_total={self._max_total:.3f}) — 放行但不记账"
+                    f"total={total:.3f}, max_total={self._max_total:.3f}) — 放行并记录影子敞口"
                 )
                 return True  # observe 模式放行, 但不累加账本
 
@@ -194,6 +229,7 @@ class CapitalAllocator:
 
     def release(self, strategy: str, position_pct: float):
         """释放 strategy 的预留资金 (平仓时调用) — 走 bucket"""
+        position_pct = self._coerce_position_pct(position_pct)
         with self._lock:
             bucket = self._bucket_for(strategy)
             current = self._allocations.get(bucket, 0.0)
@@ -255,9 +291,13 @@ class CapitalAllocator:
         同时考虑 bucket cap 和 总敞口 cap, 取较小者.
         调用方可: 将 position_pct 乘以 该系数 后再 try_reserve.
         """
+        try:
+            position_pct = self._coerce_position_pct(position_pct)
+        except ValueError as error:
+            logger.error(f"[CapitalAllocator] invalid scale request rejected: {error}", exc_info=True)
+            return 0.0
+
         with self._lock:
-            if position_pct <= 0:
-                return 1.0
             bucket = self._bucket_for(strategy)
             current = self._allocations.get(bucket, 0.0)
             cap = self._caps.get(bucket, 0.0)
@@ -267,7 +307,7 @@ class CapitalAllocator:
                      + self._legacy_protected_reserved)
 
             # bucket 剩余
-            bucket_headroom = max(0.0, cap - current) if cap > 0 else float('inf')
+            bucket_headroom = 0.0 if bucket not in self._caps or cap <= 0 else max(0.0, cap - current)
             # 总敞口剩余 (扣除手动仓位占用)
             total_headroom = max(0.0, self._max_total - total)
             allowed = min(bucket_headroom, total_headroom, position_pct)
@@ -278,16 +318,15 @@ class CapitalAllocator:
         """
         P0-4 (2026-05-14): observe → enforce 切换前必调.
 
-        observe 模式下账本可能透支 (BLOCKED 事件也记账了).
-        切 enforce 前必须清零 + 用真实持仓重建, 否则会拒所有信号.
+        observe 模式下账本记录的是实际放行敞口, 可能超过 cap.
+        切 enforce 前必须清零 + 用真实持仓重建, 否则会拒所有新信号.
         """
         with self._lock:
             self._allocations = {b: 0.0 for b in self._caps}
             self._by_strategy = {}
             self._record_event("__reset__", 0.0, "ENFORCE_RESET", 0.0)
             self._persist_state_all()  # P1-7
-        # 锁外调 (避免双重 lock)
-        self.reconcile_with_positions(positions_by_strategy)
+            self.reconcile_with_positions(positions_by_strategy)
         logger.warning(
             f"[CapitalAllocator·RESET] 账本已清零 + reconcile, 现状: {self.snapshot().by_strategy}"
         )
@@ -374,6 +413,8 @@ class CapitalAllocator:
         manual_cnt = 0
         auto_cnt = 0
         orphan_cnt = 0
+        unknown_cnt = 0
+        degraded = False
 
         if positions:
             try:
@@ -406,9 +447,16 @@ class CapitalAllocator:
                             manual_cnt += 1
                             orphan_cnt += 1
                     except Exception:
+                        unknown_cnt += 1
+                        degraded = True
                         continue
             except Exception as _e:
-                logger.debug(f"[CapitalAllocator·auto_capacity_report] classify err: {_e}")
+                unknown_cnt += len(positions)
+                degraded = True
+                logger.error(
+                    f"[CapitalAllocator·auto_capacity_report] classify err: {_e}",
+                    exc_info=True,
+                )
         else:
             # 从内部 pct 字段估算 (兜底)
             with self._lock:
@@ -418,8 +466,12 @@ class CapitalAllocator:
 
         auto_pool = max(0.0, eq - legacy_val - manual_val)
         # Task #35 约束: auto_headroom ≥ 0
-        auto_headroom = max(0.0, auto_pool - auto_val)
-        auto_headroom_pct = (auto_headroom / auto_pool) if auto_pool > 0 else 0.0
+        if degraded:
+            auto_headroom = 0.0
+            auto_headroom_pct = 0.0
+        else:
+            auto_headroom = max(0.0, auto_pool - auto_val)
+            auto_headroom_pct = (auto_headroom / auto_pool) if auto_pool > 0 else 0.0
 
         report = AutoCapacityReport(
             timestamp=time.time(),
@@ -434,6 +486,9 @@ class CapitalAllocator:
             manual_count=manual_cnt,
             auto_count=auto_cnt,
             manual_orphan_count=orphan_cnt,
+            unknown_count=unknown_cnt,
+            unknown_value=None if degraded else 0.0,
+            degraded=degraded,
         )
         with self._lock:
             self._last_auto_report = report
@@ -497,12 +552,9 @@ class CapitalAllocator:
         self._events.append(e)
         if len(self._events) > self._max_event_history:
             self._events = self._events[-self._max_event_history:]
-        # P1-7: persist ledger event (best-effort)
+        # P1-7: persist ledger event outside the allocator lock (best-effort)
         if self._db_path:
-            try:
-                self._persist_event(e)
-            except Exception as _pe:
-                logger.debug(f"[CapitalAllocator] persist event failed: {_pe}")
+            self._persistence_queue.put(("event", e))
 
 
 
@@ -569,6 +621,9 @@ class CapitalAllocator:
         rows = [("bucket", bucket, float(self._allocations.get(bucket, 0.0)), ts)]
         if strategy is not None:
             rows.append(("strategy", strategy, float(self._by_strategy.get(strategy, 0.0)), ts))
+        self._persistence_queue.put(("state", rows))
+
+    def _write_state_rows(self, rows) -> None:
         try:
             with self._db_lock:
                 conn = sqlite3.connect(self._db_path, timeout=5.0)
@@ -591,21 +646,20 @@ class CapitalAllocator:
         ts = time.time()
         rows = [("bucket", b, float(v), ts) for b, v in self._allocations.items()]
         rows += [("strategy", s, float(v), ts) for s, v in self._by_strategy.items()]
-        try:
-            with self._db_lock:
-                conn = sqlite3.connect(self._db_path, timeout=5.0)
-                try:
-                    conn.executemany(
-                        "INSERT INTO capital_state(kind,key,value,updated_at) VALUES (?,?,?,?) "
-                        "ON CONFLICT(kind,key) DO UPDATE SET value=excluded.value, "
-                        "updated_at=excluded.updated_at",
-                        rows,
-                    )
-                    conn.commit()
-                finally:
-                    conn.close()
-        except Exception as e:
-            logger.debug(f"[CapitalAllocator] _persist_state_all failed: {e}")
+        self._persistence_queue.put(("state", rows))
+
+    def _persistence_worker(self) -> None:
+        while True:
+            kind, payload = self._persistence_queue.get()
+            try:
+                if kind == "state":
+                    self._write_state_rows(payload)
+                elif kind == "event":
+                    self._persist_event(payload)
+            except Exception as error:
+                logger.error(f"[CapitalAllocator] async persistence failed: {error}", exc_info=True)
+            finally:
+                self._persistence_queue.task_done()
 
     def _persist_event(self, e) -> None:
         if not self._db_path:
@@ -627,6 +681,7 @@ class CapitalAllocator:
                 conn.close()
 
 _singleton: Optional[CapitalAllocator] = None
+_singleton_lock = threading.Lock()
 
 
 def get_capital_allocator(caps: Optional[Dict[str, float]] = None,
@@ -635,11 +690,12 @@ def get_capital_allocator(caps: Optional[Dict[str, float]] = None,
                           db_path: Optional[str] = None) -> CapitalAllocator:
     """单例. 第一次调用必须传 caps. P1-7: db_path enables persistence."""
     global _singleton
-    if _singleton is None:
-        if caps is None:
-            raise ValueError("CapitalAllocator 第一次构造必须传 caps")
-        _singleton = CapitalAllocator(
-            caps=caps, max_total_pct=max_total_pct,
-            observe_only=observe_only, db_path=db_path,
-        )
+    with _singleton_lock:
+        if _singleton is None:
+            if caps is None:
+                raise ValueError("CapitalAllocator 第一次构造必须传 caps")
+            _singleton = CapitalAllocator(
+                caps=caps, max_total_pct=max_total_pct,
+                observe_only=observe_only, db_path=db_path,
+            )
     return _singleton

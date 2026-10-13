@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -452,6 +453,92 @@ def _release_coordinator_on_broker_zero(scheduler, position) -> None:
         logger.debug(f"[平仓·broker0] {position.symbol} coordinator 释放失败 (忽略): {_ce}")
 
 
+def _order_strategy_id(signal: SignalScore, voting_result: Optional[Dict]) -> str:
+    if voting_result:
+        strategy_id = voting_result.get("strategy_id") or voting_result.get("model")
+        if strategy_id:
+            return str(strategy_id)
+    metadata = getattr(signal, "metadata", None) or {}
+    strategy_id = metadata.get("strategy_id") or metadata.get("owner_strategy")
+    return str(strategy_id or getattr(signal, "strategy_id", "") or "main")
+
+
+def _reserve_capital_for_order(
+    scheduler,
+    signal: SignalScore,
+    voting_result: Optional[Dict],
+    symbol: str,
+    quantity: float,
+    price: float,
+    context: Dict[str, Any],
+) -> bool:
+    allocator = getattr(getattr(scheduler, "coordinator", None), "capital", None)
+    if allocator is None or allocator.is_observe_only():
+        return True
+
+    try:
+        from app.risk.capital_safety import get_capital_safety_system
+        equity = float(getattr(get_capital_safety_system()._state, "current_equity", 0) or 0)
+    except Exception as equity_error:
+        logger.error(
+            f"[CapitalAllocator] {symbol} equity unavailable, reject order: {equity_error}",
+            exc_info=True,
+        )
+        return False
+
+    if equity <= 0 or quantity <= 0 or price <= 0:
+        logger.error(
+            f"[CapitalAllocator] {symbol} invalid order sizing "
+            f"(equity={equity}, qty={quantity}, price={price})"
+        )
+        return False
+
+    strategy_id = _order_strategy_id(signal, voting_result)
+    position_pct = (float(quantity) * float(price)) / equity
+    reserved_strategy = context.get("_capital_reserved_strategy")
+    reserved_pct = context.get("_capital_reserved_pct")
+    if reserved_strategy is not None and reserved_pct is not None:
+        if reserved_strategy == strategy_id and float(reserved_pct) == position_pct:
+            return True
+        logger.error(
+            f"[CapitalAllocator] {symbol} inconsistent duplicate reservation "
+            f"(existing={reserved_strategy}:{reserved_pct}, requested={strategy_id}:{position_pct})"
+        )
+        return False
+    if not allocator.try_reserve(strategy_id, position_pct):
+        logger.warning(
+            f"[CapitalAllocator·ENFORCE] {symbol} strategy={strategy_id} "
+            f"reserve {position_pct:.4f} rejected"
+        )
+        return False
+
+    context["_capital_reserved_strategy"] = strategy_id
+    context["_capital_reserved_pct"] = position_pct
+    return True
+
+
+def _release_reserved_capital(scheduler, context: Optional[Dict[str, Any]]) -> None:
+    if not context:
+        return
+    if context.get("_capital_reservation_preserve"):
+        return
+    strategy_id = context.pop("_capital_reserved_strategy", None)
+    position_pct = context.pop("_capital_reserved_pct", None)
+    if strategy_id is None or position_pct is None:
+        return
+    allocator = getattr(getattr(scheduler, "coordinator", None), "capital", None)
+    if allocator is None:
+        return
+    try:
+        allocator.release(strategy_id, float(position_pct))
+    except Exception as release_error:
+        logger.error(
+            f"[CapitalAllocator] failed to release {strategy_id} "
+            f"{float(position_pct):.4f}: {release_error}",
+            exc_info=True,
+        )
+
+
 def _sync_trade_store_on_broker_zero(scheduler, position) -> None:
     """broker=0 路径: 同步 trade_store (DB) — 标记仓位已关闭"""
     try:
@@ -484,7 +571,9 @@ def _close_pre_check(scheduler, position) -> Optional[str]:
 
     # 2. 强制刷新 broker 端持仓
     _broker_qty = _refresh_broker_position_qty(scheduler, position.symbol)
-    if _broker_qty is not None and _broker_qty <= 0:
+    if _broker_qty is None:
+        return "broker 持仓状态未知，跳过本轮平仓"
+    if _broker_qty <= 0:
         # DEB-20260903 #40: 清理内存持仓前先清算未结订单 —
         # 否则遗留挂单可能在清理后成交, 形成 broker 有持仓但 PositionStore 无记录的幽灵仓
         _bz_safe, _bz_canceled = _wait_or_cancel_open_orders(
@@ -715,7 +804,35 @@ def _submit_order_optimized(
         (submitted_order, metadata) — metadata 含 slippage_pct/execution_latency_ms/twap 详情
     """
     cfg = _load_execution_optimization_config()
-    notional = float(order.quantity) * float(order.price or signal_price or 0.0)
+    try:
+        order_price = float(order.price or 0)
+        fallback_price = float(signal_price or 0)
+        quantity = float(order.quantity or 0)
+    except (TypeError, ValueError):
+        order.state = OrderState.REJECTED
+        order.last_error = "invalid_order_price_or_quantity"
+        logger.error(
+            f"[OrderExecutor] {order.symbol} invalid order sizing type rejected "
+            f"(qty={order.quantity!r}, order_price={order.price!r}, signal_price={signal_price!r})"
+        )
+        return order, {"error": "invalid_order_price_or_quantity", "notional": 0.0}
+
+    if (
+        not math.isfinite(quantity)
+        or quantity <= 0
+        or not math.isfinite(order_price)
+        or not math.isfinite(fallback_price)
+        or max(order_price, fallback_price) <= 0
+    ):
+        order.state = OrderState.REJECTED
+        order.last_error = "invalid_order_price_or_quantity"
+        logger.error(
+            f"[OrderExecutor] {order.symbol} invalid order sizing rejected "
+            f"(qty={order.quantity}, order_price={order.price}, signal_price={signal_price})"
+        )
+        return order, {"error": "invalid_order_price_or_quantity", "notional": 0.0}
+
+    notional = quantity * (order_price if order_price > 0 else fallback_price)
     use_twap = (
         cfg["enable_twap"]
         and should_use_twap(notional, cfg["twap_threshold_usd"])
@@ -945,6 +1062,7 @@ def _close_short_for_long(scheduler, symbol: str, qty: float, current_price: flo
             symbol=symbol,
             direction=Dir.LONG,  # 买入平空
             order_type=OT.LIMIT,
+            trd_side="BUY_BACK",
             quantity=qty,
             price=_close_short_price,
         )
@@ -1092,6 +1210,7 @@ def _close_long_for_short(scheduler, symbol: str, qty: float, current_price: flo
             symbol=symbol,
             direction=Dir.SHORT,  # 卖出平多
             order_type=OT.LIMIT,
+            trd_side="SELL",
             quantity=qty,
             price=_close_long_price,
         )
@@ -2146,6 +2265,7 @@ def _real_pyramid_order(scheduler, symbol: str, signal: SignalScore, kwargs: Dic
             symbol=symbol,
             direction=signal.direction if hasattr(signal, 'direction') else Direction.LONG,
             order_type=OrderType.MARKET,
+            trd_side="SELL_SHORT" if signal.direction == Direction.SHORT else "BUY",
             quantity=kwargs.get('quantity', kwargs.get('qty', 0)),
             price=kwargs.get('price', 0),
             metadata={'source': 'pyramid_add_on'},
@@ -2293,6 +2413,7 @@ def _execute_short(scheduler, symbol: str, signal: SignalScore, context: Dict[st
     try:
         _execute_stock_short(scheduler, symbol, signal, context, voting_result)
     except Exception as e:
+        _release_reserved_capital(scheduler, context)
         logger.error(f"[做空] {symbol} 正股做空失败: {e}", exc_info=True)
 
 
@@ -2379,6 +2500,11 @@ def _execute_stock_short(scheduler, symbol: str, signal: SignalScore, context: D
     if adapter is None or not adapter.is_connected():
         raise RuntimeError("broker_adapter 不可用")
 
+    if not _reserve_capital_for_order(
+        scheduler, signal, voting_result, symbol, quantity, price, context
+    ):
+        return
+
     result = adapter.try_direct_short(symbol, quantity, price)
     if not result.get("success"):
         raise RuntimeError(f"try_direct_short 失败: {result.get('error')}")
@@ -2402,6 +2528,8 @@ def _execute_stock_short(scheduler, symbol: str, signal: SignalScore, context: D
         time_stop_hours=int(_load_short_config_val("time_decay.max_holding_days", 5) * 24),
         market_regime=getattr(signal, "market_regime", "") or MarketRegime.RANGE,
     )
+    position.owner_strategy = _order_strategy_id(signal, voting_result)
+    position.position_pct = round(float(context.get("_capital_reserved_pct", 0.0)), 4)
     position.entry_time = now_et()
     position.futu_order_id = result.get("futu_order_id", "")
     position.trail_state = {
@@ -2438,9 +2566,11 @@ def _execute_stock_short(scheduler, symbol: str, signal: SignalScore, context: D
         symbol=symbol,
         direction=Direction.SHORT,
         order_type=OrderType.MARKET,
+        trd_side="SELL_SHORT",
         quantity=quantity,
         price=price,
     )
+
     order.futu_order_id = result.get("futu_order_id", "")
 
     # 事件 + 通知
@@ -2795,10 +2925,16 @@ def _execute_long(scheduler, symbol: str, signal: SignalScore, context: Dict[str
         symbol=symbol,
         direction=signal.direction,
         order_type=OrderType.LIMIT,
+        trd_side="SELL_SHORT" if signal.direction == Direction.SHORT else "BUY",
         quantity=float(quantity),
         price=price,
         stop_price=stop_loss,
     )
+
+    if not _reserve_capital_for_order(
+        scheduler, signal, voting_result, symbol, quantity, price, context
+    ):
+        return
 
     # P1-5 修复 2026-04-26: 统一在下单前写入归因基线
     # P0 修复 (2026-05-07): trade_date 使用 ET 日期，date('now') 是 UTC 日期
@@ -2849,6 +2985,10 @@ def _execute_long(scheduler, symbol: str, signal: SignalScore, context: Dict[str
                 scheduler, order, signal_price=price, signal_time=_signal_time,
                 direction=signal.direction, signal_id=signal.signal_id, trace_id=signal.trace_id,
             )
+            if getattr(submitted_order, "state", None) == OrderState.REJECTED:
+                _release_reserved_capital(scheduler, context)
+                logger.warning(f"[下单] {symbol} 订单被拒绝，不写入本地持仓")
+                return
             # 将执行元数据挂到 position.metadata, 供平仓时写入 trade_records.metadata_json
             try:
                 if not hasattr(position, "metadata") or position.metadata is None:
@@ -2892,7 +3032,13 @@ def _execute_long(scheduler, symbol: str, signal: SignalScore, context: Dict[str
             # ORB fix: fallback to strategy_id when metadata doesn't set owner_strategy
             # Prevents all pure strategies from defaulting to "main"
             _sid = str(getattr(signal, 'strategy_id', '') or '')
-            position.owner_strategy = owner or getattr(position, "owner_strategy", None) or _sid or "main"
+            position.owner_strategy = (
+                context.get("_capital_reserved_strategy")
+                or owner
+                or getattr(position, "owner_strategy", None)
+                or _sid
+                or "main"
+            )
             # position_pct 优先级: signal.position_pct > signal.metadata.position_pct > 估算
             _pct = float(getattr(signal, "position_pct", 0) or 0)
             if _pct <= 0:
@@ -2906,6 +3052,8 @@ def _execute_long(scheduler, symbol: str, signal: SignalScore, context: Dict[str
                         _pct = (quantity * price) / _eq
                 except Exception as _silent_e:
                     logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
+            if context.get("_capital_reserved_pct") is not None:
+                _pct = float(context["_capital_reserved_pct"])
             position.position_pct = round(_pct, 4)
         except Exception:
             position.owner_strategy = "main"
@@ -2930,6 +3078,7 @@ def _execute_long(scheduler, symbol: str, signal: SignalScore, context: Dict[str
             _db_persisted = True
         except Exception as e:
             logger.error(f"[下单·P0-1] DB upsert 失败, 撤销 in-memory add: {e}")
+            context["_capital_reservation_preserve"] = True
             # 不写 in-memory, 让 broker_reconcile 在下个周期发现 orphan 自行修
             # 关键告警 — 已下单但本地无记录
             try:
@@ -2971,7 +3120,7 @@ def _execute_long(scheduler, symbol: str, signal: SignalScore, context: Dict[str
         # Phase A: 通知 coordinator (灰度, 仅当 enabled)
         try:
             _coord = getattr(scheduler, "coordinator", None)
-            if _coord is not None and _coord.enabled:
+            if _coord is not None and _coord.enabled and context.get("_capital_reserved_pct") is None:
                 _coord.record_position_owner(symbol, position.owner_strategy,
                                              float(getattr(signal, "position_pct", 0.0) or 0.0))
         except Exception as _ce:
@@ -3930,6 +4079,8 @@ def _submit_order_inner(scheduler, symbol: str, signal: SignalScore, context: Di
     # 仅 _execute_long/short 成功创建仓位后, lock 归 on_position_closed 释放;
     # 否则下面任意 return 都要主动 release.
     def _r1_release_if_held():
+        if not context.get("_r1_position_created"):
+            _release_reserved_capital(scheduler, context)
         try:
             if context.get("_r1_lock_acquired") and not context.get("_r1_position_created"):
                 _coord = getattr(scheduler, "coordinator", None)
@@ -3979,36 +4130,6 @@ def _submit_order_inner(scheduler, symbol: str, signal: SignalScore, context: Di
                     return
         except Exception:
             pass
-
-        # ── P0 (2026-06-17): CapitalAllocator enforce — 策略级资金上限强制执行 ──
-        # 审计发现: try_reserve() 从未在下单路径调用, 策略级资金上限形同虚设
-        # 修复: 在方向路由前强制调用 try_reserve, 超限直接拒绝
-        try:
-            from app.coordinator.capital_allocator import get_capital_allocator
-            _ca = get_capital_allocator()
-            if not _ca.is_observe_only():
-                _strat_id = ""
-                if voting_result:
-                    _strat_id = voting_result.get("strategy_id", "") or voting_result.get("model", "")
-                if not _strat_id and hasattr(signal, "metadata") and signal.metadata:
-                    _strat_id = signal.metadata.get("strategy_id", "main")
-                if not _strat_id:
-                    _strat_id = "main"
-                # 估算仓位占比: 用 signal.position_pct 或保守默认值
-                _pos_pct = float(getattr(signal, "position_pct", 0) or 0)
-                if _pos_pct <= 0:
-                    # 从 context 或默认值估算
-                    _pos_pct = float(context.get("estimated_position_pct", 0.10))
-                if not _ca.try_reserve(_strat_id, _pos_pct):
-                    logger.warning(
-                        f"🚫 [CapitalAllocator·ENFORCE] {symbol} 策略={_strat_id} "
-                        f"资金预留 {_pos_pct:.1%} 被拒 (bucket/total cap 超限)"
-                    )
-                    _r1_release_if_held()
-                    return
-        except Exception as _ca_err:
-            # CapitalAllocator 异常 → 记录但不阻断 (enforce 模式下的 fail-close 由 allocator 自身处理)
-            logger.warning(f"[CapitalAllocator] {symbol} 预留检查异常 (放行): {_ca_err}")
 
         # 3. 按方向路由执行
         if signal.direction == Direction.SHORT:
@@ -4729,6 +4850,7 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
         symbol=position.symbol,
         direction=Direction.SHORT if position.direction == Direction.LONG else Direction.LONG,
         order_type=OrderType.LIMIT,
+        trd_side="SELL" if position.direction == Direction.LONG else "BUY_BACK",
         quantity=position.size,
         price=_exit_limit_price,
     )
@@ -4971,6 +5093,7 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
                         symbol=position.symbol,
                         direction=Direction.SHORT if position.direction == Direction.LONG else Direction.LONG,
                         order_type=OrderType.MARKET,
+                        trd_side="SELL" if position.direction == Direction.LONG else "BUY_BACK",
                         quantity=position.size,
                         price=0,
                     )

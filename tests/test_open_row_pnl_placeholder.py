@@ -106,7 +106,8 @@ def dup_db(tmp_path):
     conn = sqlite3.connect(db)
     conn.execute("""CREATE TABLE trade_records (
         id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT, direction TEXT,
-        entry_time TEXT, exit_time TEXT, exit_price REAL, realized_pnl REAL)""")
+        entry_time TEXT, exit_time TEXT, exit_price REAL, realized_pnl REAL,
+        quantity INTEGER, close_futu_order_id TEXT)""")
     conn.execute("INSERT INTO trade_records (symbol,direction,entry_time,exit_price,realized_pnl) "
                  "VALUES ('US.BULL','SHORT','2026-08-20T09:38:09.478896-04:00',NULL,0.0)")
     # id=1320 实态: entry_time 以 +08:00 (CST 挂钟) 写法落库, 平仓已记账
@@ -150,7 +151,7 @@ def test_dup_guard_still_blocks_bull_1327_double_booking(dup_db):
         conn.close()
     # 1327 写入时 existing_pos.entry_time 的 ET 瞬时
     this = epoch("2026-08-20T09:47:17.054237-04:00")
-    matched = [cid for cid, es in candidates if epoch(es) == this]
+    matched = [row[0] for row in candidates if epoch(row[1]) == this]
     assert matched == [2]
 
 

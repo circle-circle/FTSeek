@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 import uuid
 from datetime import datetime, timedelta
@@ -55,6 +56,7 @@ logger = logging.getLogger(__name__)
 # 保留最近 5 分钟的 VIX/SPY 采样, 供 check_rapid_regime_change 检测急变
 _VIX_HISTORY: list = []   # [(timestamp, vix_value), ...]
 _SPY_HISTORY: list = []   # [(timestamp, spy_value), ...]
+_MARKET_HISTORY_LOCK = threading.Lock()
 _HISTORY_MAX_SECONDS: float = 360.0  # 保留最近 6 分钟 (略大于 5 分钟窗口)
 _HISTORY_MAX_ENTRIES: int = 30       # 最多 30 个采样点
 
@@ -65,17 +67,29 @@ _HISTORY_MAX_ENTRIES: int = 30       # 最多 30 个采样点
 def _check_execution_rules(rules: dict, symbol: str, context: dict) -> bool:
     """检查 execution_rules 是否允许执行。
 
-    返回 True=允许, False=阻止。规则缺失或无法判定时一律放行。
+    返回 True=允许, False=阻止。规则缺失或必要价格非法时 fail-close。
     """
-    if not rules or not isinstance(rules, dict):
-        return True
+    if not isinstance(rules, dict) or not rules:
+        logger.warning(f"[ExecRules] {symbol} execution_rules 缺失或格式非法, 拒绝执行")
+        return False
 
     try:
         prev_close = float(context.get("prev_close", 0) or 0)
         open_price = float(context.get("open_price", 0) or 0)
         current_price = float(context.get("current_price", context.get("price", 0)) or 0)
     except (TypeError, ValueError):
-        return True
+        logger.warning(
+            f"[ExecRules] {symbol} execution_rules 必要价格字段非法, 拒绝执行",
+            exc_info=True,
+        )
+        return False
+
+    if prev_close <= 0 or open_price <= 0 or current_price <= 0:
+        logger.warning(
+            f"[ExecRules] {symbol} execution_rules 必要价格缺失 "
+            f"(prev_close={prev_close}, open={open_price}, current={current_price}), 拒绝执行"
+        )
+        return False
 
     if prev_close > 0 and open_price > 0:
         gap_pct = (open_price - prev_close) / prev_close
@@ -104,6 +118,32 @@ def _check_execution_rules(rules: dict, symbol: str, context: dict) -> bool:
 
     # hit_zone_then_drop: 已在 entry_zone 内才会进入 Fast Lane, 这里默认通过
     return True
+
+
+def _record_market_history(now_ts: float, vix: float, spy_price: float) -> None:
+    with _MARKET_HISTORY_LOCK:
+        _VIX_HISTORY.append((now_ts, float(vix)))
+        if spy_price > 0:
+            _SPY_HISTORY.append((now_ts, float(spy_price)))
+
+        cutoff = now_ts - _HISTORY_MAX_SECONDS
+        while _VIX_HISTORY and _VIX_HISTORY[0][0] < cutoff:
+            _VIX_HISTORY.pop(0)
+        while _SPY_HISTORY and _SPY_HISTORY[0][0] < cutoff:
+            _SPY_HISTORY.pop(0)
+
+        if len(_VIX_HISTORY) > _HISTORY_MAX_ENTRIES:
+            _VIX_HISTORY[:] = _VIX_HISTORY[-_HISTORY_MAX_ENTRIES:]
+        if len(_SPY_HISTORY) > _HISTORY_MAX_ENTRIES:
+            _SPY_HISTORY[:] = _SPY_HISTORY[-_HISTORY_MAX_ENTRIES:]
+
+
+def _get_market_history() -> tuple[list[float], list[float]]:
+    with _MARKET_HISTORY_LOCK:
+        return (
+            [value for _, value in _VIX_HISTORY],
+            [value for _, value in _SPY_HISTORY],
+        )
 
 
 # ============================================================
@@ -405,26 +445,14 @@ def _run_signal_scan_impl(scheduler):
     # 记录 VIX/SPY 历史采样, 检测 5 分钟内的急变 (VIX 涨>15% 或 SPY 跌>1%)
     _now_ts = time.time()
     _spy_price = spy_context.get("price", 0) or spy_context.get("spx_price", 0) or 0
-    _VIX_HISTORY.append((_now_ts, float(vix)))
-    if _spy_price > 0:
-        _SPY_HISTORY.append((_now_ts, float(_spy_price)))
-    # 清理过期数据
-    _cutoff = _now_ts - _HISTORY_MAX_SECONDS
-    while _VIX_HISTORY and _VIX_HISTORY[0][0] < _cutoff:
-        _VIX_HISTORY.pop(0)
-    while _SPY_HISTORY and _SPY_HISTORY[0][0] < _cutoff:
-        _SPY_HISTORY.pop(0)
-    # 限制最大条目数
-    if len(_VIX_HISTORY) > _HISTORY_MAX_ENTRIES:
-        _VIX_HISTORY[:] = _VIX_HISTORY[-_HISTORY_MAX_ENTRIES:]
-    if len(_SPY_HISTORY) > _HISTORY_MAX_ENTRIES:
-        _SPY_HISTORY[:] = _SPY_HISTORY[-_HISTORY_MAX_ENTRIES:]
+    _record_market_history(_now_ts, vix, float(_spy_price or 0))
     # 调用快速切换检测
     try:
         from app.strategy.regime_filter import check_rapid_regime_change
+        _vix_history, _spy_history = _get_market_history()
         _rapid = check_rapid_regime_change(
-            vix_history=[v for _, v in _VIX_HISTORY],
-            spy_history=[s for _, s in _SPY_HISTORY],
+            vix_history=_vix_history,
+            spy_history=_spy_history,
         )
         if _rapid:
             logger.warning(f"[RegimeQuickSwitch] 检测到快速切换 → {_rapid}, 本轮强制收紧")
@@ -1429,5 +1457,3 @@ def _passes_pool_filter(scheduler, symbol: str, pool_filter: dict) -> bool:
         return True
     except Exception:
         return True  # 异常时默认放行
-
-

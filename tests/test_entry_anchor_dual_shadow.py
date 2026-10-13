@@ -181,8 +181,9 @@ def test_rfc123_registers_planned_entry_quality_diagnostic():
     """RFC-123 附节(第2层立项依据)不得被静默删 (2026-10-11 登记)。
 
     钉两类内容:
-      ① 病灶与回测数字本体 — LLM 计划价 76% 够不到、or_low 双轴完胜(48%vs29% / +1.43vs+0.94)、
-        与 ADR-035 fill_rate=0.323 互证。删掉披露不会让其它测试变红, 故单独钉住。
+      ① 病灶与回测数字本体 — LLM 计划价 76% 够不到、or_low vs llm_plan
+        (52%vs33% / +1.34vs+1.21, 复查修复后口径)、与 ADR-035 fill_rate=0.323
+        同一样本双口径互证。删掉披露不会让其它测试变红, 故单独钉住。
       ② 【最关键】时序纪律 E 节 — "现在改 planned_entry 生成 = 阶段0 影子作废"。
         这条若被删, 后人可能在阶段0 攒样期改生成逻辑, 换掉被测量变量 ⇒ 3天影子白攒、
         两变量(拆锚/换锚基)纠缠归因不了。这是本测试存在的首要理由。
@@ -199,13 +200,16 @@ def test_rfc123_registers_planned_entry_quality_diagnostic():
     for needle in (
         # ① 病灶数字本体
         "够不到 = 16/21 (76%)",          # LLM 计划价可达性
-        "fill_rate=0.323",                # ADR-035 独立互证
-        # ① 回测核心结论 (or_low 双轴完胜)
-        "or_low", "48%", "29%", "+1.43", "+0.94",
+        "fill_rate=0.323",                # ADR-035 同向读数
+        # ① 回测核心结论 (or_low 成交率明显优 + 改善微优, 2026-10-11 复查修复后)
+        "or_low", "52%", "33%", "+1.34", "+1.21", "不再支撑「双轴完胜」",
         # 权衡曲线 (回踩越深成交率崩)
         "0% 成交", "甜点",
         # 第2层方案三层
         "opening_low", "k×ATR", "TTL 回退市价",
+        # 复查修复批披露 (P0 窗口 bug / 事实更正 / 冻结 / 独立性降级)
+        "跨日", "16:00", "8 赢 2 亏", "0.31×ATR", "同一样本双口径",
+        "--until 2026-10-09",
     ):
         assert needle in txt, f"RFC-123 附节缺关键读数: {needle}"
 
@@ -219,3 +223,74 @@ def test_rfc123_registers_planned_entry_quality_diagnostic():
     # 📌 防假绿: 附节局限必须声明"不得当裁决" (防被误用为转正依据)
     assert "不得当裁决" in txt or "只筛方向" in txt, \
         "附节须声明 n=21/3天 只筛方向、不得当裁决 (防阈值购物/误用)"
+
+    # ③ 观察轨 §G: 日更重放预注册不得被静默删 (2026-10-11 用户裁「执行」)
+    sec_g = txt.split("### G. 第2层观察轨", 1)
+    assert len(sec_g) == 2, "附节 G (观察轨预注册) 缺失"
+    g = sec_g[1]
+    for needle in ("--daily", "53 5 * * 2-6", "rfc123_l2_rule_anchor_latest.json",
+                   "不设阈值", "or_low_ttl5", "or_low_ttl15"):
+        assert needle in g, f"附节 G 观察轨预注册缺关键约束: {needle}"
+
+
+def test_rfc123_backtest_cross_day_exit_window_capped():
+    """跨日退出的限价窗口必须截到入场日 16:00 (2026-10-11 复查 P0 回归)。
+
+    旧实现直接取 exit_time 的 HH:MM: 跨日退出(10-08 09:36 入场 / 10-09 05:09 平仓)
+    得到 start(09:36) > end(05:09) 的倒挂窗口 ⇒ _first_fill 立即 break, 该笔对
+    任何锚恒判 miss。此测试钉住修复语义, 防该边界再次静默劣化全表数字。
+    """
+    import importlib.util
+    from pathlib import Path
+
+    script = (Path(__file__).resolve().parents[1] / "scripts"
+              / "rfc123_planned_entry_anchor_backtest.py")
+    spec = importlib.util.spec_from_file_location("rfc123_anchor_backtest", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    # 同日退出: 窗口终点 = 退出时刻
+    assert module._window_end(
+        "2026-10-08T09:36:33-04:00", "2026-10-08T10:30:00-04:00") == "10:30"
+    # 跨日退出: bar 只覆盖入场日, 截到 16:00 (旧实现会返回 "05:09" ⇒ 窗口倒挂)
+    assert module._window_end(
+        "2026-10-08T09:36:33-04:00", "2026-10-09T05:09:45-04:00") == "16:00"
+
+
+def test_rfc123_ttl_entry_limit_vs_market_fallback():
+    """TTL 限价→市价回退: 限价内触碰→限价; TTL 过期未触碰→过期后首 bar 开盘市价.
+
+    第3层设计核心: 「TTL 内不回踩 → 转市价进场(不错过整笔)」。
+    """
+    import importlib.util
+    from pathlib import Path
+
+    script = (Path(__file__).resolve().parents[1] / "scripts"
+              / "rfc123_planned_entry_anchor_backtest.py")
+    spec = importlib.util.spec_from_file_location("rfc123_anchor_backtest", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    # 3 根 bar: 09:36 (低=101 不触碰), 09:37 (低=100 触碰), 09:38
+    bars = [
+        ("2026-10-08 09:36:00", 101.5, 101.8, 101.0, 101.2),
+        ("2026-10-08 09:37:00", 100.8, 101.2, 100.0, 100.9),
+        ("2026-10-08 09:38:00", 100.9, 101.0, 100.7, 100.8),
+    ]
+
+    # TTL=5 (到 09:41): 09:37 bar 低=100 ≤ 锚=100.5 → 限价成交 @100.5
+    entry = module._ttl_entry(bars, 100.5, True, "09:36", 5, "16:00")
+    assert entry is not None and entry[2] == "limit"
+    assert entry[1] == 100.5
+
+    # TTL=0 (到 09:36): 首 bar 不触碰 → 市价回退 (09:37 bar open=100.8)
+    entry = module._ttl_entry(bars, 100.5, True, "09:36", 0, "16:00")
+    assert entry is not None and entry[2] == "market_fallback"
+    assert entry[0] == "2026-10-08 09:37:00"
+
+    # TTL 超过实际持仓 → 不可定义
+    entry = module._ttl_entry(bars, 100.5, True, "09:36", 15, "09:40")
+    assert entry == "ttl_exceeds_hold"
+
+    # 锚无效 → None
+    assert module._ttl_entry(bars, 0, True, "09:36", 5, "16:00") is None

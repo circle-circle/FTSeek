@@ -157,6 +157,10 @@ class TestCloseTradeRecord:
                 exit_reason TEXT,
                 realized_pnl REAL,
                 pnl_pct REAL,
+                fees_est REAL,
+                pnl_net REAL,
+                fees_source TEXT,
+                net_pnl_pct REAL,
                 holding_hours REAL,
                 close_futu_order_id TEXT,
                 mfe_pct REAL,
@@ -227,6 +231,31 @@ class TestCloseTradeRecord:
         assert row["exit_time"]
         dt = datetime.fromisoformat(row["exit_time"])
         assert dt.year == datetime.utcnow().year
+
+    def test_close_trade_record_canonicalizes_reason_and_writes_net_pct(self, conn):
+        """legacy lowercase exit labels must not fragment net-PnL cohorts."""
+        conn.execute("UPDATE trade_records SET metadata_json='{}' WHERE id=1")
+        conn.commit()
+        _close_trade_record(
+            conn,
+            trade_id=1,
+            exit_price=150.0,
+            exit_reason="breakeven_lock",
+            pnl=-120.5,
+            pnl_pct=-0.015,
+            holding_hours=2.5,
+        )
+
+        row = conn.execute(
+            "SELECT exit_reason, realized_pnl, fees_est, pnl_net, net_pnl_pct "
+            "FROM trade_records WHERE id=1"
+        ).fetchone()
+        assert row["exit_reason"] == "SL_BREAKEVEN"
+        assert row["fees_est"] is not None
+        assert row["pnl_net"] == pytest.approx(
+            round(row["realized_pnl"] - row["fees_est"], 2)
+        )
+        assert row["net_pnl_pct"] == pytest.approx(round(row["pnl_net"] / 1000.0, 4))
 
     # ── [观察点1 修v2 2026-09-29] 跨夜标注功能级回归 ──
     # v1 bug: overnights 读 _tr[7] (exit_time 列), 但 _tr 在 UPDATE 前 SELECT,
@@ -299,8 +328,6 @@ class TestCloseTradeRecord:
     @pytest.fixture
     def owned_conn(self, conn):
         conn.execute("ALTER TABLE trade_records ADD COLUMN futu_order_id TEXT")
-        for definition in ("fees_est REAL", "pnl_net REAL", "fees_source TEXT"):
-            conn.execute("ALTER TABLE trade_records ADD COLUMN " + definition)
         for definition in ("direction TEXT", "size REAL", "avg_entry_price REAL", "entry_time TEXT"):
             conn.execute("ALTER TABLE open_positions ADD COLUMN " + definition)
         conn.execute(

@@ -124,10 +124,12 @@ def reconcile_live_order_fees(broker: Any, conn: Any, trade_id: int) -> Dict[str
 
         updated = conn.execute(
             "UPDATE trade_records SET fees_est=?, pnl_net=?, fees_source='broker', "
+            "net_pnl_pct=?, "
             "metadata_json=? WHERE id=? AND fees_source NOT IN ('broker','reconciled')",
             (
                 actual_total,
                 round(gross_pnl - actual_total, 2),
+                net_pnl_pct,
                 json.dumps(metadata, ensure_ascii=False, default=str),
                 trade_id,
             ),

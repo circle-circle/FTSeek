@@ -20,6 +20,7 @@ from typing import List, Optional, Dict, Any
 from pathlib import Path
 
 from app.core.trade_identity import ensure_test_symbol_not_in_production_db
+from app.risk.exit_reasons import normalize_exit_reason
 from app.utils.timezone import _et_trade_date, now_et, CST, _localize
 
 logger = logging.getLogger(__name__)
@@ -158,6 +159,10 @@ class TradeStore:
                         quantity          INTEGER,
                         realized_pnl      REAL,
                         pnl_pct           REAL,
+                        fees_est          REAL,
+                        pnl_net           REAL,
+                        fees_source       TEXT,
+                        net_pnl_pct       REAL,
                         exit_reason       TEXT,
                         holding_hours     REAL,
                         signal_strength   INTEGER,
@@ -201,6 +206,10 @@ class TradeStore:
                 #   - source_type: 来源大类 (MAIN_PIPELINE/...)
                 #   - owner_strategy: 具体 strategy.name (main/fast_lane/llm_plan)
                 for col_def in [
+                    ("fees_est", "ALTER TABLE trade_records ADD COLUMN fees_est REAL"),
+                    ("pnl_net", "ALTER TABLE trade_records ADD COLUMN pnl_net REAL"),
+                    ("fees_source", "ALTER TABLE trade_records ADD COLUMN fees_source TEXT"),
+                    ("net_pnl_pct", "ALTER TABLE trade_records ADD COLUMN net_pnl_pct REAL"),
                     ("source_type", "ALTER TABLE trade_records ADD COLUMN source_type TEXT DEFAULT 'MAIN_PIPELINE'"),
                     ("entry_reason", "ALTER TABLE trade_records ADD COLUMN entry_reason TEXT"),
                     ("signal_details", "ALTER TABLE trade_records ADD COLUMN signal_details TEXT"),
@@ -577,6 +586,7 @@ class TradeStore:
         Returns:
             新记录的 rowid
         """
+        record["exit_reason"] = normalize_exit_reason(record.get("exit_reason"))
         # Phase 2 (2026-05-31): 兼容外部直接传入 voting_data
         if voting_data:
             if voting_data.get("voting_result") is not None:
@@ -774,6 +784,7 @@ class TradeStore:
                     INSERT INTO trade_records (
                         trade_date, symbol, direction, entry_time, exit_time,
                         entry_price, exit_price, quantity, realized_pnl, pnl_pct,
+                        fees_est, pnl_net, fees_source, net_pnl_pct,
                         exit_reason, holding_hours, signal_strength, signal_confidence,
                         futu_order_id, close_futu_order_id, voting_result, final_strength, consensus_level,
                         model_scores, strategy_id, decision_reason, max_drawdown, trace_id,
@@ -782,7 +793,7 @@ class TradeStore:
                         signal_id, decision_id, factor_detail,
                         f1_trend, f2_momentum, f3_volume, f4_orderflow, f5_lifecycle,
                         created_at, config_version, entry_vix, entry_session
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'v2',?,?)
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'v2',?,?)
                 """, (
                     record.get("trade_date", ""),
                     record.get("symbol", ""),
@@ -795,6 +806,10 @@ class TradeStore:
                     record.get("quantity", 0),
                     _realized_pnl_val,
                     record.get("pnl_pct", 0.0),
+                    record.get("fees_est"),
+                    record.get("pnl_net"),
+                    record.get("fees_source"),
+                    record.get("net_pnl_pct"),
                     record.get("exit_reason", ""),
                     record.get("holding_hours", 0.0),
                     record.get("signal_strength", 0),

@@ -41,6 +41,7 @@ _AUDIT_LOG = ROOT / "data" / "extended_hours_exit_executions.jsonl"
 DB = ROOT / "data" / "ftseek_us.db"
 SESSION_WINDOWS = {"premarket": (400, 929), "afterhours": (1600, 1959),
                    "next_open": (930, 945)}   # 2026-09-17 用户裁: 盘后仓持到次日开盘兑现 (RTH 已开盘)
+SESSION_BOUNDARY_MINUTES = {"premarket": 570, "afterhours": 1200}
 _PENDING_EVIDENCE_ERRORS = {
     "exit_evidence_pending",
     "exit_legacy_order_evidence_pending",
@@ -176,10 +177,30 @@ def _should_push(status, run_len):
     return run_len % _PUSH_REMIND_EVERY == 0
 
 
-def _in_session_window(session):
+def _last_submit_second(session):
+    """ETH 边界前必须留足限价等待与撤单确认余量."""
+    boundary = SESSION_BOUNDARY_MINUTES.get(session)
+    if boundary is None:
+        return None
+    try:
+        limit_timeout = max(0.0, float(os.getenv("EXT_EXIT_LIMIT_TIMEOUT_S", "20")))
+        cancel_margin = max(0.0, float(os.getenv("EXT_EXIT_CANCEL_MARGIN_S", "10")))
+    except (TypeError, ValueError):
+        return None
+    return boundary * 60 - limit_timeout - cancel_margin
+
+
+def _in_session_window(session, now=None):
     start, end = SESSION_WINDOWS[session]
-    now = _now_et()
-    return start <= now.hour * 100 + now.minute <= end
+    now = _now_et() if now is None else now
+    if not start <= now.hour * 100 + now.minute <= end:
+        return False
+    if session not in SESSION_BOUNDARY_MINUTES:
+        return True
+    last_submit = _last_submit_second(session)
+    if last_submit is None:
+        return False
+    return now.hour * 3600 + now.minute * 60 + now.second <= last_submit
 
 
 def _is_trading_day():
