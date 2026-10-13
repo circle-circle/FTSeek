@@ -1,0 +1,59 @@
+FTSeek-US / deep-stock-analysis 数据源→消费方对照表 (2026-10-13)
+================================================================================
+
+用途
+----
+供后续多模型评测使用。判断“数据是否进入生产链路”时，必须以本表的实际引用为准，
+不得仅凭同名 DB 文件或路径推断。
+
+对照表
+------
+1. DA 社区情绪
+   - 生产入口: deep-stock-analysis/scripts/data_collector.py::collect_community_sentiment()
+   - 消费方: collect_all()["sentiment"] → llm_synth._format_data_for_prompt()
+   - 状态: 实时富途 stock_feed 请求; OK/EMPTY/FAILED/DISABLED 由 _source_status sidecar 落盘。
+   - 误判纠正: 不读取 FTSeek-US/data/social_sentiment.db。
+
+2. FTSeek social_sentiment.db
+   - 路径: FTSeek-US/data/social_sentiment.db (45KB, 2026-07-10)
+   - 写入/读取方: app/data/social_sentiment.py; app/plan/analysts/sentiment_analyst.py;
+     app/playbook/intraday_reentry.py (仅在开关开启时)
+   - 当前状态: intraday_reentry 的 social_sentiment_divergence_check_enabled=False (ADR-032)。
+   - 结论: 可作为旧社交情绪缓存/备用链路; 不是 DA prompt 的当日情绪真源。
+
+3. strategy_memory.db
+   - 生产路径: FTSeek-US/data/strategy_memory.db (200KB, 2026-10-13 05:01)
+   - 写入方: deep-stock-analysis/scripts/feedback_loop.py → strategy_memory.py
+   - 消费方: deep_analyzer._get_trade_experience(); signal_gate.evaluate_signal();
+     FTSeek Obsidian writer (best-effort 战绩展示)
+   - 实测: pattern_memory=88, symbol_memory=208, lesson_log=484。
+   - 结论: 学习记忆链路不是死库; 新鲜度与命中率仍需单独观测。
+
+4. claim_ic_cache.json
+   - 路径: deep-stock-analysis/scripts/claim_ic_cache.json (17.7KB, 2026-10-13 06:31)
+   - 写入方: alpha_backfill.compute_claim_ic() → _write_claim_ic_cache()
+   - 消费方: signal_gate._load_claim_ic_for_gate()
+   - 非消费方: llm_synth 的 prompt 注入已于 2026-07-18 用户裁决关闭，仅保留函数与回滚注释。
+   - 实测: strategy_id=deep_analysis, total_samples=2287, claims=102。
+
+5. deep-stock-analysis/scripts/alpha.db
+   - 状态: 0 字节 (2026-07-29)
+   - 当前生产 IC 入口: claim_ic_cache.json, 不是 alpha.db。
+   - 结论: 不能用 alpha.db 空文件证明 claim IC 回路死亡。
+
+6. FTSeek-US/data/signals.db
+   - 状态: 0 字节 (2026-08-31)
+   - 当前消费方: 未在 app/ 或非 archive scripts 中确认。
+   - 结论: 只能标记“疑似废弃或断链”，不能外推整个学习回路死亡。
+
+7. DA list 源状态
+   - 生产入口: collect_news / collect_finnhub_news / collect_research_reports /
+     collect_community_sentiment
+   - 消费方: collect_all()["_source_status"] → llm_synth._format_data_for_prompt()
+   - 状态: OK/EMPTY/FAILED/DISABLED/UNKNOWN; JSON 序列化后仍可恢复。
+
+使用规则
+--------
+- “空文件”必须先回答: 谁写、谁读、上次成功写读时间。
+- “旧数据”必须先回答: 是否被当前默认开关消费。
+- “备用路径”与“生产路径”必须分开; 不能把未消费文件当作生产链路证据。

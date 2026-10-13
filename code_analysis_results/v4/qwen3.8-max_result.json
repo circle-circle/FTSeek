@@ -1,0 +1,281 @@
+{
+  "model": "qwen3.8-max",
+  "elapsed": 542.6817336082458,
+  "request_id": "e6570551-dd2a-906d-ad95-60b6e34c1d95",
+  "tokens_in": 24360,
+  "tokens_out": 24108,
+  "reasoning_tokens": 17314,
+  "retries": 0,
+  "parse_ok": true,
+  "result": {
+    "model_name": "Qwen3.5",
+    "chain_defects": [
+      {
+        "file": "app/risk/exit_policy.yaml",
+        "line_range": "8-16",
+        "severity": "critical",
+        "category": "config_scope_mismatch",
+        "description": "exit_policy.yaml explicitly states that PLAYBOOK_SIM / PLAYBOOK_LIVE positions do not read this file, yet current-era stats show 438 of 446 trades are playbook_sim. The main SSOT for ATR stops, breakeven, time exit, and pre-close is therefore not governing almost the entire live book.",
+        "evidence": "exit_policy.yaml header says PLAYBOOK_SIM/LIVE do not read this file; by-strategy stats show playbook_sim n=438.",
+        "fix": "Create one effective exit SSOT for playbook positions or make _check_playbook_exit_rules consume exit_policy vol-bucket caps. Add startup validation that effective initial SL for playbook trades cannot exceed the bucket max_loss_pct unless explicitly flagged high-vol."
+      },
+      {
+        "file": "app/risk/stop_loss_config.py",
+        "line_range": "19-38, 98-134",
+        "severity": "critical",
+        "category": "stop_computation",
+        "description": "StopLossConfig can return default stop_loss -3% and regime stops as wide as -8%, with no clamp to exit_policy ATR-bucket max_loss_pct. This is consistent with SL_INITIAL average loss of -3.05% and several -5% initial-stop losses.",
+        "evidence": "_DEFAULT_STOP_LOSS default is -0.03 and strong_trend_up is -0.08; SL_INITIAL stats: 27 trades, avg -3.05%, top losses around -5.2%.",
+        "fix": "Add a hard clamp in get_stop_loss_pct: abs(stop) <= min(vol_bucket.max_loss_pct, direction_override.max_loss_pct, strategy hard cap). For low/medium buckets, cap at 1.5%-2.0% unless the trade is explicitly tagged high-vol."
+      },
+      {
+        "file": "app/risk/exit_policy.yaml",
+        "line_range": "exit_monitor",
+        "severity": "critical",
+        "category": "execution_latency",
+        "description": "The exit chain is poll-based: scan_interval_seconds=60 and cooldown_seconds=120. No broker-side stop order attachment is visible in the provided code. Fast adverse moves and opening gaps can pass the intended stop before the monitor reacts.",
+        "evidence": "exit_monitor config shows 60s scan and 120s cooldown; SL_INITIAL avg MAE 3.14% and OVERNIGHT_GAP_STOP avg -5.45% indicate stops are not being enforced at the configured price.",
+        "fix": "Attach broker-side stop orders at entry or immediately after fill. Use local monitor only as reconciliation and cleanup. On restart, re-attach missing stops before enabling normal scanning."
+      },
+      {
+        "file": "app/playbook/exit_engine.py",
+        "line_range": "55-75, 326-358",
+        "severity": "high",
+        "category": "overnight_gap_state_machine",
+        "description": "_is_overnight_position only compares ET dates. The OVERNIGHT_GAP_STOP rule is explicitly documented as having no gap validation and triggers only after the position is already overnight and losing. It is reactive, not protective.",
+        "evidence": "Code comment says the name GAP is historical and there is no gap check; OVERNIGHT_GAP_STOP stats: 9 trades, -2812 USD, avg -5.45%, all LONG, top-5 losers all this reason.",
+        "fix": "Add pre-close overnight-risk gating for longs with unrealized loss or high gap beta, attach overnight stop orders, and add a pre-open / pre-market quote check. Keep note_exit_gap for forensics but do not rely on it for risk control."
+      },
+      {
+        "file": "app/coordinator/capital_allocator.py",
+        "line_range": "158-190",
+        "severity": "medium",
+        "category": "capital_allocation",
+        "description": "try_reserve still documents observe_only behavior where it always returns True. If observe_only remains enabled in production, strategy and total capital caps are soft constraints and cannot block over-allocation.",
+        "evidence": "try_reserve docstring says observe_only=True always returns True and Phase B remaining item is to switch observe_only to False.",
+        "fix": "After reconciliation and orphan-position cleanup, set observe_only=False for live auto strategies. Fail closed on bucket cap or total cap breach and log blocked reserve attempts to the risk ledger."
+      },
+      {
+        "file": "app/risk/drawdown_control.py",
+        "line_range": "1-60, 136-168",
+        "severity": "medium",
+        "category": "risk_state_fragmentation",
+        "description": "Daily drawdown control is only fed by main-line realized PnL; playbook closes are not fed into DrawdownController. The file also documents six independent daily-loss authorities with different bases, creating a fragmented risk state machine.",
+        "evidence": "drawdown_control.py header notes playbook pnl is not fed into the controller and lists six independent loss-limit authorities.",
+        "fix": "Route all realized PnL, including playbook exits, into one daily loss ledger. Reconcile DrawdownController, AbsoluteCircuitBreaker, SymbolDailyLossGuard, and playbook RiskCircuitBreaker into a single authoritative daily-loss view."
+      },
+      {
+        "file": "app/risk/position_exit_monitor.py",
+        "line_range": "1-100",
+        "severity": "medium",
+        "category": "monitor_overlap_race",
+        "description": "There are two exit stacks: PositionExitMonitor for main/ORB positions and playbook exit_engine for playbook positions. Ownership depends on source/type gating. If a position is misclassified, both monitors may evaluate it or neither may own it. The 60s scan plus 120s cooldown also creates a window where a failed or partial exit may not be retried promptly.",
+        "evidence": "position_exit_monitor.py describes ExitMonitor rules; exit_engine.py describes separate playbook self-managed exits; exit_policy.yaml confirms split ownership.",
+        "fix": "Add an explicit exit_owner field on the position record and a single dispatcher claim. Use an idempotent exit order key and a per-position exit state lock so partial fills, rejected orders, and restarts cannot create duplicate or missed exits."
+      },
+      {
+        "file": "app/risk/exit_policy.yaml",
+        "line_range": "global",
+        "severity": "medium",
+        "category": "dead_config",
+        "description": "global.max_daily_drawdown_pct and global.max_total_positions are explicitly marked as having zero consumers. This is dangerous because operators may believe a 3% daily drawdown cap and 8-position cap are enforced by this SSOT when the real limits live elsewhere.",
+        "evidence": "yaml comments state max_daily_drawdown_pct and max_total_positions have no consumers.",
+        "fix": "Either wire these keys to DrawdownController / CapitalAllocator or delete them. Add a config guardian test that fails when risk keys are present but unconsumed."
+      }
+    ],
+    "exit_logic_findings": [
+      {
+        "stat_fact": "Net PnL -586 over 446 trades; avg MFE 0.91% vs avg realized 0.08%, i.e. 0.83 percentage points giveback per trade.",
+        "code_location": "app/playbook/adaptive_trailing.py:50-80; app/playbook/exit_engine.py:326-358",
+        "severity": "high",
+        "root_cause": "The exit chain captures only a small fraction of MFE. Adaptive trailing uses drawdown = (1 - target_capture) * MFE, with default target_capture around 60%, plus clamps. Breakeven exits also realize dust. There is no systematic partial take-profit to harvest MFE before trailing gives it back.",
+        "proposed_change": "Raise adaptive_trailing_target_capture_pct from about 60 to 70-75 for playbook_sim. Reduce max_drawdown_pct from 1.2 to 0.8 and min_drawdown_pct from 0.4 to 0.3. Add a partial exit tier: take 20%-30% profit at 0.8%-1.0% MFE, then trail the remainder.",
+        "expected_effect": "If SL_TRAIL_LOCK realized return improves by only 0.15-0.25 percentage points on 123 trades, at roughly 50 USD per percentage point, this adds about 900-1500 USD. Overall giveback could fall from 0.83pp toward 0.55-0.65pp."
+      },
+      {
+        "stat_fact": "SL_INITIAL: 27 trades, -4383 USD, avg -3.05%, avg MAE 3.14%, while low/medium bucket max_loss is configured around 1.5%-2.0%.",
+        "code_location": "app/risk/stop_loss_config.py:19-38, 98-134; app/playbook/exit_engine.py:326-358",
+        "severity": "critical",
+        "root_cause": "Playbook initial_sl appears to be driven by meta / StopLossConfig defaults rather than the exit_policy volatility-bucket hard cap. The default -3% stop matches the observed SL_INITIAL average. Poll-based monitoring adds slippage and gap-through because no broker-side stop is visible.",
+        "proposed_change": "At entry, compute effective_sl as min(ATR stop, bucket max_loss_pct, direction_override max_loss_pct) and reject or clamp any initial_sl wider than the bucket cap. Persist entry-time vol_bucket, atr_pct, effective_sl, and hard_stop_price. Attach broker-side stop orders immediately after fill.",
+        "expected_effect": "SL_INITIAL dollar loss per percentage point is about 53 USD. Reducing average SL_INITIAL loss from 3.05% to 1.5%-2.0% saves roughly 1800-2200 USD over the current sample. Broker-side stops should further reduce slippage through the stop."
+      },
+      {
+        "stat_fact": "OVERNIGHT_GAP_STOP: 9 trades, -2812 USD, avg -5.45%, all LONG; top-5 losing trades are all this reason.",
+        "code_location": "app/playbook/exit_engine.py:55-75, 326-358; app/risk/exit_policy.yaml:pre_close_exit",
+        "severity": "critical",
+        "root_cause": "The rule is named gap stop but only checks that the position is overnight and currently losing. It does not validate gap, does not act pre-open, and relies on polling. pre_close_exit.loss_flat=false also allows losing positions to remain overnight, exposing them to gap risk.",
+        "proposed_change": "Add an overnight-risk gate before close: for LONG positions with unrealized loss > 1.0%, high recent gap beta, or low liquidity, reduce 50%-100% pre-close. For allowed overnight longs, attach a broker-side overnight stop at 2.0%-2.5% or use overnight_loss_stop_pct=3% as a hard broker stop. Add pre-market quote checks before the open.",
+        "expected_effect": "OVERNIGHT_GAP_STOP dollar loss per percentage point is about 57 USD. Cutting average loss from -5.45% to -2.5%, or reducing count by half, saves about 1300-1800 USD. Removing the top five overnight-gap losers alone would improve current-era PnL by roughly 1700 USD."
+      },
+      {
+        "stat_fact": "SL_BREAKEVEN: 196 trades, +974 USD, 75% win rate, avg +0.2%, 44% of all trades; avg MFE only 0.63%.",
+        "code_location": "app/risk/exit_policy.yaml:comment on playbook breakeven_at_pct=0.4; app/playbook/exit_engine.py:factor_exit_rules",
+        "severity": "medium",
+        "root_cause": "The playbook breakeven trigger appears too eager, around 0.4%. This moves stops to cost before normal noise resolves, producing many dust exits. It protects capital but likely prevents some positions from reaching the much more profitable SL_TRAIL_LOCK state.",
+        "proposed_change": "Raise breakeven_at_pct from 0.4% to 0.7%-0.8%, or use max(0.5%, 0.5 * ATR%). Add a seasoning filter such as 15-20 minutes since entry. If profit_atr >= 1.0-1.2, hand the position to trailing rather than breakeven churn.",
+        "expected_effect": "SL_BREAKEVEN dollar value per percentage point is about 25 USD. If 20-30 breakeven trades convert to even +0.5pp average outcome, expected gain is roughly 250-600 USD. The risk is more reversals, so this must be shadow-tested."
+      },
+      {
+        "stat_fact": "2026-09-17 US.CTNT LONG breakeven_lock shows pnl_pct +2.78% but pnl -314 USD.",
+        "code_location": "not visible in provided excerpts; likely order_executor / trade_records PnL writer",
+        "severity": "high",
+        "root_cause": "A long trade with positive price change should not have negative PnL unless fees are larger than gross profit or the quantity/sign convention is wrong. The likely bug is that pnl_pct is computed direction-aware while pnl_usd uses raw signed quantity, wrong side, or swapped entry/exit prices.",
+        "proposed_change": "Normalize quantity sign before PnL computation: LONG qty_signed = +abs(qty), SHORT qty_signed = -abs(qty). Compute pnl_usd = (exit_price - entry_price) * qty_signed * contract_multiplier - fees. Compute pnl_pct = pnl_usd / entry_notional. Add a write-time invariant: sign(pnl_usd) must match sign(pnl_pct) unless fees exceed gross profit.",
+        "expected_effect": "Restores trust in exit-reason statistics and prevents misleading attribution. It may also change the reported performance of breakeven_lock and other small buckets."
+      },
+      {
+        "stat_fact": "Monthly: Aug -242 with 54.6% win rate, Sep -509 with 76.8% win rate, Oct +165 with 75.9% win rate.",
+        "code_location": "app/playbook/exit_engine.py:326-358; app/risk/stop_loss_config.py:19-38",
+        "severity": "high",
+        "root_cause": "Win rate is not the binding constraint. The system produces many small wins via SL_BREAKEVEN and SL_TRAIL_LOCK but suffers fat left-tail losses from SL_INITIAL and OVERNIGHT_GAP_STOP. The exit logic is asymmetric: it protects dust but allows tail losses.",
+        "proposed_change": "Prioritize tail-loss clamps before win-rate tuning: hard-clamp initial stops, attach broker stops, control overnight longs, and only then tune breakeven/trailing for higher capture.",
+        "expected_effect": "If the top tail-loss categories are brought under control, a 75%+ win-rate month should become consistently positive. The current September loss is explained primarily by a handful of large overnight and initial-stop losses."
+      },
+      {
+        "stat_fact": "TAKE_PROFIT has only 1 trade despite avg MFE 0.91% across all trades.",
+        "code_location": "app/risk/stop_loss_config.py:get_take_profit_pct; app/playbook/exit_engine.py:rule [1.5] TAKE_PROFIT",
+        "severity": "medium",
+        "root_cause": "Default take-profit levels in StopLossConfig are large, e.g. 10% default and 25% in strong_trend_up, while actual MFE is below 1%. Playbook TP also requires RR >= 1.5. Therefore TP almost never fires, leaving profit capture to trailing and pre-close.",
+        "proposed_change": "Use volatility-bucket take-profit levels from exit_policy, especially low/medium bucket TP around 0.4%-3.0%. Implement partial take-profit instead of all-or-nothing TP: scale out 20%-30% at bucket TP, move remainder to breakeven/trail.",
+        "expected_effect": "Capturing even 0.1-0.2pp of the average 0.91% MFE across a few hundred trades can add several hundred dollars and reduces dependence on trailing giveback."
+      },
+      {
+        "stat_fact": "MFE_STALL_EXIT: 14 trades, -606 USD, avg -1.37%, avg MFE 0.16%, avg MAE 1.77%.",
+        "code_location": "app/playbook/exit_engine.py:326-358, rule [3.4] MFE_STALL_EXIT",
+        "severity": "medium",
+        "root_cause": "The stall exit waits until holding >= 150 minutes, peak profit < 0.5%, and current price underwater. By then the position has often already taken meaningful adverse excursion. It is a late time-based loss exit.",
+        "proposed_change": "Add an earlier no-progress exit: if held 60-90 minutes, peak profit < 0.3%, and current pnl < -0.3%, exit or reduce. Keep the 150-minute stall exit as a backstop.",
+        "expected_effect": "Reducing average MFE_STALL_EXIT loss from -1.37% to around -0.8% would save roughly 250 USD on the current sample."
+      },
+      {
+        "stat_fact": "Exit-reason taxonomy still contains lowercase stragglers: tighten, breakeven_lock, lock_in.",
+        "code_location": "app/playbook/exit_engine.py and trade persistence path; exact emission point not visible in excerpt",
+        "severity": "low",
+        "root_cause": "Multiple exit paths write free-form reason strings. There is no canonical ExitReason enum or normalization layer before DB persistence.",
+        "proposed_change": "Define a canonical uppercase ExitReason enum. Map tighten to TRAIL_TIGHTEN, breakeven_lock to SL_BREAKEVEN_LOCK or SL_BREAKEVEN, and lock_in to SL_TRAIL_LOCK. Normalize all exit reasons before writing trade_records.",
+        "expected_effect": "Prevents fragmented statistics, makes A/B tests reliable, and avoids hidden exit buckets."
+      }
+    ],
+    "profit_proposals": [
+      {
+        "title": "Clamp initial stops to volatility-bucket caps and attach broker-side stops",
+        "change": "At entry, compute effective_sl from ATR and bucket max_loss_pct. Clamp any StopLossConfig or meta stop to low/medium 1.5%-2.0%, high bucket only when atr_pct justifies it. Persist vol_bucket, atr_pct, effective_sl, stop_price. Submit a broker-side stop order via Futu immediately after fill. Use ExitMonitor only as reconciliation.",
+        "target_files": [
+          "app/risk/stop_loss_config.py",
+          "app/playbook/exit_engine.py",
+          "order_executor module containing _reserve_capital_for_order",
+          "config/unified_config.yaml"
+        ],
+        "expected_impact": "SL_INITIAL loss per percentage point is about 53 USD. Reducing avg SL_INITIAL loss from -3.05% to -1.5/-2.0% saves about 1800-2200 USD over the current 27-trade sample. Broker-side stops should also reduce slippage and gap-through.",
+        "validation_method": "Shadow replay historical quotes with the clamped stop logic, compare simulated fill vs current SL_INITIAL outcomes. Then paper-trade with broker stops before live enablement.",
+        "effort": "L",
+        "priority": 1
+      },
+      {
+        "title": "Eliminate overnight gap tail risk for longs",
+        "change": "Add pre-close overnight-risk gate: if LONG and unrealized loss > 1.0%, or symbol has high gap beta / low liquidity, reduce 50%-100% before close. For allowed overnight longs, attach broker overnight stop at 2.0%-2.5% or enforce overnight_loss_stop_pct=3% as a real broker stop. Add pre-market quote check before open.",
+        "target_files": [
+          "app/playbook/exit_engine.py",
+          "app/playbook/overnight_decision.py",
+          "app/risk/exit_policy.yaml"
+        ],
+        "expected_impact": "OVERNIGHT_GAP_STOP loss per percentage point is about 57 USD. Reducing avg loss from -5.45% to -2.5%, or cutting the count in half, saves about 1300-1800 USD. The top five losing trades alone are about -1760 USD.",
+        "validation_method": "Replay prior overnight positions using pre-close and pre-market quotes. Shadow-test the gate and compare realized tail loss. A/B config can run reduce-only vs full-close cohorts.",
+        "effort": "M",
+        "priority": 2
+      },
+      {
+        "title": "Tighten adaptive trailing capture",
+        "change": "Set adaptive_trailing_target_capture_pct from 60 to 70-75. Reduce max_drawdown_pct from 1.2 to 0.8 and min_drawdown_pct from 0.4 to 0.3. Add profit tiering: when MFE > 1.0%, drawdown = max(0.3, 25%-30% of MFE) instead of allowing 40% giveback.",
+        "target_files": [
+          "app/playbook/adaptive_trailing.py",
+          "config/unified_config.yaml"
+        ],
+        "expected_impact": "SL_TRAIL_LOCK has 123 trades and roughly 50 USD per percentage point. Improving realized exit by 0.15-0.25pp adds about 900-1500 USD without changing entry logic.",
+        "validation_method": "Shadow replay using historical peak_price paths. Compare current trailing drawdown vs proposed drawdown. Run A/B config in shadow mode for at least 2-4 weeks.",
+        "effort": "S",
+        "priority": 3
+      },
+      {
+        "title": "Make breakeven less eager",
+        "change": "Raise playbook breakeven_at_pct from 0.4% to 0.7%-0.8%, or use max(0.5%, 0.5 * ATR%). Require 15-20 minutes of seasoning. If profit_atr >= 1.0-1.2, route to trailing instead of moving stop to cost immediately.",
+        "target_files": [
+          "app/playbook/exit_engine.py",
+          "config/unified_config.yaml"
+        ],
+        "expected_impact": "SL_BREAKEVEN is 44% of trades but only +974 USD. If 20-30 trades convert from dust exits to +0.5pp outcomes, expected improvement is about 250-600 USD. It may also increase the number of positions reaching SL_TRAIL_LOCK.",
+        "validation_method": "Shadow test with historical MFE/MAE paths. Compare breakeven churn, subsequent trail-lock conversion, and MAE. Use A/B config with a small live paper cohort.",
+        "effort": "S",
+        "priority": 4
+      },
+      {
+        "title": "Fix PnL sign/qty accounting and canonicalize exit_reason",
+        "change": "Normalize qty_signed by direction before PnL computation. Add invariant that pnl_pct and pnl_usd have matching sign unless fees exceed gross profit. Map lowercase exit reasons to canonical uppercase enum before DB write: tighten, breakeven_lock, lock_in.",
+        "target_files": [
+          "trade_records persistence module, exact path not visible in excerpt",
+          "app/playbook/exit_engine.py"
+        ],
+        "expected_impact": "Does not directly change trading PnL, but prevents wrong attribution and avoids tuning based on corrupted statistics. The CTNT anomaly currently contaminates breakeven_lock stats and may hide other sign bugs.",
+        "validation_method": "Unit tests for LONG/SHORT PnL sign invariants. Backfill recompute historical pnl_usd and pnl_pct from fills and compare against stored values.",
+        "effort": "S",
+        "priority": 5
+      },
+      {
+        "title": "Add partial take-profit for low/medium volatility buckets",
+        "change": "Enable small scale-out tiers: for low bucket take 20%-30% at 0.4%-0.8%, for medium bucket take 20%-30% at 1.5%-2.0%. Move remaining position to breakeven or adaptive trail. Keep high-bucket positions trailing-only to avoid choking volatility.",
+        "target_files": [
+          "app/playbook/exit_engine.py",
+          "app/risk/exit_policy.yaml"
+        ],
+        "expected_impact": "Average MFE is 0.91% but average realized is only 0.08%. Capturing an extra 0.1-0.2pp on a broad subset of trades could add several hundred dollars. It also reduces dependence on trailing giveback.",
+        "validation_method": "Shadow replay with MFE paths. Compare realized PnL, win rate, and tail loss. Run A/B with partial TP enabled only in shadow or paper mode.",
+        "effort": "M",
+        "priority": 6
+      }
+    ],
+    "data_consistency_issues": [
+      {
+        "observation": "US.CTNT LONG breakeven_lock has pnl_pct +2.78% but pnl -314 USD.",
+        "why_suspicious": "For a long position with positive price movement, net PnL should be positive unless fees are larger than gross profit, which is implausible at this reported percentage.",
+        "likely_cause": "Signed quantity bug, wrong direction handling, swapped entry/exit prices, or fee/quantity adjustment applied with the wrong sign in the trade_records writer."
+      },
+      {
+        "observation": "breakeven_lock aggregate shows avg_pct +1.61 but total pnl -297 USD over only 2 trades.",
+        "why_suspicious": "Positive average percentage return should not map to negative total dollar PnL unless one trade has corrupted sign, qty, or fee accounting.",
+        "likely_cause": "Same accounting sign/qty issue as CTNT, or one corrupted row dominating the small bucket."
+      },
+      {
+        "observation": "SL_INITIAL average loss is -3.05%, while exit_policy low/medium bucket max_loss is around 1.5%-2.0%.",
+        "why_suspicious": "If the configured bucket caps were enforced, average initial-stop losses should not be double the cap except in high-vol bucket trades or gap events.",
+        "likely_cause": "Playbook positions are not consuming exit_policy.yaml; initial_sl is likely from StopLossConfig defaults or meta, and missing entry-time bucket metadata prevents validation."
+      },
+      {
+        "observation": "OVERNIGHT_GAP_STOP is a top loss reason, but the code explicitly says the rule has no gap validation.",
+        "why_suspicious": "The exit_reason semantics imply an opening-gap event, while the implementation only checks overnight status and current loss. Historical rows cannot distinguish true gaps from post-open drawdowns.",
+        "likely_cause": "Legacy naming plus record-only note_exit_gap added after the fact. Statistics using this reason are semantically noisy."
+      },
+      {
+        "observation": "SL_BREAKEVEN and TIME_EXIT appear in current-era stats even though breakeven and time_exit are disabled in exit_policy.yaml.",
+        "why_suspicious": "The exit_reason taxonomy does not map cleanly to the stated SSOT config. This makes config-to-statistics attribution unreliable.",
+        "likely_cause": "Playbook self-managed exit chain uses separate parameters, while exit_reason labels are still aggregated together."
+      },
+      {
+        "observation": "Lowercase exit reasons remain: tighten, breakeven_lock, lock_in.",
+        "why_suspicious": "Free-form reason strings can fragment aggregates and hide the true size of exit buckets.",
+        "likely_cause": "No canonical enum or normalization layer before persistence."
+      }
+    ],
+    "overall_assessment": {
+      "strategy_soundness_score": 58,
+      "exit_logic_score": 42,
+      "top_3_actions": [
+        "Clamp initial stops to volatility-bucket caps and attach broker-side stop orders immediately after entry.",
+        "Remove overnight gap tail risk by pre-close reduction or broker-side overnight stops for vulnerable longs.",
+        "Tighten adaptive trailing capture and fix PnL sign / exit_reason taxonomy so optimization is based on reliable statistics."
+      ],
+      "summary": "The strategy has a positive core: SL_TRAIL_LOCK and SL_BREAKEVEN are profitable, and September's 76.8% win rate proves signal quality is not the main issue. The loss comes from exit asymmetry: small wins are harvested, but initial-stop and overnight-gap losses are allowed to become fat tails. The highest-ROI fixes are mechanical risk controls: enforce bucket-based initial stops, use broker-side stops, control overnight longs, and tighten trailing drawdown. Accounting and taxonomy bugs, especially the CTNT positive-pct/negative-pnl contradiction, must also be fixed before further parameter tuning."
+    }
+  },
+  "error": null
+}

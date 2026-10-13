@@ -1,0 +1,259 @@
+{
+  "model": "qwen3.8-max",
+  "elapsed": 397.77066826820374,
+  "request_id": "ba9da80a-7e15-9fcd-b60e-b2426916216d",
+  "tokens_in": 22901,
+  "tokens_out": 18454,
+  "reasoning_tokens": 13265,
+  "retries": 0,
+  "parse_ok": true,
+  "result": {
+    "model_name": "Qwen3-Max",
+    "chain_defects": [
+      {
+        "file": "app/risk/exit_policy.yaml",
+        "line_range": "exit_rules.atr_stop.vol_bucket_multipliers.low.direction_override",
+        "severity": "high",
+        "category": "stop_placement",
+        "description": "Low-vol LONG/SHORT hard stops at 0.3%/0.4% are extremely tight relative to normal quote noise. This is consistent with sl_hit being 43% of exits, 11.3% win rate, avg realized -0.13%, and avg MFE only 0.03%.",
+        "evidence": "trade stats: sl_hit 115/265, avg_mfe 0.03; config low bucket direction_override LONG max_loss_pct 0.3, SHORT 0.4",
+        "fix": "Widen low-vol hard stop to 0.6%/0.8% or use a minimum stop distance of 0.5% plus ATR floor; shadow test before live."
+      },
+      {
+        "file": "app/risk/stop_loss_config.py",
+        "line_range": "get_stop_loss_pct 87-130",
+        "severity": "high",
+        "category": "config_inconsistency",
+        "description": "StopLossConfig reads unified_config dynamic_exit, while exit_policy.yaml claims to be the exit SSOT. This creates two possible initial-stop sources and makes sl_hit attribution ambiguous.",
+        "evidence": "stop_loss_config.py priority chain; exit_policy.yaml header claims SSOT for ExitMonitor/atr_stop_engine",
+        "fix": "Unify stop source: either make StopLossConfig delegate to exit_policy or remove dynamic_exit stop overrides; persist effective_sl and stop_source in trade records."
+      },
+      {
+        "file": "app/risk/position_exit_monitor.py",
+        "line_range": "1-100",
+        "severity": "high",
+        "category": "dead_code_state_gap",
+        "description": "exit_policy.yaml marks trailing/structure/scale_out/flash/time_stop as disabled or dead, but PositionExitMonitor still imports trailing/scale-out rule modules and stats still show TRAILING_STOP, STRUCTURE_EXIT, FLASH_EXIT, time_stop. This indicates at least one active emitter outside the declared SSOT.",
+        "evidence": "position_exit_monitor imports ScaleOutRule/TrailingStopRule; exit_policy comments disable these rules; stats still contain these exit_reasons",
+        "fix": "Add startup validation and exit_reason allowlist; remove or hard-flag legacy emitters; record source_type and policy_version for every exit."
+      },
+      {
+        "file": "app/playbook/exit_engine.py",
+        "line_range": "326-358",
+        "severity": "high",
+        "category": "ssot_fragmentation",
+        "description": "Playbook SIM/LIVE exits are self-managed and explicitly not governed by exit_policy.yaml. Aggregate stats mix main and playbook exits, so exit_reason semantics and stop distances are not comparable across the 265 trades.",
+        "evidence": "exit_policy.yaml header says playbook positions do not read this file; exit_engine._check_playbook_exit_rules has separate SL/TP/overnight/time rules",
+        "fix": "Tag each trade with exit_owner, config_version, and source_type; either reconcile playbook exits with unified telemetry or report stats separately."
+      },
+      {
+        "file": "app/coordinator/capital_allocator.py",
+        "line_range": "158-190",
+        "severity": "medium",
+        "category": "capital_allocation",
+        "description": "try_reserve can be observe_only and always returns True in that mode. If production is still observe_only, strategy caps and total caps are advisory rather than enforced.",
+        "evidence": "try_reserve docstring says observe_only=True always returns True and Phase B remaining item is observe_only=False",
+        "fix": "Verify production observe_only flag; switch to enforcing mode after reconciliation; use compute_scale_factor to scale orders instead of silent overallocation."
+      },
+      {
+        "file": "app/risk/drawdown_control.py",
+        "line_range": "1-60",
+        "severity": "high",
+        "category": "risk_aggregation",
+        "description": "Daily drawdown control is known to miss playbook pnl and coexists with six independent circuit-breaker systems. True daily loss can be understated, allowing new entries after economic daily limit breach.",
+        "evidence": "drawdown_control header notes playbook pnl not fed and lists six independent daily-loss authorities",
+        "fix": "Feed all realized pnl, including playbook, into DrawdownController; publish a single daily-loss state consumed by all entry gates."
+      },
+      {
+        "file": "app/risk/exit_policy.yaml",
+        "line_range": "pre_close_exit.loss_flat=false and overnight_loss_stop_pct",
+        "severity": "high",
+        "category": "overnight_exit_gap",
+        "description": "loss_flat=false leaves losing positions overnight relying on hard stops, while stats show a 46.3h BREAKEVEN_STOP losing -2.98%. The config has overnight_loss_stop_pct but the provided code does not prove a unified enforced overnight stop.",
+        "evidence": "exit_policy pre_close_exit.loss_flat=false; BREAKEVEN_STOP holding_hours 46.3 and pnl -6035",
+        "fix": "Implement/verify a hard overnight loss stop at 2.5%-3.0% and max-hold guard in both ExitMonitor and playbook exit engine."
+      },
+      {
+        "file": "app/strategy/exit_policies.py",
+        "line_range": "_read_entry_thesis 37-52; MainPipelineExitPolicy 70-110",
+        "severity": "low",
+        "category": "thesis_exit_state_gap",
+        "description": "Thesis is read from trade_attribution at exit evaluation time. If async thesis writing is delayed or missing, exits fall back to legacy. Breakout thesis also closes at -0.5%, which may create early exits not aligned with ATR stop statistics.",
+        "evidence": "_read_entry_thesis queries sqlite; breakout branch returns CLOSE at pnl <= -0.005",
+        "fix": "Persist thesis into position metadata at entry; make thesis exits emit explicit reason codes and reconcile with ATR stop state."
+      },
+      {
+        "file": "app/risk/exit_policy.yaml",
+        "line_range": "global.max_daily_drawdown_pct and global.max_total_positions",
+        "severity": "medium",
+        "category": "decorative_risk_config",
+        "description": "The yaml itself notes max_daily_drawdown_pct and max_total_positions have zero consumers. These keys create false confidence for anyone reading the SSOT.",
+        "evidence": "exit_policy.yaml global comment marks max_daily_drawdown_pct and max_total_positions as zero-consumption decorative knobs",
+        "fix": "Either wire these keys to the real risk controllers or delete them from the SSOT."
+      }
+    ],
+    "exit_logic_findings": [
+      {
+        "stat_fact": "sl_hit is 115/265 exits, 43%, total -3702, win rate 11.3%, avg_pct -0.13, avg_mfe 0.03",
+        "code_location": "app/risk/exit_policy.yaml: exit_rules.atr_stop.vol_bucket_multipliers.low.direction_override",
+        "severity": "critical",
+        "root_cause": "Low-vol max_loss_pct 0.3%/0.4% gives almost no noise budget. Combined with weak entry timing, many trades are stopped before the thesis can express itself.",
+        "proposed_change": "Raise low-vol LONG/SHORT hard stop to 0.6%/0.8% or add min_stop_distance_pct 0.5%; require entry context to have at least 0.15% ATR and avoid immediate adverse 0.1% fills.",
+        "expected_effect": "Reducing sl_hit share from 43% to 30%-35% would remove roughly 25-35 false stops. At average sl_hit loss about -$32, this is +$800 to +$1100 before wider-stop cost; with entry filter, net expectancy should improve."
+      },
+      {
+        "stat_fact": "Average MFE 0.48% vs average realized 0.04%, about 0.44 percentage points giveback per trade",
+        "code_location": "app/playbook/adaptive_trailing.py:22-74; app/risk/exit_policy.yaml: breakeven.enabled=false",
+        "severity": "high",
+        "root_cause": "Adaptive trailing is gated to PLAYBOOK_SIM only, while main breakeven/ratchet is disabled. Live profitable excursions are not systematically locked.",
+        "proposed_change": "Enable adaptive trailing for live/main through config, target capture 60%-70%, min drawdown 0.4%, max drawdown 1.5%-2.5%; re-enable stepped profit lock at 1.0%, 2.0%, 3.0% with cost buffer.",
+        "expected_effect": "Recovering only 10%-20% of the 0.44pp giveback materially improves expectancy. For TRAILING_STOP trades, raising capture from 42% to 55% of MFE adds about 0.18 percentage points per trade."
+      },
+      {
+        "stat_fact": "TRAILING_STOP is the main profit source: 76 trades, +4444, avg_pct 0.6, win rate 39.5%, avg_mfe 1.42",
+        "code_location": "app/playbook/adaptive_trailing.py:22-74; app/risk/position_exit_monitor.py:1-100",
+        "severity": "medium",
+        "root_cause": "Trailing is profitable but captures only about 42% of MFE and wins less than half the time. The SSOT comments also show trailing was disabled in main policy, implying inconsistent live path or stale emitter.",
+        "proposed_change": "Use signed profit activation: only trail after profit >= 0.5 ATR; drawdown = max(0.4%, 0.35*MFE) capped at 2.0%; loosen only in trending regime, tighten in high_vol unless profit > 1 ATR.",
+        "expected_effect": "If average realized on trailing exits improves from 0.6% to 0.75%, linear approximation adds about +$1.1k on the current 76-trade sample while preserving the positive edge."
+      },
+      {
+        "stat_fact": "STRUCTURE_EXIT has 33 trades, total -3305, avg_pct -0.24, win rate 30.3%, avg_mfe 0.12",
+        "code_location": "app/risk/exit_policy.yaml: technical_breach.enabled=false; likely legacy emitter in position_exit_monitor or playbook path",
+        "severity": "high",
+        "root_cause": "Config says structure/technical-breach exit is disabled, but stats still show it. Low MFE and negative avg_pct suggest false triggers or exits after adverse moves rather than proactive protection.",
+        "proposed_change": "Grep all STRUCTURE_EXIT emitters, hard-disable unless explicitly enabled, and route structural-breach signals to annotation only unless ATR stop also confirms.",
+        "expected_effect": "Removing or replacing this rule could recover a large part of the -3305 drag. Even a 50% recovery is about +$1.6k, with ATR stop preserving tail protection."
+      },
+      {
+        "stat_fact": "BREAKEVEN_STOP has 1 trade, -6035, avg_pct -2.98, holding_hours 46.3, avg_mfe 0.0",
+        "code_location": "app/playbook/exit_engine.py:326-358; app/risk/exit_policy.yaml: breakeven.enabled=false",
+        "severity": "critical",
+        "root_cause": "A true breakeven stop should require prior profit and stop price near entry. MFE 0.0 and -2.98% realized imply either mislabeled exit, overnight gap through stop, stale peak/stop state, or entry-price mismatch.",
+        "proposed_change": "Add invariant: BREAKEVEN_STOP may be emitted only when peak_profit >= trigger and stop_price >= entry + cost. Otherwise label GAP_STOP, OVERNIGHT_STOP, or INITIAL_STOP. Add overnight hard stop and persist peak/stop state.",
+        "expected_effect": "Prevents a single-trade tail loss of this size. Even if only one such event occurs in the sample, avoiding it adds +$6k and makes exit_reason stats trustworthy."
+      }
+    ],
+    "profit_proposals": [
+      {
+        "title": "Widen low-vol hard stop and add entry noise filter",
+        "change": "In exit_policy.yaml low bucket, change LONG max_loss_pct from 0.3 to 0.6 and SHORT from 0.4 to 0.8; add atr_stop.min_stop_distance_pct 0.5; in signal_pipeline reject entries when quote already moved 0.1% against signal or ATR% is too low.",
+        "target_files": [
+          "app/risk/exit_policy.yaml",
+          "app/risk/atr_stop_engine.py",
+          "app/pipeline/signal_pipeline.py"
+        ],
+        "expected_impact": "sl_hit 115 trades lost -3702, average about -$32. Reducing sl_hit share from 43% to 30% removes about 34 stops. If wider stops increase remaining average loss by only 10%, net improvement is roughly +$700 to +$1200; entry filter can add more by converting false stops to small winners.",
+        "validation_method": "shadow/replay with the same 265 entries; compare sl_hit share, average loss, max adverse excursion, and daily loss",
+        "effort": "S",
+        "priority": 1
+      },
+      {
+        "title": "Enable live MFE-adaptive trailing and stepped profit lock",
+        "change": "Allow adaptive_trailing for live/main via explicit config rather than PLAYBOOK_SIM-only hard gate; set target_capture_pct 60-70, min_drawdown_pct 0.4, max_drawdown_pct 1.5-2.5; add stepped breakeven/lock at 1.0%, 2.0%, 3.0% with cost buffer.",
+        "target_files": [
+          "app/playbook/adaptive_trailing.py",
+          "app/risk/exit_policy.yaml",
+          "app/risk/position_exit_monitor.py"
+        ],
+        "expected_impact": "TRAILING_STOP currently realizes 0.6% against MFE 1.42, capture about 42%. Raising capture to 55% adds about 0.18 percentage points per trailing trade, roughly +$1.3k on the observed sample. Reducing all-trade giveback by 0.1pp should add further expectancy.",
+        "validation_method": "A-B replay/shadow of identical entries; require higher realized/MFE capture without increasing tail loss or exit churn",
+        "effort": "M",
+        "priority": 2
+      },
+      {
+        "title": "Kill legacy STRUCTURE_EXIT, FLASH_EXIT, and time_stop emitters",
+        "change": "Audit all exit_reason constants, gate legacy emitters behind explicit enabled flags, set flags false, and log blocked legacy exits. Route exits through ATR stop and trailing only.",
+        "target_files": [
+          "app/risk/position_exit_monitor.py",
+          "app/playbook/exit_engine.py",
+          "app/risk/exit_policy.yaml"
+        ],
+        "expected_impact": "STRUCTURE_EXIT -3305, FLASH_EXIT -1284, time_stop -538, combined -5127. If 40%-60% is avoidable false-exit loss while ATR stop preserves tail protection, expected improvement is +$2k to +$3k.",
+        "validation_method": "shadow mode logs would-be legacy exits and replay compares outcomes; monitor that >2% tail losses do not increase",
+        "effort": "S",
+        "priority": 3
+      },
+      {
+        "title": "True breakeven/gap-stop invariant and overnight max loss",
+        "change": "Emit BREAKEVEN_STOP only when peak_profit >= trigger and stop_price >= entry + cost. Add OVERNIGHT_LOSS_STOP at 2.5%-3.0% and max_hold guard for non-exempt positions. Persist peak_price, effective_sl, and overnight state.",
+        "target_files": [
+          "app/playbook/exit_engine.py",
+          "app/risk/position_exit_monitor.py",
+          "app/risk/exit_policy.yaml"
+        ],
+        "expected_impact": "Directly addresses the impossible BREAKEVEN_STOP -6035 and similar long-hold overnight tail losses. Conservative expected benefit is +$1k to +$2k from tail-risk reduction, plus more reliable exit_reason semantics.",
+        "validation_method": "unit tests for invariant; replay overnight positions; shadow alert when BREAKEVEN_STOP would be emitted without valid breakeven state",
+        "effort": "M",
+        "priority": 4
+      },
+      {
+        "title": "Unify stop SSOT and exit telemetry",
+        "change": "Make StopLossConfig delegate to exit_policy or remove conflicting dynamic_exit stop overrides. Record effective_sl, stop_source, policy_version, source_type, peak_profit, mfe, holding_hours, and exit_owner for every closed trade.",
+        "target_files": [
+          "app/risk/stop_loss_config.py",
+          "app/risk/exit_policy.yaml",
+          "app/risk/position_exit_monitor.py",
+          "app/playbook/exit_engine.py"
+        ],
+        "expected_impact": "Does not directly change exits but removes stop-source ambiguity and makes future parameter tuning valid. Expected indirect improvement of 5%-10% in the profitability of subsequent stop/trailing changes.",
+        "validation_method": "schema validation, shadow reconciliation of initial_sl versus exit_policy-computed stop, and exit_reason allowlist checks",
+        "effort": "M",
+        "priority": 5
+      }
+    ],
+    "data_consistency_issues": [
+      {
+        "observation": "exit_reason contains TRAILING_STOP, STRUCTURE_EXIT, FLASH_EXIT, and time_stop while exit_policy.yaml says these are disabled, dead, or removed",
+        "why_suspicious": "Current SSOT should not emit these reasons; otherwise stats cannot be interpreted against the declared config",
+        "likely_cause": "legacy emitters still active, playbook self-managed exits mixed into aggregate stats, or stats include historical period before disablement"
+      },
+      {
+        "observation": "PRE_CLOSE_EXIT has positive total_pnl +2263 but avg_pct -0.11 and win_rate only 22.7",
+        "why_suspicious": "An unweighted average pct should usually align with total pnl sign unless position sizes are highly skewed or pnl/avg_pct calculation is inconsistent",
+        "likely_cause": "avg_pct is unweighted, excludes fees, uses wrong sign, or position sizing is extremely skewed; needs query audit"
+      },
+      {
+        "observation": "holding_hours is None for sl_hit, time_stop, tp_hit, and MOC exits",
+        "why_suspicious": "Holding time is required for time-based exits, grace-period checks, and performance attribution",
+        "likely_cause": "immediate exit paths do not populate holding_hours, or entry/exit timestamps are missing in trade_records"
+      },
+      {
+        "observation": "BREAKEVEN_STOP shows avg_mfe 0.0 and loss -2.98% after 46.3 hours",
+        "why_suspicious": "A breakeven stop should require prior favorable excursion; MFE zero and large loss are logically inconsistent",
+        "likely_cause": "mislabeled initial/overnight stop, gap through stop, stale peak_price, or entry/average-price mismatch"
+      },
+      {
+        "observation": "FLASH_EXIT has avg_mfe 0.0, avg_hold_h 0.3, and avg_pct -1.69",
+        "why_suspicious": "Large immediate loss with zero MFE may indicate missing peak tracking or entry-price slippage not reflected in MFE",
+        "likely_cause": "MFE not updated before flash exit, quote/entry timestamp mismatch, or flash exit path bypasses normal peak tracking"
+      },
+      {
+        "observation": "Total net PnL is -7429 while average realized pct is +0.04%",
+        "why_suspicious": "If avg_pct is equal-weight and fees are not distorting, total pnl should be positive",
+        "likely_cause": "avg_pct is unweighted, pnl includes fees or different position sizes, or statistics aggregation is inconsistent"
+      },
+      {
+        "observation": "MOC exit_reason is a Chinese string while other reasons are English constants",
+        "why_suspicious": "Mixed-language exit_reason values can break grouping, monitoring, and policy attribution",
+        "likely_cause": "localized log string written to DB instead of canonical enum"
+      },
+      {
+        "observation": "sl_hit avg_mfe is only 0.03 with 11.3% win rate",
+        "why_suspicious": "This may be real due to tight stops, but such near-zero MFE across 115 trades can also indicate MFE sampling too coarse or stop evaluation on entry quote",
+        "likely_cause": "tight low-vol stops plus delayed or low-frequency MFE tracking; needs tick-level audit"
+      }
+    ],
+    "overall_assessment": {
+      "strategy_soundness_score": 3.5,
+      "exit_logic_score": 3.0,
+      "top_3_actions": [
+        "Widen low-vol hard stops and add entry noise filter to reduce the 43% sl_hit false-stop rate",
+        "Enable live MFE-adaptive trailing and stepped profit lock to recover the 0.44pp average giveback",
+        "Audit and disable legacy STRUCTURE_EXIT/FLASH_EXIT/time_stop emitters and unify exit_reason telemetry"
+      ],
+      "summary": "The system has negative expectancy mainly because stops are too tight in low-vol names, profit giveback is large, and exit telemetry/config is fragmented. The biggest immediate improvements are stop recalibration, live adaptive profit locking, and removing legacy exit paths. All changes should be validated by shadow replay before live capital is risked."
+    }
+  },
+  "error": null
+}

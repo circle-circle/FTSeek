@@ -1,0 +1,367 @@
+===============================================================================================
+FTSeek-US v4 交易策略复查(8月起)对比
+===============================================================================================
+
+模型                         耗时    输出tok    推理tok defects   exit发现   提案     数据问题
+-----------------------------------------------------------------------------------------------
+qwen3.8-max              543s    24108    17314       8        9    6        6
+deepseek-v4.1-flash      315s    24514    10757      10        9    8        8
+kimi-k3                  741s    30152    20971      10        8    7        8
+glm-5.3-prime            608s    58104    47786      12        8    8        9
+glm-5.3                  845s    54811    44880      10        8    8        9
+
+===============================================================================================
+盈利提升提案清单（按模型，含验证方式）
+===============================================================================================
+
+### qwen3.8-max (6 个提案)
+  P1 [L] Clamp initial stops to volatility-bucket caps and attach broker-side s
+      改动: At entry, compute effective_sl from ATR and bucket max_loss_pct. Clamp any StopLossConfig or meta stop to low/
+      预期: SL_INITIAL loss per percentage point is about 53 USD. Reducing avg SL_INITIAL loss from -3.05% to -1.5/-2.0% s
+      验证: Shadow replay historical quotes with the clamped stop logic, compare simulated fill vs current SL_INITIAL outcomes. Then paper-trade with broker stops before live enablement.
+  P2 [M] Eliminate overnight gap tail risk for longs
+      改动: Add pre-close overnight-risk gate: if LONG and unrealized loss > 1.0%, or symbol has high gap beta / low liqui
+      预期: OVERNIGHT_GAP_STOP loss per percentage point is about 57 USD. Reducing avg loss from -5.45% to -2.5%, or cutti
+      验证: Replay prior overnight positions using pre-close and pre-market quotes. Shadow-test the gate and compare realized tail loss. A/B config can run reduce-only vs full-close cohorts.
+  P3 [S] Tighten adaptive trailing capture
+      改动: Set adaptive_trailing_target_capture_pct from 60 to 70-75. Reduce max_drawdown_pct from 1.2 to 0.8 and min_dra
+      预期: SL_TRAIL_LOCK has 123 trades and roughly 50 USD per percentage point. Improving realized exit by 0.15-0.25pp a
+      验证: Shadow replay using historical peak_price paths. Compare current trailing drawdown vs proposed drawdown. Run A/B config in shadow mode for at least 2-4 weeks.
+  P4 [S] Make breakeven less eager
+      改动: Raise playbook breakeven_at_pct from 0.4% to 0.7%-0.8%, or use max(0.5%, 0.5 * ATR%). Require 15-20 minutes of
+      预期: SL_BREAKEVEN is 44% of trades but only +974 USD. If 20-30 trades convert from dust exits to +0.5pp outcomes, e
+      验证: Shadow test with historical MFE/MAE paths. Compare breakeven churn, subsequent trail-lock conversion, and MAE. Use A/B config with a small live paper cohort.
+  P5 [S] Fix PnL sign/qty accounting and canonicalize exit_reason
+      改动: Normalize qty_signed by direction before PnL computation. Add invariant that pnl_pct and pnl_usd have matching
+      预期: Does not directly change trading PnL, but prevents wrong attribution and avoids tuning based on corrupted stat
+      验证: Unit tests for LONG/SHORT PnL sign invariants. Backfill recompute historical pnl_usd and pnl_pct from fills and compare against stored values.
+  P6 [M] Add partial take-profit for low/medium volatility buckets
+      改动: Enable small scale-out tiers: for low bucket take 20%-30% at 0.4%-0.8%, for medium bucket take 20%-30% at 1.5%
+      预期: Average MFE is 0.91% but average realized is only 0.08%. Capturing an extra 0.1-0.2pp on a broad subset of tra
+      验证: Shadow replay with MFE paths. Compare realized PnL, win rate, and tail loss. Run A/B with partial TP enabled only in shadow or paper mode.
+
+### deepseek-v4.1-flash (8 个提案)
+  P1 [M] Cap the overnight tail with broker-side protective stops (kill the -28
+      改动: For any position flagged for overnight carry (pre_close loss_flat=false path), pre-arm a Futu conditional/stop
+      预期: 9 events averaging -5.45% collapse toward the 3% threshold: (5.45-3.00)/5.45 x 2812 = ~+1265 USD per 446-trade
+      验证: Replay: for the 9 historical OVERNIGHT_GAP_STOP events plus all overnight carries in the current window, recompute the exit using the first tick at/after the pre-armed stop price instead of the first scan price. Shadow: run live with the broker order placed but a 2% 'virtual offset' logged (do not actually submit) — compare the virtual stop price with the real poll exit for 10 sessions before enabling real submission.
+  P2 [M] Make the initial stop provenance explicit and tighten the effective in
+      改动: 1) Resolve the three SL authorities into one function returning (sl_price, sl_pct, sl_source); persist sl_sour
+      预期: 27 SL_INITIAL trades at avg -3.05% -> 2.0% saves 1.05pp x 5.32k implied notional x 27 = ~+1510 USD. If provena
+      验证: Replay on stored ticks/quotes is only partially possible for pre-arm; use A/B config: run two shielded configs (current vs bucket-aligned) in the shadow bridge with identical signals for 15 sessions, comparing stop-out rate and avg realized loss. Do NOT flip live until the A/B shows the tighter stop does not increase the count of stop-outs by more than (loss_reduction / new_avg_loss).
+  P3 [S] Convert the breakeven ratchet from 'move to entry at 0.4%' to a two-ru
+      改动: breakeven_at_pct 0.4 -> 0.9 with lock at entry+0.3%; add rung 2 at profit >= 1.8% lock at entry+1.0%. Keep 'mo
+      预期: 196 trades x 0.63% MFE at 32% capture. Moving capture to ~45% is +0.08pp x 196 x 5.0k = ~+780 USD, plus elimin
+      验证: Shadow: enable the two-rung ratchet only in PLAYBOOK_SIM for 15 sessions and compare capture ratio and WR against the same-period live book (directional, not causal) plus a deterministic replay over the last 60 sessions using recorded quote history for the breakeven population. Enable live when capture ratio improves without a >1.5x increase in trades reaching the hard stop.
+  P4 [S] Re-tune the adaptive trailing drawdown (capture rate) as a measurable 
+      改动: Set EXT_ADAPTIVE_TRAILING_MAX_DD explicitly in config (default 2.0-2.5) instead of an untracked env var, and l
+      预期: Two effects with opposite signs on the same 123 trades: lowering min_drawdown 0.4->0.3 reduces giveback on sma
+      验证: A/B config in shadow: two drawdown settings (1.2 clamp vs 2.5 cap) over the same replay window, report per-bucket (MFE <1%, 1-2%, 2-5%, >5%) average realized. Enable only if the >2% MFE bucket improves without the <1% bucket degrading by more than the gain.
+  P5 [S] Unify the exit_reason taxonomy and add a write-time reconciliation gua
+      改动: Add app/risk/exit_reasons.py (ExitReason enum + normalize_exit_reason) and route every write into trade_record
+      预期: No direct PnL, but it is a prerequisite for measuring everything above: without it, proposals 3-4 cannot be va
+      验证: Run the normalizer in log-only mode over the last 500 records and diff the before/after reason distribution; require the total PnL per normalized reason to be conserved (sum invariance test).
+  P6 [S] Loosen or repurpose MFE_STALL_EXIT
+      改动: Change rule [3.4] from 'exit at market' to 'tighten SL to entry-0.5%' and shorten the stall window from 150 to
+      预期: 14 trades, -606 USD, 0% WR, avg MAE 1.77% — the rule currently realizes a loss that is nearly as deep as the h
+      验证: Replay over the 14 historical MFE_STALL events: recompute with a -0.5% tightened-SL policy using the recorded MAE path; enable only if the counterfactual realized loss is at least 0.3pp better on >=60% of them.
+  P7 [S] Disable or gate extended-hours entries
+      改动: Set the extended_hours_entry strategy to shadow-only (or require a much higher conviction threshold) until it 
+      预期: 8 trades, -522 USD = -65 USD/trade, 50% WR — the worst per-trade expectancy in the by-strategy table (playbook
+      验证: Shadow: tag the entries and do not submit; compare 20 sessions of would-be performance against the book. Trivial to revert (one config flag).
+  P8 [M] Bind the capital allocator (observe_only -> enforce) and delete or wir
+      改动: Flip CapitalAllocator.observe_only to False for the main bucket after a dry-run diff, wire compute_scale_facto
+      预期: Indirect but structural: it prevents any single tail event from being sized to the maximum the broker allows a
+      验证: Two-week log-only diff: record what try_reserve would have rejected and what scale factor would have been applied, per order. Enable only if the block rate is <2% of orders and the blocked set's realized PnL is negative on average.
+
+### kimi-k3 (7 个提案)
+  P1 [M] Cushion-gated overnight admission + gap-stop backstop at 3%
+      改动: In app/playbook/overnight_decision.py (consumed at exit_engine.py:28-32): hold overnight only if close pnl >= 
+      预期: All 9 OVERNIGHT_GAP_STOP trades (MFE max 0.47%) fail the cushion test; est. save ~60-75% of -2812 ~= +$1,700-2
+      验证: Pure replay on existing trade_records (mfe/mae/hold fields already logged) — no live risk; then shadow mode: log 'would have flattened at close' vs actual for 2 weeks; optional A-B by symbol hash.
+  P2 [M] Hard SL ceiling 2.5% + broker-side RTH stop backstop in playbook engin
+      改动: In _check_playbook_exit_rules: effective_sl = min(meta_sl, config playbook.max_initial_sl_pct=2.5%); cut rule[
+      预期: SL_INITIAL avg -3.05% -> ~-2.3% = ~0.7pp x $5,320 x 27 ~= +$1,000-1,300/period; also caps 'tighten' (-452) and
+      验证: Replay Aug-Oct minute bars through modified rules (mfe/mae logged enables path reconstruction); shadow flag logging would-be exits vs actual for 2 weeks before enabling broker stops; assert no double-exit via position-id idempotency test.
+  P3 [S] Replay-gated profit-capture recalibration (trail 60%->70%, BE 0.4%->0.
+      改动: unified_config playbook: adaptive_trailing_target_capture_pct 60->70; factor_exit_rules breakeven_at_pct 0.4->
+      预期: Trail cohort: giveback 0.83pp -> ~0.62pp on MFE 1.86% ~= +$10.5/trade x 123 ~= +$1,140; BE cohort: +$400-800 n
+      验证: Deterministic replay: trail/BE rules are pure functions of the price path — reuse the existing shadow_bridge + config/exit_profiles.yaml harness; confirm with exit_quality_tracker post-exit continuation stats; 2-week shadow A-B before promotion.
+  P4 [S] Wire playbook pnl into DrawdownController + enforce CapitalAllocator
+      改动: Call drawdown_control.record_trade_pnl(pnl, 'playbook') at the playbook close-recording point; add -1% equity 
+      预期: Prevents Sep-style slow bleed (-509 at 76.8% WR tripped nothing): est. +$300-800/month in avoided tail days; e
+      验证: Shadow: recompute daily drawdown including playbook pnl over Aug-Oct records, count would-have-triggered days; allocator: existing _ReserveEvent log already records shadow blocks — audit before flip.
+  P5 [M] Retire/normalize the legacy lowercase exit writer + accounting invaria
+      改动: Grep 'tighten'/'breakeven_lock'/'lock_in', route or delete the path; canonicalize exit_reason via the ExitReas
+      预期: Removes -641/6-trade unmanaged cohort and the -314 phantom record; primary value is stopping unreviewed live e
+      验证: DB audit query for sign(pnl_pct) != sign(pnl_usd) rows and hold_minutes < grace rows; unit tests on the recorder; no live risk.
+  P6 [S] Gate or disable extended_hours_entry
+      改动: Config flag: disable extended_hours_entry, or require spread <= 25bps + half size + no overnight carry from ex
+      预期: 8 trades, -522, 50% WR -> flat removes -522/period at trivial cost; wide-spread fills are the likely mechanism
+      验证: Spread/slippage analysis of the 8 records vs RTH cohort; shadow-disable (log would-be entries) for 2 weeks.
+  P7 [S] Faster dead-money recycling + entry-quality probe
+      改动: MFE_STALL_EXIT 150min -> 90min (plus optional 60min/MFE<0.3% early tier); separately, replay SL_INITIAL entrie
+      预期: Stall: ~+$150-220/period; entry probe: SL_INITIAL cohort is -4383 — even a 10% entry improvement on the worst 
+      验证: Replay only (stall rule is deterministic on logged paths; entry test uses bar replay with offset fills).
+
+### glm-5.3-prime (8 个提案)
+  P1 [S] Stop holding losers overnight (pre-close flatten + profit-gated overni
+      改动: Set pre_close_exit.loss_flat=true in exit_policy.yaml; in _check_playbook_exit_rules rule [3], flatten when pn
+      预期: OVERNIGHT_GAP_STOP cohort: -2812 (9 trades, avg -5.45%). Flattening at pre-close (~-1.5% avg instead of -5.45%
+      验证: Replay Aug-Oct trade_records with the counterfactual 'flatten at pre-close if pnl < 0' using recorded entry/exit/MFE/MAE; then a 2-week log-only shadow flag that records the counterfactual exit price without placing orders.
+  P2 [S] Disable extended_hours_entry until fixed
+      改动: Gate off extended_hours_entry in the strategy registry (unified_config) / signal_pipeline fast-lane until (a) 
+      预期: extended_hours_entry: 8 trades, -522, 50% WR = 89% of the era's net loss (-586). Removing it makes the era ~-6
+      验证: Pure replay - the 8 trades are separable by strategy in trade_records; then shadow-off for 2 weeks comparing counterfactual fills.
+  P3 [M] Cap effective initial SL at 2.0-2.5% and place broker-side stops
+      改动: Cap direction_override max_loss_pct (medium 2.7 -> 2.0; high 5.1/9.0 -> 2.5) in exit_policy.yaml; cap playbook
+      预期: SL_INITIAL: 27 trades, -4383, avg -3.05% (top losers -5.17/-5.23/-5.26 match the high-bucket 5.1% config). Cap
+      验证: Replay with capped SL using recorded MFE/MAE paths; A/B the bucket caps in SIM (config-only change); measure re-stop rate and post-stop drift.
+  P4 [S] Retune profit capture (breakeven trigger/buffer + trail capture rate)
+      改动: A/B playbook breakeven_at_pct 0.4 -> 0.8, or keep 0.4 and lock at entry+0.2% (exit_policy.yaml breakeven.buffe
+      预期: Giveback is 0.83 pts/trade by configuration: the SL_BREAKEVEN cohort gives back 0.43 pts (MFE 0.63 -> 0.20) an
+      验证: Replay MFE/MAE paths with counterfactual exit levels (data already in trade_records); 2-week SIM A/B be_0.4 vs be_0.8 reporting expectancy per exit_reason.
+  P5 [S] Fix exit accounting and reason taxonomy (enabler for all replays)
+      改动: Single uppercase reason-enum writer; record the exit fill price and compute pnl_pct/MAE from it; write-time as
+      预期: No direct PnL, but every tuning decision above depends on these stats: CTNT (+2.78% pct vs -314 USD) currently
+      验证: Recompute era stats after backfill; assert per-trade pnl == (exit_fill - entry) x qty x direction - fees against broker statements.
+  P6 [S] Feed playbook PnL into DrawdownController; wire or delete decorative k
+      改动: Call record_trade_pnl(pnl, source='playbook') from the playbook close path; wire exit_policy.yaml global.max_d
+      预期: The daily 3% limit is currently blind to 98% of flow (only mainline closes feed it). Capping runaway days boun
+      验证: Shadow mode: log would-have-blocked events for 2 weeks without enforcing; reconcile daily sums vs broker statements.
+  P7 [S] Close the minute-15-30 loss floor (early-tighten as a real stop)
+      改动: In rule [0.5]: trigger at 15min (end of the 4% grace) instead of 30min and set effective_sl = min(current, ent
+      预期: 'tighten' realizes -2.15% vs its 1% target (3 trades, -452); MFE_STALL cuts at -1.37% (14 trades, -606). Direc
+      验证: Replay with a counterfactual effective_sl timeline; SIM A/B.
+  P8 [S] Promote early dead-signal exit from shadow
+      改动: Analyze data/early_dead_signal_shadow.jsonl (_EARLY_DEAD_SHADOW_PATH seam already in exit_engine.py): if the s
+      预期: Small direct PnL (~$0-300/era) but removes ~10% of trade count - fee drag reduction and capital freeing for th
+      验证: The shadow log already exists - compare shadow counterfactual vs realized per trade; no new instrumentation needed.
+
+### glm-5.3 (8 个提案)
+  P1 [M] Broker-side resting stops (amend-on-ratchet) for all playbook position
+      改动: At arming, submit a Futu conditional stop order (stop-market, or stop-limit with limit = stop x (1-0.3%) for L
+      预期: Every stop cohort shows fills at the worst tick (MAE ~= realized: SL_INITIAL 3.14 vs 3.05; OVERNIGHT_GAP 5.47 
+      验证: Shadow: run 2-4 weeks placing the stops record-only (or in Futu paper) and compare would-fill prices vs actual poll-based exits on the same positions; plus 1-min-bar replay of Aug-Oct simulating resting-stop fills vs recorded fills.
+  P2 [S] EOD-flat for no-progress losers (eliminate the overnight gap cohort)
+      改动: In exit_engine rule [3] PRE_CLOSE: if MFE < 0.5% AND current pnl < 0 at the T-8min window -> close, do not hol
+      预期: All 9 OVERNIGHT_GAP_STOP trades had MFE <= 0.47% and were underwater at the hold decision; closing at EOD (~-1
+      验证: Replay Aug-Oct: for every overnight-held position, compare EOD-close PnL vs the actual next-session exit; report both directions of the tradeoff before enabling.
+  P3 [S] Hard 2.5% SL cap + tighter opening cooldown on the playbook chain
+      改动: Implement the max_loss cap inside _compute_dynamic_effective_sl (the cap currently exists only in dead exit_po
+      预期: SL_INITIAL avg -3.05% -> ~-2.2% = ~+$1.2k per era (27 x 0.85pp x $5.3k). Risk: more noise stop-outs - the repl
+      验证: Replay with re-priced stops on Aug-Oct; SIM A/B config (one variant per week).
+  P4 [S] Fix accounting + taxonomy + wire playbook PnL into DrawdownController 
+      改动: Direction-signed pnl_pct; write-time invariant |pnl_usd - pnl_pct x qty x entry| < fee tolerance; migrate 'tig
+      预期: No direct PnL, but removes +/-$314-class stat corruption (CTNT), makes the 44%-share SL_BREAKEVEN cohort trust
+      验证: Unit tests with synthetic LONG/SHORT closes (including the CTNT pattern); backfill recompute of the 6 straggler rows; verify DrawdownController trips on a simulated playbook-only loss day.
+  P5 [M] Risk-normalized position sizing (qty = risk_$ / stop_distance)
+      改动: At arming, size positions so dollar risk per trade is fixed (e.g., $75-100): qty = risk_budget / (entry - init
+      预期: Implied avg notional by cohort (pnl/(n x avg_pct)): SL_INITIAL $5.3k, OVERNIGHT_GAP $5.7k vs SL_BREAKEVEN $2.5
+      验证: Replay Aug-Oct with re-sized positions (recompute per-trade pnl with new qty); SIM A/B config.
+  P6 [S] Gate or disable extended_hours_entry
+      改动: Require quoted spread <= 10bp and halve size for extended-hours entries, or route the signals to next-open lim
+      预期: 8 trades, -522, 50% WR - 1.6% of trades = 89% of net loss; removing them is +$522 per equivalent window with n
+      验证: A/B config; shadow-log counterfactual next-open fills for the same signals.
+  P7 [S] Breakeven trigger/buffer A/B + unclamp adaptive trail max_dd
+      改动: Set EXT_ADAPTIVE_TRAILING_MAX_DD=2.5 (env already implemented, no config-hash change); replay-test be trigger 
+      预期: BE cohort giveback is 0.43pp x 196 x $2.5k = ~$2.1k theoretical; realistic capture +$0.7-1.2k. Sign of a trigg
+      验证: Cohort-level replay with counterfactual exits; SIM A/B config per variant.
+  P8 [M] Cut scratch churn to reduce friction (gross-positive, friction-negativ
+      改动: The era is gross-positive (avg pct +0.078%, sum of n x avg_pct = +34.8pp) but net -586 - implied friction ~$3.
+      预期: Cutting ~90-130 scratch trades saves ~$300-600 friction per era; small but positive-expectation once the tail 
+      验证: Replay dropping the lowest-MFE decile of entries and recompute net; confirm fee column semantics first.
+
+===============================================================================================
+止损止盈发现（exit_logic_findings，按 stat_fact 聚合跨模型）
+===============================================================================================
+
+* [2模型] 2026-09-17 US.CTNT LONG 'breakeven_lock': pnl_pct +2.78% but
+    kimi-k3: Smoking gun: pnl_pct 2.78 == mfe 2.7778 to 4 decimals, and the same holds for 'lock_in' (2.08 == 2.08). The le
+    glm-5.3: Sign/direction contradiction, not fees: +2.78% on the ~$11.3k notional implied by -314/2.78% would be +$314; t
+
+* [2模型] Monthly: Aug -242 (54.6% WR), Sep -509 (76.8% WR), Oct +165 
+    glm-5.3-prime: WR is decoupled from PnL (be_0.4 dust effect). Oct's positive month coincides with a 3x volume collapse - cons
+    glm-5.3: Payoff tails, not hit rate: 36 tail trades (SL_INITIAL -4,383 + OVERNIGHT_GAP_STOP -2,812 = -7,195) offset the
+
+* [1模型] Net PnL -586 over 446 trades; avg MFE 0.91% vs avg realized 
+    qwen3.8-max: The exit chain captures only a small fraction of MFE. Adaptive trailing uses drawdown = (1 - target_capture) *
+
+* [1模型] SL_INITIAL: 27 trades, -4383 USD, avg -3.05%, avg MAE 3.14%,
+    qwen3.8-max: Playbook initial_sl appears to be driven by meta / StopLossConfig defaults rather than the exit_policy volatil
+
+* [1模型] OVERNIGHT_GAP_STOP: 9 trades, -2812 USD, avg -5.45%, all LON
+    qwen3.8-max: The rule is named gap stop but only checks that the position is overnight and currently losing. It does not va
+
+* [1模型] SL_BREAKEVEN: 196 trades, +974 USD, 75% win rate, avg +0.2%,
+    qwen3.8-max: The playbook breakeven trigger appears too eager, around 0.4%. This moves stops to cost before normal noise re
+
+* [1模型] 2026-09-17 US.CTNT LONG breakeven_lock shows pnl_pct +2.78% 
+    qwen3.8-max: A long trade with positive price change should not have negative PnL unless fees are larger than gross profit 
+
+* [1模型] Monthly: Aug -242 with 54.6% win rate, Sep -509 with 76.8% w
+    qwen3.8-max: Win rate is not the binding constraint. The system produces many small wins via SL_BREAKEVEN and SL_TRAIL_LOCK
+
+* [1模型] TAKE_PROFIT has only 1 trade despite avg MFE 0.91% across al
+    qwen3.8-max: Default take-profit levels in StopLossConfig are large, e.g. 10% default and 25% in strong_trend_up, while act
+
+* [1模型] MFE_STALL_EXIT: 14 trades, -606 USD, avg -1.37%, avg MFE 0.1
+    qwen3.8-max: The stall exit waits until holding >= 150 minutes, peak profit < 0.5%, and current price underwater. By then t
+
+* [1模型] Exit-reason taxonomy still contains lowercase stragglers: ti
+    qwen3.8-max: Multiple exit paths write free-form reason strings. There is no canonical ExitReason enum or normalization lay
+
+* [1模型] SL_INITIAL n=27, -4383 USD, avg -3.05%, avg MAE 3.14%, avg M
+    deepseek-v4.1-flash: Not primarily slippage. The realized -3.05% equals the stop_loss_config default of -3.0% and is consistent wit
+
+* [1模型] OVERNIGHT_GAP_STOP n=9, -2812 USD, avg -5.45%, all LONG, top
+    deepseek-v4.1-flash: No broker-side resting stop exists overnight. Detection is a 60s poll and the exit is a market order taken at 
+
+* [1模型] avg MFE 0.91% vs avg realized 0.08% = 0.83pp giveback per tr
+    deepseek-v4.1-flash: Decomposing total giveback (sum of MFE-realized across reasons = 370.4pp / 446 = 0.83pp): the two ratchet buck
+
+* [1模型] SL_BREAKEVEN n=196 = 44% of all trades, +974 USD, 75% WR, av
+    deepseek-v4.1-flash: The trigger is too eager and the action is too binary. A 0.4% trigger with a pure move-to-entry stop means the
+
+* [1模型] Anomaly 2026-09-17 US.CTNT LONG 'breakeven_lock': pnl -314 U
+    deepseek-v4.1-flash: Two independent numbers are being computed from two different price bases and then stored side by side as if r
+
+* [1模型] September 2026: n=181, win rate 76.8%, net -509 USD
+    deepseek-v4.1-flash: Win rate is decoupled from expectancy because the loss distribution has a fat tail while the win distribution 
+
+* [1模型] MFE_STALL_EXIT n=14, -606 USD, 0% WR, avg -1.37%, avg MAE 1.
+    deepseek-v4.1-flash: The rule is a lagging exit: by the time it fires, avg MAE is already 1.77% and the realized exit is -1.37%. It
+
+* [1模型] TAKE_PROFIT only n=1 (+444) despite 1.86% avg MFE on the tra
+    deepseek-v4.1-flash: Take-profit is structurally unreachable: with the first ratchet at +0.4% and the trail activating shortly afte
+
+* [1模型] exit_reason lowercase stragglers 'tighten' (3, -452), 'break
+    deepseek-v4.1-flash: Multiple engines write the same column with different conventions; there is no enum or constraint. 'breakeven_
+
+* [1模型] Net -586/446 trades; avg MFE 0.91% vs realized 0.08% (0.83pp
+    kimi-k3: The giveback is structural, not a bug: (a) trail drawdown = (1 - 60% capture) x MFE, i.e., 40% of every winner
+
+* [1模型] SL_INITIAL 27 trades, -4383, avg -3.05% — double the adverti
+    kimi-k3: Not primarily slippage: exit_policy.yaml bucket caps simply do not apply to these trades (98% are playbook_sim
+
+* [1模型] OVERNIGHT_GAP_STOP 9 trades, -2812, avg -5.45%, all LONG, to
+    kimi-k3: Rule [2] is an overnight deep-loss flush executed at the next session's first poll — the full overnight gap is
+
+* [1模型] SL_BREAKEVEN 196 trades (44%), +974, avg +0.2%, 75% WR
+    kimi-k3: Trigger at 0.4% sits below the cohort's own avg MFE (0.63%) — BE arms on the first noise pulse, then any pullb
+
+* [1模型] Sep: -509 with 76.8% WR — win rate is not the problem
+    kimi-k3: Arithmetic: Sep's top-5 tail losses (ORCL -400, RIVN -320, CTNT -314, SNDK -277 + others) ~= -1,750, i.e., ~3.
+
+* [1模型] exit_reason lowercase stragglers ('tighten' -452/3, 'breakev
+    kimi-k3: A Task #48-era registry with canonical ExitReason exists, yet 6 trades were written with pre-registry lowercas
+
+* [1模型] MFE_STALL_EXIT 14 trades, -606, avg -1.37%, 0% WR
+    kimi-k3: Working as designed — it exits dead money at -1.37% instead of letting it reach SL_INITIAL's -3.05% (saves ~1.
+
+* [1模型] SL_INITIAL: 27 trades, -4383, avg -3.05%, avgMAE 3.14%, 0% W
+    glm-5.3-prime: The stops that actually fire are not the 1.5-2.0% headline. Three SL parameter sources coexist (yaml buckets w
+
+* [1模型] OVERNIGHT_GAP_STOP: 9 trades, -2812, avg -5.45%, all LONG, 0
+    glm-5.3-prime: Losers are held overnight by design (loss_flat=false since 2026-07-05; cohort-B can skip pre-close profit-taki
+
+* [1模型] avg MFE 0.91% vs avg realized 0.08% - 0.83 pts giveback per 
+    glm-5.3-prime: The giveback is configured, not accidental. (a) Eager breakeven ratchet: at +0.4% profit the SL jumps to entry
+
+* [1模型] SL_BREAKEVEN is 44% of all trades (196/446), 75% WR, avg +0.
+    glm-5.3-prime: 0.4% is inside normal intraday noise, so marginal winners lock at entry and round-trip to dust. After be_0.4 l
+
+* [1模型] 2026-09-17 US.CTNT LONG breakeven_lock: pnl_pct +2.78% but p
+    glm-5.3-prime: |pnl| = pct x notional exactly ($11.3k x 2.78%) with opposite sign: qty is consistent, the fields diverge in s
+
+* [1模型] 'tighten': 3 trades, -452, avg -2.15% vs the 1% tightened SL
+    glm-5.3-prime: Both rules fire on a clock after the damage: [0.5] tightens at 30min but closes positions already >2% underwat
+
+* [1模型] TAKE_PROFIT: 1 trade in 446 (+444, +7.67%) despite bucket TP
+    glm-5.3-prime: TP almost never fires (RR gate + ATR-relative placement); profit capture is fully delegated to trail lock + pr
+
+* [1模型] SL_INITIAL: 27 trades, -4383, avg -3.05%, avgMAE 3.14% - rou
+    glm-5.3: Stacked causes, none of them 'gap' alone: (1) the 1.5-2.0% caps are dead config - the yaml header states playb
+
+* [1模型] OVERNIGHT_GAP_STOP: 9 trades, -2812, avg -5.45%, all LONG, t
+    glm-5.3: Yes - poll-based detection with no broker-side stop. The 2026-07-05 loss_flat=false rationale ('losers managed
+
+* [1模型] avg MFE 0.91% vs avg realized 0.08% - 0.83pp giveback per tr
+    glm-5.3: The leak is concentrated in two cohorts, not spread evenly: SL_TRAIL_LOCK gives back 0.83pp of a 1.86% MFE (45
+
+* [1模型] SL_BREAKEVEN: 196 trades (44% of all), +974, 75% WR, avg +0.
+    glm-5.3: The trigger is eager relative to the system's own dynamics: 0.4% is below the 0.91% avg MFE, so most positions
+
+* [1模型] exit_reason taxonomy stragglers: 'tighten' (3, -452, avg -2.
+    glm-5.3: Two writers with different conventions. 'tighten' is behaviorally the rule [0.5] early-tightened SL (1%) - its
+
+* [1模型] By strategy: extended_hours_entry 8 trades -522 (50% WR) vs 
+    glm-5.3: 1.6% of trades cause 89% of the net loss: extended-hours fills carry wide spreads/thin books and then run on t
+
+===============================================================================================
+数据一致性存疑项
+===============================================================================================
+  [qwen3.8-max] US.CTNT LONG breakeven_lock has pnl_pct +2.78% but pnl -314 USD. -> Signed quantity bug, wrong direction handling, swapped entry/exit prices, or fee
+  [qwen3.8-max] breakeven_lock aggregate shows avg_pct +1.61 but total pnl -297 USD over only 2 trades. -> Same accounting sign/qty issue as CTNT, or one corrupted row dominating the smal
+  [qwen3.8-max] SL_INITIAL average loss is -3.05%, while exit_policy low/medium bucket max_loss is around 1.5%-2.0%. -> Playbook positions are not consuming exit_policy.yaml; initial_sl is likely from
+  [qwen3.8-max] OVERNIGHT_GAP_STOP is a top loss reason, but the code explicitly says the rule has no gap validation -> Legacy naming plus record-only note_exit_gap added after the fact. Statistics us
+  [qwen3.8-max] SL_BREAKEVEN and TIME_EXIT appear in current-era stats even though breakeven and time_exit are disab -> Playbook self-managed exit chain uses separate parameters, while exit_reason lab
+  [qwen3.8-max] Lowercase exit reasons remain: tighten, breakeven_lock, lock_in. -> No canonical enum or normalization layer before persistence.
+  [deepseek-v4.1-flash] 'breakeven_lock' bucket: n=2, pnl -297 USD, avg_pct +1.61, win% 50.0 -> pnl_usd is written from the broker fill (with fees, true quantity, possibly aggr
+  [deepseek-v4.1-flash] 2026-09-17 US.CTNT LONG breakeven_lock: pnl -314 USD, pnl_pct +2.78, MFE 2.7778, MAE 0.0, hold_h 0.1 -> Record synthesized at decision time: pnl_pct taken from the ratchet/stop level (
+  [deepseek-v4.1-flash] SL_INITIAL and OVERNIGHT_GAP_STOP both have realized avg_pct within 0.09pp of avgMAE (3.05 vs 3.14 a -> 60s poll + market-order exit with no broker-side resting stop; MAE is computed f
+  [deepseek-v4.1-flash] 'lock_in': n=1, pnl +108, avg_pct +2.08, MFE +2.08, MAE 3.97 -> Reinforces the SL provenance problem: at least one population of live positions 
+  [deepseek-v4.1-flash] 'tighten': n=3, pnl -452, avg_pct -2.15, 0% WR; combined with the lowercase 'breakeven_lock'/'lock_i -> Legacy writer path (pre-refactor ExitMonitor or a factor-level rule) still activ
+  [deepseek-v4.1-flash] Strategy split: playbook_sim 438 trades / -64 USD vs extended_hours_entry 8 trades / -522 USD -> Naming convention where PLAYBOOK_SIM is the execution mode tag rather than a pap
+  [deepseek-v4.1-flash] TAKE_PROFIT n=1 and PRE_CLOSE_EXIT n=16 across 446 trades while the config lists a full pre_close la -> Two overlapping pre-close configs, one consumed and one decorative. The stats ca
+  [deepseek-v4.1-flash] holding_hours values are present in the top-10 losers (0.1 to 19.4) but no null count / coverage sta -> Unknown — more context needed. Request: count of rows with holding_hours IS NULL
+  [kimi-k3] 2026-09-17 US.CTNT: pnl_pct +2.78 == mfe 2.7778 (4-decimal match) while pnl_usd = -314; identical pa -> Legacy lowercase exit writer computes pct from meta peak/entry instead of realiz
+  [kimi-k3] SL_BREAKEVEN shows 75% win rate — 49 of 196 'breakeven' exits are losses -> breakeven buffer absent in playbook factor_exit_rules (main-line yaml has buffer
+  [kimi-k3] strategy='playbook_sim' rows carry data_quality='real' and dominate (438/446) the broker-verified cu -> Legacy naming of a live playbook strategy; needs verification of how data_qualit
+  [kimi-k3] 'breakeven_lock' cohort avgMAE = 0.0 across 2 trades with avgMFE 1.61%; CTNT row MAE 0.0 with MFE 2. -> Legacy writer does not update peak/trough state (or writes MAE only from a track
+  [kimi-k3] exit_policy.yaml shows breakeven.enabled=false and time_exit.enabled=false, yet stats show 196 SL_BR -> Documented SSOT split (playbook factor_exit_rules with be_0.4 lives in unified_c
+  [kimi-k3] Cross-breakdown aggregates reconcile perfectly: reason counts sum to 446, monthly counts 207+181+58= -> Single trade_records source feeding all rollups; trust the aggregates, distrust 
+  [kimi-k3] MFE_STALL_EXIT / PATIENT_EXIT_* cohorts show 0% win rate by construction, and DEAD_SIGNAL_EXIT 46.5% -> KPI definition issue, not a logging bug — recommend reporting win rate excluding
+  [kimi-k3] Loser cohorts carry systematically larger implied notional: SL_INITIAL ~$5.3K and OVERNIGHT_GAP_STOP -> Sizing varies by signal type/bucket (large low-vol names get bigger notional but
+  [glm-5.3-prime] CTNT 2026-09-17: pnl_pct +2.78% but pnl -314 USD; MAE 0.0; pct == MFE (2.7778) exactly; hold 0.1h -> pnl computed from the exit fill, pnl_pct/MFE/MAE from the last polled quote (bet
+  [glm-5.3-prime] 'lock_in' trade: realized pct +2.08 == MFE 2.08 exactly, with MAE 3.97 > MFE -> Same writer family: pnl_pct written from peak_profit_pct at decision time rather
+  [glm-5.3-prime] avg realized pct +0.08% (positive) while net pnl is -586 USD -> Two compounding effects: (a) dollar-weighting - losing cohorts carry larger noti
+  [glm-5.3-prime] avgMAE = 0.0 for the entire 'breakeven_lock' cohort (both trades) and for TAKE_PROFIT, while other r -> MAE is updated only in the playbook exit loop's peak/trough tracking; the legacy
+  [glm-5.3-prime] OVERNIGHT_GAP_STOP name vs code: no gap check (2026-09-24 勘误); note_exit_gap now writes meta['exit_g -> Doc drift after note_exit_gap was added (RFC-106); the reason string was never r
+  [glm-5.3-prime] holding_hours for overnight trades: 6.3h for positions entered on a previous trading day (wall-clock -> Market-hours-only or daily-reset holding clock. Not necessarily a bug, but TIME_
+  [glm-5.3-prime] Sep 76.8% WR with -509 net (best WR, worst PnL); Oct +165 with only 58 trades vs 181 in Sep -> be_0.4 breakeven dust inflating WR; Oct volume drop likely from circuit breakers
+  [glm-5.3-prime] exit_reason taxonomy: 15 reasons with 3 lowercase stragglers ('tighten', 'breakeven_lock', 'lock_in' -> Legacy ExitMonitor/exit_rules reason strings never migrated to the playbook engi
+  [glm-5.3-prime] Cross-sums reconcile: n by reason = 446 = monthly sum = strategy sum; pnl by reason (-587 with round -> n/a - consistency confirmation; the loss concentration in extended_hours_entry i
+  [glm-5.3] US.CTNT 2026-09-17 breakeven_lock: pnl_pct +2.78% vs pnl -314 USD, mae 0.0, hold 0.1h, direction LON -> The lowercase 'breakeven_lock' writer computes pnl_pct with a LONG convention ((
+  [glm-5.3] PATIENT_EXIT_FILL: avg_pct 0.0 with pnl -5; system-wide avg pct +0.078% (sum of n x avg_pct = +34.8p -> pnl_pct is gross of commissions (computed from prices) while pnl_usd is net of f
+  [glm-5.3] breakeven_lock cohort (2 trades): avg_pct +1.61, WR 50%, total -297. -> Same sign bug as the CTNT row; cohort stats unusable until backfilled with direc
+  [glm-5.3] mae = 0.0 for TAKE_PROFIT (MFE 7.67%) and both breakeven_lock trades. -> MAE tracking is only wired on the exit_engine taxonomy paths; the legacy lowerca
+  [glm-5.3] Implied avg notional by cohort (pnl/(n x avg_pct)): SL_INITIAL $5.3k, OVERNIGHT_GAP $5.7k, SL_TRAIL_ -> Fixed-fraction/fixed-share sizing not tied to stop distance (or cohort price dif
+  [glm-5.3] exit_reason mixes 15 enum-style reasons with 3 lowercase stragglers ('tighten', 'breakeven_lock', 'l -> An unmigrated exit writer bypassing the ExitReason enum at the trade_records bou
+  [glm-5.3] OVERNIGHT_GAP_STOP is 9/9 LONG. -> Likely design asymmetry in the overnight exemptions (overnight_eod_exempt / w_we
+  [glm-5.3] holding_hours for overnight stops (6.3, 6.3, 19.4, 13.8, 6.4) initially looks too short for overnigh -> Verified consistent, not a bug: holding_hours excludes non-trading time - ORCL 1
+  [glm-5.3] Aggregate cross-checks: sum pnl by reason = -587 ~= -586; sum n = 446; monthly sum -586; strategy su -> n/a - statistics are reliable at cohort level except the per-trade sign/MAE issu
+
+===============================================================================================
+自评
+===============================================================================================
+  qwen3.8-max            strategy=58/10 exit=42/10
+      - Clamp initial stops to volatility-bucket caps and attach broker-side stop orders immediately after e
+      - Remove overnight gap tail risk by pre-close reduction or broker-side overnight stops for vulnerable 
+      - Tighten adaptive trailing capture and fix PnL sign / exit_reason taxonomy so optimization is based o
+  deepseek-v4.1-flash    strategy=5/10 exit=3/10
+      - Pre-arm broker-side protective stops for every overnight carry and exempt overnight positions from t
+      - Prove and then fix the initial-stop provenance: persist sl_source/sl_effective_pct, then align the l
+      - Convert the 0.4% move-to-entry breakeven into a two-rung profit lock (0.9% -> entry+0.3%, 1.8% -> en
+  kimi-k3                strategy=5/10 exit=3/10
+      - Cushion-gated overnight admission (close pnl >= +0.3% or MFE >= 0.8% to hold overnight) + overnight_
+      - Hard initial-SL ceiling 2.5% inside _check_playbook_exit_rules (overriding armed meta and the 4% ope
+      - Replay-gated capture recalibration (adaptive trail capture 60%->70%, breakeven trigger 0.4%->0.8% wi
+  glm-5.3-prime          strategy=4/10 exit=3/10
+      - Flatten underwater positions at pre-close and profit-gate overnight holds - kills the OVERNIGHT_GAP_
+      - Disable extended_hours_entry (8 trades, -522 = 89% of net loss; the era becomes ~breakeven) and fix 
+      - Cap effective initial SL at 2.0-2.5% across all three SL parameter sources and add broker-side stop 
+  glm-5.3                strategy=5/10 exit=3/10
+      - Move stops to the broker: submit Futu conditional stop orders at arming, amend on every ratchet, kee
+      - Stop holding no-progress losers overnight: EOD-flat when MFE < 0.5% and underwater (all 9 OVERNIGHT_
+      - Fix measurement before tuning: direction-signed pnl_pct (CTNT +2.78% vs -314 USD), ExitReason migrat

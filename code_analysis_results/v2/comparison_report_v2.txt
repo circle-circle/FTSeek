@@ -1,0 +1,85 @@
+==========================================================================================
+FTSeek-US v2 分析对比（bug 修复后代码）
+==========================================================================================
+
+模型                         耗时    输出tok    推理tok bugs logic opts     C/H/M/L
+------------------------------------------------------------------------------------------
+qwen3.8-max              336s    13724    10355    8     6    5     0/7/6/1
+deepseek-v4.1-flash      283s    24839    13324   18     7    7    2/8/12/3
+kimi-k3                  531s    22718    15253   11     7    6    0/3/10/5
+glm-5.3-prime            368s    35430    27346   13     9    7    0/3/10/9
+glm-5.3                  473s    29953    23205    9     6    5     0/2/5/8
+
+==========================================================================================
+Critical/High 问题清单（按模型）
+==========================================================================================
+
+### qwen3.8-max (7 个)
+  [    HIGH] app/execution/broker_adapter.py:606-638 (error_handling) cancel_order treats RET_OK as only request accepted, but the visible comment/logic allows returning 
+  [    HIGH] app/core/position_sync.py:385-417 (logic_error) In _reconcile_playbook_execution_states, row broker_env is lowercased but the incoming broker_env is
+  [    HIGH] app/coordinator/capital_allocator.py:CapitalAllocator.reset_and_reconcile (function) (race_condition) reset_and_reconcile clears allocations under self._lock, releases the lock, then calls reconcile_wit
+  [    HIGH] app/pipeline/signal_pipeline.py:_check_execution_rules (function) (missing_validation) _check_execution_rules returns True when rules are missing, malformed, or price fields cannot be par
+  [    HIGH] app/pipeline/order_executor.py:_submit_order_optimized (781-813 visible excerpt) (business_logic) notional is computed as quantity * (order.price or signal_price or 0.0). If both prices are missing/
+  [    HIGH] app/execution/broker_adapter.py:472-504 (business_logic) submit_order falls back to deriving Futu side from Direction alone: LONG -> BUY, else SELL. This doe
+  [    HIGH] app/coordinator/capital_allocator.py:CapitalAllocator.try_reserve (function) (business_logic) In observe_only mode, a blocked reserve returns True but does not add allocation. If the order still
+
+### deepseek-v4.1-flash (10 个)
+  [CRITICAL] app/core/position_sync.py:~30-36 (EXTERNAL_CLOSE_DUP_SQL) and its consumer near ~1548 (logic_error) The external-close duplicate predicate is 'SELECT ... FROM trade_records WHERE symbol=? AND directio
+  [CRITICAL] app/coordinator/capital_allocator.py:~185-250 (try_reserve) and ~255-270 (release) (missing_validation) try_reserve validates nothing about position_pct. With position_pct = float('nan') every comparison 
+  [    HIGH] app/coordinator/capital_allocator.py:~620-640 (get_capital_allocator) (concurrency) The singleton factory is a bare check-then-act on a module global: 'if _singleton is None: ... _sing
+  [    HIGH] app/coordinator/capital_allocator.py:~225-245 (observe branch) vs ~255-270 (release) (logic_error) Reserve and release are asymmetric. In observe_only mode a BLOCKED reserve returns True without incr
+  [    HIGH] app/coordinator/capital_allocator.py:~225-320 and ~430-500 (calls to _record_event/_persist_state/_persist_state_all) (performance) try_reserve, release, force_set, reset_and_reconcile and reconcile_with_positions all perform persis
+  [    HIGH] app/coordinator/capital_allocator.py:~495-560 (auto_capacity_report, position classification loop) (error_handling) auto_capacity_report is fail-open. The outer 'except Exception as _e: logger.debug(...)' around 'fro
+  [    HIGH] app/pipeline/order_executor.py:~40-47 (_get_pdt_guard) (concurrency) The lazy PDT guard singleton has the same unlocked check-then-act race as get_capital_allocator: 'gl
+  [    HIGH] app/pipeline/order_executor.py:~50-68 (_with_symbol_lock_release) (concurrency) The decorator releases the symbol lock in a finally block on every exit from the wrapped close funct
+  [    HIGH] app/pipeline/signal_pipeline.py:~50-58 (_VIX_HISTORY / _SPY_HISTORY) and their mutation sites (concurrency) Rapid-regime-change history is kept in module-level mutable lists with module-level size limits. The
+  [    HIGH] app/coordinator/capital_allocator.py:~205 (try_reserve docstring) and ~330-345 (reset_and_reconcile docstring) (business_logic) The file states 'observe_only=True' is still the Phase A default and that 'Phase B 剩余项: observe_only
+
+### kimi-k3 (3 个)
+  [    HIGH] app/coordinator/capital_allocator.py:168-205 (try_reserve BLOCKED path vs release) (logic_error) Reserve/release accounting asymmetry in observe mode. After the H7 change, a BLOCKED reserve in obse
+  [    HIGH] app/coordinator/capital_allocator.py:132-176 (try_reserve), 196-205 (release), 257-285 (compute_scale_factor) (missing_validation) No validation of position_pct. If a caller passes NaN (e.g., from qty*price/equity with corrupted qu
+  [    HIGH] app/core/scheduler_core.py:51-95 (PositionStore.__init__/add) (logic_error) PositionStore keys positions by symbol only (_positions: Dict[str, Position]), and _pending is also 
+
+### glm-5.3-prime (3 个)
+  [    HIGH] app/coordinator/capital_allocator.py:146-215 (try_reserve) vs 217-227 (release) (logic_error) Reserve/release asymmetry left by the H7 fix: in observe_only mode a BLOCKED reserve returns True (t
+  [    HIGH] app/execution/broker_adapter.py:472-504 (submit_order, trd_side resolution at ~497-499) (logic_error) trd_side = order.trd_side if hasattr(order, 'trd_side') else (BUY if direction==LONG else SELL). has
+  [    HIGH] app/coordinator/capital_allocator.py:71-135 (__init__ observe_only default) + 640-648 (get_capital_allocator default) (business_logic) Production default is observe_only=True - capital caps are advisory only. Combined with the reserve/
+
+### glm-5.3 (2 个)
+  [    HIGH] app/coordinator/capital_allocator.py:141-211 (try_reserve + release; line numbers approximate) (logic_error) Observe-mode ledger drift via release-without-reserve. In try_reserve, when observe_only=True and th
+  [    HIGH] app/coordinator/capital_allocator.py:141-200 (try_reserve; also release 202-211) (missing_validation) try_reserve performs no validation on position_pct. A NaN input (plausible from the documented order
+
+==========================================================================================
+跨模型重叠（≥2 模型指向同一文件，置信度高）
+==========================================================================================
+  app/coordinator/capital_allocator.py [missing_validation] <- deepseek-v4.1-flash, glm-5.3, glm-5.3-prime, kimi-k3, qwen3.8-max
+  app/coordinator/capital_allocator.py [concurrency] <- deepseek-v4.1-flash, glm-5.3, glm-5.3-prime, kimi-k3, qwen3.8-max
+  app/coordinator/capital_allocator.py [business_logic] <- deepseek-v4.1-flash, glm-5.3, glm-5.3-prime, kimi-k3, qwen3.8-max
+  app/coordinator/capital_allocator.py [race_condition] <- glm-5.3, glm-5.3-prime, kimi-k3, qwen3.8-max
+  app/pipeline/signal_pipeline.py [concurrency] <- deepseek-v4.1-flash, glm-5.3, kimi-k3, qwen3.8-max
+  app/playbook/exit_engine.py [edge_case] <- glm-5.3, glm-5.3-prime, kimi-k3, qwen3.8-max
+  app/coordinator/capital_allocator.py [logic_error] <- deepseek-v4.1-flash, glm-5.3, glm-5.3-prime, kimi-k3
+  app/core/position_sync.py [logic_error] <- deepseek-v4.1-flash, kimi-k3, qwen3.8-max
+  app/core/scheduler_core.py [logic_error] <- deepseek-v4.1-flash, kimi-k3, qwen3.8-max
+  app/core/scheduler_core.py [concurrency] <- deepseek-v4.1-flash, glm-5.3, qwen3.8-max
+  app/pipeline/signal_pipeline.py [missing_validation] <- deepseek-v4.1-flash, glm-5.3-prime, qwen3.8-max
+  app/pipeline/order_executor.py [business_logic] <- deepseek-v4.1-flash, glm-5.3-prime, qwen3.8-max
+  app/pipeline/order_executor.py [concurrency] <- deepseek-v4.1-flash, glm-5.3, glm-5.3-prime
+  app/execution/broker_adapter.py [logic_error] <- deepseek-v4.1-flash, glm-5.3-prime, kimi-k3
+  app/pipeline/order_executor.py [race_condition] <- glm-5.3, glm-5.3-prime, kimi-k3
+  app/execution/broker_adapter.py [error_handling] <- glm-5.3, qwen3.8-max
+  app/execution/broker_adapter.py [business_logic] <- glm-5.3-prime, qwen3.8-max
+  app/core/engine.py [edge_case] <- deepseek-v4.1-flash, qwen3.8-max
+  app/coordinator/capital_allocator.py [error_handling] <- deepseek-v4.1-flash, glm-5.3-prime
+  app/core/engine.py [logic_error] <- deepseek-v4.1-flash, kimi-k3
+  app/pipeline/signal_pipeline.py [business_logic] <- glm-5.3, kimi-k3
+  app/core/engine.py [missing_validation] <- glm-5.3, glm-5.3-prime
+
+==========================================================================================
+自评 & 风险评估
+==========================================================================================
+  qwen3.8-max            quality=6/10 arch=6/10 risk=high
+  deepseek-v4.1-flash    quality=6/10 arch=6/10 risk=high
+  kimi-k3                quality=6/10 arch=6/10 risk=high
+  glm-5.3-prime          quality=6/10 arch=6/10 risk=medium
+  glm-5.3                quality=7/10 arch=6/10 risk=medium

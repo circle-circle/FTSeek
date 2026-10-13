@@ -1,0 +1,523 @@
+{
+  "model": "glm-5.3",
+  "elapsed": 547.370014667511,
+  "request_id": "42f28c46-a95e-90b2-936d-8aec5879c802",
+  "tokens_in": 30049,
+  "tokens_out": 44838,
+  "reasoning_tokens": 33460,
+  "retries": 0,
+  "parse_ok": true,
+  "finish_reason": "stop",
+  "raw_content": "",
+  "result": {
+    "model_name": "FTSeek-US DA chain under review — analyst LLM: qwen3.7-max (config.LLM_MODEL), challenger LLM: deepseek-v4.1-flash (config.py 2026-09-14 decision); reviewer: senior LLM-systems architect + quant auditor",
+    "prompt_issues": [
+      {
+        "location": "USER_TEMPLATE",
+        "severity": "high",
+        "category": "bias",
+        "description": "Direction-gate asymmetry: SELL_SHORT missing the three questions is hard-forced to SKIP, but the mirrored BUY obligation carries no equivalent hard consequence — a structural LONG tilt in what survives the contract. The prompt claims symmetry ('多空对称适用…不存在\"某方向天然更需谨慎\"的全局规则') but the enforcement is not symmetric.",
+        "evidence": "\"direction=SELL_SHORT 时必须在 thesis 内回答三问 — ①具体下跌催化剂是什么…③逼空风险自评(拥挤空头/低流通/逼空燃料)。三问答不全 → 改 SKIP 并在 skip_reason 说明缺哪问。不禁做空。\" vs \"多空镜像义务 (对称): direction=BUY 时 bull_case 同样必须给出同等具体的上行催化剂与时效 — \\\"跌多了该反弹\\\"与\\\"涨多了该跌\\\"同属不合格论据。\" (no SKIP consequence stated for BUY)",
+        "fix": "Make the mirror binding: BUY without a concrete上行催化剂+时效 also → SKIP with skip_reason; keep only the documented structural squeeze question as the permitted asymmetry."
+      },
+      {
+        "location": "calibration",
+        "severity": "high",
+        "category": "calibration",
+        "description": "The '已被价格反映' (priced-in) test inspects only the current premarket window (premarket change % + premarket volume). It ignores cumulative drift since the news timestamp, and early-morning scans see near-zero premarket volume — so 3-day-old news with the move already realized but a flat premarket today is systematically classified as 'not reflected' → inflated HIGH bands. Symmetric across direction, wrong in both directions.",
+        "evidence": "\"判定依据不是新闻的\\\"年龄\\\"，而是**该信息是否已被价格反映**。判断材料 = 盘前异动(盘前涨跌幅/盘前成交量, 见⚡盘前时段数据段…)\" and HIGH criterion \"②核心信息未被价格反映(盘前同向异动|涨跌幅|<2%, 或盘前成交量未见放量, 以⚡盘前时段数据段为准…)\"",
+        "fix": "Machine-compute per-news-item drift since its timestamp from kline (news_time→now) plus premarket stats in code; inject a computed boolean '已被价格反映: 是/否(依据: 新闻后累计±X%, 盘前量Y)'; make criterion ② a read-only marker like criterion ③."
+      },
+      {
+        "location": "CHALLENGER",
+        "severity": "high",
+        "category": "blind_spot",
+        "description": "Pseudo-independence: the challenger is told to judge '不看分析师结论', but the candidate direction is disclosed in the first line of its user prompt and the whole task is framed as '假设它错了' — anchoring is structurally present despite the '独立先行' design claim (the stated rationale for v2 was anti-anchoring after the GS case).",
+        "evidence": "\"【证伪任务 — 第14轮 P9】候选方向 = {initial_analysis.get('direction','?')}。\" followed by \"把你在\\\"不看分析师结论\\\"下独立倾向的方向填入 independent_direction (作为防锚定观测)\"",
+        "fix": "Two-pass challenger: Pass 1 = data-only prompt (no candidate direction, no analyst output) → independent_direction; Pass 2 = falsification against the analyst output. Log Pass-1-vs-analyst divergence as the real anchor-divergence metric."
+      },
+      {
+        "location": "CHALLENGER",
+        "severity": "high",
+        "category": "gaming",
+        "description": "The ≥2-counter-evidence quota blocks a single fatal flaw from producing DISAGREE: one fabricated number or one unpriced earnings date inside the holding window can at best yield PARTIAL_AGREE, which may not gate the decision down.",
+        "evidence": "\"- 你找到了≥2条有数据出处的具体反证, 且足以推翻方向 → DISAGREE, my_direction 给反方向\" / \"- 找不到≥2条有出处的具体反证 → AGREE, 并在 missed_risks 写 \\\"无实质反证\\\" (诚实, 不编造)\"",
+        "fix": "Allow DISAGREE on one decisive hard flaw (hallucinated number, hard-date risk inside the holding period, price-anchor violation); keep the ≥2 bar only for soft-evidence disagreements."
+      },
+      {
+        "location": "USER_TEMPLATE",
+        "severity": "high",
+        "category": "bias",
+        "description": "The PE rule conflates 'data missing' with 'loss-making'. VERIFIED historical harm: this exact rule amplified the v0.70 key-mismatch bug, injecting a fake '亏损公司' bear argument into 100% of analyses. The rule is still live whenever a source returns 0/None for PE.",
+        "evidence": "\"如果PE为负或0，说明该股亏损或无盈利，必须在bear_case中提及\" + verified docstring: \"实测 100% 分析里 LLM 看到 涨跌幅+0.0%/PE=0/EPS=0/市值$0.0B/52周高低$0, 叠加 USER_PROMPT\\\"PE为负或0必须在bear_case提及\\\" = 每只股票被强制注入一条虚假\\\"亏损公司\\\"看空论据\"",
+        "fix": "Renderer must emit distinct states 'PE: 数据缺失' vs 'PE: 亏损(负值)'; key the prompt rule to the loss state only; add a regression test that no analysis ever sees PE=0 originating from a missing key."
+      },
+      {
+        "location": "SYSTEM_PROMPT",
+        "severity": "medium",
+        "category": "bias",
+        "description": "Exemplar shape asymmetry: bull exemplars are event/earnings claim types — exactly what score_band HIGH criterion ① rewards — while bear exemplars are valuation/insider/sentiment types. The exemplars teach that the HIGH-conviction shape belongs to LONG; no negative-event bear exemplar (contract loss, guidance cut) exists, so the synthetic ACME block steers claim_type selection despite the '禁止复用' guard.",
+        "evidence": "\"示例bull_case论据…- \\\"Q1营收+X%、EPS超共识+Y%, 净利率Z%\\\"…- \\\"某业务拟分拆IPO\\\"(独有催化…)\" vs \"示例bear_case论据: - \\\"M家机构目标价均值仅余+Q%, PE高于行业中位\\\"…- \\\"高管近3个月零买入、套现约$V\\\"…- \\\"散户情绪一边倒看多约U%偏拥挤\\\"\"",
+        "fix": "Mirror the exemplars: add a bear product_catalyst negative event and a bull valuation/insider example, or strip direction labels and present shape-only exemplars."
+      },
+      {
+        "location": "calibration",
+        "severity": "medium",
+        "category": "calibration",
+        "description": "The dynamically injected 数据充分性 marker is the right mechanism (system-computed, model told to read it), but its soundness is only as good as collector failure semantics: with silent [] failures (news/sentiment), a failed dimension is indistinguishable from a covered one, so '充分 ✓' can be emitted on a batch whose sources are down. HYPOTHESIS pending the data_text renderer (not provided — more context needed).",
+        "evidence": "\"③数据头部标记\\\"数据充分性: 充分 ✓\\\"(该标记由系统按实际采集结果算好, 直接读, 禁止自行估计维度数)\" + collector \"if r.get(\\\"code\\\") == 0: return r.get(\\\"data\\\", [])\\n    return []\"",
+        "fix": "Make the marker three-state per dimension (ok/empty/failed); force 不充分 when any core dimension is 'failed'; the model then reads a trustworthy marker."
+      },
+      {
+        "location": "SYSTEM_PROMPT",
+        "severity": "medium",
+        "category": "gaming",
+        "description": "Execution-layer facts invite moral hazard and formulaic stops: the model is told direction gates do not depend on its self-review and that stops will be clamped anyway, so it can output ritual 2-5% stops without structural reasoning.",
+        "evidence": "\"方向性硬门(接飞刀拦截/破位硬买拦截/追涨降级)由执行层代码统一执行, 不依赖你的自我审查\" and \"直接给 2-5% 区间内的止损即可; 小于2%易落入噪声扫损区\"",
+        "fix": "Require stop_loss to cite a structural anchor (support level / ATR multiple with the input number); soften '不依赖你的自我审查'; keep the clamp fact but demand the model's own rationale."
+      },
+      {
+        "location": "USER_TEMPLATE",
+        "severity": "medium",
+        "category": "contract",
+        "description": "Several contract fields are not machine-checkable: causal_chain can be filler 'A→B→C', per-batch '确认指标' is unverifiable free text, and evidence is free text — only numeric presence is checked. The model can satisfy the letter of the contract while gaming its substance.",
+        "evidence": "\"\\\"causal_chain\\\": \\\"3步以上因果传导链(用→连接)\\\"\" and \"entry_strategy必须分批(至少2批)，每批有触发条件(价位+确认指标)\"",
+        "fix": "Structuralize: causal_chain as an array of nodes each carrying a data-field reference; batches as an array of {price, condition_metric, condition_value}; machine-validate shape and citations post-hoc."
+      },
+      {
+        "location": "USER_TEMPLATE",
+        "severity": "medium",
+        "category": "gaming",
+        "description": "Number-presence checking is gameable by transplant: any input number attached to any claim passes the anti-fabrication check (e.g., a peer's PE cited as the own stock's PE). Value-presence ≠ semantic binding.",
+        "evidence": "\"你的输出中每个数字必须来自\\\"论据溯源清单\\\"或输入数据的其他字段，不得编造\"",
+        "fix": "Require field-path citations (e.g., 'fundamentals.pe_normalized=27.7') and machine-validate the binding between cited path and claim semantics, not just value presence."
+      },
+      {
+        "location": "USER_TEMPLATE",
+        "severity": "medium",
+        "category": "gaming",
+        "description": "Disclosing that tripwires are shadow-only reduces the model's incentive to produce genuine falsification conditions — operational enforcement status does not belong in a generation prompt.",
+        "evidence": "\"当前下游 tripwire_checker 仅做影子评估, `tripwire_checker_enforce=false` 时不修改指令; 恢复自动核销须另行裁决\"",
+        "fix": "Remove enforcement status from the prompt; enforce the ≥2 machine-checkable invalidation_triggers in post-hoc validation instead."
+      },
+      {
+        "location": "calibration",
+        "severity": "medium",
+        "category": "calibration",
+        "description": "Insider activity is listed as a 'market doesn't know' edge source, but insider data is public (Form 4) and the collector window is 3 months — insider-edge claims are structurally stale by construction.",
+        "evidence": "\"真正的 edge 来源是: 市场还不知道的信息(如刚发布的8-K/盘前突发/内部人异动)，而不是已经在价格中反映的旧新闻\" vs collector docstring \"Finnhub 内部人交易: 最近3个月的买入/卖出\"",
+        "fix": "Restrict insider-edge claims to filings within N days (the collector already has dates — inject age); otherwise label insider data as background, not edge."
+      },
+      {
+        "location": "SYSTEM_PROMPT",
+        "severity": "medium",
+        "category": "calibration",
+        "description": "Incident anecdotes and un-windowed small-sample statistics are embedded in prompt text as universal law (survivorship/window bias): specific dead-trade cases and a pearson=−0.40 half-window autocorrelation are stated without sample size or window, and the model will over-generalize them.",
+        "evidence": "\"(实证 9/14: HPE 昨收62.09/禁追58.00 < 飞刀线58.98 → 空集; NOK 昨收11.13/禁追10.50 < 10.57 → 空集)\" and \"标的级历史胜负对本股下一笔无预测力, 半程自相关 pearson=−0.40 且反持续 (DEB-20260825 第2轮)\"",
+        "fix": "Keep only the machine-checkable geometry rule (chase_cap ≥ 飞刀线) in the prompt; strip numeric anecdotes and un-windowed statistics, or annotate sample size and evaluation window."
+      },
+      {
+        "location": "CHALLENGER",
+        "severity": "medium",
+        "category": "blind_spot",
+        "description": "The challenger's data view is character-capped, so it may see less data than the analyst: it can miss the falsifying evidence or falsely report '来源不明数字' for numbers that exist in the full input. The _cap value is not shown — more context needed.",
+        "evidence": "\"return json.dumps(view, ensure_ascii=False, indent=2)[:_cap]\" (tail of the data-view builder immediately above _run_challenger)",
+        "fix": "Guarantee the challenger view covers 100% of the analyst's data_text (cap ≥ its length) or paginate verification; add a test asserting both prompts see an identical numeric inventory."
+      },
+      {
+        "location": "CHALLENGER",
+        "severity": "medium",
+        "category": "blind_spot",
+        "description": "Structural contradiction: the challenger demands CPI/FOMC hard-date risk coverage while the analyst is forbidden from writing any number not present in the input — and no macro calendar is collected. Both roles share this blind spot, so the falsifier cannot falsify on macro timing.",
+        "evidence": "\"d. 风险完备性: 重大风险与硬日期风险(财报/CPI/FOMC)是否已覆盖\" vs \"输入数据中没有的数字一律不写\"",
+        "fix": "Inject an economic-calendar section (next CPI/FOMC/employment dates within the holding horizon) into the shared data block."
+      },
+      {
+        "location": "CHALLENGER",
+        "severity": "medium",
+        "category": "gaming",
+        "description": "The anti-ritualization rules legitimize '证伪失败' so heavily that a compliance-oriented model will find AGREE the safest verdict — the 107/107 same-direction pathology may persist in new clothing. Additionally the challenger was downgraded to a flash-tier model validated only on contract-key presence and latency, not falsification recall.",
+        "evidence": "\"如果你找不到≥2条有数据支撑的具体反证, 就在missed_risks写[\\\"无实质反证: 当前方向的数据支撑成立\\\"]并给AGREE — 承认\\\"证伪失败\\\"是你的合法且诚实的输出, 禁止为显得严格而编造风险。\" + config: \"2026-09-14 (用户裁决): DA 挑战者 deepseek-v4-pro-0813 → deepseek-v4.1-flash…契约 12 键全在\"",
+        "fix": "Monitor challenger AGREE rate with an alarm (e.g., >90% over 30 decisions triggers review); build a planted-flaw eval set so AGREE must be earned against known-flawed analyses; re-benchmark flash vs pro on flaw-detection recall."
+      },
+      {
+        "location": "SYSTEM_PROMPT",
+        "severity": "medium",
+        "category": "contract",
+        "description": "Instruction overload: ~90 lines of system prompt plus a ~200-line user contract full of dated DEB/RFC references and conditional exceptions. Instruction dilution risk — the judgment rules that remain get less attention, and conditional clauses ('触发条件不满足时对应条款不适用') are easy to misapply.",
+        "evidence": "\"【论据质量的机检条件】(触发条件不满足时对应条款不适用)\" plus the volume of dated clauses (DEB-20260825, RFC-133, RFC-120, P10 第14轮, DEB-20260901…)",
+        "fix": "Migrate every machine-checkable rule (rating↔direction, chase_cap geometry, tripwire/invalidation counts, batch count, PE rule) to post-hoc validators; target ~40% prompt reduction; A/B via the existing PROMPT_HASH fingerprint split."
+      },
+      {
+        "location": "SYSTEM_PROMPT",
+        "severity": "low",
+        "category": "bias",
+        "description": "Forced premarket stance with an asymmetric evidence bar: fade requires '强证据' while trend-continuation does not — a momentum tilt in framing.",
+        "evidence": "\"判断它是\\\"趋势延续\\\"(顺势方向入场)还是\\\"过度反应\\\"(逆势博反弹, 需强证据)\"",
+        "fix": "State equal evidence bars for both labels; require the stance only when premarket data is present and non-sparse."
+      },
+      {
+        "location": "USER_TEMPLATE",
+        "severity": "low",
+        "category": "contract",
+        "description": "Template placeholders induce padding and anchoring: risks shows exactly 3 items; the executive_summary example carries concrete numbers (12%, 81.7) that can anchor output or leak as prices; the legacy 'score' field invites inconsistency with score_band.",
+        "evidence": "\"\\\"risks\\\": [\\\"风险1\\\", \\\"风险2\\\", \\\"风险3\\\"]\" and \"\\\"executive_summary\\\": \\\"一句话结论+核心动作（必须具体，如：Q1营收+12%但新高日量能平平，回调到81.7分2批建仓）\\\"\" and \"另: 兼容字段 \\\"score\\\": 0-10数字 (可留空, 系统将以score_band为准重算)\"",
+        "fix": "Empty arrays with count guidance ('1-5条, 按证据'); placeholder-style example (X%, $Y); drop or machine-derive the legacy score field."
+      }
+    ],
+    "source_chain_issues": [
+      {
+        "source": "Futu news / research reports (collect_news, collect_research_reports)",
+        "severity": "high",
+        "category": "silent_failure",
+        "description": "Non-zero API code returns [] with no error and no timestamp — API failure is indistinguishable from 'no news' in the prompt. The model reads failure as absence (no catalysts / all-clear). No relevance filter on the Futu keyword search either (ticker-as-keyword noise risk).",
+        "code_location": "scripts/data_collector.py:129-170",
+        "fix": "Return {'_status':'failed','_error':code,'_fetched_at':ET} and render an explicit per-section failure line; count failed ≠ missing in the 数据质量审计 block; add a relevance filter mirroring the Finnhub v2 pattern."
+      },
+      {
+        "source": "Futu community sentiment + social_sentiment.db cache",
+        "severity": "high",
+        "category": "staleness",
+        "description": "VERIFIED (measured): social_sentiment.db sentiment_cache has 36 rows, last fetched 2026-07-10 (~3 months stale). The DA's own live source (stock_feed) fails silently to [] on non-zero code. Whether the stale cache feeds any DA prompt path is unverified (data_text renderer not provided — more context needed; per the module docstring FTSeek's Reddit/HN sentiment is a separate layer). Either way the sentiment dimension is effectively absent or stale, and the 拥挤警示 machine condition ('当输入含散户情绪数据且一边倒(>85%…)') has no fresh data behind it.",
+        "code_location": "scripts/data_collector.py:155-162; measured: social_sentiment.db sentiment_cache (36 rows, 2026-07-10)",
+        "fix": "Label every sentiment row with fetch date and age; exclude >7d-old rows from crowding judgments; either schedule cache refresh or remove the sentiment section and its machine condition until coverage is real."
+      },
+      {
+        "source": "Finnhub company-news (collect_finnhub_news)",
+        "severity": "high",
+        "category": "staleness",
+        "description": "News time is rendered as '%m-%d' (no year, no time-of-day, UTC day boundary) — the prompt's edge logic ('24h 内发布的 8-K') is not computable from this format; an 8-K filed 20:00 ET shows the next UTC day. Error dicts from _finnhub_get are silently converted to [].",
+        "code_location": "scripts/data_collector.py:171-212",
+        "fix": "Render full ISO timestamps in ET with year and time; propagate failures as labeled errors; keep the low_relevance flag but exclude low-relevance items from claim-eligible evidence."
+      },
+      {
+        "source": "Finnhub metric/recommendation/insider/profile2/earnings (all _finnhub_get callers)",
+        "severity": "medium",
+        "category": "error_leak",
+        "description": "Mixed failure semantics: these collectors propagate {'_error': …} dicts (and _run_futu_script can add '_raw': stdout[:300]) while news collectors return []. If the renderer dumps sections verbatim, raw error text/junk leaks into the prompt as if it were data; if it filters _error keys, the dimension silently disappears. Renderer behavior not shown — HYPOTHESIS, more context needed on the data_text builder.",
+        "code_location": "scripts/data_collector.py:568-609 (collect_fundamentals: 'if \\\"_error\\\" in data: return data'), :60-98 (_run_futu_script: '{\\\"_error\\\": \\\"no JSON\\\", \\\"_raw\\\": stdout[:300]}')",
+        "fix": "One failure schema for all sources ({'_status','_error','_fetched_at'}); renderer prints '【X】采集失败: <reason> @ <time>' and never prints _raw; 数据质量审计 counts failed separately from missing."
+      },
+      {
+        "source": "Finnhub API key & rate limits",
+        "severity": "high",
+        "category": "rate_limit",
+        "description": "Single FINNHUB_KEY, no retry/backoff, curl without -f (HTTP 429 body parsed as data or empty → exception → {'_error'}), and collect_all fires many Finnhub endpoints per symbol × top_n candidates — rate-limit exhaustion silently empties dimensions across the whole batch simultaneously (correlated failure).",
+        "code_location": "scripts/config.py (FINNHUB_KEY = _read_env(\\\"FINNHUB_API_KEY\\\")); scripts/data_collector.py:~100-115 (_curl_json)",
+        "fix": "Per-run call budget; 429 backoff with jitter; curl -f + HTTP status capture; optional second key; circuit breaker that marks the dimension 'failed(rate-limit)' and forces 数据充分性=不充分 for the batch."
+      },
+      {
+        "source": "Futu snapshot (collect_snapshot)",
+        "severity": "medium",
+        "category": "silent_failure",
+        "description": "Missing fields default to 0 ('pe_ttm_ratio': float(row.get('pe_ttm_ratio',0) or 0)) — PE=0 re-triggers the forced-bear prompt rule (verified historical bug class). No fetch timestamp is visibly injected into the prompt on the single-symbol path (fields list shown without update_time; the batch path has update_time but is for scanners) — HYPOTHESIS pending renderer.",
+        "code_location": "scripts/data_collector.py:242-323",
+        "fix": "Emit None as '缺失', never 0; include update_time and as-of ET in the rendered snapshot; regression-test that PE=0-from-missing cannot reach the prompt."
+      },
+      {
+        "source": "signal_gate dependencies (strategy_memory, alpha_backfill)",
+        "severity": "critical",
+        "category": "silent_failure",
+        "description": "VERIFIED (measured): strategy_memory.db is 0 bytes since 2026-08-04 and alpha.db has 0 tables — yet the gate's stated design is '基于strategy_memory的经验' and it loads claim-IC via alpha_backfill (fail-open → None). The gate still emits PASS/WARN/BLOCK + numeric quality_score on empty experience/IC data: precision theater at the final quality check.",
+        "code_location": "scripts/signal_gate.py:1-80 (docstring '盘前对deep_analysis输出做最终质量检查，基于strategy_memory的经验'; _load_claim_ic_for_gate → load_claim_ic() except → None)",
+        "fix": "Repair the writers; until then the gate must emit 'experience_data: unavailable' and deflate decision_conf/quality_score, or default to WARN when its data dependencies are empty; alarm on empty DBs."
+      },
+      {
+        "source": "IC / feedback loop (ic_writer → signal_snapshots)",
+        "severity": "critical",
+        "category": "silent_failure",
+        "description": "VERIFIED (measured): signals.db has 0 tables while llm_audit.db shows 15,131 LLM calls — the LLM side runs but the IC/learning loop is not landing data. Pipeline comments say ic_writer writes 'FTSeek signal_snapshots.db'; the measured empty file is 'signals.db' — either a name mismatch (orphan DB) or writes failing. Needs verification of ic_writer's actual target — more context needed.",
+        "code_location": "scripts/pipeline.py:2392-2433 ('写入 FTSeek signal_snapshots.db (IC追踪, 不碰运行代码)')",
+        "fix": "Verify ic_writer's target path against the measured DBs; add post-write row-count assertions and a daily freshness alarm; treat all calibration statistics as untrusted until snapshots accumulate."
+      },
+      {
+        "source": "news quality layer (news_quality.db)",
+        "severity": "medium",
+        "category": "coverage_gap",
+        "description": "VERIFIED (measured): news_classifications has 37 rows in total history while 'news_classifier' exists as an llm_audit feature — news quality scoring is effectively not running, so no downstream filter distinguishes high- from low-quality news items feeding claim_type=product_catalyst/earnings_beat.",
+        "code_location": "measured: news_quality.db news_classifications (37 rows); llm_audit.db features include 'news_classifier'",
+        "fix": "Diagnose the classifier writer (schedule/queue/DB path); or explicitly drop the dimension rather than implying coverage."
+      },
+      {
+        "source": "short interest / borrow data",
+        "severity": "high",
+        "category": "coverage_gap",
+        "description": "Not collected anywhere in the shown collector, yet the SHORT三问 requires '③逼空风险自评(拥挤空头/低流通/逼空燃料)' — the model must self-assess squeeze risk with zero short-interest/float data, inviting fabricated or vacuous answers that the challenger (same blind spot) cannot falsify.",
+        "code_location": "absent from scripts/data_collector.py; requirement in scripts/llm_synth.py USER contract (SHORT 风险三问)",
+        "fix": "Collect short interest / days-to-cover (SEC bi-monthly + Finra updates) and float (profile2 shareOutstanding is already fetched); inject so the squeeze answer is data-anchored; until then mark the question '数据不可用' rather than forcing self-assessment."
+      },
+      {
+        "source": "macro calendar (CPI/FOMC)",
+        "severity": "medium",
+        "category": "coverage_gap",
+        "description": "The challenger checks '硬日期风险(财报/CPI/FOMC)是否已覆盖' but no macro-calendar collector exists in the shown code — the analyst cannot cite these dates without violating the anti-fabrication rule.",
+        "code_location": "scripts/llm_synth.py:2100-2210 (challenger validation dimension d); no collector in scripts/data_collector.py",
+        "fix": "Inject an economic-calendar section (next CPI/FOMC/employment dates within the holding horizon) into the shared data block."
+      },
+      {
+        "source": "options / IV / expected move",
+        "severity": "medium",
+        "category": "coverage_gap",
+        "description": "No options chain, IV, OI or earnings-implied-move collection (ANOMALY_SCRIPTS['derivatives'] is an event detector, not an IV/OI feed); catalyst时效 answers and expected-move judgments are pure model guesses with no data anchor.",
+        "code_location": "scripts/config.py ANOMALY_SCRIPTS['derivatives']; no IV/OI collector in scripts/data_collector.py",
+        "fix": "Add Futu option-chain IV + straddle-implied move for the next event; feed into SHORT三问 时效 and tripwire thresholds."
+      },
+      {
+        "source": "sector peers / industry valuation anchor",
+        "severity": "medium",
+        "category": "coverage_gap",
+        "description": "Peers are collected (top-5 snapshot + 5d change) but the 估值锚定 machine condition ('当输入同时含本股 PE/PB 与行业中枢时') needs an industry median that is not clearly computed/injected. Unit mismatch risk: the peers block uses Futu total_market_val (absolute USD) while profile2 returns marketCapitalization (millions USD) — both can appear in the prompt.",
+        "code_location": "scripts/data_collector.py:1065-1106 (peers: 'market_cap': snap.get(\\\"total_market_val\\\", 0)) vs :678-697 (profile2: 'market_cap': data.get(\\\"marketCapitalization\\\"))",
+        "fix": "Compute and inject industry median PE/PB with explicit units; normalize all market caps to one unit and label it."
+      },
+      {
+        "source": "insider transactions (collect_insider_transactions)",
+        "severity": "medium",
+        "category": "silent_failure",
+        "description": "Empty API response yields recent_buy_count=0 / recent_sell_count=0 — '零买入' is then citable as insider_bearish (the SYSTEM_PROMPT exemplar literally models '高管近3个月零买入、套现约$V'), conflating source-empty with confirmed-no-transactions; the 3-month window carries no age labels.",
+        "code_location": "scripts/data_collector.py:624-665",
+        "fix": "Distinguish '_status: empty-source' vs 'no transactions in window'; render window dates; require the model to cite the distinction."
+      },
+      {
+        "source": "OpenD orchestration (connection storm fix)",
+        "severity": "low",
+        "category": "rate_limit",
+        "description": "Good engineering (verified in code): semaphore DA_OPEND_MAX_CONC=4 after the '8/13 盘中 35/35 快照超时实锤' connection storm. Residual risk: timeouts return {'_error'} dicts whose rendering path is unverified.",
+        "code_location": "scripts/data_collector.py:60-98 (_opend_subprocess_run, _OPEND_SEM)",
+        "fix": "Keep the semaphore; route timeout errors through the unified failure schema so they are labeled, not leaked or dropped."
+      }
+    ],
+    "quality_proposals": [
+      {
+        "title": "Unified source-failure & freshness labeling (SFF contract)",
+        "change": "Every collector returns {'_status': 'ok|empty|failed', '_error', '_fetched_at' (ET)}; the data renderer prints a per-section header such as '【新闻(Finnhub)】采集失败: 429 @ 2026-10-12 06:22 ET — 本段为失败, 非无新闻'; the 数据质量审计 block counts failed/empty/missing separately; one prompt rule: failed ≠ absence, failed core dimensions cap score_band.",
+        "target_files": [
+          "scripts/data_collector.py",
+          "scripts/llm_synth.py (data renderer)",
+          "scripts/deep_analyzer.py"
+        ],
+        "expected_effect": "Removes absence-vs-failure ambiguity (news/sentiment/insider); the model stops reading outages as 'no catalysts' or 'all-clear'; SKIP and score_band become outage-aware; the 数据充分性 marker becomes trustworthy.",
+        "validation_method": "replay",
+        "effort": "M",
+        "priority": 1
+      },
+      {
+        "title": "Machine-computed priced-in flag for score_band criterion ②",
+        "change": "Code computes, per top news item, cumulative drift since the item's timestamp (kline from news_time to now) plus premarket change/volume; injects '已被价格反映: 是/否 (新闻后累计±X%, 盘前量Y)'; criterion ② becomes a read-only marker like criterion ③.",
+        "target_files": [
+          "scripts/data_collector.py (new computation)",
+          "scripts/llm_synth.py (SYSTEM_PROMPT calibration block + USER contract criterion ②)"
+        ],
+        "expected_effect": "Kills the premarket-window miscalibration (stale news + flat premarket → false HIGH); HIGH-band integrity improves; removes the model-judgment gaming surface of criterion ②.",
+        "validation_method": "ic_tracking",
+        "effort": "M",
+        "priority": 1
+      },
+      {
+        "title": "Repair the inert feedback loop (alpha / strategy_memory / IC snapshots)",
+        "change": "Verify ic_writer's actual DB target vs the measured empty signals.db; fix alpha_backfill and strategy_memory writers; add post-write row-count assertions + daily freshness alarms; signal_gate emits 'deps_unavailable' and deflates decision_conf when its data dependencies are empty.",
+        "target_files": [
+          "scripts/ic_writer.py",
+          "scripts/alpha_backfill.py",
+          "scripts/strategy_memory.py",
+          "scripts/signal_gate.py"
+        ],
+        "expected_effect": "Restores the learning/validation loop the gate and all calibration statistics depend on; the gate stops emitting experience-based scores from an empty DB (VERIFIED: strategy_memory 0 bytes since 2026-08-04, alpha.db 0 tables).",
+        "validation_method": "ic_tracking",
+        "effort": "M",
+        "priority": 1
+      },
+      {
+        "title": "Two-pass de-anchored challenger + single-flaw DISAGREE",
+        "change": "Pass 1: challenger sees data only (no candidate direction, no analyst output) → independent_direction; Pass 2: falsification vs analyst output with a full (uncapped) data view; remove the ≥2 counter-evidence quota so one decisive hard flaw (fabricated number, unpriced hard date in the holding window) can produce DISAGREE.",
+        "target_files": [
+          "scripts/llm_synth.py (_run_challenger, _challenger_data_view cap)"
+        ],
+        "expected_effect": "Real independence instead of disclosed-direction anchoring; fatal single flaws actually flip verdicts; challenger_independent_direction becomes a genuine anchor-divergence metric.",
+        "validation_method": "shadow",
+        "effort": "M",
+        "priority": 1
+      },
+      {
+        "title": "PE/None disambiguation + unit & window normalization",
+        "change": "Renderer: None → '缺失' (never 0); PE states '亏损(负)' vs '数据缺失'; all market caps normalized to one labeled unit; '5日涨跌' computed over a defined window identical to the tripwire checker's; news timestamps full ISO ET.",
+        "target_files": [
+          "scripts/llm_synth.py (_fundamental_view / renderer)",
+          "scripts/data_collector.py"
+        ],
+        "expected_effect": "Eliminates the verified PE=0 forced-bear bug class and 1000x market-cap comparison errors; tripwires stop mis-firing on window mismatches; the '24h内' edge test becomes computable.",
+        "validation_method": "replay",
+        "effort": "S",
+        "priority": 1
+      },
+      {
+        "title": "Symmetric direction gates (BUY mirror = SHORT 三问)",
+        "change": "BUY without a concrete上行催化剂+时效 → SKIP with skip_reason, exactly like the SHORT三问; keep only the documented structural squeeze question as the allowed asymmetry.",
+        "target_files": [
+          "scripts/llm_synth.py (USER contract: SHORT 风险三问 / 多空镜像义务)"
+        ],
+        "expected_effect": "Removes the structural LONG tilt in what survives the contract; direction distribution reflects evidence, not enforcement friction.",
+        "validation_method": "replay",
+        "effort": "S",
+        "priority": 2
+      },
+      {
+        "title": "Collect short interest, options IV, and macro calendar",
+        "change": "Add short interest/days-to-cover + float; option-chain IV and event-implied move; economic calendar (CPI/FOMC) within the holding horizon; inject as labeled sections so SHORT三问 ③, catalyst时效, and challenger risk-completeness are data-anchored.",
+        "target_files": [
+          "scripts/data_collector.py (new collectors)",
+          "scripts/llm_synth.py (data renderer)"
+        ],
+        "expected_effect": "Squeeze-risk and timing judgments stop being guesses; the challenger's CPI/FOMC check becomes satisfiable without violating the anti-fabrication rule.",
+        "validation_method": "shadow",
+        "effort": "L",
+        "priority": 2
+      },
+      {
+        "title": "Field-path citations & anti-transplant validator",
+        "change": "evidence must cite 'section.field=value'; a post-hoc validator checks that the cited path exists and semantically matches the claim (own-stock vs peer fields), not just value presence.",
+        "target_files": [
+          "scripts/llm_synth.py (contract + validator)",
+          "scripts/ic_writer.py (_classify_claim reuse)"
+        ],
+        "expected_effect": "Closes the number-transplant gaming path (peer PE cited as own PE) that pure numeric-presence checking misses.",
+        "validation_method": "replay",
+        "effort": "M",
+        "priority": 2
+      },
+      {
+        "title": "Finnhub resilience: budget, backoff, circuit breaker",
+        "change": "Per-run Finnhub call budget; 429 backoff with jitter; curl -f + HTTP status capture; optional second key; circuit breaker marks the dimension 'failed(rate-limit)' and forces 数据充分性=不充分 for the batch.",
+        "target_files": [
+          "scripts/data_collector.py (_curl_json, _finnhub_get)",
+          "scripts/config.py"
+        ],
+        "expected_effect": "Ends correlated silent dimension loss across a candidate batch under rate limits (single key, no retry today).",
+        "validation_method": "shadow",
+        "effort": "S",
+        "priority": 2
+      },
+      {
+        "title": "Challenger capability eval harness (flash-tier check)",
+        "change": "Build an adversarial eval set (~30 analyses with planted flaws: fabricated numbers, stale-data traps, unpriced earnings dates); measure challenger flaw-detection recall/precision before/after the deepseek-v4.1-flash downgrade; revert if recall degrades materially.",
+        "target_files": [
+          "scripts/llm_synth.py",
+          "scripts/challenger_eval.py (new)"
+        ],
+        "expected_effect": "Evidence-based decision on the flash-tier challenger instead of contract-key-only validation ('契约 12 键全在' ≠ falsification capability); also monitors AGREE-rate drift.",
+        "validation_method": "replay",
+        "effort": "M",
+        "priority": 2
+      },
+      {
+        "title": "Sentiment: revive or remove",
+        "change": "Either schedule social_sentiment cache refresh (VERIFIED: 36 rows, last fetched 2026-07-10) or remove the sentiment section and the 拥挤警示 machine condition until coverage is real.",
+        "target_files": [
+          "scripts/data_collector.py",
+          "scripts/llm_synth.py (机检条件)"
+        ],
+        "expected_effect": "Stops implying a sentiment dimension that is 3 months stale; eliminates stale-crowding misleads.",
+        "validation_method": "shadow",
+        "effort": "S",
+        "priority": 2
+      },
+      {
+        "title": "Prompt slimming via validator migration",
+        "change": "Move machine-checkable rules (rating↔direction, chase_cap geometry vs 飞刀线, tripwire/invalidation counts, batch count, PE rule) out of the prompt into post-hoc validators; target ~40% prompt reduction; use the existing PROMPT_HASH + temperature fingerprint to split baselines.",
+        "target_files": [
+          "scripts/llm_synth.py",
+          "scripts/contract_validator.py (new)"
+        ],
+        "expected_effect": "Less instruction dilution; remaining judgment rules get more attention; violations caught deterministically instead of by prompt compliance.",
+        "validation_method": "shadow",
+        "effort": "M",
+        "priority": 3
+      }
+    ],
+    "mislead_risks": [
+      {
+        "location": "sentiment data section (social_sentiment.db / collect_community_sentiment)",
+        "risk": "3-month-old retail sentiment presented as current crowding signal (VERIFIED staleness of the cache; live source fails silently).",
+        "concrete_scenario": "A cache row from 2026-07-10 shows 85% bullish; in October the model triggers the 拥挤警示 machine condition ('当输入含散户情绪数据且一边倒(>85%看多或看空)') and writes a sentiment_crowded bear claim based on July's mood.",
+        "fix": "Fetch-date label on every sentiment row; exclude >7d-old rows from crowding judgments; mark the dimension stale in the 数据质量审计 block."
+      },
+      {
+        "location": "news sections (collect_news / collect_finnhub_news)",
+        "risk": "Silent API failure rendered as 'no news' — absence vs failure ambiguity.",
+        "concrete_scenario": "Finnhub returns 429 for the whole candidate batch; every analysis sees an empty news section; the model concludes '无增量信息/无催化剂' → LOW/SKIP cascade, or for a SELL_SHORT candidate reads 'no negative news' as all-clear and drops the thesis.",
+        "fix": "Per-section failure labels with reason and ET timestamp; failed ≠ empty in the quality-audit counts."
+      },
+      {
+        "location": "snapshot/fundamentals rendering",
+        "risk": "Precision theater: missing values rendered as precise zeros.",
+        "concrete_scenario": "VERIFIED historical instance: '实测 100% 分析里 LLM 看到 涨跌幅+0.0%/PE=0/EPS=0/市值$0.0B' → the PE rule forced a fake '亏损公司' bear argument into every analysis.",
+        "fix": "None → '缺失' text; regression test that no 0-from-missing value reaches the prompt."
+      },
+      {
+        "location": "SYSTEM_PROMPT calibration anecdotes & stats",
+        "risk": "Incident anecdotes and un-windowed statistics embedded as universal law (survivorship/window bias).",
+        "concrete_scenario": "The model treats '半程自相关 pearson=−0.40' as a law of nature and refuses any mean-reversion consideration on a name with consecutive losses even when the current setup differs; HPE/NOK dead-trade numbers anchor chase_cap heuristics beyond their geometric content.",
+        "fix": "Strip numeric anecdotes from prompts; keep only machine-checkable geometry; annotate any retained statistic with sample size and window."
+      },
+      {
+        "location": "Finnhub news time field",
+        "risk": "MM-DD-only, UTC-based timestamps make the '24h 内' edge test uncomputable and day-boundary-erroneous.",
+        "concrete_scenario": "An 8-K filed 20:00 ET on 10-11 renders as '10-12' (UTC); the model counts it as today's fresh edge and gives HIGH, when it is 10+ hours old and possibly already premarket-priced.",
+        "fix": "Full ISO ET timestamps with year and time-of-day."
+      },
+      {
+        "location": "market cap fields (Futu total_market_val vs Finnhub profile2 marketCapitalization)",
+        "risk": "Unit ambiguity: absolute USD vs millions USD appearing side-by-side.",
+        "concrete_scenario": "Own profile says market_cap 3200 (millions) while the peers block says market_cap 3200000000; the model writes '市值显著高于同行' off a 1000x artifact in a valuation claim.",
+        "fix": "Normalize to one unit and label units explicitly in the renderer."
+      },
+      {
+        "location": "insider transactions section",
+        "risk": "Empty source rendered as 'zero insider buying' — absence vs zero.",
+        "concrete_scenario": "API returns {'data': []}; recent_buy_count=0; the model, primed by the exemplar '高管近3个月零买入、套现约$V', writes an insider_bearish claim implying confirmed inactivity.",
+        "fix": "Render '_status: empty-source' vs 'no transactions in window' as distinct states; include window dates."
+      },
+      {
+        "location": "collect_finnhub_news low_relevance fallback",
+        "risk": "Irrelevant news injected with a flag the model may ignore, feeding false company-specific catalysts.",
+        "concrete_scenario": "No headline contains the ticker; the latest 6 market-wide stories are injected ('relevant, low_rel = uniq[:top_n], True'); the model builds a product_catalyst claim from one of them, satisfying score_band HIGH criterion ① on a false event.",
+        "fix": "Exclude low_relevance items from claim-eligible evidence or drop them; keep them only in a clearly-labeled '背景(低相关)' block."
+      },
+      {
+        "location": "premarket data section + calibration block",
+        "risk": "Sparse/absent premarket data read as 'info not yet reflected' → inflated HIGH.",
+        "concrete_scenario": "06:22 ET scan: pre_volume ≈ 0, pre_price=0 outside session; the model must '显式表态' on the premarket move, reads 'no premarket move' as un-priced edge on 3-day-old news and gives HIGH.",
+        "fix": "Session-aware marker '盘前数据未开盘/稀疏 — 不得作为未反映证据'; replace model judgment with the machine-computed priced-in flag."
+      },
+      {
+        "location": "language mixing (zh prompts + en data)",
+        "risk": "Cross-script number/unit transcription and definition drift.",
+        "concrete_scenario": "The contract defines 量比 in Chinese ('当日累计成交量÷最近20个完整交易日平均成交量') while data sections carry English field names and summaries; the model transcribes '27.7' from an English summary into a Chinese thesis with the wrong unit context, or reads '10-12' as DD-MM.",
+        "fix": "Bilingual field labels with units; numbers rendered verbatim with unit suffixes; ISO dates."
+      },
+      {
+        "location": "signal_gate outputs (quality_score / decision_conf)",
+        "risk": "Gate precision theater on empty dependencies.",
+        "concrete_scenario": "VERIFIED: strategy_memory.db 0 bytes since 2026-08-04, alpha.db 0 tables; the gate still emits PASS with a numeric quality_score implying experience-based scoring; downstream sizing trusts a number computed from defaults.",
+        "fix": "Gate emits 'experience_data: unavailable' and deflates conf when deps are empty; alarm on empty DBs."
+      },
+      {
+        "location": "peers chg_5d / invalidation_triggers '5日涨跌'",
+        "risk": "Off-by-one window mismatch between computed data and checker semantics.",
+        "concrete_scenario": "peers chg_5d is computed over 5 bars = 4 intervals (first_close→last_close of collect_kline(us_sym, '1d', 5)); a tripwire '5日涨跌 < -10' is later evaluated by the checker over a different window → spurious invalidations or missed ones.",
+        "fix": "Define the window once in code and mirror the exact definition in the prompt's invalidation_triggers spec."
+      }
+    ],
+    "overall_assessment": {
+      "prompt_quality_score": 6,
+      "source_chain_score": 3.5,
+      "top_3_actions": [
+        "Unify failure/staleness semantics across all collectors: every source returns {_status, _error, _fetched_at(ET)} and the renderer labels each data section with fetch time and failure-vs-empty; make the 数据充分性 marker three-state so 'failed' forces 不充分 (fixes the stale-sentiment and empty-news misleads at the root).",
+        "Repair the inert feedback loop: VERIFIED alpha.db 0 tables, strategy_memory.db 0 bytes since 2026-08-04, signals.db empty — verify ic_writer's target, fix the writers, add row-count assertions, and make signal_gate flag unavailable deps and deflate decision_conf instead of emitting experience-based scores from empty DBs.",
+        "De-anchor and empower the challenger plus machine-compute calibration: two-pass challenger (data-only independent judgment before any direction is disclosed), remove the ≥2 counter-evidence DISAGREE quota, guarantee an uncapped data view, and compute the '已被价格反映' flag in code from news-to-now drift instead of the current premarket-only window."
+      ],
+      "summary": "The DA prompts show unusually mature self-auditing — honesty affordances ('反方允许 0 条', SKIP as legitimate output), machine-checkable enums, anti-fabrication with code-side hallucination counting, and prompt fingerprints for baseline splits — but retain structural biases the audit rounds have not removed: a SHORT/BUY enforcement asymmetry, exemplar shapes that map HIGH-conviction claim types onto the bull side, a priced-in calibration test whose sample window (current premarket only) systematically mislabels stale news as edge, and a challenger whose independence is undermined by disclosing the candidate direction up front, a ≥2 counter-evidence quota that blocks single-fatal-flaw disagreements, a capped data view, and a flash-tier downgrade validated only on contract-key presence. The source chain is the weaker half: VERIFIED measurements show the learning loop is inert (alpha.db 0 tables, strategy_memory.db 0 bytes since 2026-08-04, signals.db empty, sentiment cache 3 months stale at 36 rows, news classifications 37 rows ever) while collectors fail silently ([] on API error), attach no fetch timestamps, render missing values as 0, mix units (absolute USD vs millions), and omit short interest, options IV and macro calendars that the prompts themselves require (SHORT三问 squeeze self-assessment, challenger CPI/FOMC checks). Net effect: a sophisticated reasoning layer confidently analyzing unlabeled stale or empty data, with a final gate that scores on empty experience. Verified facts (DB freshness measurements, code behavior shown) are distinguished above from hypotheses that depend on the data_text renderer and the _challenger_data_view cap value, which were not provided — those items need that context before final severity confirmation. Highest-leverage fixes are failure/freshness labeling, feedback-loop repair, and de-anchoring the challenger with a machine-computed priced-in criterion; all are validatable without live capital via replay, shadow A/B on the existing PROMPT_HASH split, and IC tracking once snapshots actually land."
+    }
+  },
+  "error": null
+}

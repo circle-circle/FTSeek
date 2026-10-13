@@ -1,0 +1,230 @@
+===============================================================================================
+FTSeek-US v5 DA prompt+信息源链路复查对比
+===============================================================================================
+
+模型                         耗时    输出tok    推理tokprompt问题     链路问题   提案     误导风险
+-----------------------------------------------------------------------------------------------
+qwen3.8-max              539s    21339    14094      12       15    8       20
+deepseek-v4.1-flash      247s    21290     7638      13       13   12       12
+kimi-k3                  626s    27121    16678      12       10   10       15
+glm-5.3-prime            371s    36427    27253      16       11   11       12
+glm-5.3                  547s    44838    33460      19       15   12       12
+
+===============================================================================================
+质量提升提案清单（按模型，含验证方式）
+===============================================================================================
+
+### qwen3.8-max (8 个提案, 详见 qwen3.8-max_result.json)
+
+### deepseek-v4.1-flash (12 个提案, 详见 deepseek-v4.1-flash_result.json)
+
+### kimi-k3 (10 个提案, 详见 kimi-k3_result.json)
+
+### glm-5.3-prime (11 个提案, 详见 glm-5.3-prime_result.json)
+
+### glm-5.3 (12 个提案, 详见 glm-5.3_result.json)
+
+===============================================================================================
+Prompt 问题（按 location 聚合跨模型）
+===============================================================================================
+
+* [25模型] USER_TEMPLATE
+    qwen3.8-max: [high] score_band HIGH privileges product_catalyst or earnings_beat claims, steering the model away from valid techni
+    qwen3.8-max: [high] The not-priced-in criterion is model-interpreted from pre-market fields and uses ambiguous syntax, making it e
+    qwen3.8-max: [high] Numeric provenance is required but the JSON contract lacks structured evidence references, so the model can ci
+
+* [19模型] SYSTEM_PROMPT
+    qwen3.8-max: [high] The synthetic ACME few-shot example demonstrates desired argument shapes but can create availability bias towa
+    qwen3.8-max: [high] Edge calibration relies primarily on pre-market reaction to decide whether information is priced in. Thin pre-
+    deepseek-v4.1-flash: [critical] ACME 合成示例不是中性形态示范：全部示例论据都指向“需深度挖掘的公司独有事件 + 双数字估值锚 + 内部人时序 + 散户拥挤反向警示”，其中 bear_case 3 条示例全部是可计算的高分形态，bull_case 
+
+* [19模型] CHALLENGER
+    qwen3.8-max: [high] The challenger is told to be independent but receives the candidate direction in the task header before indepe
+    qwen3.8-max: [high] The requirement to find at least two data-backed counter-evidences makes AGREE the default when data is thin. 
+    qwen3.8-max: [critical] The challenger sees the same collected data and no source-health manifest, so it cannot detect stale, empty, o
+
+* [9模型] calibration
+    qwen3.8-max: [medium] The prompt removed explicit historical win-rate bias, but downstream calibration can still be absent or surviv
+    deepseek-v4.1-flash: [high] “信息 edge = 是否已被价格反映”的判定被绑定在盘前数据段上（盘前同向异动 + 放量）。该数据段在非盘前批次不存在（collect_snapshot_batch 注释：“非交易时段 pre_price=0 的行由调
+    deepseek-v4.1-flash: [medium] 校准统计的可得性存疑：代码注释引用“历史 21:2”“107/107”“近14日命中29%”等统计，但 context 未给出这些统计的样本窗、切分口径与生成代码；而唯一可用的校准数据源（strategy_memory.
+
+===============================================================================================
+误导风险
+===============================================================================================
+  [qwen3.8-max] social_sentiment prompt section: Stale sentiment is interpreted as current crowd positioning.
+  [qwen3.8-max] Futu news/community empty arrays: API failure, keyword mismatch, or language mismatch is interpreted as no news.
+  [qwen3.8-max] Finnhub company-news empty result: Rate-limit or auth failure becomes silent no-news.
+  [qwen3.8-max] USER_TEMPLATE PE rule: PE=0 from missing or normalized data is interpreted as loss-making.
+  [qwen3.8-max] collect_snapshot pre-market fields: pre_price=0, stale update_time, or wrong session causes false effective price.
+  [qwen3.8-max] kline-derived 5-day change: Missing bars, holidays, or split adjustments can distort momentum metrics.
+  [qwen3.8-max] Finnhub news time format: Month-day without year can misdate news around month or year boundaries.
+  [qwen3.8-max] market cap and valuation fields: Unit ambiguity across Finnhub and Futu fields can mislead size or valuation comparisons.
+  [qwen3.8-max] invalidation_triggers percent fields: Decimal vs percentage-point confusion can make triggers unusable.
+  [qwen3.8-max] chase_cap_price semantics: Model confuses invalidation level with chase cap, producing structurally unexecutable orders.
+  [qwen3.8-max] score_band pre-market criterion: Ambiguous condition syntax leads inconsistent HIGH/LOW assignment.
+  [qwen3.8-max] SYSTEM_PROMPT ACME example: Example argument types become a template and bias evidence search.
+  [qwen3.8-max] strategy_memory / calibration stats: Future calibration may suffer survivorship if only executed or surviving trades are stored.
+  [qwen3.8-max] Chinese prompt plus English data: Language mixing can cause entity, unit, and numeric parsing errors.
+  [qwen3.8-max] empty signals.db / alpha.db: Missing signals or claim IC are treated as neutral rather than unknown.
+  [qwen3.8-max] analyst consensus period: Stale monthly recommendation is treated as current consensus.
+  [qwen3.8-max] insider transaction list: Recent list without explicit date window can present old transactions as recent.
+  [qwen3.8-max] precision theater: Exact but immaterial numbers create false confidence.
+  [qwen3.8-max] news_classifications small sample: 37-row history can mislead news-quality calibration.
+  [qwen3.8-max] challenger same data view: Challenger cannot falsify missing data, so false AGREE occurs.
+  [deepseek-v4.1-flash] USER 契约：“如果PE为负或0，说明该股亏损或无盈利，必须在bear_cas: 把“数据缺失/采集失败渲染为 0”与“公司确实亏损”划等号，模型被迫产出一条语义为“亏损”的看空论据。
+  [deepseek-v4.1-flash] 数据段缺失渲染（新闻/研报/社区空列表）: “空”被读作“无消息”，即把失败当事实；进一步在 score_band/证据缺口判断里被当成“无催化剂”。
+  [deepseek-v4.1-flash] sentiment_cache（最后抓取 2026-07-10）: 陈旧情绪被当作当日情绪，并触发 SYSTEM_PROMPT 的拥挤警示机检 → 强制一条“散户一边倒”bear 论据。
+  [deepseek-v4.1-flash] cross-section：Futu total_market_val 与 Fi: 同概念不同单位（绝对额 vs 百万美元）并列出现，被读成同一量纲，造成数量级误判。
+  [deepseek-v4.1-flash] 内部人交易段（total_recent_value / recent_buy_c: total_recent_value 是最近 20 条的 value 无符号求和，若 prompt/模型把它当作“净买入额”，方向可能被读反。
+  [deepseek-v4.1-flash] score_band 判据② ：盘前数据段缺失的批次: 判据不可判定时，模型可能默认“未被价格反映”而给 HIGH，或反向一律不给 HIGH；两种行为都不可见。
+  [deepseek-v4.1-flash] 价格精度（entry_price/stop_loss/chase_cap/飞刀线: 精确度表演：由薄盘前成交或昨收推导出的价位以 2 位小数呈现，看起来像经过精确计算，但源数据精度/流动性不支持。
+  [deepseek-v4.1-flash] SYSTEM_PROMPT 内的具名仟例（HPE 62.09/58.00/58.: 把 n≈3 的个案当规范注入，模型会对这些结构/数字产生锚定，或在不相关标的上做错误类比（例如把所有回撤都按“错杀”处理）。
+  [deepseek-v4.1-flash] 校准/统计口径（“历史 21:2”“107/107”“近14日命中29%”等注释: survivorship 与窗口选择不可见：这类统计是否只覆盖“已产生决策的样本”、是否剔除被 gate/执行层拒绝的样本、窗口起止为何，均未给出；引用后成为 prompt/设计决策的依据。
+  [deepseek-v4.1-flash] 语言混合（中文 prompt + 英文 Finnhub 数据）与证伪官的数字溯源: 证伪官被要求“分析师论点中的每个具体数字必须能在原始数据中找到出处”，但英文原文与中文译文/改写之间不存在字符串匹配，会产生假阳性“来源不明数字”，污染幻觉计数与 challenger 的有效性评估。
+  [deepseek-v4.1-flash] challenger 验证维度 d（CPI/FOMC 硬日期风险）: 要求核验一个没有数据源的维度，导致两种坏结果：机械“不通过”（无信息）或模型凭记忆编造宏观日期（幻觉）。
+  [deepseek-v4.1-flash] llm_audit.db features 含 'test_feature_xy: 生产审计库混入测试与合成特征，若按 feature 聚合做 IC/校准统计，会引入不可归因样本（污染分母）。
+  [kimi-k3] 情绪数据段 (social_sentiment): 3个月前情绪无时间戳注入时, 模型与拥挤机检(>85%一边倒)都把7月情绪当10月事实
+  [kimi-k3] collect_news / collect_community_sentime: absence与failure同形(都渲染为无内容), 模型把采集失败断言为『无新闻/无催化/无负面』的事实陈述
+  [kimi-k3] collect_fundamentals等 {"_error": ...} 返回: 错误dict泄漏进prompt被当作数据, 或section静默消失且不计入数据充分性(渲染层行为未在所给代码, 待验证)
+  [kimi-k3] snapshot字段`or 0`强转 (pe_ttm_ratio/volume/: 哨兵值0与真值0不可分: PE=0=亏损也=缺数; volume=0=停牌也=无人问津; 配合『PE为负或0必须提bear』规则, 缺数被强制翻译成亏损看空论据
+  [kimi-k3] 盘前effective_price锚定: 全部价位(入场/止损/止盈)被指令锚定到单个稀薄盘前成交价; 低流动盘前的单笔wild print成为所有价格基准; pre_price=0的回退路径单标的情况未明(待验证)
+  [kimi-k3] collect_finnhub_news时间字段: "time": "%m-%d"无年份+UTC换算(utcfromtimestamp), 与ET交易日可错1天; edge判定依赖『信息vs今日盘前反应』的时间对齐, 错位直接污染校准判据②
+  [kimi-k3] collect_earnings_calendar的ET偏移hack: `timedelta(hours=-4) if 3 <= month <= 11 else -5`按月近似DST, 3月1-8日与11月2-30日偏移错误; 午夜边界附近『today』翻转一天, 未来财报过滤与『财报前3
+  [kimi-k3] _challenger_data_view [:_cap]截断: JSON在任意字符处截断(可能在数字/字符串中间), 证伪官基于残缺数据核验: 完整数据里存在的数字因被截而误报『来源不明数字』, 被截section里的真实幻觉则永久失明
+  [kimi-k3] 中文prompt+英文数据的语言混合: 证据转述的翻译漂移: 英文新闻的 hedging/severity 在中文论据中丢失或加重, 数字前的限定词(~, expected, up to)脱落
+  [kimi-k3] tripwires自由文本threshold vs invalidation_t: 单位双轨: invalidation_triggers已规定单位(USD/百分点/无量纲量比, 好), 但tripwires的threshold自由文本(『低于$5B』)单位随意(B/M混用); 市值渲染单位($B)与原
+  [kimi-k3] score_band判据②的2%阈值与『放量确认』: 伪精度剧场: |盘前涨跌|1.9% vs 2.1%被类别化为不同确信档; 且RFC-133禁用昨日口径量比后『放量』无定义, 模型可能违规回看量比或凭空编造量能描述
+  [kimi-k3] 『数据充分性: 充分 ✓』头部flag: 单点信任: prompt禁止模型自行清点(『禁止自行估计维度数』『禁止自行清点维度』), 若flag计算(代码未提供, 待验证)只查存在性不查新鲜度/失败态, 『充分』为过期数据背书
+  [kimi-k3] collect_finnhub_news的low_relevance降级: ticker未见于标题时降级取最新N条并标low_relevance=true——若渲染层丢弃该标记(待验证), 市场级泛新闻被读作个股催化
+  [kimi-k3] 校准统计与gate pattern统计(学习回路修复后): 存活者/选择偏差: 已成交信号才有结果, SKIP永无反事实记分→任何『pattern胜率』只反映被取走的交易; 且news_classifications全历史37行级样本, 任何统计皆噪声。该偏差已被实证过一次(『近
+  [kimi-k3] analyst_consensus / insider_sentiment的pe: Finnhub recommendation按月、insider-sentiment按月度记录, 若渲染不带period(待验证), 模型把上月评级/上季MSPR引为当前事实——prompt强制『必须引用买入占比和分析师
+  [glm-5.3-prime] 情绪段 (sentiment section): 3-month-old cache presented without fetch date → model treats stale crowding as current
+  [glm-5.3-prime] 新闻段 (Futu news / Finnhub company-news): fetch failure rendered as 'no news' — absence vs failure ambiguity
+  [glm-5.3-prime] 基本面指标 (Finnhub stock/metric): HTTP error body parsed as data → all-None metrics look like normal missing fields
+  [glm-5.3-prime] execution_plan (entry/stop/take-profit): precision theater — contract forces specific numbers regardless of evidence strength; stop band is dictated
+  [glm-5.3-prime] score_band criterion ② (盘前 reflection te: missing premarket section defaults to 'not reflected' → edge granted → HIGH; prior-session reflection untested
+  [glm-5.3-prime] USER contract PE rule: PE=0 sentinel read as 'loss-making company'
+  [glm-5.3-prime] challenger data view: truncated view → false '来源不明数字' accusations and missed counter-evidence → wrongful AGREE
+  [glm-5.3-prime] market_cap / valuation fields: unit ambiguity — Finnhub profile2 marketCapitalization is in millions USD (unlabeled in code) vs Futu total_ma
+  [glm-5.3-prime] invalidation_triggers metric enum: Chinese-only enum matching undercounts English outputs; mixed-language thresholds lack a unit schema
+  [glm-5.3-prime] calibration stats embedded in prompt tex: frozen historical stats cited as current evidence; with feedback DBs verified empty they can never be re-valid
+  [glm-5.3-prime] 数据充分性 header: sufficiency computed from presence, not freshness or non-nullness (hypothesis — computation not shown)
+  [glm-5.3-prime] analyst_consensus section: monthly recommendation snapshot rendered without age
+  [glm-5.3] sentiment data section (social_sentiment: 3-month-old retail sentiment presented as current crowding signal (VERIFIED staleness of the cache; live sourc
+  [glm-5.3] news sections (collect_news / collect_fi: Silent API failure rendered as 'no news' — absence vs failure ambiguity.
+  [glm-5.3] snapshot/fundamentals rendering: Precision theater: missing values rendered as precise zeros.
+  [glm-5.3] SYSTEM_PROMPT calibration anecdotes & st: Incident anecdotes and un-windowed statistics embedded as universal law (survivorship/window bias).
+  [glm-5.3] Finnhub news time field: MM-DD-only, UTC-based timestamps make the '24h 内' edge test uncomputable and day-boundary-erroneous.
+  [glm-5.3] market cap fields (Futu total_market_val: Unit ambiguity: absolute USD vs millions USD appearing side-by-side.
+  [glm-5.3] insider transactions section: Empty source rendered as 'zero insider buying' — absence vs zero.
+  [glm-5.3] collect_finnhub_news low_relevance fallb: Irrelevant news injected with a flag the model may ignore, feeding false company-specific catalysts.
+  [glm-5.3] premarket data section + calibration blo: Sparse/absent premarket data read as 'info not yet reflected' → inflated HIGH.
+  [glm-5.3] language mixing (zh prompts + en data): Cross-script number/unit transcription and definition drift.
+  [glm-5.3] signal_gate outputs (quality_score / dec: Gate precision theater on empty dependencies.
+  [glm-5.3] peers chg_5d / invalidation_triggers '5日: Off-by-one window mismatch between computed data and checker semantics.
+
+===============================================================================================
+自评
+===============================================================================================
+  qwen3.8-max            prompt=6.2/10 chain=4.1/10
+      - Add a per-source freshness/status manifest with TTLs and hard routing for stale or failed critical s
+      - Sanitize all _error and empty states so API failures are never rendered as no-news or as data.
+      - Rewrite challenger and score_band calibration to remove event-type bias, anchor-free independence, a
+  deepseek-v4.1-flash    prompt=6.0/10 chain=3.0/10
+      - 为每个数据段加时效信封与三态源状态（OK/EMPTY/FAILED/STALE），并让机检条款的适用性由代码判定：直接消灭“3 个月前情绪当今日事实”“源挂了=无新闻”“空库=有经验”三类静默误导（p
+      - 删除 PE=0→亏损 的强制 bear 条款，并把 claim_type 与 score_band 判据①②改为代码推断/系统计算：堵住类别性看空偏差与“自报 product_catalyst 换 H
+      - 恢复挑战者的真实独立性：角色分温（挑战者 ≥0.3）、否证优先的两阶段视图、DISAGREE 门槛降为 1 条可推翻反证，并以已落盘字段 + PROMPT_HASH 切分做效力回测（proposals
+  kimi-k3                prompt=7.0/10 chain=3.5/10
+      - 全链路新鲜度/status信封(Q1): collector统一{status,as_of}返回, 失败/过期/空三态分离渲染, 『数据充分性』flag纳入新鲜度, 对实测死库(sentiment ~
+      - 封闭三条直接制造虚假thesis的失配: PE=0消歧(Q2, pitfall #22复发通道), SHORT三问的short-interest数据落地(Q7, 当前要么强制SKIP要么诱发编造), 
+      - 证伪层完整性: 两调用反锚定+禁止值中间截断+parse失败显式落盘告警(Q5), 并对score_band HIGH判据①做claim_type独立复判(Q6)——否则证伪官与自评标签共同构成『看起
+  glm-5.3-prime          prompt=6.0/10 chain=3.0/10
+      - Fix failure/staleness semantics end-to-end: fetch timestamps + per-section age labels, TTL-guard the
+      - Revive or excise the verified-dead feedback loop (signals.db 0 tables, alpha.db 0 tables, strategy_m
+      - Restore challenger data parity (remove [:_cap] truncation, independent-direction-first ordering) and
+  glm-5.3                prompt=6.0/10 chain=3.5/10
+      - Unify failure/staleness semantics across all collectors: every source returns {_status, _error, _fet
+      - Repair the inert feedback loop: VERIFIED alpha.db 0 tables, strategy_memory.db 0 bytes since 2026-08
+      - De-anchor and empower the challenger plus machine-compute calibration: two-pass challenger (data-onl
+
+===============================================================================================
+附录: 人工取证裁决 + 修复落地 (2026-10-12, v5 闭环)
+===============================================================================================
+
+一、对五模型 P1 共识的取证裁决
+
+1. "3个月陈旧情绪数据进 DA prompt" —— 【证伪】
+   - DA 情绪源为实时抓取: data_collector.py:1168 sentiment=lambda: collect_community_sentiment()
+     走富途社区 stock_feed 实时接口, 不读 social_sentiment.db。
+   - 陈旧的 social_sentiment.db 属 FTSeek-US 主仓多源情绪背离检查 (intraday_reentry.py),
+     该检查已于 2026-08-22 默认关闭 (ADR-032, 原因正是实测该源有问题)。
+   - 根因: 评测上下文给了新鲜度清单但缺"数据源→消费方"映射, 5/5 模型均在此造桥。
+
+2. _error dict 泄漏 —— 【部分成立, 已修复】
+   - dict 型源 (fundamentals/analyst/insider/profile 等) 渲染端 6 处 "_error" not in 守卫, 早已防御。
+   - list 型源存在真实缺口: executor 异常写入 result[key]={"_error":..} (data_collector.py:1188),
+     llm_synth.py L563 `if sentiment:` 对非空 dict 为真 → L576 `sentiment[:5]` TypeError。
+     同类缺口: klines[-1] (KeyError), news/research 迭代 (AttributeError)。
+
+3. 新闻时间戳链路 —— 【无问题】新闻段标"时间为ET", news_v2 每条带[时间](来源)+低相关度降级标注。
+
+4. 空库事实 (signals.db/strategy_memory.db/alpha.db 为空) —— 【部分成立, 需按真实路径拆分】
+   - signals.db 为 0 字节: 属主/消费方未确认, 只能判"疑似废弃或断链", 不能外推全学习回路死亡。
+   - skill scripts/alpha.db 为 0 字节: 当前 signal_gate 不消费该文件; claim IC 实际读取
+     scripts/claim_ic_cache.json (2026-10-13 更新, total_samples=2287, claims=102)。
+   - strategy_memory.db 不能按 skill/data 下的 0 字节文件判断: config.FTSEEK_DB 指向
+     /opt/ftseek/FTSeek-US/data/ftseek_us.db, strategy_memory.DB_PATH 因此指向
+     /opt/ftseek/FTSeek-US/data/strategy_memory.db; 该库 200KB, 含 pattern_memory=88、
+     symbol_memory=208、lesson_log=484。
+   - 结论: "strategy_memory/claim IC 全部死亡"是路径误判; 真实待办是为 signals.db 建
+     source→consumer 对照, 并监控 claim_ic_cache 与 strategy_memory 的新鲜度。
+
+5. 情绪帖无单帖时间戳 (仅聚合发帖节奏行) —— 【成立, 轻微】
+
+二、修复落地 (TDD)
+
+- 复现: tests/test_sentiment_error_dict.py 先证 TypeError(unhashable type: 'slice') @ L576
+- 修复: llm_synth.py 对 sentiment/kline/news/research 读取处统一 isinstance 归一化
+- 验证: 新测试 4 项全绿 + 既有 3 测试无回归 + llm_synth 导入编译正常
+- 回滚点: deep-stock-analysis skill 仓 git 6cbfae9
+- 生效: llm_synth 无状态按调用加载, 无需重启
+
+二.1、v5 复查后追加 P0 修复 (2026-10-13)
+
+- PE 消歧: `_fundamental_view` 将 PE/PB/市值/52周高低缺失或 0 归一为 None, 渲染
+  "数据未采集(N/A)"; prompt 仅允许 PE<0 表述"亏损", PE=0/缺失必须进入 evidence_gaps。
+- 三态源状态: `SourceResult` 继承 list, 旧迭代/切片/JSON 输出兼容; 富途新闻、研报、
+  社区情绪与 Finnhub 新闻携带 OK/EMPTY/FAILED/DISABLED。prompt 头部显式渲染
+  FAILED≠无新闻、EMPTY=源成功但无结果, 且不泄漏原始错误文本。
+- 新增测试: tests/test_source_status_and_pe.py 覆盖三态、PE 消歧、prompt 契约与 JSON 兼容。
+
+二.2、v5 P1 影子审计落地 (2026-10-13, 默认不改变交易行为)
+
+- 状态落盘: `collect_all()` 新增 `_source_status` sidecar, 记录四类 list 源
+  OK/EMPTY/FAILED/DISABLED/UNKNOWN; JSON 序列化后 prompt 仍能恢复失败/空态语义。
+- score_band 审计: 新增 `_score_band_audit`, 用代码复算 HIGH 三判据
+  (公司独有事件、未被价格反映、数据充分)。同时调用 `ic_writer._classify_claim`
+  复判 claim_type, 记录自报与推断不一致。字段仅落 `result["_score_band_audit"]`,
+  不覆盖 score/score_band, 不改方向、仓位、止损或执行参数。
+- priced_in 判定: 依据有效价与昨收盘计算涨跌幅; 方向同向且幅度≥2% 判 yes,
+    反向或幅度<2% 判 no, 价格缺失/不可解析/SKIP 判 unknown。unknown 会记录 HIGH 不满足。
+- 挑战者盲评: 新增 `DA_CHALLENGER_BLIND_SHADOW=1` 可选开关 (默认 0)。开启时先让
+  挑战者只看原始数据输出独立方向、最强证据与数据盲区, 再进入原有证伪流程; 结果只落
+  `_debate.challenger_blind_shadow`, 不参与合并决策。
+- 测试: tests/test_score_band_shadow_audit.py 覆盖 JSON sidecar、HIGH 支持/降档影子、
+  claim_type 复判、盲评默认关闭与显式开启。
+- 源链路对照: 新增 source_consumer_map.txt, 明确 DA 情绪、social_sentiment.db、
+  strategy_memory.db、claim_ic_cache.json、alpha.db、signals.db 的真实写入/消费方。
+- 验证: `python -m pytest -q tests` = 53 passed; `py_compile` 通过。skill 按调用加载,
+  本轮无需重启服务。
+
+三、v5 提案清单修正
+
+  保留(取证支持): 三态返回([]→{status})、学习回路死活裁决、PE=0 消歧、证伪官去锚定
+  降级: "新鲜度信封" P0→P1 (真实缺口是 list 源失败语义+情绪时间戳, 非陈旧数据污染)
+  新增 P0 (已完成): list 源 error-dict 归一化守卫
+
+四、教训(写入评测流程)
+
+给模型的上下文缺"数据源→消费方"映射时, 模型会在数据流向上造桥。
+后续轮次上下文必须附 source→consumer 对照表。

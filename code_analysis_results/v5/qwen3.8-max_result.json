@@ -1,0 +1,470 @@
+{
+  "model": "qwen3.8-max",
+  "elapsed": 538.9501185417175,
+  "request_id": "2511dc26-c127-9629-ae88-36b26d05bf87",
+  "tokens_in": 31638,
+  "tokens_out": 21339,
+  "reasoning_tokens": 14094,
+  "retries": 0,
+  "parse_ok": true,
+  "finish_reason": "stop",
+  "raw_content": "",
+  "result": {
+    "model_name": "auditor: Qwen3.8-Max; production analyst: qwen3.7-max; challenger: deepseek-v4.1-flash",
+    "prompt_issues": [
+      {
+        "location": "SYSTEM_PROMPT",
+        "severity": "high",
+        "category": "bias",
+        "description": "The synthetic ACME few-shot example demonstrates desired argument shapes but can create availability bias toward product/insider/sentiment claims and style mimicry, even though reuse is forbidden.",
+        "evidence": "以下用合成示例股 ACME(虚构公司, 数字为占位符) 展示论据质量水准——禁止复用示例中的任何具体数字/事件到你的真实输出",
+        "fix": "Remove concrete few-shot examples from the production system prompt or replace them with abstract schema-only guidance. If examples are retained, rotate randomized synthetic cases and add a post-check that rejects example-pattern arguments lacking matching input fields."
+      },
+      {
+        "location": "USER_TEMPLATE",
+        "severity": "high",
+        "category": "bias",
+        "description": "score_band HIGH privileges product_catalyst or earnings_beat claims, steering the model away from valid technical, macro, flow, or valuation theses and encouraging claim_type mislabeling to obtain HIGH.",
+        "evidence": "HIGH = 同时满足全部3条: ①bull/bear_case中至少1条claim_type为product_catalyst或earnings_beat",
+        "fix": "Make HIGH event-agnostic: require a dated, source-verified unique edge or statistically anomalous data, not a fixed claim_type. Validate claim_type against evidence and allow technical/valuation/flow theses with explicit catalyst and falsification triggers."
+      },
+      {
+        "location": "USER_TEMPLATE",
+        "severity": "high",
+        "category": "gaming",
+        "description": "The not-priced-in criterion is model-interpreted from pre-market fields and uses ambiguous syntax, making it easy to assert HIGH without deterministic verification.",
+        "evidence": "核心信息未被价格反映(盘前同向异动|涨跌幅|<2%, 或盘前成交量未见放量",
+        "fix": "Compute a machine-generated priced_in flag from pre_price, pre_change_rate, pre_volume, and liquidity thresholds; inject the flag as a boolean and require the model to cite it instead of estimating it."
+      },
+      {
+        "location": "SYSTEM_PROMPT",
+        "severity": "high",
+        "category": "calibration",
+        "description": "Edge calibration relies primarily on pre-market reaction to decide whether information is priced in. Thin pre-market liquidity, missing pre-market fields, or a stale quote can falsely classify information as priced or unpriced.",
+        "evidence": "判定依据不是新闻的年龄，而是该信息是否已被价格反映。判断材料 = 盘前异动",
+        "fix": "Add session state, quote update_time, minimum pre-market volume thresholds, and an explicit missing-data route. Validate calibration with post-open event-window returns rather than only pre-market reaction."
+      },
+      {
+        "location": "USER_TEMPLATE",
+        "severity": "high",
+        "category": "contract",
+        "description": "Numeric provenance is required but the JSON contract lacks structured evidence references, so the model can cite sections vaguely and downstream code cannot reliably verify every number.",
+        "evidence": "你的输出中每个数字必须来自论据溯源清单或输入数据的其他字段，不得编造",
+        "fix": "Require each bull/bear claim to include evidence_refs: [{section_id, field, value, unit, as_of}]. Build an input-data index and reject or downgrade outputs containing numbers not present in the index."
+      },
+      {
+        "location": "USER_TEMPLATE",
+        "severity": "medium",
+        "category": "contract",
+        "description": "Entry split and archetype requirements are expressed in free text. The pipeline has regex fallbacks, but phrasing can satisfy the prompt without producing executable legs.",
+        "evidence": "entry_strategy必须分批(至少2批)，每批有触发条件(价位+确认指标)",
+        "fix": "Replace free-text entry_strategy with a structured legs array: [{seq, price, trigger, size_pct, order_type}]. Machine-check that confirmation.price_level, chase_cap_price, and legs are mutually consistent."
+      },
+      {
+        "location": "USER_TEMPLATE",
+        "severity": "high",
+        "category": "bias",
+        "description": "The PE=0/negative rule forces a bear-case mention even when 0 may be missing data, API default, or normalization failure, creating false bearish evidence.",
+        "evidence": "如果PE为负或0，说明该股亏损或无盈利，必须在bear_case中提及",
+        "fix": "Distinguish null/missing from negative/zero. Require PE source, as_of date, and normalized field name. Only force a bear-case mention when negative or zero PE is verified from fundamentals, not from missing data."
+      },
+      {
+        "location": "CHALLENGER",
+        "severity": "high",
+        "category": "blind_spot",
+        "description": "The challenger is told to be independent but receives the candidate direction in the task header before independent analysis, creating anchoring despite the anti-anchoring intent.",
+        "evidence": "【证伪任务 — 第14轮 P9】候选方向 = {initial_analysis.get('direction','?')}",
+        "fix": "Run challenger in two stages: first call with raw data only and no candidate direction; second call compares the independent verdict to the analyst. Store divergence and use it as a gate feature."
+      },
+      {
+        "location": "CHALLENGER",
+        "severity": "high",
+        "category": "gaming",
+        "description": "The requirement to find at least two data-backed counter-evidences makes AGREE the default when data is thin. Absence of counter-evidence can be mistaken for support.",
+        "evidence": "找不到≥2条有数据支撑的具体反证...并给AGREE",
+        "fix": "Add verdicts INSUFFICIENT_DATA or DATA_BLINDSPOT. Require the challenger to falsify data freshness, coverage, and failure states. Do not equate inability to find counter-evidence with AGREE."
+      },
+      {
+        "location": "CHALLENGER",
+        "severity": "critical",
+        "category": "blind_spot",
+        "description": "The challenger sees the same collected data and no source-health manifest, so it cannot detect stale, empty, or failed sources. It shares the analyst's data blind spots.",
+        "evidence": "原始数据: {_challenger_data_view(data_text)}",
+        "fix": "Inject a data_source_manifest with status, fetched_at, as_of, TTL, row_count, and error_reason for every section. Require the challenger to flag stale or empty critical sources as hard risks."
+      },
+      {
+        "location": "calibration",
+        "severity": "medium",
+        "category": "calibration",
+        "description": "The prompt removed explicit historical win-rate bias, but downstream calibration can still be absent or survivorship-biased if strategy_memory or alpha stores are empty or later backfilled from incomplete populations.",
+        "evidence": "删除已过时的近14日命中29%胜率论据",
+        "fix": "Any injected calibration stat must include sample_size, window, direction split, skip/loss inclusion, and a minimum-sample gate. Disable calibration when stores are empty or n is too small."
+      },
+      {
+        "location": "USER_TEMPLATE",
+        "severity": "medium",
+        "category": "contract",
+        "description": "data_quality_note must copy the audit block, but if the audit block is missing, stale, or wrong, the model may copy an incorrect number or fabricate a plausible audit.",
+        "evidence": "data_quality_note必须量化：直接照抄数据中数据质量审计段的数字",
+        "fix": "Provide the quality audit as structured JSON with a checksum or exact required fields. Validate that data_quality_note matches the machine-generated audit, and reject mismatches."
+      }
+    ],
+    "source_chain_issues": [
+      {
+        "source": "social_sentiment.db sentiment_cache",
+        "severity": "critical",
+        "category": "staleness",
+        "description": "Measured freshness shows 36 rows and last fetched 2026-07-10, about three months stale at 2026-10-12. If this cache is injected into DA without fetched_at/TTL, the LLM may treat stale sentiment as current crowd positioning.",
+        "code_location": "social_sentiment.db sentiment_cache; prompt rendering path not shown in provided context",
+        "fix": "Add fetched_at and TTL to every sentiment section. If age exceeds a short TTL, label STALE and exclude from score_band or sentiment_crowded rules."
+      },
+      {
+        "source": "news_quality.db news_classifications",
+        "severity": "high",
+        "category": "coverage_gap",
+        "description": "Measured total history is only 37 rows. If used for calibration, news filtering, or classifier confidence, the sample is too small and may produce misleading quality signals.",
+        "code_location": "news_quality.db news_classifications; consuming code not shown in provided context",
+        "fix": "Expose row_count and coverage window to the prompt/gate. Disable classifier-based calibration below a minimum sample size or mark it as low-confidence."
+      },
+      {
+        "source": "signals.db",
+        "severity": "high",
+        "category": "coverage_gap",
+        "description": "Measured database is empty with 0 tables. Any downstream feature expecting signals may silently receive nothing, and absence may be interpreted as neutral rather than missing infrastructure.",
+        "code_location": "signals.db; consuming path not shown in provided context",
+        "fix": "Create explicit schema and source_health entry. When empty, inject status=EMPTY_TABLES and force conservative gating for features that depend on signals."
+      },
+      {
+        "source": "strategy_memory.db",
+        "severity": "high",
+        "category": "silent_failure",
+        "description": "Measured file is 0 bytes since 2026-08-04. signal_gate imports strategy_memory and may return empty hints, so the gate can operate without memory while appearing normal.",
+        "code_location": "signal_gate.py:1-80",
+        "fix": "Add cold-start detection. If strategy_memory is empty, set memory_status=COLD_START, avoid pattern-based quality boosts, and log a gate reason."
+      },
+      {
+        "source": "alpha.db",
+        "severity": "high",
+        "category": "coverage_gap",
+        "description": "Measured database is empty. _load_claim_ic_for_gate returns None on exception, so claim IC is unavailable and weak claims may not be penalized.",
+        "code_location": "signal_gate.py:29-35",
+        "fix": "Surface claim_ic_status=UNAVAILABLE in gate output and prompt metadata. Do not infer claim validity when IC cache is absent; use conservative default weights."
+      },
+      {
+        "source": "Futu news / research / community",
+        "severity": "high",
+        "category": "silent_failure",
+        "description": "collect_news, collect_research_reports, and collect_community_sentiment return empty lists on non-zero code or HTTP failure. Empty list is indistinguishable from true absence, keyword mismatch, language mismatch, or API outage.",
+        "code_location": "data_collector.py:129-170",
+        "fix": "Return structured status: {status: ok|empty|error, fetched_at, http_code, error_reason, row_count}. Render empty as NO_DATA_WITH_STATUS, not as plain absence."
+      },
+      {
+        "source": "Finnhub company-news",
+        "severity": "high",
+        "category": "silent_failure",
+        "description": "collect_finnhub_news returns [] when data is not a list or when the switch is off. Rate-limit errors, auth errors, or empty API responses all become silent no-news states.",
+        "code_location": "data_collector.py:171-212",
+        "fix": "Distinguish API_ERROR, RATE_LIMITED, EMPTY_WINDOW, and SWITCH_OFF. Include fetched_at and query window. Do not let error become plain empty news."
+      },
+      {
+        "source": "Finnhub metric / recommendation / earnings / insider",
+        "severity": "critical",
+        "category": "error_leak",
+        "description": "Several collectors return the upstream error dict upward when _finnhub_get fails. If collect_all or prompt rendering does not sanitize, an _error object can enter the LLM context as if it were data.",
+        "code_location": "data_collector.py:568-609, 624-665, 678-719; pattern: if \"_error\" in data: return data",
+        "fix": "Centralize sanitizer: convert _error into source_health {status:error, reason, retryable} and remove raw error payloads from data_text. Add unit tests with mocked API failures."
+      },
+      {
+        "source": "Finnhub API key / rate limits",
+        "severity": "high",
+        "category": "rate_limit",
+        "description": "Config shows a single FINNHUB_KEY. The snippets do not show a token bucket, retry/backoff, or per-endpoint budget. Batch DA runs can exhaust free-tier limits and convert failures into empty data.",
+        "code_location": "config.py:59-60; _finnhub_get implementation not fully shown",
+        "fix": "Add rate limiter, exponential backoff, response caching, per-symbol endpoint budget, and optional secondary key. Emit rate_limit_status into source manifest."
+      },
+      {
+        "source": "Futu snapshot / kline",
+        "severity": "high",
+        "category": "staleness",
+        "description": "Snapshot code adds pre/after fields and update_time in batch path, but prompt consumption is not shown. Stale quotes, pre_price=0 outside valid session, or missing update_time can cause the LLM to anchor to obsolete prices.",
+        "code_location": "data_collector.py:242-283, 363-404",
+        "fix": "Require update_time, session_state, and quote_age_sec in prompt header. Reject or downgrade analysis when quote age exceeds TTL or pre_price=0 in a session where it should exist."
+      },
+      {
+        "source": "capital flow",
+        "severity": "medium",
+        "category": "staleness",
+        "description": "Capital flow is mentioned as an existing FTSeek source but its freshness/rendering is not shown. If stale or omitted, the model may infer no flow signal rather than missing data.",
+        "code_location": "not in provided context; needs trace in FTSeek provider or collect_all",
+        "fix": "Add capital_flow_status with as_of and TTL. If stale, label STALE and prevent use in claim strength."
+      },
+      {
+        "source": "options flow / short interest / borrow / FTD / peer medians",
+        "severity": "high",
+        "category": "coverage_gap",
+        "description": "The prompt asks SHORT squeeze risk, valuation anchors, and catalyst timing, but decision-relevant data such as options flow, IV skew, short interest, borrow fee, failure-to-deliver, and robust peer medians is not fully collected or guaranteed.",
+        "code_location": "data_collector.py overall; peer snapshot logic at data_collector.py:1065-1106",
+        "fix": "Add dedicated collectors for options flow, short interest, borrow cost, FTD, and sector peer valuation medians. Each must carry as_of, unit, and source status."
+      },
+      {
+        "source": "Futu subprocess scripts",
+        "severity": "high",
+        "category": "error_leak",
+        "description": "_run_futu_script returns error dictionaries and truncated raw stdout. If these structures are passed into prompt assembly, raw error text or partial JSON can be interpreted as market data.",
+        "code_location": "data_collector.py:80-110",
+        "fix": "Normalize subprocess failures into source_health and never include _raw in evidence sections. Log raw output only to audit files."
+      },
+      {
+        "source": "Finnhub insider transactions",
+        "severity": "medium",
+        "category": "staleness",
+        "description": "The snippet takes recent = transactions[:20] without an explicit date-window filter. If API ordering changes or old records are returned, stale insider activity can be presented as recent.",
+        "code_location": "data_collector.py:624-665",
+        "fix": "Filter by transactionDate against a fixed window, include min/max transaction dates, and label the window in the prompt."
+      },
+      {
+        "source": "Finnhub analyst recommendation",
+        "severity": "medium",
+        "category": "staleness",
+        "description": "collect_analyst_consensus uses the latest monthly period but does not expose fetched_at or period age. The prompt requires use if provided, which can force reliance on stale consensus.",
+        "code_location": "data_collector.py:568-609",
+        "fix": "Include period, fetched_at, and age_days. If age exceeds threshold, mark consensus STALE and prevent mandatory citation from affecting score_band."
+      }
+    ],
+    "quality_proposals": [
+      {
+        "title": "Source-health and freshness manifest",
+        "change": "For every collected section, produce {status, fetched_at, as_of, ttl, row_count, error_reason, staleness_flag}. Render this manifest at the top of DA data_text and feed it to the challenger. Add hard routing: critical stale sources force data_sufficient=false or SKIP.",
+        "target_files": [
+          "data_collector.py",
+          "llm_synth.py",
+          "pipeline.py"
+        ],
+        "expected_effect": "Prevents stale or failed data from being interpreted as true absence or current fact. Improves SKIP quality, evidence_gaps, and downstream trade safety.",
+        "validation_method": "replay",
+        "effort": "M",
+        "priority": 1
+      },
+      {
+        "title": "Error and empty-state sanitizer",
+        "change": "Intercept all {_error} dicts and empty lists before prompt assembly. Convert them into structured source_health entries. Never render raw error payloads or _raw stdout into evidence sections.",
+        "target_files": [
+          "data_collector.py",
+          "llm_synth.py"
+        ],
+        "expected_effect": "Eliminates error leakage into LLM context and removes absence-vs-failure ambiguity for news, sentiment, fundamentals, and insider data.",
+        "validation_method": "shadow",
+        "effort": "S",
+        "priority": 1
+      },
+      {
+        "title": "Machine-readable evidence ledger",
+        "change": "Require each claim to include evidence_refs with section_id, field, value, unit, and as_of. Build an index of all injectable numbers and run post-validation that extracts numbers from thesis/evidence and matches them to the index.",
+        "target_files": [
+          "llm_synth.py",
+          "pipeline.py"
+        ],
+        "expected_effect": "Reduces hallucination, precision theater, and vague sourcing. Enables claim-level IC and auditability.",
+        "validation_method": "replay",
+        "effort": "L",
+        "priority": 2
+      },
+      {
+        "title": "Score_band calibration rewrite",
+        "change": "Remove the product_catalyst/earnings_beat monopoly for HIGH. Compute data_sufficient and priced_in flags in code. Let HIGH require verified unique edge, unpriced evidence, and sufficient data, with claim_type used only as classification.",
+        "target_files": [
+          "llm_synth.py",
+          "data_collector.py",
+          "signal_gate.py"
+        ],
+        "expected_effect": "Reduces event-type bias and claim_type gaming. Makes conviction more comparable across candidates and directions.",
+        "validation_method": "ic_tracking",
+        "effort": "M",
+        "priority": 2
+      },
+      {
+        "title": "Two-stage challenger with data-blind-spot falsification",
+        "change": "First challenger call receives only raw data and source manifest, no analyst direction. Second call compares independent direction with analyst. Add INSUFFICIENT_DATA verdict and require falsification of stale/empty sources.",
+        "target_files": [
+          "llm_synth.py"
+        ],
+        "expected_effect": "Improves true independence, catches missing-data blind spots, and reduces fake consensus when data is thin.",
+        "validation_method": "replay",
+        "effort": "M",
+        "priority": 2
+      },
+      {
+        "title": "Structured execution-plan legs",
+        "change": "Replace free-text entry_strategy with structured legs array and validate chase_cap geometry by direction. Auto-reject or auto-correct impossible caps, missing legs, or price levels inconsistent with confirmation.",
+        "target_files": [
+          "llm_synth.py",
+          "pipeline.py"
+        ],
+        "expected_effect": "Reduces structurally unexecutable instructions, chase-cap misuse, and dead orders caused by text parsing ambiguity.",
+        "validation_method": "shadow",
+        "effort": "M",
+        "priority": 2
+      },
+      {
+        "title": "Add short-squeeze and options data",
+        "change": "Integrate options flow, IV skew, put/call volume, short interest, days to cover, borrow fee, and FTD where available. Feed these into SHORT risk three questions and squeeze-risk checks.",
+        "target_files": [
+          "data_collector.py",
+          "config.py",
+          "llm_synth.py"
+        ],
+        "expected_effect": "Makes short theses and squeeze-risk assessments evidence-based rather than narrative-based, improving short-side trade quality.",
+        "validation_method": "shadow",
+        "effort": "L",
+        "priority": 3
+      },
+      {
+        "title": "Rebuild strategy_memory and alpha claim IC with survivorship controls",
+        "change": "Backfill from full llm_calls and outcome data, including SKIP, blocked, losing, and never-executed signals where appropriate. Store sample_size, window, and direction split. Gate uses memory only when minimum sample thresholds are met.",
+        "target_files": [
+          "strategy_memory.py",
+          "alpha_backfill.py",
+          "signal_gate.py",
+          "ic_writer.py"
+        ],
+        "expected_effect": "Turns empty memory stores into calibrated gates without introducing survivorship bias or fake confidence.",
+        "validation_method": "replay",
+        "effort": "L",
+        "priority": 3
+      }
+    ],
+    "mislead_risks": [
+      {
+        "location": "social_sentiment prompt section",
+        "risk": "Stale sentiment is interpreted as current crowd positioning.",
+        "concrete_scenario": "Cache last fetched 2026-07-10 shows 85% bullish; in October the model triggers sentiment_crowded bear evidence even though sentiment may have reversed.",
+        "fix": "Add fetched_at, TTL, and stale label; exclude stale sentiment from mandatory crowded-sentiment rules."
+      },
+      {
+        "location": "Futu news/community empty arrays",
+        "risk": "API failure, keyword mismatch, or language mismatch is interpreted as no news.",
+        "concrete_scenario": "collect_news returns [] after HTTP failure; DA concludes no company catalyst and downgrades HIGH conviction.",
+        "fix": "Return status=ERROR or EMPTY_WITH_REASON and show query keyword/language/window."
+      },
+      {
+        "location": "Finnhub company-news empty result",
+        "risk": "Rate-limit or auth failure becomes silent no-news.",
+        "concrete_scenario": "Single Finnhub key is throttled during batch; collect_finnhub_news returns []; model says no recent news and misses an 8-K.",
+        "fix": "Distinguish RATE_LIMITED, API_ERROR, EMPTY_WINDOW; retry with backoff and expose status."
+      },
+      {
+        "location": "USER_TEMPLATE PE rule",
+        "risk": "PE=0 from missing or normalized data is interpreted as loss-making.",
+        "concrete_scenario": "Finnhub metric missing or default 0 forces a bear-case claim that the company is unprofitable.",
+        "fix": "Use null for missing PE; require negative PE from verified field before mandatory bear mention."
+      },
+      {
+        "location": "collect_snapshot pre-market fields",
+        "risk": "pre_price=0, stale update_time, or wrong session causes false effective price.",
+        "concrete_scenario": "Pre-market quote missing; model sees last_price and small change, missing a large pre-market gap and anchors entry incorrectly.",
+        "fix": "Inject session_state, update_time, quote_age_sec, and effective_price basis; reject stale quotes."
+      },
+      {
+        "location": "kline-derived 5-day change",
+        "risk": "Missing bars, holidays, or split adjustments can distort momentum metrics.",
+        "concrete_scenario": "A holiday leaves only three bars in a five-day window; computed 5-day change covers a longer calendar period and overstates momentum.",
+        "fix": "Use trading-calendar-aware windows and flag insufficient bars."
+      },
+      {
+        "location": "Finnhub news time format",
+        "risk": "Month-day without year can misdate news around month or year boundaries.",
+        "concrete_scenario": "On Jan 2, a Dec 30 headline appears as 12-30 and may be treated as recent without year context.",
+        "fix": "Use ISO 8601 date with year and timezone."
+      },
+      {
+        "location": "market cap and valuation fields",
+        "risk": "Unit ambiguity across Finnhub and Futu fields can mislead size or valuation comparisons.",
+        "concrete_scenario": "Finnhub marketCapitalization and Futu total_market_val may use different units; model compares them directly and misclassifies cap size.",
+        "fix": "Normalize to USD and explicit unit labels such as market_cap_usd_millions."
+      },
+      {
+        "location": "invalidation_triggers percent fields",
+        "risk": "Decimal vs percentage-point confusion can make triggers unusable.",
+        "concrete_scenario": "Model outputs -0.05 for a -5% trigger; downstream checker interprets it as -0.05 percentage points or rejects it.",
+        "fix": "Enforce unit in schema and validate numeric range; store percent_points explicitly."
+      },
+      {
+        "location": "chase_cap_price semantics",
+        "risk": "Model confuses invalidation level with chase cap, producing structurally unexecutable orders.",
+        "concrete_scenario": "SHORT entry=298 but cap=302 because the model uses an upside invalidation level; order is born invalid.",
+        "fix": "Machine-check direction-specific cap inequality and provide derived safe defaults or rejection."
+      },
+      {
+        "location": "score_band pre-market criterion",
+        "risk": "Ambiguous condition syntax leads inconsistent HIGH/LOW assignment.",
+        "concrete_scenario": "Model interprets pre-market change <2% OR low volume as unpriced, while another run interprets it differently, producing unstable conviction.",
+        "fix": "Replace free-text criterion with code-computed priced_in boolean and deterministic rules."
+      },
+      {
+        "location": "SYSTEM_PROMPT ACME example",
+        "risk": "Example argument types become a template and bias evidence search.",
+        "concrete_scenario": "Model over-searches for product_catalyst or insider selling because examples show them, even when data supports a technical flow thesis.",
+        "fix": "Use abstract schema examples or rotate synthetic examples; score claim quality independent of example pattern."
+      },
+      {
+        "location": "strategy_memory / calibration stats",
+        "risk": "Future calibration may suffer survivorship if only executed or surviving trades are stored.",
+        "concrete_scenario": "Gate recommends short hold based only on historical winners, ignoring blocked or stopped-out cases.",
+        "fix": "Backfill full decision population with outcome labels and minimum-sample disclosure."
+      },
+      {
+        "location": "Chinese prompt plus English data",
+        "risk": "Language mixing can cause entity, unit, and numeric parsing errors.",
+        "concrete_scenario": "Chinese terms like 亿 or 万 mixed with English million/billion cause market cap or volume misreading.",
+        "fix": "Standardize data keys, units, and numeric formats; provide a bilingual glossary or normalize to English field names."
+      },
+      {
+        "location": "empty signals.db / alpha.db",
+        "risk": "Missing signals or claim IC are treated as neutral rather than unknown.",
+        "concrete_scenario": "Gate passes a weak claim because claim IC is unavailable, not because claim is strong.",
+        "fix": "Expose MISSING_STORE status and apply conservative defaults."
+      },
+      {
+        "location": "analyst consensus period",
+        "risk": "Stale monthly recommendation is treated as current consensus.",
+        "concrete_scenario": "Period is two months old but model cites buy ratio as fresh support for HIGH conviction.",
+        "fix": "Show period, fetched_at, and age; downgrade stale consensus."
+      },
+      {
+        "location": "insider transaction list",
+        "risk": "Recent list without explicit date window can present old transactions as recent.",
+        "concrete_scenario": "API returns older transactions first; model cites insider selling over the last 3 months incorrectly.",
+        "fix": "Filter by transactionDate and include window_start/window_end."
+      },
+      {
+        "location": "precision theater",
+        "risk": "Exact but immaterial numbers create false confidence.",
+        "concrete_scenario": "MSPR changes from 0.11 to 0.12 are presented as strong insider evidence despite low materiality.",
+        "fix": "Add materiality thresholds, rounding guidance, and source confidence fields."
+      },
+      {
+        "location": "news_classifications small sample",
+        "risk": "37-row history can mislead news-quality calibration.",
+        "concrete_scenario": "A classifier accuracy or relevance stat based on 37 rows is used to trust or discount news flow.",
+        "fix": "Show sample_size and disable calibration below threshold."
+      },
+      {
+        "location": "challenger same data view",
+        "risk": "Challenger cannot falsify missing data, so false AGREE occurs.",
+        "concrete_scenario": "Analyst misses a stale sentiment source; challenger sees the same stale section and finds no counter-evidence, so it AGREEs.",
+        "fix": "Provide source manifest and require challenger to evaluate freshness/completeness as a separate falsification dimension."
+      }
+    ],
+    "overall_assessment": {
+      "prompt_quality_score": 6.2,
+      "source_chain_score": 4.1,
+      "top_3_actions": [
+        "Add a per-source freshness/status manifest with TTLs and hard routing for stale or failed critical sources.",
+        "Sanitize all _error and empty states so API failures are never rendered as no-news or as data.",
+        "Rewrite challenger and score_band calibration to remove event-type bias, anchor-free independence, and data-blind-spot falsification."
+      ],
+      "summary": "The DA prompts are unusually detailed and contain many useful machine-checkable constraints, but they are over-complex and create gaming surfaces: event-type bias in HIGH, ambiguous priced-in calibration, free-text execution legs, and a challenger that shares the analyst's data blind spots. The larger risk is the information-source chain: measured freshness shows stale sentiment, tiny news classification history, and empty signal/memory/alpha stores, while collector code has multiple silent-empty and error-dict paths. Before further prompt tuning, the system needs deterministic source health, error sanitization, and evidence-level traceability; otherwise the LLM can be misled by absence, staleness, or unit ambiguity into confident but unsupported trade theses."
+    }
+  },
+  "error": null
+}

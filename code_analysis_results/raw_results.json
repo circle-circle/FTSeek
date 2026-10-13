@@ -1,0 +1,1191 @@
+[
+  {
+    "model": "deepseek-v4.1-flash",
+    "elapsed": 354.64642333984375,
+    "request_id": "44df730b-98df-92f4-89e7-11a9629d350f",
+    "tokens_in": 19495,
+    "tokens_out": 26705,
+    "reasoning_tokens": 14638,
+    "retries": 0,
+    "result": {
+      "model_name": "architect-review-agent",
+      "architecture_analysis": {
+        "pattern": "Modular monolith with a layered pipeline: an asyncio-driven scheduler core (TradingScheduler) orchestrates a signal -> decision -> risk -> execution -> position-management chain. Cross-cutting concerns are expressed as ABC 'engines' (RiskEngine / ExecutionEngine / ObservabilityEngine over BaseEngine) with an EventStore as an event/trace sink, and a DI container provides singletons (config_container, get_capital_allocator, PositionStore, broker adapter). Persistence is SQLite (WAL) used ad-hoc from many modules; runtime state is split between an in-memory SSOT (PositionStore) and the broker (Futu) as the real SSOT, reconciled by a 30s background thread (position_sync). Threading and asyncio are mixed: asyncio scan/monitor loops plus dedicated threads for position sync, TWAP, heartbeat/reconnect, and symbol locks. Domain logic is further layered into strategy -> coordinator (capital_allocator / signal_arbitrator / exit_dispatcher) -> playbook (playbook_service / exit_engine) -> risk (position_exit_monitor / exit_rules registry).",
+        "main_components": [
+          "app/core/scheduler_core.py::TradingScheduler + PositionStore (in-memory position SSOT, symbol-keyed dict guarded by RLock)",
+          "app/core/engine.py::BaseEngine / RiskEngine / ExecutionEngine / ObservabilityEngine (abstract engine contracts) + EventStore",
+          "app/core/config.py -> app/core/config_container.ConfigContainer (single config entry point, legacy ConfigLoader retained)",
+          "app/core/position_sync.py (background reconciliation thread, 30s; external-close detection; playbook execution-state reconcile; Futu order-remark whitelist for AUTO claiming)",
+          "app/pipeline/signal_pipeline.py (scan loop -> per-symbol decision chain: market data, LLM voting, execution_rules gate, consensus, SignalScore)",
+          "app/pipeline/order_executor.py (order building, risk gate, qty computation, TWAP routing, close/re-entry handling, SymbolLock decorator)",
+          "app/execution/broker_adapter.py::FutuBrokerAdapter (order submit/cancel/query, positions, heartbeat/reconnect) + twap_executor + symbol_lock_manager",
+          "app/coordinator/capital_allocator.py (bucket-based capital ledger, observe/enforce modes, SQLite-persisted ledger)",
+          "app/risk/position_exit_monitor.py (ATR stop / chandelier / scale-out / flash / pre-close / time-stop orchestration over exit_rules)",
+          "app/playbook/exit_engine.py + overnight_decision (playbook self-managed exit chain, horizon/overnight exemptions)",
+          "app/storage/trade_store.py, app/storage/rejection_logger.py, app/positions/source.py (owner classification: auto / legacy_protected / manual / manual_orphan)",
+          "app/notifier, app/observability, app/web_dashboard, app/review (reporting/monitoring surfaces reading the ledger and trade store)"
+        ],
+        "data_flow": "1) scan_loop() applies market gate + circuit breakers, then _run_signal_scan_impl() batches symbols by adaptive polling tier and calls _process_symbol_impl(). 2) Per symbol: market data (market_data_router/futu_lv3_provider) -> context enrichment (earnings, VIX regime, premarket) -> playbook fast-lane short-circuit OR technical signal/LLM vote -> consensus -> SignalScore (with position_pct). 3) Risk gate: engine pre_trade_check + execution_rules + PDT guard + notional sanity -> order built in order_executor (_submit_order / _submit_order_optimized). 4) Capital side: coordinator/capital_allocator.try_reserve(strategy, position_pct) is intended to debit the bucket ledger before submission (currently observe-only and NOT called on the order path). 5) Execution: broker_adapter.submit_order (or TWAP for notional > threshold) -> Futu OpenD -> fill returns (order_id, futu_order_id, filled price); simulated fills are synthesized when disconnected in SIMULATE mode. 6) Position management: PositionStore.add() writes the in-memory SSOT, registers with symbol_lock_manager, and mirrors into daily_active_pool; trade_store persists the record. 7) Exit path: risk/position_exit_monitor + playbook/exit_engine evaluate rules each tick and call _close_position (decorated with _with_symbol_lock_release) -> broker order -> PositionStore.remove() -> capital release. 8) Reconciliation: position_sync thread polls Futu positions/orders, detects external closes, reclassifies AUTO vs MANUAL by order remark, reconciles playbook execution states, and force-corrects the capital ledger and DB.",
+        "weaknesses": [
+          "Dual SSOT for positions (PositionStore memory dict vs broker) with only a 30s periodic reconcile and no conflict resolution policy; broker_adapter.get_positions() returns [] on disconnect, which is indistinguishable from 'account is flat'.",
+          "PositionStore keys state by symbol only, while symbol_lock_manager, position_sync and the order path are (symbol, direction, owner)-aware - LONG/SHORT legs can silently overwrite each other.",
+          "Fail-open risk gates: multiple gates (VWAP deviation lookup, execution_rules, playbook classification, entry_time parsing) swallow exceptions and return 'allow', so a data outage silently disables risk controls.",
+          "Capital control is architecturally inert: observe_only defaults to True and the order path never calls try_reserve (acknowledged in the code), so max_total/caps are not enforced on real submissions.",
+          "Mixed threading + asyncio with module-level mutable globals (_VIX_HISTORY/_SPY_HISTORY, exit-engine log-dedup sets, capital_allocator singleton) that are not consistently lock-protected or per-scheduler scoped.",
+          "No repository/port abstraction for persistence: every module opens its own sqlite3 connection with its own timeout/pragma assumptions; no single-writer discipline, making deadlock/DB-locked failures and drift likely.",
+          "Very large modules (order_executor.py 5685 lines, pipeline.py 9453 lines historically, position_sync.py 2853 lines) with hidden coupling and duplicated constants (EXTERNAL_CLOSE_DUP_SQL defined but not used).",
+          "Duplicated domain vocabularies (two ExitReason enums, two exit-rule dispatch mechanisms - legacy if-chain plus ExitRuleRegistry 'gradually introduced'), creating two sources of truth for exit decisions.",
+          "Configuration history debt (ConfigLoader/UnifiedConfig/ConfigContainer) still leaves legacy accessors alive, so different call sites can read different config snapshots."
+        ]
+      },
+      "bugs": [
+        {
+          "file": "app/execution/broker_adapter.py",
+          "line_range": "785-800 (get_positions, not-connected branch)",
+          "severity": "critical",
+          "category": "error_handling",
+          "description": "get_positions() returns an empty list when the adapter is not connected (only a debug log is emitted). The return type cannot express 'unknown', so callers (position_sync reconciliation, position_monitor, pre-trade equity checks) receive a value that is indistinguishable from 'the account holds nothing'.",
+          "impact": "Any transient Futu/OpenD disconnect (heartbeat interval is 30s, reconnect backoff up to 30s) can make the reconciler conclude the account is flat: open positions can be deleted from the memory SSOT/DB, spurious 'external close' records can be written, and equity/notional gates can be evaluated against zero exposure. This is a silent, money-losing failure mode that only manifests during the exact moment the broker link is unstable.",
+          "fix": "Never overload empty-with-error. Raise a typed BrokerUnavailableError (or return a snapshot object with .ok=False), and make every caller fail-closed on it. Minimal change: `if not self.is_connected(): raise BrokerUnavailableError('positions unavailable')`, plus an `is_connected()` guard at all reconcile entry points in position_sync before any delete/insert. Keep an explicit `get_positions_or_none()` for legacy call sites that truly want 'empty means empty'."
+        },
+        {
+          "file": "app/execution/broker_adapter.py",
+          "line_range": "483-492 (submit_order disconnect branch)",
+          "severity": "critical",
+          "category": "logic_error",
+          "description": "When not connected and self.trade_env != 0, submit_order returns self._simulate_fill(order) - i.e. it fabricates a full fill. The guard added in 'DEB-20260903 #97' only protects the case where trade_env == 0. If the process is configured with a SIMULATE adapter (trade_env=1) while the deployment is meant to trade a real/simulated-but-authoritative account (env var AUTO_TRADE_ACCOUNT mismatch), every offline order becomes a phantom position.",
+          "impact": "Phantom positions in PositionStore/DB that do not exist at the broker: the exit monitor will manage a non-existent position, capital is debited, realized PnL becomes fiction, and if the adapter is later replaced by a real one the close order is rejected or (worse) an unintended opening order is placed. Also masks broker outages entirely from operators.",
+          "fix": "Make simulated fills opt-in and explicit: `if not self.is_connected(): if not self._allow_simulated_fill: raise RuntimeError(...); return self._simulate_fill(order)`, where _allow_simulated_fill is a config flag (default False) that is asserted False whenever the trading account is real or a live trading session is active. Additionally cross-check trade_env against AUTO_TRADE_ACCOUNT at startup and refuse to boot on mismatch."
+        },
+        {
+          "file": "app/core/scheduler_core.py",
+          "line_range": "45-95 (PositionStore.__init__/add)",
+          "severity": "critical",
+          "category": "logic_error",
+          "description": "PositionStore keeps `self._positions: Dict[str, Position]` keyed by symbol only and `self._pending: Set[str]` keyed by symbol only. The rest of the system is (symbol, direction, owner)-aware: symbol_lock_manager.release(position.symbol, direction, owner), position_sync explicitly 'Handles both LONG and SHORT positions', and capital/owner classification is per-leg. add() does an unconditional `self._positions[symbol] = position`, so a second leg on the same symbol overwrites the first.",
+          "impact": "If a LONG and a SHORT (or an auto leg and a manual/legacy leg) coexist on one symbol, the memory SSOT holds only one of them: the overwritten leg is never evaluated by the exit monitor, never released in the capital ledger, and never reconciled against the broker, producing unbounded unmanaged exposure. Because the exchange/broker still holds both legs, downside is not symmetric to the local book.",
+          "fix": "Key positions and pending by a composite: `Key = Tuple[str, str, str]  # (symbol, direction, owner)` (or an internal `_key(symbol, direction, owner)` returning f'{symbol}|{direction}|{owner}'). add()/remove()/has()/get() take direction+owner and reject/raise on a real duplicate key instead of overwriting; expose `all_for_symbol(symbol)` for direction-agnostic queries. Migration: keep a `_by_symbol` index for O(1) lookups."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "≈580-596 (get_capital_allocator)",
+          "severity": "high",
+          "category": "race_condition",
+          "description": "The module-level singleton is created with an unguarded check-then-act: `global _singleton; if _singleton is None: ... _singleton = CapitalAllocator(...)`. CapitalAllocator itself is lock-protected, but instantiation is not, and the process runs multiple threads (position_sync thread, TWAP/heartbeat threads, DI-container warm-up).",
+          "impact": "Two racing callers can each construct a CapitalAllocator. The loser's instance is discarded but already returned to its caller, so two components hold different ledgers: caps and max_total are effectively doubled, persisted state is written from two objects, and `reset_and_reconcile` on one has no effect on the other. Capital isolation (Task #35 auto/legacy/manual pools) silently fails.",
+          "fix": "Use double-checked locking with a module lock:\n```python\n_singleton_lock = threading.Lock()\n\ndef get_capital_allocator(caps=None, max_total_pct=0.90, observe_only=True, db_path=None):\n    global _singleton\n    if _singleton is not None:\n        return _singleton\n    with _singleton_lock:\n        if _singleton is None:\n            if caps is None:\n                raise ValueError(\"CapitalAllocator 第一次构造必须传 caps\")\n            _singleton = CapitalAllocator(caps=caps, max_total_pct=max_total_pct,\n                                         observe_only=observe_only, db_path=db_path)\n    return _singleton\n```\nAdditionally log a warning (not silently ignore) when a later call passes non-default caps/db_path that differ from the constructed singleton."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "≈145-270 (try_reserve / release)",
+          "severity": "high",
+          "category": "missing_validation",
+          "description": "Neither try_reserve nor release validates the sign or finiteness of position_pct. In try_reserve a negative value can never trip `current + position_pct > cap` or `total + position_pct > max_total`, so it is classified ALLOWED and executed as `self._allocations[bucket] = current + position_pct` - i.e. a negative reservation silently CREDITS the ledger. Symmetrically, release() computes `max(0.0, current - position_pct)`, so a negative pct inflates the bucket.",
+          "impact": "A single sign error upstream (short leg, unsigned conversion, mis-scaled pct) permanently corrupts the ledger: it either frees capital that is actually deployed (over-allocation once enforce mode is enabled) or blocks all trading by inflating usage. Because the corruption is persisted to capital_state, it survives restarts and is only repaired by reconcile_with_positions.",
+          "fix": "Validate at the boundary and fail loudly:\n```python\nif position_pct is None or not math.isfinite(position_pct) or position_pct < 0:\n    logger.error(f\"[CapitalAllocator] invalid position_pct={position_pct!r} strategy={strategy} -> reject\")\n    return False  # or raise ValueError for programmer errors\n```\nand in release(): `if position_pct is None or position_pct <= 0: log+return`. Also guard `strategy` being empty/None, and clamp release to the strategy's own outstanding amount (see logic_issues entry on release drift)."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "≈218-250 (try_reserve cap check) and ≈258-282 (compute_scale_factor)",
+          "severity": "high",
+          "category": "logic_error",
+          "description": "Both the per-bucket cap check (`if cap > 0 and current + position_pct > cap`) and compute_scale_factor (`bucket_headroom = ... if cap > 0 else float('inf')`) treat a bucket whose configured cap is 0.0 - and, more importantly, any bucket absent from `self._caps` (get() default 0.0, e.g. a new/renamed strategy or a typo'd bucket_map target) - as UNLIMITED rather than as 'no budget'. The module docstring itself gives `{\"main\": 0.80, \"llm_plan\": 0.0}` as a legitimate configuration, where 0.0 reads as 'disabled'.",
+          "impact": "Any strategy/bucket not present in the caps dict gets an unlimited per-strategy budget and is bounded only by max_total. A strategy rename, a bucket_map typo, or an intentional 0.0 allocation silently removes the per-strategy ceiling - exactly the '软约束' problem Phase A was created to eliminate. Losses can concentrate in a single unconfigured strategy up to the global cap.",
+          "fix": "Make the policy explicit instead of inferring it from a numeric default. Suggested: reserve -1.0 (or a sentinel `UNLIMITED`) for 'no per-strategy cap' and treat 0.0 as 'blocked', plus fail-closed on unknown buckets:\n```python\nUNLIMITED = -1.0\ncap = self._caps.get(bucket, 0.0)\nif cap != UNLIMITED and current + position_pct > cap:\n    decision = \"BLOCKED_STRATEGY_CAP\"\n```\nand warn once per unknown bucket at first use (`if bucket not in self._caps: logger.warning(...)`). Apply the identical rule in compute_scale_factor (headroom = inf only when cap == UNLIMITED). Document the chosen semantics in the class docstring since reconciliation/snapshot code must agree."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "≈480-520 (_record_event -> _persist_event), ≈190-215 (call sites under self._lock)",
+          "severity": "medium",
+          "category": "concurrency",
+          "description": "Every reserve/release/force_set/reconcile calls _record_event -> _persist_event (and _persist_state) WHILE holding the non-reentrant `self._lock`. _persist_event opens a fresh sqlite3 connection, executes an INSERT plus `DELETE ... WHERE id <= (SELECT MAX(id) FROM capital_ledger) - 5000`, and commits. All of that I/O happens inside the ledger's critical section.",
+          "impact": "The ledger lock is held for the duration of a SQLite connect+commit (milliseconds to tens of milliseconds under WAL write contention) on the hot order path. With several scheduler threads, reserve/release serializes on disk I/O; a stuck/locked DB (busy_timeout up to 5s) blocks every capital decision for seconds. Symptoms will look like random trading latency spikes with no obvious cause.",
+          "fix": "Move persistence out of the critical section: build an immutable event record under the lock, append to an in-memory queue, and have a single writer thread/drain task persist asynchronously (or use `asyncio.to_thread`). If synchronous persistence must stay, reuse one long-lived connection per process guarded by _db_lock and drop per-call connect/commit. Also replace the per-insert MAX/DELETE pruning with a periodic (e.g. every N events or on a timer) retention task - the current subquery runs a table scan on every single ledger row."
+        },
+        {
+          "file": "app/core/position_sync.py",
+          "line_range": "28-34 (EXTERNAL_CLOSE_DUP_SQL) vs 105-123 (upsert_external_close_trade_record)",
+          "severity": "high",
+          "category": "logic_error",
+          "description": "The module defines EXTERNAL_CLOSE_DUP_SQL as the single source of truth for the external-close duplicate predicate, and the comment states the guard body is untestable so 'tests 直接对该 SQL 钉不变量'. However upsert_external_close_trade_record does NOT use the constant - it inlines a different query: `SELECT id FROM trade_records WHERE symbol=? AND direction=? AND exit_price > 0 ORDER BY id DESC LIMIT 1` (different column list, extra ORDER BY/LIMIT).",
+          "impact": "The invariant pinned by tests applies to a string that production never executes. The real predicate can be changed (or has already diverged) without any test failing, which is precisely how the previously documented bug class - 'real broker close skipped INSERT + notification while open_positions DELETE still ran, so the close vanished' - recurs. Additionally the query selects (symbol, direction, exit_price>0) with no entry_time linkage despite entry_time being selected in the constant.",
+          "fix": "Single-source it: `closed = conn.execute(EXTERNAL_CLOSE_DUP_SQL, (symbol, direction)).fetchone()` and make the constant return exactly the columns the caller needs (`SELECT id, entry_time FROM trade_records WHERE ...`). Add a unit test asserting no other module inlines a `trade_records ... exit_price > 0` predicate (grep-based guard) so the invariant cannot silently fork again."
+        },
+        {
+          "file": "app/core/position_sync.py",
+          "line_range": "370-376 (_reconcile_playbook_execution_states)",
+          "severity": "medium",
+          "category": "logic_error",
+          "description": "Environment filtering normalizes only one side: `env = str(row[\"broker_env\"] or broker_env).lower()` then `if env != broker_env: continue`. The comparison is against the caller-supplied broker_env verbatim, so it only works if the caller always passes a lowercase value ('simulate'/'real'). Any caller passing 'SIMULATE', 'REAL', or a differently formatted env string ('Simulate') skips every row.",
+          "impact": "Reconciliation silently becomes a no-op: playbook_instructions stuck in UNKNOWN/SUBMITTED/FILLED_UNBOOKED are never resolved, holding slots and (per the B1-lite design) blocking re-entry for the symbol. The failure is invisible - the function returns normally having done nothing - and matches the '不支持交叉交易, 有待成交订单' symptom class described in order_executor's header.",
+          "fix": "Normalize both sides once at function entry: `broker_env = str(broker_env or '').strip().lower()` and compare `env == broker_env`. Log at INFO how many rows were considered vs skipped per env so a permanent zero-work pass is observable. Also add a metric/counter for rows examined by state."
+        },
+        {
+          "file": "app/execution/broker_adapter.py",
+          "line_range": "600-632 (cancel_order post-verify branch)",
+          "severity": "high",
+          "category": "error_handling",
+          "description": "After a successful RET_OK cancel request the code re-queries order state, but the documented contract is 'CANCELLING_*/CANCELLED_* -> True; 其余/查询异常 -> True+warning' - i.e. an unverifiable or non-terminal state is reported to the caller as a successful cancellation.",
+          "impact": "Callers treat the order as dead and may place a replacement (close/re-entry/trim) while the original is still live at the broker. That produces the exact production failure the module comments describe ('不支持交叉交易, 有待成交订单') and can double the intended position or leave a resting order that fills hours later against a position the system believes is closed. The 'terminal confirmation is left to position_sync (30s)' fallback is far too slow for a close-then-reenter path.",
+          "fix": "Do not conflate 'requested' with 'dead'. Return a tri-state (CANCELLED / PENDING / UNKNOWN) or raise for UNKNOWN, and make order_executor wait for a real terminal state (bounded poll with backoff, e.g. 5 attempts over 10-20s) before submitting a replacement. On UNKNOWN, block the replacement order for that (symbol, direction, owner) and raise an alert instead of proceeding."
+        },
+        {
+          "file": "app/pipeline/order_executor.py",
+          "line_range": "55-75 (_with_symbol_lock_release)",
+          "severity": "high",
+          "category": "concurrency",
+          "description": "The decorator unconditionally releases the SymbolLock in a finally block: `finally: get_symbol_lock_manager().release(position.symbol, _dir_str, _owner)`. It does not know whether the wrapped _close_position actually acquired the lock, nor whether the acquire key matched the release key (release uses `owner_strategy or 'main'` and a direction string derived at release time; the acquire site may have used a different owner/direction). It also fixes the positional signature `wrapper(scheduler, position, *args, **kwargs)`, so a kwarg call `_close_position(scheduler, position=pos)` raises TypeError.",
+          "impact": "Two distinct failures: (a) releasing a lock never held can clear a DIFFERENT holder's symbol lock, allowing a concurrent open/close on the same symbol+direction -> duplicated orders, over-sized positions, or an exit canceling a fresh entry; (b) if the acquire key differs from the release key, the real lock is never freed, permanently blocking that symbol (a silent trading halt until restart). Rationale is not confirmable from the provided excerpt because _close_position's body is truncated - verify whether acquire lives inside _close_position or in the caller.",
+          "fix": "Make acquisition and release explicit and symmetric: acquire inside the wrapper (or have _close_position return/own a SymbolLock handle), track `acquired = False; ... acquired = True` and only release when acquired; build the key once (`lock_key = (symbol, direction_value, owner or 'main')`) and pass the same tuple to acquire and release. Define the signature as `wrapper(scheduler, position=None, *args, position_kw=None, **kwargs)` or bind args with inspect.signature. Add a debug assertion that release() finds a matching held lock."
+        },
+        {
+          "file": "app/pipeline/signal_pipeline.py",
+          "line_range": "53-62 (_VIX_HISTORY / _SPY_HISTORY module globals)",
+          "severity": "medium",
+          "category": "concurrency",
+          "description": "Rapid-regime-change detection keeps its samples in module-level mutable lists shared by every importer, appended and trimmed from the scan loop (`_HISTORY_MAX_SECONDS`, `_HISTORY_MAX_ENTRIES`). There is no lock and no per-scheduler scoping; trimming is done by rebinding/slicing the list.",
+          "impact": "Two concrete failures: (1) a reader iterating _VIX_HISTORY concurrently with the trim can raise 'list changed size during iteration' / ValueError, aborting the regime check at the worst possible moment (a rapid regime change); (2) in any process hosting more than one scheduler (live + backtest/replay, or two accounts), the histories cross-contaminate, so the rapid-change trigger fires on samples from an unrelated run - a false circuit-breaker/regime switch or a missed one.",
+          "fix": "Move the buffers onto the scheduler/regime-detector instance (or a small `RegimeHistory` class holding `collections.deque(maxlen=N)`), guard mutations with the class's own lock or confine access to a single asyncio task, and evict by timestamp inside the same critical section. As an immediate stopgap, replace slice-rebinding with deque(maxlen) which makes append/evict atomic w.r.t. iteration semantics and cannot change size unexpectedly."
+        },
+        {
+          "file": "app/core/scheduler_core.py",
+          "line_range": "75-95 (PositionStore.add, _pending.discard)",
+          "severity": "medium",
+          "category": "race_condition",
+          "description": "add() clears the duplicate-open guard for the symbol (`self._pending.discard(symbol)`) for ANY caller. The pending set exists precisely to cover the broker_sync 5s debounce window described in the __init__ comment; but the background position_sync thread also calls add() when it discovers a broker position, so an unrelated adoption/echo path clears the guard while two signal threads are still in flight.",
+          "impact": "The duplicate-open window reopens: within the debounce interval, another signal for the same symbol sees has()==False and pending cleared -> a second order is submitted. Result is over-sized positions, doubled commission, and a position larger than the capital ledger believes - the exact failure the pending set was introduced to fix.",
+          "fix": "Only the code path that actually created the reservation should clear it: pass an explicit token, e.g. `add(symbol, position, pending_token=...)` and `self._pending.discard(token)`; or make pending entries carry an owner/timestamp with TTL and let a janitor expire them instead of clearing on any add. Never clear pending from the reconciliation/adoption path."
+        },
+        {
+          "file": "app/core/engine.py",
+          "line_range": "29-35 and 59-63 (BaseEngine.heartbeat/is_healthy; RiskEngine.initialize)",
+          "severity": "medium",
+          "category": "logic_error",
+          "description": "is_healthy() requires `(datetime.now() - self.last_heartbeat).total_seconds() < 60`, but last_heartbeat is set only in BaseEngine.__init__ and in heartbeat(). None of the subclasses' initialize()/shutdown() call super().initialize()/heartbeat(), and nothing in the provided file calls heartbeat().",
+          "impact": "After 60 seconds of uptime every engine reports unhealthy regardless of actual state. Any supervisor, dashboard, or auto-restart logic keyed on is_healthy() will generate a permanent false alarm, either masking a real failure inside the noise or triggering an unnecessary restart during trading hours. This also contradicts the intent of the heartbeat API.",
+          "fix": "Have initialize() call self.heartbeat() and require subclasses to call super().initialize(); alternatively derive health from real work signals (last successful pre_trade_check / last submitted order / last metrics collection) rather than a manual ping nobody sends. If a supervisor is intended, add a scheduled `heartbeat()` call per engine and an explicit degraded state with hysteresis instead of a bare 60s hard cutoff."
+        },
+        {
+          "file": "app/execution/broker_adapter.py",
+          "line_range": "82-110 (_notional_sanity_check)",
+          "severity": "medium",
+          "category": "missing_validation",
+          "description": "The 'last wall' 30% notional cap is bypassed by the caller-supplied boolean is_close: `if is_close: return True` (added 2026-06-16 because a $43K SNDK close was rejected). The flag is trusted from the order construction path without verifying that the order actually reduces an existing position, and the equity fetch path is described as fail-closed but the close path skips it entirely.",
+          "impact": "Any upstream misclassification of an opening order as a close (direction inference bug, FLAT_ALL handling, or a caller passing is_close=True defensively) completely disables the final notional guard, permitting an unbounded single order at the broker. Because this guard sits below the capital allocator (which is currently observe-only), it is the only hard limit on notional.",
+          "fix": "Verify intent instead of trusting the flag: for is_close=True, require that a matching position exists with sufficient quantity net of open reducing orders (`position_store.get(symbol, direction)` size >= order.quantity, or broker order_list_query showing a filled open leg). If verification is impossible, degrade to a much higher but finite cap (e.g. 2x equity) rather than infinity, and emit a WARNING with trace_id so the bypass is auditable."
+        }
+      ],
+      "logic_issues": [
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "≈145-205 (try_reserve docstring) + app/pipeline/order_executor.py ≈694-726",
+          "severity": "critical",
+          "category": "business_logic",
+          "description": "The capital ledger is not connected to the order path. try_reserve's own docstring records: observe_only=True always returns True, `order_executor._submit_order` does not call try_reserve before submitting, and signal.position_pct defaults to 0.0 so the pre-trade amount is 0. The enforcement code, the AutoCapacityReport, the owner pools and the persistence layer are all therefore decorative with respect to real orders.",
+          "impact": "Every capital guarantee marketed in the code (per-strategy cap, max_total 90%, auto/legacy/manual isolation, headroom reporting on the dashboard and in daily_review) is unenforced: the system can reach 100%+ notional exposure in a single bucket while the dashboard reports healthy headroom. Reviewers reading CapitalSnapshot would be misled about real risk.",
+          "fix": "(1) In order_executor, compute the intended notional from the final quantity/price (_get_order_qty result) and call `allocator.try_reserve(strategy, notional/equity)` before submit; on False, reject the signal with a rejection_logger entry. (2) On any close (including partial/scale-out/external close), call release with the same strategy key. (3) Make observe_only=false a prerequisite for any 'capital enforced' claim, and expose the current mode on the dashboard/health endpoint so the enforcement state is never ambiguous. (4) Populate signal.position_pct from the sizing layer instead of leaving it 0.0."
+        },
+        {
+          "file": "app/core/position_sync.py",
+          "line_range": "105-123 (upsert_external_close_trade_record dedupe predicate)",
+          "severity": "high",
+          "category": "edge_case",
+          "description": "External-close dedupe matches only (symbol, direction, exit_price > 0), ignoring entry_time even though the constant selects it. For a symbol traded more than once in the same direction (close then re-enter, or a second cohort), the second, genuine external close matches the FIRST row and is treated as a duplicate.",
+          "impact": "The second close is silently skipped - no trade_records INSERT, no notification - while the open_positions DELETE path still runs. The trade disappears from the books: realized PnL understated, capital release possibly doubled/omitted, and the daily review unable to explain the position. This is the same failure shape as the 2026-08-28 bug the comment says was fixed by changing the predicate; the fix is incomplete because the dedupe key is still too coarse.",
+          "fix": "Tie the duplicate check to the position instance being closed: match on (symbol, direction, entry_time within tolerance) of the record being created, e.g. `... WHERE symbol=? AND direction=? AND exit_price > 0 AND ABS(entry_time - ?) < 1` (entry_time already selected). Additionally, when a duplicate is detected, log at WARNING with both ids and the incoming entry_time/exit_price so an over-broad dedupe can never be silent."
+        },
+        {
+          "file": "app/playbook/exit_engine.py",
+          "line_range": "59-75 (_is_overnight_position)",
+          "severity": "high",
+          "category": "business_logic",
+          "description": "Naive entry timestamps are treated as if they were already ET dates: `if tzinfo is not None: astimezone(_et).date() else: _entry.date()`, then compared to `datetime.now(_et).date()`. If entry_time strings are stored in UTC (common across this codebase), an entry at e.g. 2026-09-24T01:00:00Z is 2026-09-23 21:00 ET but is classified as 2026-09-24 - i.e. 'today', not overnight. The `except Exception: return False` fallback compounds this: malformed input disables the rule.",
+          "impact": "Positions that are genuinely held overnight are misclassified as intraday, so OVERNIGHT_GAP_STOP never fires for them: deep overnight losers are held past the open, trading the exact gap risk the rule exists to cut. The loss is silent (no alert, no log) and biased toward the most volatile part of the session. Conversely, depending on storage convention, some intraday positions could be classified as overnight and force-closed prematurely.",
+          "fix": "Make the storage timezone explicit and never guess: `_entry = datetime.fromisoformat(entry_time_str); if _entry.tzinfo is None: _entry = _entry.replace(tzinfo=timezone.utc)` (if UTC is the storage contract) then `_entry.astimezone(_et).date()`. Assert the convention with a unit test covering 20:00-23:59 ET entries. Replace the bare `except: return False` with a logged WARNING and a metric counter so unparsable entry_time is visible rather than silently disabling a protective exit."
+        },
+        {
+          "file": "app/pipeline/signal_pipeline.py",
+          "line_range": "24-35 (_get_vwap_deviation) and 66-90 (_check_execution_rules)",
+          "severity": "high",
+          "category": "missing_validation",
+          "description": "Multiple risk gates fail OPEN by construction. _get_vwap_deviation swallows every exception and returns None, with the docstring stating 'pre_trade_check 将软放行'. _check_execution_rules returns True for missing/non-dict rules, for unparsable context (`except (TypeError, ValueError): return True`), and for any case it cannot decide.",
+          "impact": "A market-data outage (market_data_router error, missing ticker_vwap_deviation key), a config-loading failure, or a malformed context silently disables the corresponding protection precisely when the environment is degraded - the correlation between data outages and adverse market conditions is exactly when the gates matter most. There is no counter of how often a gate soft-passed, so nobody can tell enforcement from vacuum.",
+          "fix": "Introduce an explicit three-valued gate result (PASS / FAIL / UNKNOWN) and a policy per gate: UNKNOWN should block new entries (or at minimum downsize), not silently allow. Emit a metric + WARNING (rate-limited) on every UNKNOWN with symbol and gate name, and add a daily-review surface reporting soft-pass counts so fail-open behavior is measurable rather than invisible."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "≈350-366 (release)",
+          "severity": "high",
+          "category": "business_logic",
+          "description": "release() decrements the BUCKET ledger unconditionally and clamps at 0 (`new_val = max(0.0, current - position_pct)`). In observe mode, reservations that were BLOCKED are deliberately not booked (H7 fix), yet the matching close still calls release() with the full amount. Worked example with caps {'main': 0.8}, bucket_map {'fast_lane': 'main'}: fast_lane reserves 0.05 (booked -> main=0.05); a big 'main' signal reserves 0.90 (BLOCKED, not booked); when that big position closes, release('main', 0.90) drives main to 0.0 and silently wipes fast_lane's 0.05.",
+          "impact": "The ledger under-counts real exposure. While observe_only=True this looks harmless, but the moment enforcement is enabled the under-counted ledger authorizes over-allocation - the classic 'capital gate passes, book is already full' scenario. reset_and_reconcile only repairs the state at the observe->enforce flip, so drift accumulated in the meantime grants a one-time over-allocation window.",
+          "fix": "Track per-strategy outstanding reservations (`self._reserved_by_strategy`) and clamp release to that amount: `releasable = min(position_pct, self._reserved_by_strategy.get(strategy, 0.0))`; when position_pct > releasable, log a WARNING with both numbers and the decision history, and reconcile the excess from positions rather than crediting the bucket. Never let a release reduce another strategy's share of a shared bucket below its own outstanding amount."
+        },
+        {
+          "file": "app/risk/position_exit_monitor.py",
+          "line_range": "≈66-80 (imports) and header 'Task #48 优先级注册表 (渐进式引入)'",
+          "severity": "medium",
+          "category": "business_logic",
+          "description": "Two sources of truth for exit decisions. (a) ExitReason is imported from `.exit_rules` here while order_executor.py imports ExitReason from `app.core.models` - if these are distinct enum classes, comparisons/serialization across the boundary can silently mismatch. (b) The header states the legacy rule if-chain (rules 0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 5) still runs while ExitRuleRegistry is 'progressively introduced' as an auxiliary entry, and playbook/exit_engine.py duplicates a rule chain migrated verbatim from pipeline.py with same-name forwarders on both sides.",
+          "impact": "Exit policy can diverge: a rule tightened in the registry but not in the legacy chain (or vice versa) yields inconsistent behavior by which path happens to fire first. Duplicate ExitReason enums risk exit reasons being recorded as unknown/None in trade_records, breaking attribution, exit-quality scoring and the daily review - or, worse, an equals-comparison returning False so a stop that should match does not.",
+          "fix": "Pick one exit dispatch and delete the other: either make ExitRuleRegistry the sole dispatcher and reduce the legacy chain to thin wrappers, or freeze the registry. Consolidate ExitReason into exactly one module (app/core/models) and re-export from exit_rules; add an assertion/test that all enum members and their string values are identical across any re-export, and that DB writes only ever receive the canonical type. Add a startup log listing the active rule chain with priorities so the effective policy is observable."
+        },
+        {
+          "file": "app/core/position_sync.py",
+          "line_range": "350-382 (_reconcile_playbook_execution_states, LIMIT 25)",
+          "severity": "low",
+          "category": "edge_case",
+          "description": "Each reconcile pass processes at most 25 unresolved playbook instructions (ORDER BY updated_at, id) and, because rows that cannot be resolved keep their state and their updated_at may be refreshed on each attempt, a small set of permanently-unresolvable rows can occupy the window.",
+          "impact": "If more than 25 instructions are stuck (e.g. after a broker outage that left many SUBMITTED/FILLED_UNBOOKED rows), reconciliation throughput can lag behind arrival, and slots stay locked longer than necessary - blocking re-entry on those symbols. Under an outage-recovery burst this stretches hours.",
+          "fix": "Make the LIMIT configurable and raise it for the recovery pass; order by updated_at ASC with a 'last_attempt_at' column so rows rotate fairly (no starvation), and skip rows whose backoff window has not elapsed. Emit a metric of pending-row depth so backlog is visible."
+        },
+        {
+          "file": "app/pipeline/order_executor.py",
+          "line_range": "694-726 (_submit_order_optimized)",
+          "severity": "low",
+          "category": "missing_validation",
+          "description": "TWAP routing uses an approximation that can silently misroute: `notional = float(order.quantity) * float(order.price or signal_price or 0.0)`. For MARKET orders (price 0.0/None) the notional is estimated from an arbitrary signal_price, and if price is None and signal_price is 0.0 the notional collapses to 0 -> never TWAP; if signal_price is stale/high the order can be routed to TWAP unnecessarily. `float(order.quantity)` also raises TypeError if quantity is unset instead of producing a validation error.",
+          "impact": "Execution-quality decisions (market vs TWAP) become non-deterministic for market/edge-price orders: large orders silently take market impact, or small orders are needlessly sliced and lose timing. The failure is invisible in logs because no validation error is raised on the price path.",
+          "fix": "Validate inputs first (`if order.quantity is None or order.quantity <= 0: raise ValueError`), then resolve the reference price once via a helper that falls back to the last quote (not the signal price) and logs which source was used: `ref_price = order.price or last_quote or signal_price`. Route to TWAP only when the resolved notional is trustworthy; otherwise log the reason and use the market path explicitly."
+        }
+      ],
+      "optimization_suggestions": [
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "category": "performance",
+          "description": "SQLite access pattern: a brand-new sqlite3 connection + PRAGMA-less connect + commit per reserve/release/event, executed while holding the ledger lock, plus a MAX(id)/DELETE retention subquery on every ledger insert.",
+          "expected_impact": "Removing per-call connect and commits from the hot path cuts capital-decision latency from milliseconds to microseconds and eliminates order-path stalls during DB contention. A single reused connection or an async writer with batched commits should reduce ledger write overhead by an order of magnitude and remove the lock-held-across-IO hazard."
+        },
+        {
+          "file": "app/pipeline/order_executor.py",
+          "category": "maintainability",
+          "description": "order_executor.py is 5685 lines and position_sync.py is 2853 lines, with symbols/constants shared across the whole app; the symbol-lock decorator, TWAP routing, qty computation and close logic are all in one module.",
+          "expected_impact": "Splitting into focused modules (order_builder, risk_gate, qty_sizing, twap_routing, close_flow, symbol_lock) with explicit interfaces reduces the blast radius of changes and makes the lock-acquisition/release contract testable in isolation - directly preventing the class of bug found in the decorator. Expect measurably faster review and a lower regression rate per change."
+        },
+        {
+          "file": "app/core/scheduler_core.py",
+          "category": "performance",
+          "description": "PositionStore.add() performs daily_active_pool JSON/disk synchronization inside the RLock critical section (documented lock order PositionStore._lock -> DailyActivePool._lock).",
+          "expected_impact": "Moving pool persistence to a coalesced async flush (dirty-set + interval writer) shortens the store's critical section from disk-write latency to a set insert, reducing contention for scan_loop/monitor_loop/position_sync and removing a whole class of 'slow lock' stalls during high signal volume."
+        },
+        {
+          "file": "app/pipeline/signal_pipeline.py",
+          "category": "scalability",
+          "description": "Rapid-regime-change state lives in module-level globals, so it cannot be scoped per scheduler and cannot be reset between live and replay runs.",
+          "expected_impact": "Moving to a per-scheduler RegimeHistory object enables safe concurrent live+backtest execution in one process, makes backtests deterministic, and removes iterator-invalidation risk. Also allows persisting/snapshotting the window for post-mortems."
+        },
+        {
+          "file": "app/execution/broker_adapter.py",
+          "category": "scalability",
+          "description": "Connection lifecycle is managed with a dedicated heartbeat thread plus manual reconnect backoff arrays (RECONNECT_BACKOFF_SEC), while the rest of the system is asyncio-based; every call site re-checks is_connected() and invents its own behavior on failure.",
+          "expected_impact": "Introducing a broker connection state machine (CONNECTED / DEGRADED / UNAVAILABLE) with a single failure policy consumed by all callers removes the divergent handling that produced the []-means-flat and simulated-fill-on-disconnect defects, and lets trading pause deterministically instead of degrading silently."
+        },
+        {
+          "file": "app/core/position_sync.py",
+          "category": "maintainability",
+          "description": "Reconciliation logic (external-close detection, AUTO/MANUAL classification by remark whitelist, playbook state reconcile, over-limit trim) lives in one 2853-line method cluster with duplicated SQL predicates and deliberate test seams for untestable code.",
+          "expected_impact": "Extracting the predicates into named, unit-tested functions (dedupe predicate, remark classification, env normalization) removes the need for the SQL-string invariant pinning, closes the divergence found in EXTERNAL_CLOSE_DUP_SQL, and makes each reconciliation decision individually testable and observable."
+        },
+        {
+          "file": "app/storage/trade_store.py (repository layer across app/storage/*)",
+          "category": "maintainability",
+          "description": "Persistence is ad hoc: every module opens its own sqlite3 connection with its own timeout and pragma assumptions (safe_sqlite_connect in some places, raw sqlite3.connect in capital_allocator), and multi-module writers share one SQLite file.",
+          "expected_impact": "A single writer-service/repository abstraction (one connection pool, one busy_timeout/WAL policy, one serialization point) eliminates DB-locked failures and cross-module write races, and is a prerequisite for any future move to Postgres without touching trading logic."
+        },
+        {
+          "file": "app/risk/position_exit_monitor.py",
+          "category": "maintainability",
+          "description": "Rule priority is implicit in code order across three modules (position_exit_monitor, exit_rules registry, playbook/exit_engine) and logged via process-level dedup sets (_EARLY_TIGHT_SL_LOGGED, _LOSER_DS_EXEMPT_LOGGED) and module-relative data paths (_EARLY_DEAD_SHADOW_PATH = Path('data/...')).",
+          "expected_impact": "A single declarative rule table (id, priority, enabled, params) loaded once and evaluated in a deterministic order makes the effective exit policy auditable and backtestable, and anchoring data paths to the project root (Path(__file__).parents[n]) removes silent write-to-wrong-CWD failures under systemd/cron launch."
+        }
+      ],
+      "overall_assessment": {
+        "code_quality_score": 6,
+        "architecture_score": 6,
+        "risk_level": "high",
+        "top_3_priorities": [
+          "Fail-closed broker boundary: stop returning [] for 'unknown' positions (broker_adapter.get_positions) and stop fabricating fills on disconnect (submit_order/_simulate_fill); require explicit opt-in for simulated fills and validate trade_env against the live-account flag at startup.",
+          "Fix the position SSOT key: PositionStore must be keyed by (symbol, direction, owner) like the symbol lock manager and position_sync, and _pending must not be cleared by the reconciliation/adoption path - otherwise LONG/SHORT legs and duplicate orders silently corrupt state.",
+          "Close the capital-control loop and its validation gaps: wire capital_allocator.try_reserve/release into order_executor with a real notional, fix the negative-pct and cap==0/unknown-bucket fail-open semantics, and guard the singleton with a lock."
+        ],
+        "summary": "FTSeek-US is a well-instrumented modular monolith with a genuinely thoughtful domain layer: an explicit engine contract, an event store for replay, an owner-classified capital ledger, and volume of hard-won production comments that document prior incidents (re-entry cascade failures, remark-based AUTO claiming, currency-defensive pl_val). The design intent is sound, but the reviewed code shows a recurring pattern where safety mechanisms are present, documented and observably NOT effective at the boundary: capital caps are observe-only and never called from the order path, per-strategy bucket caps treat 0.0/unknown buckets as unlimited, the broker adapter reports 'flat' when disconnected and manufactures fills offline, the last-line notional cap is bypassed by a caller-supplied flag, and several risk gates fail open on exception. Two structural defects concentrate most of the production risk: (1) the position SSOT is symbol-keyed while every other component is (symbol, direction, owner)-aware, so multi-leg state can be silently overwritten; and (2) external-close dedupe and the symbol-lock release are both keyed more coarsely than the entities they guard, which is precisely how a close can vanish from the books or a lock can be released for a holder that never took it. Concurrency hygiene is inconsistent: the capital ledger's own lock is used correctly, but the module-level singleton, the VIX/SPY history lists, and the engine heartbeat are unprotected or unsynchronized, and SQLite I/O is executed while holding a hot lock. Verification limits: only app/core/engine.py, app/core/config.py and app/coordinator/capital_allocator.py were provided in full; order_executor.py, position_sync.py and broker_adapter.py were truncated to headers/selected ranges. Findings in truncated files are based on visible code plus the modules' own comments - notably the symbol-lock decorator (needs the body of _close_position to confirm lock acquisition ownership), the broker get_positions empty-list callers, and the position_sync reconcile connection's commit/close handling should be confirmed against the full sources before fixing. Recommended sequencing: close the broker fail-open paths and the position key first (money-losing, hard to detect), then wire and validate capital enforcement, then address the duplicated exit-rule/enum authorities and the SQLite I/O-in-lock pattern.",
+        "context_limitations": "Several source files were truncated in the provided context (order_executor.py 5685 lines - only header + _submit_order_optimized; position_sync.py 2853 lines - only header + two ranges; broker_adapter.py 1342 lines - header + four ranges; signal_pipeline.py, position_exit_monitor.py, exit_engine.py, scheduler_core.py - headers/ranges only). Line numbers outside the explicitly marked ranges are estimates derived from the module ordering and are annotated with '≈'. Findings flagged as needing confirmation (symbol-lock decorator acquisition ownership, callers of get_positions, db commit/close in _reconcile_playbook_execution_states, ExitReason enum identity across modules) should be re-verified against the full files."
+      }
+    },
+    "error": null
+  },
+  {
+    "model": "qwen3.8-flash",
+    "elapsed": 371.4431359767914,
+    "request_id": "5114af83-509b-992d-92fe-6d20c2aa1760",
+    "tokens_in": 19871,
+    "tokens_out": 20339,
+    "reasoning_tokens": 15868,
+    "retries": 0,
+    "result": {
+      "model_name": "claude-sonnet-4-6",
+      "architecture_analysis": {
+        "pattern": "Hybrid event-driven trading pipeline with asyncio/threading mixed concurrency, layered strategy/risk/execution modules, broker adapter abstraction over Futu OpenAPI, SQLite persistence, and singleton-like service containers.",
+        "main_components": [
+          "app/core/scheduler_core.py: PositionStore and TradingScheduler core",
+          "app/pipeline/signal_pipeline.py: signal scan, market context, regime filters, decision entry",
+          "app/pipeline/order_executor.py: order construction, TWAP routing, close/reentry logic, symbol locks",
+          "app/coordinator/capital_allocator.py: bucket-based capital reservation and exposure accounting",
+          "app/execution/broker_adapter.py: Futu OpenD connection, submit/cancel/query orders, positions",
+          "app/core/position_sync.py: broker-to-local position reconciliation, external close detection, playbook execution state reconciliation",
+          "app/risk/position_exit_monitor.py: stop-loss, trailing, scale-out, pre-close, time-stop orchestration",
+          "app/playbook/exit_engine.py: playbook-specific exit rule chain",
+          "app/core/engine.py: RiskEngine/ExecutionEngine/ObservabilityEngine abstract lifecycle",
+          "app/storage/trade_store.py and SQLite DB: trade records and audit state"
+        ],
+        "data_flow": "scan_loop or scheduler triggers market data retrieval -> signal generation/LLM or playbook scoring -> regime/VIX and pre-trade filters -> capital allocator reservation -> order builder in order_executor -> broker_adapter submit_order to Futu -> fill/order state captured -> PositionStore and trade_records updated -> position_sync reconciles broker positions -> position_exit_monitor/exit_engine evaluate exits -> close orders routed through order_executor/broker_adapter -> notifications, dashboards, and review consume events.",
+        "weaknesses": [
+          "Mixed threading.Lock and asyncio assumptions create hidden concurrency boundaries, especially in capital allocation, position store, and market history buffers.",
+          "Several fail-open behaviors in broker and signal paths can silently continue trading when data or connectivity is unavailable.",
+          "Capital ledger accounting is not a complete SSOT for real exposure, especially in observe mode and during reset/reconcile races.",
+          "Broker adapter returns empty positions on disconnect, making downstream reconciliation and risk logic unsafe.",
+          "SQLite persistence is performed inside critical locks, coupling order-path latency to disk/WAL contention.",
+          "Order lifecycle lacks a strongly typed state machine with idempotency keys visible in the provided snippets.",
+          "Global singletons and lazy initialization are not consistently thread-safe.",
+          "Some position-sync duplicate detection logic is inconsistent with its own documented SQL guard."
+        ]
+      },
+      "bugs": [
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "152-165",
+          "severity": "critical",
+          "category": "logic_error",
+          "description": "try_reserve only enforces a bucket cap when cap > 0. Unknown buckets and buckets configured with cap=0.0 default to 0.0 and therefore bypass bucket enforcement, leaving only total cap checks.",
+          "impact": "In enforce mode, strategies intended to be disabled, such as a bucket configured as 0.0, can still reserve capital and open positions if total headroom exists. This directly violates per-strategy risk limits.",
+          "fix": "Reject unknown buckets and enforce zero caps. Example: if bucket not in self._caps: return False; if current + position_pct > cap: decision = BLOCKED_STRATEGY_CAP."
+        },
+        {
+          "file": "app/execution/broker_adapter.py",
+          "line_range": "785-817",
+          "severity": "critical",
+          "category": "error_handling",
+          "description": "get_positions returns an empty list when the broker is disconnected instead of raising or returning a stale/unknown status.",
+          "impact": "Position sync, risk checks, and exit monitors may interpret a disconnected broker as a true flat account. This can delete local positions, skip exits, allow duplicate entries, and corrupt accounting.",
+          "fix": "Return a structured result such as positions plus connection_state, or raise RuntimeError. Callers must distinguish disconnected from zero positions and use a last-known cache with TTL and explicit stale handling."
+        },
+        {
+          "file": "app/execution/broker_adapter.py",
+          "line_range": "464-496",
+          "severity": "high",
+          "category": "error_handling",
+          "description": "submit_order returns a simulated fill whenever the broker is not connected and trade_env is not equal to 0. If trade_env is None, unset, or misconfigured, the real-account path can silently simulate fills.",
+          "impact": "Phantom fills and positions can be recorded while no broker order exists. This is especially dangerous during real-trading rollout or environment-variable drift.",
+          "fix": "Validate trade_env explicitly. Raise for unknown values and for real environment when disconnected. Only simulate when trade_env is explicitly SIMULATE."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "168-175",
+          "severity": "high",
+          "category": "concurrency",
+          "description": "try_reserve holds the global _lock while calling _persist_state, which opens a SQLite connection and commits. The same pattern exists in release, force_set, and reconcile paths.",
+          "impact": "SQLite latency, WAL contention, or disk stalls block all capital allocation decisions and can stall order execution across strategies.",
+          "fix": "Keep only in-memory state mutation under the lock. Copy the persisted rows while holding the lock, release it, then write to SQLite through a bounded async/batched writer."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "300-325",
+          "severity": "medium",
+          "category": "concurrency",
+          "description": "reset_and_reconcile zeroes allocations under the lock, releases the lock, and then calls reconcile_with_positions. Another thread can reserve capital in the gap.",
+          "impact": "Concurrent reservations can be overwritten or double-counted during the reset-to-reconcile window, causing capital ledger drift.",
+          "fix": "Perform reset and reconciliation atomically under one lock, or use a generation/version guard that rejects reservations during reconciliation."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "630-645",
+          "severity": "medium",
+          "category": "race_condition",
+          "description": "get_capital_allocator singleton initialization is not thread-safe. Multiple threads can observe _singleton as None and create separate CapitalAllocator instances.",
+          "impact": "Concurrent first calls can produce divergent ledgers, duplicated DB writers, and inconsistent risk limits.",
+          "fix": "Use a module-level threading.Lock with double-checked initialization, or initialize the singleton once during application startup before worker threads/tasks start."
+        },
+        {
+          "file": "app/pipeline/order_executor.py",
+          "line_range": "42-49",
+          "severity": "medium",
+          "category": "race_condition",
+          "description": "_get_pdt_guard lazily initializes a global PDTGuard without synchronization.",
+          "impact": "Multiple threads can create separate PDTGuard instances, leading to inconsistent trade counters, DB contention, or missed PDT checks.",
+          "fix": "Protect initialization with a lock or initialize PDTGuard explicitly during scheduler startup."
+        },
+        {
+          "file": "app/pipeline/signal_pipeline.py",
+          "line_range": "48-53",
+          "severity": "medium",
+          "category": "race_condition",
+          "description": "_VIX_HISTORY and _SPY_HISTORY are module-level mutable lists used for rapid regime detection without synchronization.",
+          "impact": "Concurrent scan threads can interleave appends and trimming, producing corrupted history, false rapid-regime blocks, or missed regime changes.",
+          "fix": "Guard the history with a lock, or use a single producer/consumer queue and perform trimming in one thread."
+        },
+        {
+          "file": "app/core/position_sync.py",
+          "line_range": "55-80",
+          "severity": "high",
+          "category": "logic_error",
+          "description": "upsert_external_close_trade_record uses a duplicate query on symbol and direction with exit_price > 0, but does not include entry_time despite EXTERNAL_CLOSE_DUP_SQL being defined for that purpose.",
+          "impact": "If the omitted body treats any prior closed row as a duplicate, a legitimate new external close for the same symbol and direction can be suppressed, causing missing trade records and notifications.",
+          "fix": "Use EXTERNAL_CLOSE_DUP_SQL and match entry_time, preferably also quantity or exit_time, before deciding that a close is a duplicate."
+        },
+        {
+          "file": "app/core/scheduler_core.py",
+          "line_range": "62-73",
+          "severity": "high",
+          "category": "missing_validation",
+          "description": "PositionStore._pending is keyed only by symbol. The system supports multiple strategies and buckets, and the provided code indicates symbol locks by direction and owner strategy elsewhere.",
+          "impact": "One strategy can block another from opening the same symbol, or a failed order can leave pending state that prevents legitimate re-entry. Conversely, incomplete pending keys can allow double-open of the same logical position if pending is cleared too early.",
+          "fix": "Key pending state by symbol, direction, owner_strategy, and client_order_id. Release pending only on terminal order states and add a timeout for stale pending entries."
+        },
+        {
+          "file": "app/core/engine.py",
+          "line_range": "44-50",
+          "severity": "low",
+          "category": "logic_error",
+          "description": "BaseEngine.is_healthy uses wall-clock datetime.now() to compare against last_heartbeat.",
+          "impact": "Clock changes, DST transitions, or timezone shifts can cause false healthy or unhealthy status, potentially suppressing or triggering alerts incorrectly.",
+          "fix": "Use time.monotonic() for heartbeat age, or store timezone-aware UTC timestamps consistently."
+        }
+      ],
+      "logic_issues": [
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "177-186",
+          "severity": "high",
+          "category": "business_logic",
+          "description": "In observe_only mode, a blocked reserve returns True but does not update the allocation ledger. The ledger therefore represents allowed reservations, not actual exposure.",
+          "impact": "Dashboards, auto capacity reports, and later enforce-mode decisions may understate exposure. If any consumer treats snapshot.total_reserved as true account exposure, risk decisions become unsafe.",
+          "fix": "Either record actual orders/fills in observe mode, or expose separate fields for ledger_reserved and estimated_exposure. Before switching to enforce mode, reconcile from broker positions and validate that no real exposure is missing."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "206-212",
+          "severity": "medium",
+          "category": "edge_case",
+          "description": "force_set(strategy, value) writes directly to the bucket allocation. If multiple strategies share a bucket, one strategy's force_set can overwrite the bucket total.",
+          "impact": "Capital accounting can be corrupted during startup recovery or periodic reconciliation, causing either overblocking or overexposure.",
+          "fix": "Do not use force_set for shared buckets. Use reconcile_with_positions with aggregated bucket totals, or make force_set delta-based and strategy-scoped."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "195-204",
+          "severity": "medium",
+          "category": "edge_case",
+          "description": "release creates a bucket entry if one is missing and clamps both bucket and strategy allocations to zero, hiding over-release or unknown-strategy releases.",
+          "impact": "Ledger drift can silently become zero instead of surfacing a mismatch. Repeated over-release can mask bugs and make later enforce-mode behavior unpredictable.",
+          "fix": "Validate that the bucket exists and that the strategy has a matching reservation. Log or alert when release exceeds allocated amount instead of silently clamping."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "260-280",
+          "severity": "high",
+          "category": "edge_case",
+          "description": "compute_scale_factor treats cap == 0 as unlimited by using float('inf') for bucket_headroom, mirroring the try_reserve zero-cap bug.",
+          "impact": "Callers that scale down instead of hard-reject can allocate to zero-cap buckets, bypassing intended strategy isolation.",
+          "fix": "Return 0.0 for unknown buckets or cap == 0.0. Use bucket_headroom = cap - current without the cap > 0 special case."
+        },
+        {
+          "file": "app/pipeline/signal_pipeline.py",
+          "line_range": "22-37",
+          "severity": "medium",
+          "category": "missing_validation",
+          "description": "_get_vwap_deviation swallows all exceptions and returns None. The header comment states pre_trade_check will soft-pass when VWAP deviation is unavailable.",
+          "impact": "A data-source failure can disable a risk filter and allow trades that would otherwise be blocked by VWAP deviation rules.",
+          "fix": "Distinguish unavailable data from zero deviation. For high-risk filters, fail-close or require a configurable data-quality gate. At minimum, emit a warning and increment a metric."
+        },
+        {
+          "file": "app/core/scheduler_core.py",
+          "line_range": "74-90",
+          "severity": "medium",
+          "category": "edge_case",
+          "description": "PositionStore.add updates the in-memory position, then synchronizes the daily active pool inside the same lock. If pool synchronization fails, memory and pool state can diverge.",
+          "impact": "Scan loops or monitoring paths that rely on the daily active pool may miss a newly added position, while PositionStore believes it exists.",
+          "fix": "Make pool synchronization transactional with memory state, or use an outbox/event queue so failures can be retried without leaving inconsistent state."
+        },
+        {
+          "file": "app/core/engine.py",
+          "line_range": "94-127",
+          "severity": "medium",
+          "category": "edge_case",
+          "description": "Base engine shutdown methods mostly set enabled to False. ExecutionEngine clears pending_orders but does not clear order_book, cancel active TWAP tasks, or close broker_adapter.",
+          "impact": "Shutdown may leave background tasks, broker connections, or stale order state alive, causing resource leaks or delayed restart behavior.",
+          "fix": "Implement concrete shutdown logic: cancel async tasks, stop heartbeat threads, close broker adapter, clear order books, and flush metrics."
+        },
+        {
+          "file": "app/playbook/exit_engine.py",
+          "line_range": "44-63",
+          "severity": "low",
+          "category": "edge_case",
+          "description": "_is_overnight_position assumes naive entry_time strings are already in ET and falls back to local date comparison.",
+          "impact": "If entry_time is stored in a different timezone or as naive UTC, overnight classification can be wrong, affecting gap-stop and pre-close exit rules.",
+          "fix": "Require timezone-aware timestamps or explicitly convert from a known source timezone before comparing ET dates."
+        }
+      ],
+      "optimization_suggestions": [
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "category": "performance",
+          "description": "Move SQLite persistence outside the critical allocation lock and batch ledger/state writes.",
+          "expected_impact": "Reduces order-path latency and prevents WAL or disk stalls from blocking capital decisions."
+        },
+        {
+          "file": "app/execution/broker_adapter.py",
+          "category": "scalability",
+          "description": "Add a connection health state machine with cached positions, freshness TTL, and explicit stale/error responses.",
+          "expected_impact": "Prevents fail-open position emptiness and improves resilience during Futu OpenD interruptions."
+        },
+        {
+          "file": "app/pipeline/order_executor.py",
+          "category": "maintainability",
+          "description": "Introduce an explicit order state machine with client_order_id idempotency, terminal-state handling, and reconciliation hooks.",
+          "expected_impact": "Reduces duplicate orders, stale pending locks, and cross-strategy race conditions."
+        },
+        {
+          "file": "app/pipeline/signal_pipeline.py",
+          "category": "performance",
+          "description": "Cache market context per symbol per scan tick and make regime history thread-safe or single-producer.",
+          "expected_impact": "Lowers repeated market-data calls and eliminates history corruption under concurrent scans."
+        },
+        {
+          "file": "app/core/position_sync.py",
+          "category": "maintainability",
+          "description": "Use context managers for all SQLite connections and align duplicate-close logic with the documented EXTERNAL_CLOSE_DUP_SQL.",
+          "expected_impact": "Reduces handle leaks and makes external-close accounting testable and deterministic."
+        },
+        {
+          "file": "app/core/scheduler_core.py",
+          "category": "maintainability",
+          "description": "Remove sys.path mutation and move dependencies into a DI container or explicit constructor injection.",
+          "expected_impact": "Improves test isolation and reduces import-order side effects."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "category": "scalability",
+          "description": "Separate bucket ledger, strategy ledger, and broker exposure reconciliation into distinct components with clear SSOT semantics.",
+          "expected_impact": "Makes multi-strategy capital isolation safer and easier to audit during enforce-mode rollout."
+        },
+        {
+          "file": "app/risk/position_exit_monitor.py",
+          "category": "maintainability",
+          "description": "Add property-based tests for ATR stop, chandelier, breakeven, and pre-close exit rules using pure-function boundaries.",
+          "expected_impact": "Catches edge cases in exit logic before they affect live capital."
+        }
+      ],
+      "overall_assessment": {
+        "code_quality_score": 6,
+        "architecture_score": 6,
+        "risk_level": "high",
+        "top_3_priorities": [
+          "Fix fail-open broker behavior: get_positions must not return empty on disconnect, and submit_order must reject unknown or real disconnected trade_env.",
+          "Correct capital allocator enforcement and concurrency: enforce zero/unknown bucket caps, remove SQLite IO from critical locks, and make singleton/reset/reconcile thread-safe.",
+          "Harden position and order lifecycle: key pending state by symbol/direction/owner/client_order_id, fix external-close duplicate detection, and introduce an idempotent order state machine."
+        ],
+        "summary": "FTSeek-US is a large, modular algorithmic trading system with clear separation between signal, risk, execution, playbook, and reconciliation layers. However, the provided code shows several production-critical weaknesses, especially around fail-open broker states, capital-limit enforcement, and mixed threading/asyncio concurrency. The most dangerous issues are not merely performance bugs: they can cause phantom fills, missed exits, duplicate entries, or exposure that exceeds configured strategy limits.",
+        "summary_note": "Some conclusions are based on truncated snippets; the external-close duplicate logic and symbol-lock decorator should be confirmed with the full function bodies before deployment changes."
+      }
+    },
+    "error": null
+  },
+  {
+    "model": "ZHIPU/GLM-5.3-Flash",
+    "elapsed": 538.8540160655975,
+    "request_id": "a5875876-708b-914a-b7d6-cdf7d3b6ebc9",
+    "tokens_in": 18540,
+    "tokens_out": 30131,
+    "reasoning_tokens": 22536,
+    "retries": 0,
+    "result": {
+      "model_name": "claude-sonnet-4.5",
+      "architecture_analysis": {
+        "pattern": "Layered orchestrator monolith. A central TradingScheduler (app/core/scheduler_core.py) coordinates domain modules: data providers (app/data) -> signal pipeline (app/pipeline/signal_pipeline.py) -> risk/coordinator gates (app/risk, app/coordinator/capital_allocator.py) -> order executor (app/pipeline/order_executor.py) -> Futu broker adapter (app/execution/broker_adapter.py) -> position reconciliation (app/core/position_sync.py) and exit monitoring (app/risk/position_exit_monitor.py, app/playbook/exit_engine.py). SQLite is the shared SSOT for trade records, playbook instructions and the capital ledger; an EventStore provides observability. Dependency wiring is a hybrid of a DI container (di_container) and ad-hoc module-level service-locator singletons (get_capital_allocator, get_symbol_lock_manager, get_rejection_logger, _get_pdt_guard). Concurrency is a hybrid of asyncio plus background threads (position_sync 30s loop, heartbeat threads) guarded by threading.RLock/Lock.",
+        "main_components": [
+          "TradingScheduler + PositionStore (app/core/scheduler_core.py) - orchestration and in-memory position SSOT with pending-set duplicate-open guard",
+          "Signal pipeline (app/pipeline/signal_pipeline.py) - scan loop, regime/context enrichment, consensus -> SignalScore",
+          "Order executor (app/pipeline/order_executor.py, 5685 lines) - order construction, risk gates, qty calc, TWAP vs market routing, close logic with symbol locks",
+          "CapitalAllocator (app/coordinator/capital_allocator.py) - bucket-based capital ledger with persist-to-SQLite, observe/enforce modes",
+          "FutuBrokerAdapter (app/execution/broker_adapter.py) - order submission, notional backstop (30% equity), heartbeat/reconnect, currency-pinned position queries",
+          "Position sync (app/core/position_sync.py) - 30s broker-vs-DB reconciliation, AUTO/MANUAL claim via remark whitelist, external-close detection",
+          "Position exit monitor (app/risk/position_exit_monitor.py) + playbook exit engine (app/playbook/exit_engine.py) - ATR stops, scale-out, chandelier, pre-close layering",
+          "PDT guard + symbol lock manager (app/risk/pdt_guard.py, app/execution/symbol_lock_manager.py)",
+          "Engine base classes (app/core/engine.py) - RiskEngine/ExecutionEngine/ObservabilityEngine ABCs with EventStore",
+          "Config container (app/core/config.py -> config_container) - consolidated SSOT after legacy loader removal",
+          "Observability: EventStore, exit quality tracker, web dashboard, review/analytics modules"
+        ],
+        "data_flow": "Market data (Futu via market_data_router/futu_lv3_provider) -> signal_pipeline._process_symbol_impl builds context (VWAP deviation, earnings, VIX regime, war-room fast lane) and produces a SignalScore -> coordinator arbitration + capital gates (theoretically CapitalAllocator.try_reserve) + RiskEngine.pre_trade_check -> order_executor builds Order, computes qty/price, applies PDT guard and symbol locks, then _submit_order_optimized routes to TWAPExecutor or market order -> FutuBrokerAdapter.submit_order (notional sanity check, remark tagging e.g. pb_*) -> fills update PositionStore.add (clears pending set, syncs daily_active_pool) and trade_records -> position_sync thread reconciles Futu SSOT vs local DB every 30s (external-close detection, AUTO claim via remark whitelist) -> position_exit_monitor / exit_engine evaluate exit rules -> _close_position (symbol-locked, decorated by _with_symbol_lock_release) -> CapitalAllocator.release + events/alerts -> dashboards and daily review.",
+        "weaknesses": [
+          "Hybrid asyncio + threading model with blocking calls: synchronous SQLite commits and broker RPCs can run on the event loop thread or hold locks for seconds (e.g., CapitalAllocator persists under self._lock); no clear ownership of which thread executes which stage.",
+          "Capital enforcement is documented as NOT wired into the main order path (try_reserve never called by order_executor._submit_order; signal.position_pct defaults to 0.0) and allocator defaults to observe_only=True - the entire capital-governance layer is currently advisory.",
+          "Several risk gates fail open by design (VWAP deviation soft-pass, _check_execution_rules pass-on-unparseable, paper-mode simulate-fill on broker disconnect) with no failure counters or alerts.",
+          "Service-locator singletons with unsynchronized lazy init (get_capital_allocator, _get_pdt_guard) - races and silent config mismatch on second call.",
+          "Abstraction-reality drift: app/core/engine.py defines ExecutionEngine/RiskEngine ABCs, but the real executor is module-level functions taking a raw scheduler object; order_book/pending_orders in the base class are unsynchronized and shutdown() drops pending orders without broker cancel.",
+          "God modules: order_executor (5685 lines), position_sync (2853), scheduler_core (3136), position_exit_monitor (2556) - high coupling, large blast radius per change (Task #34 incident originated in this area).",
+          "SQLite as shared SSOT with many writers and per-call connections; WAL/busy_timeout configured only in some modules (capital_allocator) not uniformly via safe_sqlite_connect.",
+          "Relative paths in production code (exit_engine 'data/early_dead_signal_shadow.jsonl' is CWD-dependent while scheduler_core correctly anchors to __file__).",
+          "Reservations in CapitalAllocator have no TTL/expiry; correctness relies on every failure path calling release() (not yet exercised since try_reserve is unwired)."
+        ]
+      },
+      "bugs": [
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "636-645 (get_capital_allocator)",
+          "severity": "medium",
+          "category": "race_condition",
+          "description": "Module-level singleton uses an unsynchronized check-then-set on a global. Two threads calling get_capital_allocator concurrently on first use can each construct a CapitalAllocator (one wins the global, both are returned to different callers). Additionally, later callers passing different caps/max_total_pct are silently ignored - the first caller's config wins.",
+          "impact": "Two allocators with divergent ledgers could split capital accounting (orders gated by one instance, dashboard/review reading the other), and config drift (e.g., a tightened max_total_pct) is silently dropped.",
+          "fix": "Add a module-level _init_lock = threading.Lock() with double-checked locking, and store the first-call kwargs; subsequent calls with conflicting caps/max_total_pct should raise or log an error instead of silently returning the original instance."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "163-201, 203-219, 499-525, 580-620 (approx.; try_reserve/release/_record_event hold _lock while calling _persist_state/_persist_state_all/_persist_event)",
+          "severity": "high",
+          "category": "concurrency",
+          "description": "try_reserve, release, force_set, reset_and_reconcile and reconcile_with_positions mutate the ledger under self._lock and then call _persist_state*, which acquires self._db_lock, opens a NEW sqlite3 connection, and commits (busy timeout 5s). _record_event additionally opens a second connection per event (via _persist_event). Lock ordering is consistent (_lock -> _db_lock, no deadlock), but the capital lock is held across synchronous disk I/O.",
+          "impact": "Every capital check on the order hot path can stall for the duration of SQLite I/O/contingion (up to ~5s under lock contention). If invoked from the asyncio loop thread, the entire event loop (quotes, exits, monitors) freezes; watchdog heartbeats and 60s exit-scan cadence can be violated during bursts of orders.",
+          "fix": "Keep only the in-memory mutation inside self._lock; persist after releasing it (capture the rows, then write), or push persistence to a single background writer thread / queue. Reuse one long-lived WAL connection instead of per-call connect+commit."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "172-176 (try_reserve) and 271-290 (compute_scale_factor)",
+          "severity": "high",
+          "category": "logic_error",
+          "description": "Bucket cap check is guarded by 'if cap > 0 and current + position_pct > cap'. The module's own docstring defines zero-cap buckets as disabled (example: {\"llm_plan\": 0.0}), but cap == 0.0 skips the check entirely - a strategy mapped to a 0.0 bucket (or an unknown strategy, since cap defaults to self._caps.get(bucket, 0.0)) faces NO bucket limit, only the global 0.90 total cap. compute_scale_factor has the same inversion: cap == 0 yields bucket_headroom = float('inf').",
+          "impact": "Latent today (allocator is observe_only by default), but the moment enforce mode is enabled (planned Phase B), 'disabled' buckets and unmapped strategies can reserve capital freely, silently defeating per-bucket isolation - the exact scenario the allocator exists to prevent.",
+          "fix": "Fail closed: treat cap == 0 as 'no capacity' (block any positive reserve) and unknown buckets as cap=0 with a warning log. In compute_scale_factor, use bucket_headroom = max(0.0, cap - current) for cap >= 0 and 0.0 for unknown buckets. Add a unit test pinning zero-cap semantics."
+        },
+        {
+          "file": "app/core/engine.py",
+          "line_range": "125-128",
+          "severity": "medium",
+          "category": "resource_leak",
+          "description": "ExecutionEngine.shutdown() sets enabled=False and calls self.pending_orders.clear() without cancelling those orders at the broker and without persisting order_book.",
+          "impact": "On shutdown/restart, orders can remain live at Futu and fill unattended; the restarted process has no in-memory record of them, so fills are only discovered later by the 30s position_sync reconciliation - exactly the class of 'unknown pending order' incidents documented in order_executor Task #34 ('不支持交叉交易, 有待成交订单').",
+          "fix": "In shutdown(), iterate pending_orders and call broker cancel_order for each (with timeout), log any that fail to reach a terminal state, and persist a snapshot of order_book for recovery-on-start reconciliation."
+        },
+        {
+          "file": "app/core/engine.py",
+          "line_range": "119-128",
+          "severity": "medium",
+          "category": "concurrency",
+          "description": "order_book (dict) and pending_orders (list) are plain mutable structures with no locking anywhere in the base class, while the surrounding system is explicitly multi-threaded (position_sync thread, scheduler loops, symbol lock manager, heartbeat threads).",
+          "impact": "Concurrent submit/query/cancel can lose updates or corrupt the book, producing intermittent, hard-to-reproduce reconciliation anomalies.",
+          "fix": "Guard both structures with threading.RLock (or make the execution engine single-threaded on the event loop with asyncio.Lock and document the owning thread)."
+        },
+        {
+          "file": "app/core/engine.py",
+          "line_range": "36-42",
+          "severity": "low",
+          "category": "logic_error",
+          "description": "is_healthy() compares datetime.now() against last_heartbeat, which is only advanced by an external heartbeat() call; BaseEngine never updates it itself, and the 60s threshold is hardcoded (self.config ignored). If no caller pumps heartbeat(), every engine reads as unhealthy 60s after construction; if nothing polls is_healthy(), the check is dead code. (Call sites are outside the provided excerpt - verify before changing.)",
+          "impact": "Either false 'unhealthy' alarms that get ignored (alarm fatigue) or a health check that never fires when it should during a stalled loop.",
+          "fix": "Have the engine refresh last_heartbeat inside its own periodic work, or have the scheduler ping engines on a timer; make the timeout configurable via self.config."
+        },
+        {
+          "file": "app/pipeline/order_executor.py",
+          "line_range": "33-39",
+          "severity": "low",
+          "category": "race_condition",
+          "description": "_get_pdt_guard() lazily initializes the module-global _pdt_guard without a lock; two threads entering simultaneously can construct two PDTGuard instances.",
+          "impact": "If PDTGuard caches day-trade counters in memory, two instances can disagree and allow a PDT-violating day trade; benign only if it re-reads the DB on every check (PDTGuard source not in the provided context - verify).",
+          "fix": "Double-checked locking with a module-level threading.Lock, or construct the guard eagerly at scheduler startup and inject it."
+        },
+        {
+          "file": "app/pipeline/order_executor.py",
+          "line_range": "713-725",
+          "severity": "medium",
+          "category": "missing_validation",
+          "description": "_submit_order_optimized computes notional = float(order.quantity) * float(order.price or signal_price or 0.0). For MARKET orders price is None/0, so the notional falls back to signal_price, which may be minutes stale (or 0.0, making notional 0). The TWAP-vs-market decision (should_use_twap) and any notional-dependent behavior therefore run on a stale or zero estimate. Within the shown excerpt there is also no validation that quantity > 0 or notional > 0 before submission.",
+          "impact": "Large orders can silently take the wrong execution path (market instead of TWAP, or vice versa) based on a stale quote; notional=0 bypasses size-based routing entirely; a zero/negative quantity would propagate toward the broker call.",
+          "fix": "Re-quote the current price at submission time for the notional estimate and record the quote used in exec_metadata (slippage must be measured against a fresh reference); raise/log a rejection when quantity <= 0 or (market order and notional <= 0)."
+        },
+        {
+          "file": "app/pipeline/signal_pipeline.py",
+          "line_range": "21-36",
+          "severity": "medium",
+          "category": "error_handling",
+          "description": "_get_vwap_deviation swallows all exceptions and returns None; per its own docstring, pre_trade_check then 'soft-passes' (软放行). A data-provider outage silently disables this risk gate, and nothing distinguishes 'gate passed' from 'gate unavailable'.",
+          "impact": "During quote/context outages - precisely when prices are most disorderly - signals proceed without the VWAP-deviation check, with no telemetry or alert.",
+          "fix": "Keep the soft-pass only with explicit instrumentation: increment a 'gate_unavailable' counter, emit an alert after N consecutive misses per symbol, and consider fail-closed for high-notional or volatile-regime signals."
+        },
+        {
+          "file": "app/pipeline/signal_pipeline.py",
+          "line_range": "47-56",
+          "severity": "medium",
+          "category": "concurrency",
+          "description": "_VIX_HISTORY and _SPY_HISTORY are module-level lists shared across scan threads with no lock (mutation sites are beyond the shown excerpt - verify). Even though list.append is GIL-atomic, the typical windowed prune-vs-iterate pattern can drop samples or raise during concurrent pruning.",
+          "impact": "The Rapid Regime Change detector (P0 2026-06-17) can miss or misread samples during fast markets, delaying de-risking triggers exactly when they matter.",
+          "fix": "Replace with collections.deque(maxlen=_HISTORY_MAX_ENTRIES) per series and prune by timestamp at read time, or wrap mutations in a small threading.Lock; add a unit test with concurrent producers."
+        },
+        {
+          "file": "app/execution/broker_adapter.py",
+          "line_range": "36-42",
+          "severity": "medium",
+          "category": "missing_validation",
+          "description": "FUTU_UNLOCK_PWD plaintext fallback is read from the environment at init and kept as an instance attribute. Env vars leak via /proc/<pid>/environ, crash dumps and are easy to log accidentally; there is also no visible validation that the unlock actually succeeded before live order submission.",
+          "impact": "Real-money trading credential exposure; a stale/missing unlock can also surface only mid-day as order rejections at the worst time.",
+          "fix": "Drop the plaintext fallback (MD5-only), load the secret from a secret manager or a root-readable file, never log either value, and verify unlock at connect time with an explicit health flag surfaced to the dashboard."
+        },
+        {
+          "file": "app/execution/broker_adapter.py",
+          "line_range": "474-486",
+          "severity": "medium",
+          "category": "error_handling",
+          "description": "In SIMULATE env, submit_order returns self._simulate_fill(order) when is_connected() is False. The DEB-20260903 #97 fix correctly protects the REAL env, but in paper mode a disconnect now fabricates fills: strategies 'fill', exits trigger, and slippage/latency metadata is synthetic.",
+          "impact": "Connectivity incidents are masked during paper trading (the staging environment for go-live); if AUTO_TRADE_ACCOUNT/trade_env configuration drifts, this path silently consumes signals with fake fills and no alert.",
+          "fix": "Return a rejected Order with reason BROKER_DISCONNECTED and emit an alert instead of simulating on disconnect; keep simulated fills only behind an explicit dry-run flag, and add a startup assertion binding trade_env to AUTO_TRADE_ACCOUNT."
+        },
+        {
+          "file": "app/core/position_sync.py",
+          "line_range": "20-21",
+          "severity": "low",
+          "category": "resource_leak",
+          "description": "_SELF_MANAGED_SKIP_LOGGED is a module-level set that grows with every distinct symbol seen and is never pruned; its dedup semantics also span the whole process lifetime rather than per day.",
+          "impact": "Slow unbounded memory growth in a long-lived process, and 'first occurrence' log dedup that suppresses context days later after a restart-free week.",
+          "fix": "Key entries by (trade_date, symbol) and prune dates older than today each sync cycle, or use a bounded LRU."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "395-435 (auto_capacity_report position loop)",
+          "severity": "medium",
+          "category": "missing_validation",
+          "description": "The position loop uses defensive getattr chains with 0 defaults: getattr(p, 'size', 0), getattr(p, 'current_price', 0), getattr(p, 'avg_entry_price', 0). If the caller passes broker dicts (which per get_positions use 'qty'/'cost_price' keys) or Position objects with different field names, size and price silently evaluate to 0 and market value becomes 0. (Caller types are outside the provided excerpt - verify.)",
+          "impact": "auto exposure is undercounted and auto_headroom overstated, so enforce-mode decisions and dashboard reports look healthy while the book is concentrated - silent over-allocation.",
+          "fix": "Accept an explicit protocol/dataclass for positions (or normalize broker dicts before the call), log-and-count positions that lack required attributes instead of silently zeroing, and cross-check report totals against total_equity (raise if current_auto_exposure > total_equity)."
+        },
+        {
+          "file": "app/playbook/exit_engine.py",
+          "line_range": "30-33",
+          "severity": "low",
+          "category": "logic_error",
+          "description": "_EARLY_DEAD_SHADOW_PATH = Path(\"data/early_dead_signal_shadow.jsonl\") resolves against the process CWD, while other modules (scheduler_core) correctly anchor paths to __file__-derived BASE_DIR/PROJECT_ROOT.",
+          "impact": "Depending on launch directory (start.sh, systemd, manual runs), the P7 shadow telemetry is written to the wrong location or fails, silently corrupting the early-dead-signal analysis the seam was built for.",
+          "fix": "Anchor to the project root: Path(__file__).resolve().parents[2] / \"data\" / \"early_dead_signal_shadow.jsonl\" (mirroring scheduler_core's BASE_DIR pattern), and audit other relative 'data/' paths for the same issue."
+        }
+      ],
+      "logic_issues": [
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "137-166 (try_reserve docstring) + app/pipeline/order_executor.py",
+          "severity": "critical",
+          "category": "business_logic",
+          "description": "The code itself documents that the main order path (order_executor._submit_order) never calls try_reserve, and signal.position_pct defaults to 0.0, so reserved amounts are 0. Combined with observe_only=True as the default, every bucket cap and the 0.90 total cap are advisory only in production - the capital-governance layer is effectively non-functional.",
+          "impact": "No hard limit on strategy concentration: a runaway signal loop or strategy bug can commit the whole account; the only effective backstops are the broker adapter's 30% notional sanity check and upstream heuristics.",
+          "fix": "Execute the documented Phase B plan: compute order qty first, derive position_pct from notional/equity, call try_reserve inside try/except before broker submission, release in finally on rejection/failure, run reset_and_reconcile + reconcile_with_positions, then flip observe_only=False; add a reserved-vs-actual drift metric."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "203-212 (release)",
+          "severity": "medium",
+          "category": "edge_case",
+          "description": "release() clamps negative results with max(0.0, ...) silently. A double-release or a release with the wrong magnitude never surfaces as an anomaly.",
+          "impact": "Ledger drift accumulates quietly until the periodic reconcile; in enforce mode drift causes false rejections (blocking good trades) or false headroom (over-allocation).",
+          "fix": "When the un-clamped value would go negative, log a warning and record an event with decision='RELEASE_OVERFLOW' (and feed it into reconcile alerting) instead of silently clamping."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "137-212 (try_reserve/release contract)",
+          "severity": "medium",
+          "category": "business_logic",
+          "description": "Reservations have no id, no TTL and no automatic expiry; correctness depends on every failure/retry/TWAP-cancel path remembering to call release(). The order path involves exceptions, retries without backoff (per Task #34 history) and cancel_active_twap flows - a single missed release permanently consumes bucket capacity.",
+          "impact": "Silent capacity leak: a strategy gradually loses allocation until the next reconcile, or reconcile over-corrects and creates a transient over-allocation window.",
+          "fix": "Return a reservation handle with a TTL (auto-release after N minutes unless confirmed filled), hook release to order terminal states (FILLED_ALL/CANCELLED/REJECTED), and unit-test exception paths for reserve/release pairing."
+        },
+        {
+          "file": "app/pipeline/signal_pipeline.py",
+          "line_range": "63-100 (_check_execution_rules)",
+          "severity": "medium",
+          "category": "missing_validation",
+          "description": "The gate returns True when rules are missing OR when context values are unparseable ('规则缺失或无法判定时一律放行'). 'No rules defined' and 'rules present but unevaluable due to bad data' are treated identically.",
+          "impact": "Malformed playbook/plan payloads silently skip execution constraints (e.g., price-band checks), producing entries outside the intended conditions with no signal that a gate was skipped.",
+          "fix": "Distinguish the two cases: missing rules -> pass (log debug); rules present but context invalid -> block and alert (or at minimum count and alert after N occurrences); validate context value types at context-build time."
+        },
+        {
+          "file": "app/playbook/exit_engine.py",
+          "line_range": "46-66 (_is_overnight_position) and OVERNIGHT_GAP_STOP rule",
+          "severity": "low",
+          "category": "business_logic",
+          "description": "As the authors' own 2026-09-24 erratum notes, OVERNIGHT_GAP_STOP never verifies an actual gap: the predicate is only 'entry date < today AND loss >= threshold'. note_exit_gap (RFC-106 §5.2) is record-only. Additionally, parse failures return False (conservative), so a malformed entry_time silently disables the rule for that position.",
+          "impact": "Overnight positions can be force-closed on ordinary intraday drift as if it were a gap event; malformed timestamps silently opt positions out of the fast-loss exit.",
+          "fix": "Once note_exit_gap has collected evidence, add an explicit gap predicate (today_open vs prev_close beyond k x ATR) or rename the rule to OVERNIGHT_LOSS_STOP to align semantics; log (once per symbol) when entry_time parsing fails."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "117-127 + 560-578",
+          "severity": "low",
+          "category": "edge_case",
+          "description": "On restart, persisted bucket/strategy allocations are restored immediately in __init__, but manual/legacy pools start at 0.0 until StrategyCoordinator.reconcile() runs. In enforce mode, any reserve processed in that window computes auto_pool too large (max_total - 0 - 0).",
+          "impact": "A brief post-restart over-allocation window in enforce mode (currently latent while observe_only=True, but will matter after Phase B).",
+          "fix": "Gate enforce-mode try_reserve on a 'reconciled' flag set after the first reconcile_with_positions/set_owner_pools call (fail-closed or observe-behavior until then), or persist and restore manual/legacy pools too."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "221-248 (snapshot)",
+          "severity": "low",
+          "category": "business_logic",
+          "description": "snapshot().by_strategy actually returns bucket-level allocations (dict(self._allocations)) - the docstring admits it for backward compatibility. Dashboard/daily_review consumers reading 'by_strategy' will misattribute exposure when bucket_map merges strategies (e.g., fast_lane -> main).",
+          "impact": "Misleading dashboards and reviews during incidents; operators may manually intervene based on the wrong strategy-level exposure.",
+          "fix": "Expose both views explicitly (by_bucket and by_strategy via by_strategy_snapshot()), migrate consumers, and deprecate the ambiguous field."
+        },
+        {
+          "file": "app/core/position_sync.py",
+          "line_range": "350-382 (_reconcile_playbook_execution_states)",
+          "severity": "low",
+          "category": "missing_validation",
+          "description": "NEEDS MORE CONTEXT: the excerpt opens safe_sqlite_connect and enters try, but is truncated before the finally block - it cannot be confirmed that conn.close() runs on all exception paths, and PlaybookDB is constructed over the same raw conn (ownership of closing is unclear). Flagged for verification, not asserted as a definite leak.",
+          "impact": "If the connection is not closed on exceptions, the long-running 30s sync thread leaks file descriptors/locks over time.",
+          "fix": "Ensure try/finally conn.close() (or a context manager) and make PlaybookDB explicitly not own/close a caller-supplied connection; verify with a long-run soak test."
+        }
+      ],
+      "optimization_suggestions": [
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "category": "performance",
+          "description": "Move SQLite persistence out of the self._lock critical section: capture rows under the lock, then write via a single long-lived WAL connection owned by a background writer (or write-behind queue). Currently every reserve opens two connections (state + event) and commits synchronously.",
+          "expected_impact": "p99 try_reserve latency drops from potentially seconds (SQLite busy/contended) to microseconds; eliminates event-loop stall risk on the order hot path."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "category": "performance",
+          "description": "Throttle _persist_event's pruning DELETE ('WHERE id <= MAX(id) - 5000') which currently executes on every ledger insert; run it every N inserts or on a timer, and batch event inserts.",
+          "expected_impact": "Roughly halves write transactions per reserve and reduces WAL churn/vacuum pressure on ftseek_us.db."
+        },
+        {
+          "file": "app/pipeline/signal_pipeline.py",
+          "category": "maintainability",
+          "description": "Encapsulate _VIX_HISTORY/_SPY_HISTORY in a small thread-safe ring-buffer utility (deque(maxlen) + timestamp prune on read) instead of bare module-level lists.",
+          "expected_impact": "Removes a class of concurrency bugs in the rapid-regime-change detector and bounds memory; makes the buffer unit-testable in isolation."
+        },
+        {
+          "file": "app/pipeline/order_executor.py",
+          "category": "maintainability",
+          "description": "Split the 5685-line module into order construction, risk-gate orchestration, submission/TWAP, and close management submodules - it has regrown after being split out of scheduler_tasks.py, and the Task #34 close-path cascade incident originated in this area.",
+          "expected_impact": "Smaller review surface per change, independently testable units, fewer cross-path regressions in the highest-risk money path."
+        },
+        {
+          "file": "app/core/engine.py",
+          "category": "maintainability",
+          "description": "Replace Dict[str, Any] config with typed dataclasses/pydantic models in BaseEngine, and reconcile the abstract engine interfaces with the actual implementation (order_executor functions take a raw scheduler rather than subclassing ExecutionEngine) - either adopt the ABCs or remove the dead abstraction.",
+          "expected_impact": "Catches config-key typos at startup, reduces abstraction-reality drift that currently misleads contributors about where execution logic lives."
+        },
+        {
+          "file": "app/core/db_utils.py + app/storage/",
+          "category": "scalability",
+          "description": "Unify SQLite access policy: WAL + busy_timeout + bounded retry for ALL connections (currently only capital_allocator sets these explicitly; other modules rely on safe_sqlite_connect defaults), and concentrate writes into fewer owners or a single writer per process.",
+          "expected_impact": "Fewer SQLITE_BUSY/'database is locked' errors during concurrent position_sync / exit-monitor / playbook / dashboard write cycles."
+        },
+        {
+          "file": "app/core/di_container.py",
+          "category": "maintainability",
+          "description": "Migrate ad-hoc lazy singletons (get_capital_allocator, get_symbol_lock_manager, get_rejection_logger, _get_pdt_guard, _get_vwap_deviation's scheduler lookups) into the existing DI container with explicit lifecycles and eager construction at startup.",
+          "expected_impact": "Deterministic initialization order, elimination of lazy-init races, and easier test isolation for the money-path components."
+        },
+        {
+          "file": "tests/",
+          "category": "maintainability",
+          "description": "Extend the 'pinned invariant' test pattern (already used for EXTERNAL_CLOSE_DUP_SQL in position_sync) to: capital allocator conservation (reserve+release balance, zero-cap semantics, scale-factor bounds) and the RFC-080 remark whitelist (is_system_order_remark).",
+          "expected_impact": "Prevents regressions in the highest-risk guards; the pattern has already proven its worth by catching the external-close data-loss bug class."
+        }
+      ],
+      "overall_assessment": {
+        "code_quality_score": 6,
+        "architecture_score": 6,
+        "risk_level": "high",
+        "top_3_priorities": [
+          "Wire capital enforcement into the real order path (Phase B): compute position_pct from actual qty/notional, call try_reserve before broker submission with guaranteed release-on-failure, reconcile, then flip observe_only=False - and fix the zero-cap/unknown-bucket guard inversion (capital_allocator.py) BEFORE flipping to enforce, otherwise disabled buckets become unlimited.",
+          "Remove blocking SQLite I/O from CapitalAllocator's self._lock critical section (write-behind or dedicated writer connection) and make its singleton thread-safe - capital checks sit on the order hot path and can currently stall the loop/lock for seconds.",
+          "Audit and remediate fail-open behavior across risk gates for live trading: VWAP-deviation soft-pass and _check_execution_rules pass-on-unparseable (signal_pipeline), and paper-mode simulate-fill on broker disconnect (broker_adapter) - make them fail-closed or at minimum loudly instrumented with counters and alerts."
+        ],
+        "summary": "FTSeek-US shows strong incident-driven maturity: the code is annotated with concrete post-mortems (Task #34 close-path cascade, DEB-20260903 #97 disconnect safety, RFC-080 remark whitelist with an explicitly fail-safe direction, H7 ledger-booking fix), and good defensive patterns are in place (symbol-lock release decorator, PositionStore pending-set against duplicate opens, pinned SQL invariants in tests, currency pinning on position queries, fail-closed real-env disconnect handling). However, the system's capital-governance layer is currently decorative: the allocator's own docstring admits the main order path never calls try_reserve and position_pct defaults to 0.0, with observe_only=True on top - so no bucket or total cap is actually enforced on real orders. Combined with several fail-open risk gates, this means the effective safety net in production is thinner than the architecture suggests. Structurally, the hybrid asyncio-plus-threads model with blocking SQLite I/O held under locks (capital_allocator persists inside its critical section) is the most likely source of the next latency incident, and god-modules (order_executor 5685 lines, position_sync 2853) concentrate blast radius. Caveat: several key files were provided only as excerpts (order_executor, position_sync, position_exit_monitor, broker_adapter internals); findings above are grounded in the provided code, and the two entries explicitly marked 'needs more context' (PositionStore pending cleanup on exception paths, _reconcile_playbook_execution_states conn lifecycle) require the full source to confirm.",
+        "code_quality_score_note": "Scores reflect: solid incident-response discipline and testing culture (+), offset by unenforced capital controls, fail-open gates, lock-held I/O, and abstraction-reality drift (-)."
+      }
+    },
+    "error": null
+  },
+  {
+    "model": "ZHIPU/GLM-5.3-FlashX",
+    "elapsed": 164.50050473213196,
+    "request_id": "9ec13991-59aa-92d5-b50a-4e37984d545f",
+    "tokens_in": 18540,
+    "tokens_out": 19288,
+    "reasoning_tokens": 11929,
+    "retries": 0,
+    "result": {
+      "model_name": "claude-sonnet-4.5",
+      "architecture_analysis": {
+        "pattern": "Layered, event-driven trading monolith. An asyncio TradingScheduler (app/core/scheduler_core.py) drives a pipeline chain: signal_pipeline (scan -> _process_symbol_impl -> SignalScore) -> coordinator (signal_arbitrator, capital_allocator) -> pipeline/order_executor (risk gates, qty calc, TWAP/market routing) -> execution/broker_adapter (Futu OpenAPI). A 30s background thread (app/core/position_sync.py) reconciles local SQLite/PositionStore state against Futu as SSOT. Risk is layered: position_exit_monitor (rule-based exits), playbook/exit_engine (self-managed exit rule chain), RiskEngine/ExecutionEngine/ObservabilityEngine ABCs in app/core/engine.py. Persistence is SQLite (WAL) with trade_records/open_positions/playbook_instructions tables. Incident-driven evolution is visible everywhere: dated inline RFC/DEB/P0 annotations document post-mortems baked into code comments.",
+        "main_components": [
+          "TradingScheduler + PositionStore (app/core/scheduler_core.py) — in-memory position SSOT with pending-set dedup",
+          "signal_pipeline (app/pipeline/signal_pipeline.py) — market gating, signal generation, consensus/voting, pre-trade checks",
+          "order_executor (app/pipeline/order_executor.py, 5685 lines) — order construction, PDT guard, symbol locks, close flows, notifications",
+          "CapitalAllocator (app/coordinator/capital_allocator.py) — bucketed capital ledger with observe/enforce modes and SQLite persistence",
+          "FutuBrokerAdapter (app/execution/broker_adapter.py) — order submission, cancellation, positions, heartbeat/reconnect, notional hard cap",
+          "position_exit_monitor (app/risk/) + playbook exit_engine — multi-rule exit engine (ATR trailing, scale-out, pre-close, time stop)",
+          "position_sync (app/core/position_sync.py) — 30s reconciliation thread, external-close detection, remark-based AUTO/MANUAL attribution",
+          "EventStore / BaseEngine ABCs (app/core/engine.py) — event, alert, failure recording",
+          "TradeStore / SQLite storage layer (app/storage/)",
+          "web_dashboard, review, llm/agents subsystems"
+        ],
+        "data_flow": "scan_loop -> _run_signal_scan_impl -> _process_symbol_impl: fetch quotes/context -> signal generation (technical intraday / LLM voting) -> index linkage + pyramid checks -> SignalScore -> pre-trade gates (VWAP deviation, PDTGuard, signal arbitrator, manual-hold registry; CapitalAllocator is NOT yet called here) -> order_executor builds Order and computes qty -> _submit_order_optimized routes to TWAPExecutor or market order -> FutuBrokerAdapter.submit_order (notional sanity check -> Futu API, remark=client_order_id for attribution) -> fill booking into PositionStore + trade_records -> position_exit_monitor and playbook exit_engine continuously evaluate exit rules against quotes -> _close_position (symbol-locked, broker position refresh, open-order wait) submits close order -> position_sync thread every 30s reconciles Futu positions vs local DB, detects external closes via remark whitelist, upserts trade records, and reconciles playbook instruction states.",
+        "weaknesses": [
+          "God modules: order_executor.py (5685 lines) and historically playbook/pipeline.py (9453 lines, now being split) concentrate gating, sizing, closing, notification in one file — the file header itself documents a cascading-failure incident caused by this coupling",
+          "Scheduler passed as a god-object parameter into pipeline functions (_submit_order_optimized(scheduler, ...)), creating tight coupling and untestable seams",
+          "Module-level lazy singletons (get_capital_allocator, _get_pdt_guard) bypass the existing DI container (di_container) and are not thread-safe in a mixed asyncio + raw-thread runtime",
+          "Mixed concurrency models: asyncio event loop plus background threads (position_sync, heartbeats) sharing SQLite and in-memory stores; correctness relies on hand-documented lock ordering (e.g., PositionStore._lock -> DailyActivePool._lock)",
+          "Order attribution depends on fragile string remark parsing (pb_/orb_/OVER_LIMIT_TRIM prefixes) as the sole AUTO-claim credential — acknowledged by RFC-080 as having previously caused real-money manual positions to be auto-closed",
+          "Error states conflated with empty results in broker adapter (get_positions returns [] when disconnected; cancel_order returns True on unknown post-cancel status)",
+          "Capital enforcement gap (documented): order path never calls try_reserve and signal.position_pct defaults to 0.0, so caps are advisory even in enforce mode (Phase A)",
+          "Core engine ABCs (RiskEngine/ExecutionEngine) appear partially aspirational — actual logic lives in scheduler functions, so the abstractions add indirection without enforcement"
+        ]
+      },
+      "bugs": [
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "620-645",
+          "severity": "high",
+          "category": "race_condition",
+          "description": "get_capital_allocator uses check-then-act lazy singleton (if _singleton is None: _singleton = CapitalAllocator(...)) with no lock. position_sync runs as a background thread while asyncio tasks, dashboard, and review modules may all first-touch the allocator concurrently. Two threads can both see None and each construct an allocator; only one wins the module global, and any try_reserve/release calls that landed on the loser instance are silently lost, splitting the capital ledger.",
+          "impact": "Split-brain capital ledger: reservations recorded in an orphaned instance vanish, understating exposure. If/when enforce mode goes live, caps computed from a partially-populated ledger allow over-allocation of real capital.",
+          "fix": "Add a module-level lock with double-checked locking: _singleton_lock = threading.Lock(); def get_capital_allocator(...): global _singleton; if _singleton is None: with _singleton_lock: if _singleton is None: ...validate caps...; _singleton = CapitalAllocator(...). Better: construct eagerly at startup inside the DI container and inject it."
+        },
+        {
+          "file": "app/pipeline/order_executor.py",
+          "line_range": "36-43",
+          "severity": "high",
+          "category": "race_condition",
+          "description": "_get_pdt_guard() lazily constructs a module-global PDTGuard with no lock (same check-then-act pattern). The comment explicitly says lazy init exists because the constructor performs DB access, meaning construction is slow — widening the race window. Signal pipeline tasks and the position_sync/monitor threads can race the first call.",
+          "impact": "Two PDTGuard instances each hold their own day-trade counters/state. Day-trade counting can be split across instances, so the guard under-counts trades and can permit Pattern Day Trader rule violations on a real account (broker restrictions, forced liquidations).",
+          "fix": "def _get_pdt_guard(): global _pdt_guard; if _pdt_guard is None: with threading.Lock(): (double-check) _pdt_guard = PDTGuard(); return _pdt_guard — or initialize PDTGuard eagerly during scheduler startup and store it on the scheduler/DI container."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "146-190, 192-199, 486-505, 558-617",
+          "severity": "medium",
+          "category": "concurrency",
+          "description": "try_reserve and release call _record_event (which opens a new SQLite connection and inserts via _persist_event) and then _persist_state (another new SQLite connection + commit) while holding self._lock. Every reserve/release in the order path serializes behind up to two synchronous disk transactions; a slow disk or lock contention on the DB file stalls every capital check and therefore the order path.",
+          "impact": "Order-path tail latency spikes during bursts or disk stalls; all strategies queue behind one strategy's persistence. In fast markets this delays submissions by an unbounded amount.",
+          "fix": "Snapshot the values under self._lock, then persist after releasing it: with self._lock: ...update book...; pending_rows = [...]  / then self._persist_rows(pending_rows) outside the lock. Additionally reuse a single long-lived sqlite connection (check_same_thread=False) guarded by _db_lock, and move the ledger-prune DELETE to a periodic job instead of per-event."
+        },
+        {
+          "file": "app/core/position_sync.py",
+          "line_range": "40-90",
+          "severity": "high",
+          "category": "logic_error",
+          "description": "EXTERNAL_CLOSE_DUP_SQL = 'SELECT id, entry_time FROM trade_records WHERE symbol=? AND direction=? AND exit_price > 0' and the equivalent lookup inside upsert_external_close_trade_record dedup on symbol+direction+exit_price>0 with NO correlation to entry_time or the specific position being closed. After any completed round-trip of a symbol/direction, a subsequent genuine external close (re-entry cycle) matches the historical closed row and is classified as a duplicate. CONFIRM: the guard body at ~line 500 and upsert continuation are truncated, but both shown snippets use this uncorrelated predicate.",
+          "impact": "Exactly the failure mode the 2026-08-28 fix comment describes: '真实券商平仓被跳过 INSERT 与通知, 而 open_positions 的 DELETE 照常执行 -> 该笔平仓在系统里彻底消失' — a real broker close is never booked (no PnL record, no notification) while the local position disappears, corrupting realized-PnL attribution and review.",
+          "fix": "Correlate the dedup to the position identity: pass entry_time (and ideally quantity) into the check — 'WHERE symbol=? AND direction=? AND exit_price>0 AND entry_time=?' — or resolve the open position row id first and dedup on (open_position_id, close_order_id). Add a pinned test: same symbol+direction closed twice in one day must produce two trade_records rows."
+        },
+        {
+          "file": "app/execution/broker_adapter.py",
+          "line_range": "785-795",
+          "severity": "high",
+          "category": "error_handling",
+          "description": "get_positions() returns [] when is_connected() is False ('未连接，返回空持仓'). This conflates 'cannot query broker' with 'broker has no positions'. Given position_sync treats Futu as SSOT for reconciliation and external-close detection, an empty list during a transient disconnect is indistinguishable from a full liquidation. CONFIRM: consumer code for this method is truncated; if every reconcile caller checks is_connected() first, downgrade to low.",
+          "impact": "A transient OpenD disconnect during a reconcile cycle can make the sync layer believe all positions were externally closed: phantom close bookings, false realized-PnL records, spurious notifications, or (worse) reconcile 'corrections' that zero the capital ledger.",
+          "fix": "Change the contract: return Optional[List[Dict]] (None when disconnected/unavailable) or raise BrokerUnavailableError, and make reconcile loops skip the cycle on None with a warning. Keep [] strictly meaning 'broker confirmed zero positions'."
+        },
+        {
+          "file": "app/core/engine.py",
+          "line_range": "126-137",
+          "severity": "medium",
+          "category": "resource_leak",
+          "description": "ExecutionEngine.shutdown() sets enabled=False and calls self.pending_orders.clear() without cancelling those orders at the broker or persisting them. Orders still live at Futu are dropped from local tracking entirely.",
+          "impact": "On shutdown/restart, in-flight orders are orphaned: the engine no longer tracks fills/cancels, recovery depends entirely on position_sync's 30s remark-based reconciliation, and until then re-entry guards (e.g., '不支持交叉交易, 有待成交订单' incident in the order_executor header) can block or duplicate trading.",
+          "fix": "In shutdown(): for each pending order, attempt broker_adapter.cancel_order(order.id) with a short timeout; for anything not reaching terminal state, persist (order_id, symbol, state=PENDING_ORPHAN) to the order table before clearing, and have startup recovery re-query those order ids via query_order."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "539-556",
+          "severity": "low",
+          "category": "logic_error",
+          "description": "_load_persist_state only restores persisted buckets where 'key in self._allocations' (i.e., keys present in the current caps config). If the caps config changed between runs, persisted allocations for removed/renamed buckets are silently discarded, while _by_strategy rows are restored unconditionally.",
+          "impact": "After a config change + restart, total reserved capital is understated by the dropped buckets; reconcile-with-positions will eventually correct it, but in the window between restart and the first reconcile the ledger lies.",
+          "fix": "Load all persisted bucket rows first; for keys not in caps, log a warning and either add them to the ledger as an 'orphan' bucket or refuse to start until reconciled. Assert sum(restored) matches expectations or schedule an immediate reconcile_with_positions at startup."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "625-645",
+          "severity": "medium",
+          "category": "missing_validation",
+          "description": "get_capital_allocator silently ignores caps/max_total_pct/observe_only/db_path arguments after the first construction. A second call site (e.g., dashboard, review, tests, a second strategy group) requesting different caps or observe_only=False receives the first caller's configuration without any signal.",
+          "impact": "A subsystem that believes it flipped enforce mode or tightened caps is actually still on the original config; enforce-mode rollout (the stated Phase B goal) can silently not happen for parts of the system.",
+          "fix": "After the singleton exists, compare requested params to the live instance and raise or log a loud error on mismatch; or accept params only on first call and force later callers to use accessor/setter methods (set_observe_only already exists)."
+        },
+        {
+          "file": "app/pipeline/signal_pipeline.py",
+          "line_range": "46-52",
+          "severity": "low",
+          "category": "concurrency",
+          "description": "_VIX_HISTORY and _SPY_HISTORY are module-level plain lists appended and trimmed (check len > _HISTORY_MAX_ENTRIES then re-slice). CONFIRM: writer call sites are truncated; with the scan loop being multi-batch and position_sync/monitor running as threads, writers may not all be on one event-loop thread, so append-then-trim sequences can interleave and drop or duplicate samples.",
+          "impact": "check_rapid_regime_change (the P0 2026-06-17 fast-regime detector) can miss or misread a rapid VIX/SPY spike exactly when data is arriving fastest — the moment the check matters most.",
+          "fix": "Use collections.deque(maxlen=_HISTORY_MAX_ENTRIES) for O(1) thread-safe appends, prune by timestamp on read, and if writers span threads, wrap mutations in a small lock or funnel samples through a single writer task."
+        },
+        {
+          "file": "app/pipeline/order_executor.py",
+          "line_range": "45-64",
+          "severity": "low",
+          "category": "missing_validation",
+          "description": "_with_symbol_lock_release releases with key (position.symbol, position.direction.value, owner or 'main'). CONFIRM: the acquisition-side key construction is truncated. If the lock was acquired with a different direction serialization (e.g., str(Direction.LONG) vs 'long') or the position object lost owner_strategy before close, the release targets a different key than the acquire, leaving the original lock held forever.",
+          "impact": "A leaked symbol lock permanently blocks future entries/closes for that symbol (or, if the manager tolerates unknown keys silently, hides the leak until manual restart).",
+          "fix": "Have get_symbol_lock_manager() return the exact key/token handed out at acquire time (context-manager or token-based release) and log a warning when releasing a key that is not currently held; add a periodic lock-leak detector that reports locks held > N minutes."
+        },
+        {
+          "file": "app/playbook/exit_engine.py",
+          "line_range": "36-38",
+          "severity": "low",
+          "category": "logic_error",
+          "description": "_EARLY_DEAD_SHADOW_PATH = Path(\"data/early_dead_signal_shadow.jsonl\") is a CWD-relative path. The service is deployed under /opt/ftseek/FTSeek-US (per truncated absolute paths) likely via start.sh/systemd; any WorkingDirectory change silently redirects or breaks shadow-trace writes.",
+          "impact": "P7 shadow-path evidence for early-dead signals is written to an unexpected location or write fails, degrading the post-mortem pipeline that this team demonstrably relies on (shadow_registry, daily_review).",
+          "fix": "Anchor to the project root: DATA_DIR = Path(__file__).resolve().parents[2] / 'data' (or a config-provided absolute data dir), and create parent dirs on write."
+        },
+        {
+          "file": "app/core/engine.py",
+          "line_range": "31-45",
+          "severity": "low",
+          "category": "logic_error",
+          "description": "is_healthy() compares (datetime.now() - last_heartbeat).total_seconds() < 60 using naive wall-clock time, and last_heartbeat is only advanced if something calls heartbeat(). Nothing in the shown code owns a heartbeat schedule, so an engine that does real work but is never heartbeated flips to unhealthy 60s after construction; conversely NTP clock jumps distort the check.",
+          "impact": "False 'engine unhealthy' states can trigger spurious alerts or, if any supervisor disables unhealthy engines, silently disable live risk/execution logic; wall-clock jumps (DST/NTP) create both false-healthy and false-unhealthy windows.",
+          "fix": "Use time.monotonic() for last_heartbeat, and give BaseEngine an explicit heartbeat contract: either the scheduler loop calls heartbeat() on a fixed cadence for every engine, or is_healthy() falls back to subclass-provided liveness signals."
+        }
+      ],
+      "logic_issues": [
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "105-190",
+          "severity": "critical",
+          "category": "business_logic",
+          "description": "The module docstring states the enforce path is not wired: '_submit_order 下单前 尚未调用此方法' and 'signal.position_pct 默认为 0.0, 导致预留金额为 0'. So even with observe_only=False, every reserve is for 0% and caps constrain nothing; the ledger only becomes truthful via periodic reconcile_with_positions.",
+          "impact": "There is currently no enforced per-strategy or total capital cap in the live order path — the single most important guard against runaway exposure in a multi-strategy real-money system is advisory-only. Any signal flood or strategy bug can allocate far beyond intended 80%/90% limits until a broker-side or reconcile correction.",
+          "fix": "Phase B as documented, concretely: in order_executor's order build (before _submit_order_optimized), compute position_pct = (qty * price) / total_equity from the final qty (not the default signal field), call try_reserve(strategy, pct), and abort the order on False; call release(strategy, pct) in every close path (including _close_position finally and external-close handling); then run reset_and_reconcile(positions_by_strategy) once and flip observe_only=False. Add an integration test: 100 simultaneous max-size signals must not exceed max_total_pct."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "160-186",
+          "severity": "high",
+          "category": "business_logic",
+          "description": "In observe_only mode, BLOCKED decisions log a warning and return True WITHOUT recording the reservation (H7). Combined with the unwired order path above, the system can run over caps indefinitely between 30s reconciles and the BLOCKED warnings are the only signal — no counter, no alert escalation, no time-box on Phase A.",
+          "impact": "During the (possibly indefinite) Phase A window, real exposure can exceed max_total with only log-line visibility; if logs are not actively alerted on, over-allocation is discovered at reconcile or, worst case, at a margin call.",
+          "fix": "Add a BLOCKED-event counter exposed via snapshot()/metrics and wire it to the alerting pipeline (AlertLevel threshold, e.g., >N blocks/hour); set an explicit deadline/kill-switch that flips observe_only to enforce after reset_and_reconcile, enforced at startup."
+        },
+        {
+          "file": "app/execution/broker_adapter.py",
+          "line_range": "600-632",
+          "severity": "medium",
+          "category": "edge_case",
+          "description": "cancel_order returns True when the post-cancel status query errors or returns a non-terminal state ('其余/查询异常 -> True+warning'), i.e., unconfirmed cancels are reported as success. The comment acknowledges this and defers terminal-state confirmation to position_sync's 30s sweep.",
+          "impact": "In the cancel-vs-fill race, callers treat the order as cancelled and may immediately resubmit (e.g., replace-stop flows), briefly doubling exposure until the 30s reconcile notices the fill. The order_executor header documents a related live incident ('不支持交叉交易, 有待成交订单').",
+          "fix": "Return a tri-state (CANCELLED / FAILED / UNKNOWN). On UNKNOWN, mark the order 'cancel_unconfirmed' and have the symbol lock / pending-set / re-entry guard for that symbol stay engaged until position_sync observes a terminal state, rather than optimistically allowing re-entry."
+        },
+        {
+          "file": "app/execution/broker_adapter.py",
+          "line_range": "78-100",
+          "severity": "medium",
+          "category": "missing_validation",
+          "description": "_notional_sanity_check unconditionally returns True when is_close=True (P0 2026-06-16, added so FLAT_ALL emergencies are not blocked). There is no verification that the order being passed actually closes an existing position — any caller bug that labels an open order is_close=True bypasses the 30% equity hard cap entirely.",
+          "impact": "A single mislabeled flag on the 'last wall' guard converts the safety net into an always-open gate for arbitrary notional sizes on real money.",
+          "fix": "Validate the close claim cheaply before bypassing: confirm the symbol has a broker/local position and that order.quantity <= held quantity (abs) before returning True for is_close; otherwise fall through to the normal notional check. Log every is_close bypass with position id for audit."
+        },
+        {
+          "file": "app/core/scheduler_core.py",
+          "line_range": "90-130",
+          "severity": "medium",
+          "category": "concurrency",
+          "description": "PositionStore uses a _pending: Set[str] to prevent duplicate entries during the broker_sync 5s debounce window; add() discards the symbol from _pending on success. CONFIRM: the failure-path removal (order rejected/exception after pending insertion) is not shown in the truncated file. If any submission path adds to _pending and then raises before add() or an explicit discard, the symbol is stuck in _pending with no TTL.",
+          "impact": "A single failed submission permanently (until process restart) blocks all new signals for that symbol — silent loss of trading opportunities, and because _pending is in-memory, the symptom disappears on restart, making it hard to diagnose.",
+          "fix": "Guarantee release with try/finally around the entire submit path: pending_add(symbol); try: submit; finally: pending_discard(symbol) (add() also discards, idempotent). Add a timestamp to pending entries and a sweeper that discards entries older than e.g. 60s with a warning log."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "line_range": "192-199",
+          "severity": "low",
+          "category": "edge_case",
+          "description": "release() clamps with max(0.0, current - position_pct) per bucket and per strategy with no validation. A double-release (e.g., close path executed twice due to the race the order_executor header documents) silently clamps to 0 instead of revealing the accounting error.",
+          "impact": "Repeated/duplicate close paths understate the bucket by the clamped excess relative to truth-by-events; the ledger can read lower than real exposure until the next reconcile, masking the very double-execution bugs the team has already hit.",
+          "fix": "When position_pct > current reserved, log a warning (or record a NEGATIVE_RELEASE event with the excess) instead of silently clamping; reconcile_with_positions remains the correction mechanism, but the anomaly becomes visible."
+        },
+        {
+          "file": "app/pipeline/order_executor.py",
+          "line_range": "712-726",
+          "severity": "low",
+          "category": "edge_case",
+          "description": "_submit_order_optimized computes notional = quantity * (order.price or signal_price or 0.0). If both are None/0 (e.g., pure market order constructed without reference price), notional=0, so should_use_twap(0, threshold) is always False and any downstream notional-based checks see zero.",
+          "impact": "Large orders with missing reference prices silently skip TWAP optimization and execute as single market prints, increasing slippage precisely when price data was unavailable.",
+          "fix": "Fail closed or fetch a fallback: if notional cannot be computed (both prices falsy), pull last quote from market_data_router; if still unavailable, either reject the order or route to a conservative default (treat as above-threshold). Log the fallback."
+        },
+        {
+          "file": "app/core/position_sync.py",
+          "line_range": "55-75",
+          "severity": "low",
+          "category": "edge_case",
+          "description": "AUTO-claim credential is the remark prefix whitelist; header notes the whitelist list ('pb_', 'orb_', 'ext_entry', 'ext_exit_', 'OVER_LIMIT_TRIM') must NEVER be applied to external-close detection, and fail-safe maps unknown remarks to MANUAL. The invariant lives only in comments; the two classification points are deep in truncated code.",
+          "impact": "A future refactor that applies is_system_order_remark to the external-close path would recreate the RFC-080 class of incident (manual/APP closes of AUTO positions being misclassified, or AUTO closes dropped).",
+          "fix": "Encode the invariant structurally: expose two separately-named predicates (is_auto_entry_remark / is_external_close_candidate) where the latter has no whitelist filter, and pin both behaviors with tests named after the RFC-080 incident."
+        }
+      ],
+      "optimization_suggestions": [
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "category": "performance",
+          "description": "Replace per-event SQLite connect/insert/commit (up to 2 new connections per try_reserve, plus a DELETE-based ledger prune per event) with a single long-lived WAL connection or an in-process write-behind queue flushed periodically; move persistence calls outside self._lock.",
+          "expected_impact": "Removes disk I/O from the capital-gate critical section; cuts order-path tail latency and eliminates cross-strategy serialization during bursts."
+        },
+        {
+          "file": "app/pipeline/order_executor.py",
+          "category": "maintainability",
+          "description": "Decompose the 5685-line module along its own documented seams: OrderGate (PDT/VWAP/arbitrator/capital checks), QuantityCalculator, EntryFlow, CloseFlow (with the Task #34 open-order-wait logic), NotificationSink. Keep thin forwarding functions during migration as done for playbook exit_engine.",
+          "expected_impact": "Smaller, independently testable units; the header's cascading-failure post-mortem (position-shortage -> no backoff -> 8h lockout) shows the cost of the current monolith; reduces regression surface for the highest-risk code path."
+        },
+        {
+          "file": "app/core/engine.py",
+          "category": "maintainability",
+          "description": "Make the engine ABCs real or remove them: register engines in the scheduler loop with a monotonic-clock heartbeat task, and route the live risk/execution logic (currently in scheduler functions) through the pre_trade_check/should_exit interfaces; otherwise delete the unused abstraction.",
+          "expected_impact": "One liveness/health mechanism instead of implicit contracts; less indirection; new engineers can locate enforcement points instead of rediscovering them in scheduler internals."
+        },
+        {
+          "file": "app/pipeline/signal_pipeline.py",
+          "category": "performance",
+          "description": "Swap _VIX_HISTORY/_SPY_HISTORY lists for collections.deque(maxlen=30) with timestamp pruning on read, and cache the last computed regime verdict for a few seconds to avoid re-scanning on every symbol in a batch.",
+          "expected_impact": "O(1) allocation-free updates per tick; removes trim races; negligible CPU on the hot scan path."
+        },
+        {
+          "file": "app/core/scheduler_core.py",
+          "category": "performance",
+          "description": "Inside PositionStore.add(), the daily_active_pool update (potential JSON file write) happens while holding PositionStore._lock. Snapshot the needed metadata under the lock and perform pool/file updates outside it, preserving the documented lock ordering.",
+          "expected_impact": "has()/add() from scan/monitor/sync threads no longer queue behind file I/O; lower latency on the position-mutation path."
+        },
+        {
+          "file": "app/core/position_sync.py",
+          "category": "maintainability",
+          "description": "Centralize the external-close dedup and remark classification into a small repository/class with pinned invariant tests (entry_time correlation, whitelist-not-applied-to-external-close, exit_price>0 semantics), instead of module-level SQL string constants whose guard bodies sit 500 lines deep.",
+          "expected_impact": "Directly prevents recurrence of the 2026-08-28 'close disappears from the system' class of bug; makes the SSOT reconciliation logic reviewable and testable in isolation."
+        },
+        {
+          "file": "app/execution/broker_adapter.py",
+          "category": "scalability",
+          "description": "Return richer error semantics across the adapter surface: Optional results or typed exceptions for disconnect/unknown states (get_positions, cancel_order), and a shared 'connection healthy' accessor consumers can check before reconcile cycles.",
+          "expected_impact": "Downstream reconcile/exit logic can distinguish 'empty' from 'unavailable', eliminating the phantom-close class of failure and reducing defensive is_connected() checks scattered across callers."
+        },
+        {
+          "file": "app/coordinator/capital_allocator.py",
+          "category": "scalability",
+          "description": "Unify instantiation through the existing DI container (di_container) instead of the module-global singleton, and fix the stale reset_and_reconcile docstring ('BLOCKED 事件也记账了') which contradicts the H7 fix.",
+          "expected_impact": "Single construction path (no split-brain instances), honest documentation, easier enforce-mode rollout since config is injected and visible in one place."
+        }
+      ],
+      "overall_assessment": {
+        "code_quality_score": 6,
+        "architecture_score": 6,
+        "risk_level": "high",
+        "top_3_priorities": [
+          "Wire CapitalAllocator enforcement into the live order path: compute position_pct from final order qty, call try_reserve before submission and release on every close, then reset_and_reconcile + flip observe_only=False — today the capital caps are advisory no-ops on real money.",
+          "Make lazy singletons thread-safe (double-checked locking) for get_capital_allocator and _get_pdt_guard, or construct them eagerly in the DI container — duplicate instances split the PDT day-trade counters and the capital ledger across threads.",
+          "Harden close booking semantics: correlate the external-close dedup on entry_time/position identity (not just symbol+direction+exit_price>0), make broker_adapter.get_positions distinguish 'disconnected' from 'empty', and give _pending/cancel-unconfirmed states a guaranteed release path — these jointly prevent missed and phantom close bookings."
+        ],
+        "summary": "FTSeek-US is a mature, incident-hardened system: the dated RFC/DEB/P0 annotations show disciplined post-mortem culture, and many past failures (remark-based misattribution, dedup-caused vanished closes, disconnect-time fake fills) have already been found and patched with fail-safe defaults. However, the system's most important financial guard — the capital allocator — is explicitly still in observe/Phase A and not wired into the order path, and its surrounding plumbing (lazy singletons, persist-inside-lock, silent arg-swallowing) is not yet production-grade for the enforce mode it is heading toward. The mixed asyncio + thread runtime makes the two racy singletons and the shared in-memory history buffers more than theoretical: the codebase's own incident history proves these windows get hit. Real-money risk remains HIGH until the capital enforce path is integrated and the guard singletons are construction-safe. The close-booking chain (external-close dedup correlation, empty-on-disconnect positions, pending-set lifecycle) is the second cluster requiring attention, since the project's own comments record that bugs here cause trades to 'completely disappear' from the ledger. Finally, the monolithic order_executor and the partially-aspirational engine ABCs concentrate the most dangerous logic in the least testable shapes; continuing the playbook-style decomposition (as done with exit_engine.py) is the highest-leverage maintainability investment. Note: several files (order_executor body, position_sync guard body, exit rule implementations) were truncated; issues flagged CONFIRM should be verified against the full sources before fixing."
+      }
+    },
+    "error": null
+  }
+]

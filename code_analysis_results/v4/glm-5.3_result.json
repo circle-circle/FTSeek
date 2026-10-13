@@ -1,0 +1,328 @@
+{
+  "model": "glm-5.3",
+  "elapsed": 845.2146382331848,
+  "request_id": "fe273ffd-6b3f-9ae2-82ad-fe4fd1e6e475",
+  "tokens_in": 22927,
+  "tokens_out": 54811,
+  "reasoning_tokens": 44880,
+  "retries": 0,
+  "parse_ok": true,
+  "result": {
+    "model_name": "glm-4.6",
+    "chain_defects": [
+      {
+        "file": "app/risk/drawdown_control.py",
+        "line_range": "1-60 (header registry) + record_trade_pnl (~136-168)",
+        "severity": "critical",
+        "category": "risk-control blind spot",
+        "description": "Playbook close PnL is never fed into DrawdownController (documented in-file as DEB P1-M3 residual gap). 438 of 446 current-era trades are playbook_sim, so the persisted 3% daily-drawdown limit sees essentially none of the realized PnL. The playbook-domain RiskCircuitBreaker is report-only (never wired to block), leaving AbsoluteCircuitBreaker (-$2000/day class constants) and symbol-level guards as the only real brakes on 98% of the flow.",
+        "evidence": "Header: 'playbook 平仓 pnl 未喂入本控制器, 日回撤池当前仅主线平仓在喂'; strategy table: playbook_sim n=438/446; six-authority registry in same header.",
+        "fix": "Call record_trade_pnl(pnl, source='playbook') from the playbook close path (exit_engine/pipeline close handler); add a unit test that a playbook-only loss day trips is_daily_limit_breached()."
+      },
+      {
+        "file": "app/playbook/exit_engine.py",
+        "line_range": "60-75 (_is_overnight_position), 77-100 (note_exit_gap), rule [2] docstring 326-358",
+        "severity": "critical",
+        "category": "overnight protection hole / poll-based soft stop",
+        "description": "OVERNIGHT_GAP_STOP is an in-app rule with no gap check (2026-09-24 errata) and, per all provided code, no broker-side resting stop: losers are held overnight (loss_flat=false policy plus playbook overnight exemptions), the market closes, and the first protection is a scan-cycle detection after next open followed by a market order into the open flush. note_exit_gap is explicitly record-only. No conditional/stop-order submission appears in any provided code section (order_executor source not shown - confirm before implementing).",
+        "evidence": "9 trades -2812 avg -5.45% all LONG; avgMAE 5.47 vs avg realized 5.45 (exit fill at the running worst tick of the hold); top-5 losers all this reason; hold 6.3-19.4h with MFE <= 0.47%.",
+        "fix": "(a) submit a broker-side conditional stop (Futu OpenAPI) before close for every overnight position; (b) EOD-flat when MFE < 0.5% and pnl < 0; (c) evaluate the gap rule event-driven on the first open quote instead of waiting for scan cadence."
+      },
+      {
+        "file": "app/playbook/exit_engine.py",
+        "line_range": "rule [0] opening cooldown + _compute_dynamic_effective_sl (docstring 326-358; bodies not shown)",
+        "severity": "high",
+        "category": "stop-width policy vs dead config",
+        "description": "The playbook chain relaxes SL to 4% for the first 15 minutes (documented in exit_policy.yaml global_hold_protection note: opening cooldown 15 min with SL widened to 4%), and the initial SL comes from arming meta (ATR-relative), not from exit_policy.yaml's 1.5-2.0% vol-bucket caps - those caps are explicitly documented as not governing playbook positions. Intraday single-trade losses of -5.1 to -5.3% (MU/AFRM/UBER) show the operative initial SL is ~5% on high-ATR names.",
+        "evidence": "SL_INITIAL n=27 avg -3.05% vs configured low/medium max_loss 1.5-2.0% (LONG medium override 2.7%); avgMAE 3.14 (fills at the extreme); MU -5.23%, AFRM -5.17%, UBER -5.26% all intraday (hold 1.9-6.7h).",
+        "fix": "Implement a hard max_loss cap (2.5%) inside _compute_dynamic_effective_sl so a cap actually runs on the playbook chain; reduce opening-cooldown relaxation 4% -> 2.5% and time-box 15 -> 10 min; validate via replay before live."
+      },
+      {
+        "file": "app/risk/exit_policy.yaml",
+        "line_range": "header (top ~25 lines); global block; atr_stop.vol_bucket_multipliers; breakeven block",
+        "severity": "high",
+        "category": "SSOT / config-code inconsistency",
+        "description": "exit_policy.yaml is decorative for 98% of current flow: the header states PLAYBOOK_SIM/LIVE positions do not read this file; the 2026-07-05 vol-bucket + direction_override tuning, the breakeven block (enabled:false) and pre_close loss_flat govern only the 8 extended_hours/main-line trades. An operator reading this SSOT would conclude breakeven is off while the playbook be-0.4 ratchet produces 44% of all exits (SL_BREAKEVEN). Two global keys (max_daily_drawdown_pct, max_total_positions) have zero consumers per the in-file 2026-08-28 audit - more dangerous than a missing knob.",
+        "evidence": "Header disclaimer; strategy table playbook_sim 438/446; in-file 'zero consumer' annotations on two global keys.",
+        "fix": "Either wire playbook factor_exit_rules to consume this file (single SSOT) or relocate the operative playbook exit parameters into it and delete/mark dead keys; emit a startup banner listing which keys are actually consumed (guardian already does per-key .get())."
+      },
+      {
+        "file": "app/coordinator/capital_allocator.py",
+        "line_range": "158-190 (try_reserve), 227-259 (release)",
+        "severity": "high",
+        "category": "capital enforcement gap + ledger drift",
+        "description": "Allocator runs observe_only=True: try_reserve always returns True, so strategy/total caps are recorded but never block (docstring: 'Phase B remaining item: switch observe_only to False'). Additionally release() uses position.position_pct while the 2026-10-12 wiring reserves with real qty*price/equity at order time - partial fills or price drift between reserve and close accumulate ledger drift; force_set reconcile exists but its cadence is unspecified.",
+        "evidence": "try_reserve code + docstring; release() implementation.",
+        "fix": "After a shadow period comparing recorded-vs-allowed, flip observe_only to False; store the reserved amount (or reservation id) on the position and release exactly that value; schedule periodic force_set reconcile from broker snapshots."
+      },
+      {
+        "file": "app/risk/position_exit_monitor.py + app/playbook/exit_engine.py",
+        "line_range": "position_exit_monitor.py 1-100 (docstring rules 0-5); exit_policy.yaml exit_monitor block (scan 60s / cooldown 120s)",
+        "severity": "medium",
+        "category": "dual exit chains / stale spec / failed-exit retry gap",
+        "description": "Two parallel exit chains (ExitMonitor for main/ORB; playbook exit_engine for SIM/LIVE) with different reason taxonomies and parameter sources. The monitor docstring still advertises Flash Exit, Day Trade Mode and Scale Out that exit_policy.yaml marks removed/disabled (flash_exit removed 2026-06-20; day_trade_mode enabled:false; scale_out enabled:false) - a stale spec inviting mis-tuning; exit_rules_exclusivity also references disabled rules. cooldown_seconds=120 > scan_interval_seconds=60 means a rejected/failed close order cannot re-trigger for 2 minutes - in a fast drop this adds slippage exactly when the position is blowing through the stop. Position ownership between chains is segregated by source_type with no ownership lease shown: a misclassified position after restart re-import is either double-managed (duplicate close orders) or orphaned (no exits).",
+        "evidence": "Docstring vs yaml; exit_monitor block; exit_policy.yaml header describing the 7/3 segregation.",
+        "fix": "Regenerate the monitor docstring from config; on order-reject bypass the cooldown and retry immediately with a marketable order; add an ownership registry (position_id -> owning monitor) checked at position (re)load; unify exit_reason strings through ExitReason at the trade_records write boundary. More context needed on order_executor/position store to size the double-exit risk."
+      },
+      {
+        "file": "app/strategy/exit_policies.py",
+        "line_range": "36-60 (_read_entry_thesis) + 100-130 (MainPipelineExitPolicy)",
+        "severity": "medium",
+        "category": "blocking I/O on exit path + undocumented tight rule",
+        "description": "_read_entry_thesis opens a synchronous sqlite3 connection per evaluate() call inside the asyncio exit loop - under load this adds latency precisely when exit decisions must be fast. MainPipelineExitPolicy closes breakout-thesis positions at -0.5% pnl, far tighter than any configured stop - if this policy chain is active for main-line positions it is a second, undocumented stop. Whether ExitPolicy.evaluate sits on the live exit path is not shown (more context needed).",
+        "evidence": "Code; no config gate around the -0.5% breakout rule.",
+        "fix": "Cache thesis per trace_id (or read from the in-memory position store); gate the breakout -0.5% rule behind config and replay-validate it before it can silently override the ATR stop."
+      },
+      {
+        "file": "app/playbook/market_regime.py",
+        "line_range": "44-60 (spy_price_basis shadow comment) + 117-149 (MarketRegimeGate._assess_cache)",
+        "severity": "medium",
+        "category": "stale input to gating/sizing",
+        "description": "Pre-market regime assessment uses kline last close as spy_price (yesterday's close); the in-code shadow note documents a 9/21 case where 0.11% MA20 distance flips the regime. Regime drives position_multiplier and min_strength, so entries can be sized on stale data. Shadow telemetry (score_shadow/regime_shadow) is record-only with a 5-10 day verdict pending.",
+        "evidence": "In-code shadow comment; _ASSESS_CACHE_TTL 120s.",
+        "fix": "Land the shadow verdict; if pre_price flips regime >= 1x/week, switch spy_price to pre_price during the pre-market window only."
+      },
+      {
+        "file": "app/playbook/exit_engine.py",
+        "line_range": "326-358 docstring ('peak_price historical peak (restored from meta)')",
+        "severity": "medium",
+        "category": "state persistence gap on trail stops",
+        "description": "Trailing/lock stops depend on peak_price persisted in meta and restored per scan. If the meta write lags or a restart loses the intraday peak, the trail recomputes from a lower peak - a wider stop and larger giveback exactly in the cohort that carries the system (SL_TRAIL_LOCK +6307). Meta persistence cadence is not shown (more context needed).",
+        "evidence": "SL_TRAIL_LOCK giveback 0.83pp (MFE 1.86 -> realized 1.03); peak restored from meta per docstring.",
+        "fix": "Persist peak on every ratchet update and, on restart, re-derive peak from 1-min kline highs since entry; log an invariant warning when recovered peak < kline high."
+      },
+      {
+        "file": "app/risk/stop_loss_config.py",
+        "line_range": "28-40 (_DEFAULT_STOP_LOSS) + _validate",
+        "severity": "low",
+        "category": "dangerous silent fallback",
+        "description": "Fallback SLs include strong_trend_up -0.08 and high_volatility -0.07: if unified_config dynamic_exit is missing or malformed at startup, an 8% stop silently applies to main-line positions. _validate only logs errors and never fails startup.",
+        "evidence": "Defaults dict; _validate() log-only behavior.",
+        "fix": "Make _validate raise in production mode when dynamic_exit.default.stop_loss is missing; clamp all fallbacks to -0.03."
+      }
+    ],
+    "exit_logic_findings": [
+      {
+        "stat_fact": "SL_INITIAL: 27 trades, -4383, avg -3.05%, avgMAE 3.14% - roughly double the 1.5-2.0% low/medium bucket max_loss",
+        "code_location": "app/risk/exit_policy.yaml (header + atr_stop.vol_bucket_multipliers - dead for playbook); app/playbook/exit_engine.py rule [0] opening cooldown (4% / 15 min) + arming-meta ATR-relative SL; exit_monitor scan_interval 60s (poll-based)",
+        "severity": "critical",
+        "root_cause": "Stacked causes, none of them 'gap' alone: (1) the 1.5-2.0% caps are dead config - the yaml header states playbook positions (438/446 trades) do not read this file, so the operative initial SL is the arming-meta stop (ATR-relative, ~5% on high-ATR names like MU/AFRM/UBER) relaxed to 4% during the first-15-min cooldown; (2) stops are soft: no broker-side resting order exists in any provided code, detection is a 60s poll; (3) fills land at the extreme - avgMAE 3.14 vs realized 3.05 (0.09pp gap) is the signature of detect-then-market-order at the worst tick of the move, not of a stop resting at the broker.",
+        "proposed_change": "Submit broker-side stop-market (or wide stop-limit) orders at arming and amend them on every ratchet update; implement a hard 2.5% max_loss cap inside _compute_dynamic_effective_sl so a cap actually runs on the playbook chain; reduce opening-cooldown relaxation to 2.5% / 10 min.",
+        "expected_effect": "Pulling SL_INITIAL avg from -3.05% to ~-2.2% adds ~27 x 0.85pp x $5.3k implied avg notional (= -4383/(27x3.05%)) = ~+$1.2k per 446-trade era; broker-side fills additionally bound the MAE-realized gap on fast moves."
+      },
+      {
+        "stat_fact": "OVERNIGHT_GAP_STOP: 9 trades, -2812, avg -5.45%, all LONG, top-5 losers; avgMAE 5.47 ~= realized 5.45",
+        "code_location": "app/playbook/exit_engine.py:60-75 (_is_overnight_position - no gap check, 2026-09-24 errata) + rule [2]; note_exit_gap (77-100, record-only); exit_policy.yaml pre_close_exit.loss_flat:false (2026-07-05 rationale)",
+        "severity": "critical",
+        "root_cause": "Yes - poll-based detection with no broker-side stop. The 2026-07-05 loss_flat=false rationale ('losers managed by hard SL') assumed an in-session hard stop, but overnight the in-app stop cannot fire; losers with MFE <= 0.47% are held into the close, gap or sell off at the open, and the first detection is a scan cycle after open, filling with a market order at the flush low (MAE ~= realized proves the exit fill is the worst tick of the entire hold). The ~3% threshold (overnight_loss_stop_pct in the main-chain yaml; playbook value in unified_config, not shown) is blown by ~2.45pp of gap + latency + open-liquidity slippage. All 9 LONG suggests overnight-hold eligibility is long-only (cohort exemptions) - a directional overnight risk concentration.",
+        "proposed_change": "(a) broker-side conditional stop before close for every overnight position; (b) EOD-flat rule: MFE < 0.5% AND pnl < 0 at the T-8min window -> close, do not hold; (c) event-driven gap evaluation on the first open quote rather than scan cadence.",
+        "expected_effect": "EOD-flat alone converts the 9 trades from avg -5.45% to roughly -1.5% EOD exits = ~+$1.9-2.0k (9 x ~3.95pp x $5.7k implied notional); broker-side stops recover ~9 x 2.45pp x $5.7k = ~+$1.25k on the gap cohort. Largest removable bleed after SL_INITIAL."
+      },
+      {
+        "stat_fact": "avg MFE 0.91% vs avg realized 0.08% - 0.83pp giveback per trade across 446 trades",
+        "code_location": "app/playbook/adaptive_trailing.py:38-70 (target_capture 60%, min_dd 0.4 / max_dd 1.2 clamp - in-code F3 saturation note); playbook breakeven_at_pct=0.4 with zero buffer (exit_policy.yaml header note, be_0.4 2026-08-17); exit_engine rule [1] ratchet",
+        "severity": "high",
+        "root_cause": "The leak is concentrated in two cohorts, not spread evenly: SL_TRAIL_LOCK gives back 0.83pp of a 1.86% MFE (45% giveback; 123 x 0.83pp x ~$5.0k = ~$5.1k) - the adaptive trail's max_dd=1.2% clamp saturates for MFE > 3% (documented F3) and/or the static factor drawdown is loose; SL_BREAKEVEN gives back 0.43pp of 0.63% MFE (196 x 0.43pp x ~$2.5k = ~$2.1k) - the ratchet moves SL to entry with buffer 0, so ordinary noise stops positions that had shown profit at ~0. Secondary leak: 25% of breakeven exits fill below entry (soft-stop slippage).",
+        "proposed_change": "Set EXT_ADAPTIVE_TRAILING_MAX_DD=2.5 (env override already implemented, no config-hash change) to unclamp high-MFE trades; add a breakeven lock buffer (SL = entry x (1+0.15%)) in factor_exit_rules; both replay-validated first.",
+        "expected_effect": "Trail capture 55% -> ~65% = ~+$1.2k; BE buffer +0.15pp x 196 x $2.5k = ~+$0.7k if the 75% WR holds. Loosening trails increases giveback on trades that do not extend - sign uncertain without replay."
+      },
+      {
+        "stat_fact": "SL_BREAKEVEN: 196 trades (44% of all), +974, 75% WR, avg +0.2%, avgMFE 0.63%",
+        "code_location": "playbook factor_exit_rules breakeven_at_pct=0.4 (exit_policy.yaml header note); exit_engine rule [1] SL classification",
+        "severity": "high",
+        "root_cause": "The trigger is eager relative to the system's own dynamics: 0.4% is below the 0.91% avg MFE, so most positions that ever show profit ratchet to entry and are stopped by mean reversion, netting +$5/trade - dust - while the same machinery leaves initial stops at -3.05% and overnight gaps at -5.45%. The payoff asymmetry (typical win +0.2% vs tail -3 to -5.5%) is exactly why Sep posted 76.8% WR and still lost -509. But the counterfactual is two-sided: the ratchet also rescues marginal winners from the -3% tail, and the BE cohort's implied notional ($2.5k) is half the initial-stop cohort's ($5.3k), so the dust is small in dollars - the highest-value fix is on the loss side, not the BE side.",
+        "proposed_change": "Do not tune the trigger live. Run a replay A/B of trigger 0.4 vs 0.7 vs 1.0 plus a +0.15% lock-buffer variant on Aug-Oct trades; adopt only the variant that improves cohort net PnL including friction (~$3.5-4.8/trade).",
+        "expected_effect": "Buffer-only: ~+$0.7k if WR holds. Trigger raise: uncertain sign - trades peaking in [0.4, 0.7) redistribute between scratch and the initial-SL tail; the replay decides. Churn reduction also cuts friction on ~196 round trips."
+      },
+      {
+        "stat_fact": "2026-09-17 US.CTNT LONG 'breakeven_lock': pnl_pct +2.78% but pnl -314 USD; mae 0.0; hold 0.1h",
+        "code_location": "the lowercase 'breakeven_lock' close-accounting writer - not in exit_engine's documented reason set; likely the legacy close path in app/playbook/pipeline.py (exact lines need context; trade_records writer not shown)",
+        "severity": "high",
+        "root_cause": "Sign/direction contradiction, not fees: +2.78% on the ~$11.3k notional implied by -314/2.78% would be +$314; the exact magnitude with opposite sign is the signature of a SHORT payoff recorded with a LONG pct convention - pnl_pct computed as (exit-entry)/entry regardless of direction while pnl_usd uses signed qty (or the direction field is wrong and the fills were short). Corroborating: mae=0.0 (MAE untracked on this path) and the cohort's other trade is +17 at pct +0.44 - both pcts positive, one USD negative, so WR (50%) and avg_pct (+1.61) disagree within one row. A 2.78% fee/slippage explanation is implausible on a 6-minute hold.",
+        "proposed_change": "Audit the breakeven_lock/tighten/lock_in writer; compute pnl_pct direction-aware; add a write-time invariant |pnl_usd - pnl_pct x qty x entry_price| < fee tolerance; migrate the three lowercase reasons to ExitReason.",
+        "expected_effect": "Removes +/-$314-class corruption per occurrence; SL_BREAKEVEN-family cohorts become trustworthy - a prerequisite for the breakeven A/B and any exit-parameter tuning."
+      },
+      {
+        "stat_fact": "Monthly: Aug -242 (54.6% WR), Sep -509 (76.8% WR), Oct +165 - Sep proves win rate is not the problem",
+        "code_location": "aggregate of exit_engine rules [0]/[2] tails vs rules [1]/[3] engine",
+        "severity": "critical",
+        "root_cause": "Payoff tails, not hit rate: 36 tail trades (SL_INITIAL -4,383 + OVERNIGHT_GAP_STOP -2,812 = -7,195) offset the +7,281 earned by 319 ratchet-engine trades (SL_TRAIL_LOCK + SL_BREAKEVEN). In Sep alone, four trades (ORCL -400, RIVN -320, CTNT -314, SNDK -277 = ~-1,311) equal 2.6x the month's net loss.",
+        "proposed_change": "Prioritize tail-execution fixes (initial-stop execution + overnight policy + hard SL cap) over any win-rate optimization; treat WR as already sufficient.",
+        "expected_effect": "Cutting the 36-trade tail from -7,195 to ~-4,500 flips the era net from -586 to ~+2.1k with zero signal-side changes."
+      },
+      {
+        "stat_fact": "exit_reason taxonomy stragglers: 'tighten' (3, -452, avg -2.15%), 'breakeven_lock' (2, -297), 'lock_in' (1, +108)",
+        "code_location": "unmigrated reason writer(s) alongside exit_engine's documented taxonomy; ExitReason enum exists in app/risk/exit_rules but is not enforced at the trade_records boundary",
+        "severity": "medium",
+        "root_cause": "Two writers with different conventions. 'tighten' is behaviorally the rule [0.5] early-tightened SL (1%) - its avg -2.15% means 1.15pp of execution beyond even the tightened stop, a third independent confirmation of soft-stop slippage; it should roll up into the SL_INITIAL family but currently fragments cohort stats (and shifts the '44% SL_BREAKEVEN share' if merged).",
+        "proposed_change": "Enum migration at the write boundary plus a stats mapping (tighten -> SL_INITIAL family); backfill the 6 straggler rows.",
+        "expected_effect": "Cleaner measurement and consolidated slippage evidence for the broker-side-stop case; no direct PnL."
+      },
+      {
+        "stat_fact": "By strategy: extended_hours_entry 8 trades -522 (50% WR) vs playbook_sim 438 trades -64",
+        "code_location": "extended-hours entry path (signal_pipeline fast lane / scheduler gate - exact gate needs context)",
+        "severity": "medium",
+        "root_cause": "1.6% of trades cause 89% of the net loss: extended-hours fills carry wide spreads/thin books and then run on the same soft-stop machinery; avg -65/trade vs -0.15/trade for the regular session.",
+        "proposed_change": "Gate extended-hours entries on quoted spread (e.g., <= 10bp) and halve size, or route the signals to next-open limit orders.",
+        "expected_effect": "+$522 per equivalent 3-month window on current flow; near-zero risk to the profit engine (the SL_TRAIL_LOCK cohort is regular-session playbook)."
+      }
+    ],
+    "profit_proposals": [
+      {
+        "title": "Broker-side resting stops (amend-on-ratchet) for all playbook positions",
+        "change": "At arming, submit a Futu conditional stop order (stop-market, or stop-limit with limit = stop x (1-0.3%) for LONG); amend/replace on every ratchet update (breakeven, trail lock, tighten); cancel on non-SL exits. Keep the in-app monitor as reconciler that detects orphaned/missed stops.",
+        "target_files": [
+          "app/playbook/exit_engine.py (emit stop-order updates alongside SL state)",
+          "order_executor (submit/amend/cancel conditional orders)",
+          "position store (persist broker stop order id)"
+        ],
+        "expected_impact": "Every stop cohort shows fills at the worst tick (MAE ~= realized: SL_INITIAL 3.14 vs 3.05; OVERNIGHT_GAP 5.47 vs 5.45; tighten -2.15% vs a 1% stop). Conservative recovery: 27x0.85pp x $5.3k + 9x2.45pp x $5.7k + 3x1.15pp x $7.0k = ~$2.7k, plus ~49 breakeven slippage fills x ~0.35pp x $2.5k = ~$0.4k -> era net flips from -586 to roughly +2.5k. Also removes the 120s-cooldown retry hazard on rejected closes.",
+        "validation_method": "Shadow: run 2-4 weeks placing the stops record-only (or in Futu paper) and compare would-fill prices vs actual poll-based exits on the same positions; plus 1-min-bar replay of Aug-Oct simulating resting-stop fills vs recorded fills.",
+        "effort": "M",
+        "priority": 1
+      },
+      {
+        "title": "EOD-flat for no-progress losers (eliminate the overnight gap cohort)",
+        "change": "In exit_engine rule [3] PRE_CLOSE: if MFE < 0.5% AND current pnl < 0 at the T-8min window -> close, do not hold overnight; keep the cohort-B winner skip unchanged. New factor_exit_rules key e.g. eod_flat_no_progress_mfe_pct: 0.5.",
+        "target_files": [
+          "app/playbook/exit_engine.py (rule [3])",
+          "config/unified_config.yaml (factor_exit_rules)"
+        ],
+        "expected_impact": "All 9 OVERNIGHT_GAP_STOP trades had MFE <= 0.47% and were underwater at the hold decision; closing at EOD (~-1.5% est.) instead of -5.45% saves ~9 x 3.95pp x $5.7k = ~+$1.9-2.0k per era. Risk: forfeits overnight reversals - the replay quantifies how many overnight-held losers recovered next day.",
+        "validation_method": "Replay Aug-Oct: for every overnight-held position, compare EOD-close PnL vs the actual next-session exit; report both directions of the tradeoff before enabling.",
+        "effort": "S",
+        "priority": 2
+      },
+      {
+        "title": "Hard 2.5% SL cap + tighter opening cooldown on the playbook chain",
+        "change": "Implement the max_loss cap inside _compute_dynamic_effective_sl (the cap currently exists only in dead exit_policy.yaml); opening cooldown 4% -> 2.5% and 15 -> 10 minutes.",
+        "target_files": [
+          "app/playbook/exit_engine.py (_compute_dynamic_effective_sl, rule [0])",
+          "config/unified_config.yaml"
+        ],
+        "expected_impact": "SL_INITIAL avg -3.05% -> ~-2.2% = ~+$1.2k per era (27 x 0.85pp x $5.3k). Risk: more noise stop-outs - the replay measures the WR shift; the population is SIM, so a config A/B costs zero capital.",
+        "validation_method": "Replay with re-priced stops on Aug-Oct; SIM A/B config (one variant per week).",
+        "effort": "S",
+        "priority": 3
+      },
+      {
+        "title": "Fix accounting + taxonomy + wire playbook PnL into DrawdownController (measurement integrity)",
+        "change": "Direction-signed pnl_pct; write-time invariant |pnl_usd - pnl_pct x qty x entry| < fee tolerance; migrate 'tighten'/'breakeven_lock'/'lock_in' to ExitReason with a stats mapping; call DrawdownController.record_trade_pnl from the playbook close path.",
+        "target_files": [
+          "trade_records close writer (app/playbook/pipeline.py close path - exact lines need context)",
+          "app/risk/drawdown_control.py (caller wiring)"
+        ],
+        "expected_impact": "No direct PnL, but removes +/-$314-class stat corruption (CTNT), makes the 44%-share SL_BREAKEVEN cohort trustworthy, and closes the risk blind spot where 98% of flow is invisible to the 3% daily-DD limit. Prerequisite for safely interpreting the A/B results of proposals 1/3/7.",
+        "validation_method": "Unit tests with synthetic LONG/SHORT closes (including the CTNT pattern); backfill recompute of the 6 straggler rows; verify DrawdownController trips on a simulated playbook-only loss day.",
+        "effort": "S",
+        "priority": 4
+      },
+      {
+        "title": "Risk-normalized position sizing (qty = risk_$ / stop_distance)",
+        "change": "At arming, size positions so dollar risk per trade is fixed (e.g., $75-100): qty = risk_budget / (entry - initial_sl); keep the current notional as a cap.",
+        "target_files": [
+          "playbook arming/sizing (playbook_service / capital allocation path)",
+          "app/coordinator/capital_allocator.py"
+        ],
+        "expected_impact": "Implied avg notional by cohort (pnl/(n x avg_pct)): SL_INITIAL $5.3k, OVERNIGHT_GAP $5.7k vs SL_BREAKEVEN $2.5k - per-trade dollar risk spans ~$10 (BE) to ~$170 (initial/gap), ~16x dispersion with the largest risk on the widest stops. Normalizing the 36 tail trades to ~$100 risk cuts them from -7,195 to ~-3,600 = ~+$3.6k; offset: tight-stop winners get larger notional (trail locks could grow) - replay nets it.",
+        "validation_method": "Replay Aug-Oct with re-sized positions (recompute per-trade pnl with new qty); SIM A/B config.",
+        "effort": "M",
+        "priority": 5
+      },
+      {
+        "title": "Gate or disable extended_hours_entry",
+        "change": "Require quoted spread <= 10bp and halve size for extended-hours entries, or route the signals to next-open limit orders.",
+        "target_files": [
+          "app/pipeline/signal_pipeline.py (entry session gate)",
+          "config/unified_config.yaml"
+        ],
+        "expected_impact": "8 trades, -522, 50% WR - 1.6% of trades = 89% of net loss; removing them is +$522 per equivalent window with no effect on the regular-session profit engine.",
+        "validation_method": "A/B config; shadow-log counterfactual next-open fills for the same signals.",
+        "effort": "S",
+        "priority": 6
+      },
+      {
+        "title": "Breakeven trigger/buffer A/B + unclamp adaptive trail max_dd",
+        "change": "Set EXT_ADAPTIVE_TRAILING_MAX_DD=2.5 (env already implemented, no config-hash change); replay-test be trigger 0.4 vs 0.7 vs 1.0 and a +0.15% lock buffer before adopting any.",
+        "target_files": [
+          "app/playbook/adaptive_trailing.py (env override path)",
+          "config/unified_config.yaml (factor_exit_rules breakeven)"
+        ],
+        "expected_impact": "BE cohort giveback is 0.43pp x 196 x $2.5k = ~$2.1k theoretical; realistic capture +$0.7-1.2k. Sign of a trigger raise is uncertain (scratches may redistribute into the initial-SL tail) - replay decides; the trail unclamp only affects MFE > 3% trades (few in the current cohort).",
+        "validation_method": "Cohort-level replay with counterfactual exits; SIM A/B config per variant.",
+        "effort": "S",
+        "priority": 7
+      },
+      {
+        "title": "Cut scratch churn to reduce friction (gross-positive, friction-negative system)",
+        "change": "The era is gross-positive (avg pct +0.078%, sum of n x avg_pct = +34.8pp) but net -586 - implied friction ~$3.5-4.8/trade (~8-10bp on ~$4-5k notional; corroborated by PATIENT_EXIT_FILL: pct 0.0, usd -5). Raise DEAD_SIGNAL/MFE_STALL quality bars or skip the lowest-quality signal decile to cut trade count 20-30% while leaving the trail-lock cohort intact.",
+        "target_files": [
+          "app/pipeline/signal_pipeline.py (entry quality gate)",
+          "config/unified_config.yaml"
+        ],
+        "expected_impact": "Cutting ~90-130 scratch trades saves ~$300-600 friction per era; small but positive-expectation once the tail fixes land. Confidence limited until fee accounting is confirmed (pnl_pct appears gross, pnl_usd net).",
+        "validation_method": "Replay dropping the lowest-MFE decile of entries and recompute net; confirm fee column semantics first.",
+        "effort": "M",
+        "priority": 8
+      }
+    ],
+    "data_consistency_issues": [
+      {
+        "observation": "US.CTNT 2026-09-17 breakeven_lock: pnl_pct +2.78% vs pnl -314 USD, mae 0.0, hold 0.1h, direction LONG.",
+        "why_suspicious": "+2.78% on the implied ~$11.3k notional equals +$314 - the USD figure is the exact negative of the pct-implied PnL, a sign/direction contradiction; fees cannot explain -314 on a 6-minute hold, and mae=0.0 is implausible for a trade that moved 2.78%.",
+        "likely_cause": "The lowercase 'breakeven_lock' writer computes pnl_pct with a LONG convention ((exit-entry)/entry) while pnl_usd uses signed qty - i.e., a SHORT payoff recorded as LONG (or a negative qty flowing into usd only). MAE is not tracked on that path."
+      },
+      {
+        "observation": "PATIENT_EXIT_FILL: avg_pct 0.0 with pnl -5; system-wide avg pct +0.078% (sum of n x avg_pct = +34.8pp over 446) vs net -586 USD.",
+        "why_suspicious": "Positive average pct with negative total USD means the two columns use different accounting bases; a pct of exactly 0.0 with a non-zero USD loss isolates the difference to fees/slippage.",
+        "likely_cause": "pnl_pct is gross of commissions (computed from prices) while pnl_usd is net of fills+fees - implied friction ~$3.5-4.8/trade (~8-10bp). The strategy is gross-positive but friction-negative. Needs a fee column to confirm."
+      },
+      {
+        "observation": "breakeven_lock cohort (2 trades): avg_pct +1.61, WR 50%, total -297.",
+        "why_suspicious": "Both trades show positive pct (+2.78, +0.44) yet the cohort loses money and WR is 50% - WR, avg_pct and total USD disagree within a single row.",
+        "likely_cause": "Same sign bug as the CTNT row; cohort stats unusable until backfilled with direction-aware pct."
+      },
+      {
+        "observation": "mae = 0.0 for TAKE_PROFIT (MFE 7.67%) and both breakeven_lock trades.",
+        "why_suspicious": "A +7.67% winner with literally zero adverse excursion over its whole hold is implausible; the breakeven_lock rows already show another tracking gap.",
+        "likely_cause": "MAE tracking is only wired on the exit_engine taxonomy paths; the legacy lowercase-reason writer does not record MAE."
+      },
+      {
+        "observation": "Implied avg notional by cohort (pnl/(n x avg_pct)): SL_INITIAL $5.3k, OVERNIGHT_GAP $5.7k, SL_TRAIL_LOCK $5.0k, SL_BREAKEVEN $2.5k, PRE_CLOSE $4.1k.",
+        "why_suspicious": "The widest-stop cohorts carry the largest notional - per-trade dollar risk spans ~$10 (BE) to ~$170 (initial/gap), ~16x dispersion, the opposite of risk-normalized sizing; alternatively a price-level artifact (cheaper symbols in the BE cohort).",
+        "likely_cause": "Fixed-fraction/fixed-share sizing not tied to stop distance (or cohort price differences). Needs qty/price columns to distinguish; either way the tails carry the most dollar risk."
+      },
+      {
+        "observation": "exit_reason mixes 15 enum-style reasons with 3 lowercase stragglers ('tighten', 'breakeven_lock', 'lock_in', 6 trades).",
+        "why_suspicious": "'tighten' (avg -2.15%, 0% WR) is behaviorally the rule [0.5] early-tightened SL and should roll into the SL_INITIAL family; leaving it out shifts every cohort share, including the headline 'SL_BREAKEVEN = 44% of trades'.",
+        "likely_cause": "An unmigrated exit writer bypassing the ExitReason enum at the trade_records boundary."
+      },
+      {
+        "observation": "OVERNIGHT_GAP_STOP is 9/9 LONG.",
+        "why_suspicious": "Under direction-agnostic overnight holding, 9/9 same-direction is a ~1/512 coincidence; either eligibility is long-only by design or SHORT overnight exits receive a different reason label.",
+        "likely_cause": "Likely design asymmetry in the overnight exemptions (overnight_eod_exempt / w_week_loser_exempt); if unintended, it is a concentrated directional overnight risk. Confirm against unified_config."
+      },
+      {
+        "observation": "holding_hours for overnight stops (6.3, 6.3, 19.4, 13.8, 6.4) initially looks too short for overnight holds.",
+        "why_suspicious": "A prior-day 15:00 entry exiting at 9:20 next day is ~18.3 wall-clock hours, not 6.3.",
+        "likely_cause": "Verified consistent, not a bug: holding_hours excludes non-trading time - ORCL 18.3 wall - 12h night = 6.3; QCOM Thu 14:00 -> Mon 9:24 = 67.4 wall - 48h weekend = 19.4; RIVN Fri 19:30 -> Mon 9:20 = 61.8 - 48 = 13.8. Values reconcile exactly, which also confirms these positions really were held overnight."
+      },
+      {
+        "observation": "Aggregate cross-checks: sum pnl by reason = -587 ~= -586; sum n = 446; monthly sum -586; strategy sum -586; sum(n x avg_pct)/446 = +0.078% ~= stated 0.08%; MFE_STALL avgMFE 0.16 < 0.5 rule threshold; SL_BREAKEVEN avgMFE 0.63 >= 0.4 trigger.",
+        "why_suspicious": "None - these pass; the per-reason table is internally consistent and exit_reason semantics match the documented code thresholds.",
+        "likely_cause": "n/a - statistics are reliable at cohort level except the per-trade sign/MAE issues flagged above; Sep's 76.8% WR with -509 is a real payoff-asymmetry signature, not a logging bug."
+      }
+    ],
+    "overall_assessment": {
+      "strategy_soundness_score": 5,
+      "exit_logic_score": 3,
+      "top_3_actions": [
+        "Move stops to the broker: submit Futu conditional stop orders at arming, amend on every ratchet, keep the in-app monitor as reconciler - MAE ~= realized on SL_INITIAL (3.14 vs 3.05), OVERNIGHT_GAP (5.47 vs 5.45) and tighten (-2.15% vs a 1% stop) proves poll-based fills land at the worst tick of the hold.",
+        "Stop holding no-progress losers overnight: EOD-flat when MFE < 0.5% and underwater (all 9 OVERNIGHT_GAP_STOP trades had MFE <= 0.47%); this cohort is -2,812 and contains the top-5 losers.",
+        "Fix measurement before tuning: direction-signed pnl_pct (CTNT +2.78% vs -314 USD), ExitReason migration for 'tighten'/'breakeven_lock'/'lock_in', and feed playbook PnL into DrawdownController - 98% of flow is currently invisible to the 3% daily-DD limit."
+      ],
+      "summary": "The signal layer is gross-positive (avg +0.078%/trade, 66.7% WR, Sep 76.8% WR) but the exit/execution layer converts it into -586 net over 446 trades: 36 tail trades (SL_INITIAL -4,383 + OVERNIGHT_GAP_STOP -2,812) erase the +7,281 earned by the ratchet engine (SL_TRAIL_LOCK + SL_BREAKEVEN). Three mechanical causes, all fixable without touching signal logic: (1) every stop is an in-app 60s-poll soft stop - MAE ~= realized on all stop cohorts proves fills land at the worst tick of the hold; (2) no-progress losers (MFE < 0.5%) are held overnight with no broker-side protection and exit at -5.45% opens; (3) the operator's exit_policy.yaml is dead config for 98% of flow, so the believed 1.5-2.0% cap never runs - the operative SL is ATR-wide, relaxed to 4% in the opening cooldown. Fix measurement first (CTNT sign bug, lowercase reasons, playbook PnL into DrawdownController), then broker-side stops + EOD-flat + a real SL cap: expected swing ~+$4-5k per 446-trade era, flipping the system decisively positive. Scores on a 0-10 scale."
+    }
+  },
+  "error": null
+}

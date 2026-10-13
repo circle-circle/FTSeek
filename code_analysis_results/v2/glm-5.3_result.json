@@ -1,0 +1,223 @@
+{
+  "model": "glm-5.3",
+  "elapsed": 472.78879141807556,
+  "request_id": "849edaae-49d3-9f36-b43c-cb4e5cd9c11e",
+  "tokens_in": 18531,
+  "tokens_out": 29953,
+  "reasoning_tokens": 23205,
+  "retries": 0,
+  "parse_ok": true,
+  "content_len": 31362,
+  "result": {
+    "model_name": "GLM-4.6",
+    "architecture_analysis": {
+      "pattern": "Layered, event-driven trading pipeline with an engine abstraction (Risk/Execution/Observation BaseEngine in app/core/engine.py), a central TradingScheduler orchestrating scan→signal→risk→order→position flows, background reconciliation threads (position_sync, 30s interval), a DI container (app/core), and singleton managers (CapitalAllocator, SymbolLockManager, PDTGuard, rejection logger). Despite the stated asyncio foundation, the hot paths are thread-based (threading.Lock/RLock, background threads) with synchronous SQLite and Futu OpenD I/O. Persistence is SQLite (WAL) shared across the main process, web dashboard, and review tooling. The codebase is visibly mid-refactor: monolithic scheduler_tasks.py is being decomposed into pipeline/risk/playbook modules with dated fix annotations (P0/P1, Task #34, RFC-080, DEB-20260903 #97).",
+      "main_components": [
+        "TradingScheduler / app/core/scheduler_core.py (PositionStore with RLock + pending-set duplicate-open guard, orchestration)",
+        "app/pipeline/signal_pipeline.py (scan_loop, per-symbol decision chain, regime filters, SignalScore construction)",
+        "app/pipeline/order_executor.py (order construction, risk gates, capital reservation at order point, TWAP vs market routing via _submit_order_optimized, _close_position with symbol-lock decorator)",
+        "app/execution/broker_adapter.py (FutuBrokerAdapter: OpenD connection, submit/cancel/positions, heartbeat + reconnect, 30% notional sanity wall, offline-simulated-fill guard)",
+        "app/core/position_sync.py (30s reconciliation thread: broker SSOT ↔ local DB, AUTO claim via _SYSTEM_ORDER_REMARK_PREFIXES whitelist, external-close dedup via EXTERNAL_CLOSE_DUP_SQL)",
+        "app/risk/position_exit_monitor.py + app/playbook/exit_engine.py (modular exit rule chains: SL/TP/trailing/pre-close/time-stop)",
+        "app/coordinator/capital_allocator.py (bucketed capital ledger with caps, observe/enforce modes, SQLite persistence, auto-pool isolation for legacy/manual positions)",
+        "app/core engines + EventStore (events, alerts, failure records)",
+        "app/storage layer (trade_store, playbook DB, rejection/exit-quality trackers)",
+        "app/web_dashboard, app/review, observability consumers"
+      ],
+      "data_flow": "scan_loop → market data (Futu quotes via MarketDataRouter / adaptive polling tiers) → _process_symbol_impl per symbol (context enrichment, VWAP/earnings/regime gates, fast-lane plan or technical/LLM-vote signal) → SignalScore → risk pre_trade_check + CapitalAllocator.try_reserve at the order point (order_executor _reserve_capital_for_order computes quantity×price/equity) → _submit_order_optimized routes TWAP vs market → FutuBrokerAdapter.submit_order → Futu OpenD → fills → position_sync thread (30s) reconciles broker SSOT against PositionStore/trade_records, claims AUTO orders via remark whitelist, detects external closes → position_exit_monitor / playbook exit_engine evaluate exit rules each tick → close via _close_position under SymbolLock → CapitalAllocator.release on position close → TradeEvents/Alerts to EventStore → dashboard / daily_review / analytics consume events and the capital ledger.",
+      "weaknesses": [
+        "Single Futu OpenD connection (one quote_ctx/trade_ctx) is a single point of failure; heartbeat/reconnect exists but there is no redundant connection or broker failover path.",
+        "Concurrency model mismatch: described as asyncio-based, but hot paths use threading locks and background threads with synchronous SQLite and broker I/O; a blocking call made from the event-loop thread can stall the whole system.",
+        "Scheduler-centric coupling: order_executor functions accept the whole 'scheduler' object and reach into its attributes (market_data, execution_engine), inverting dependency direction; a DI container exists but singletons are still lazily constructed at call sites without locks.",
+        "Capital enforcement is still observe_only=True in production (Phase B pending), so bucket/total caps are advisory today; the ledger that will back enforcement has integrity defects (see bugs: release-without-reserve drift, unvalidated position_pct, unpersisted owner pools).",
+        "Fail-open defaults in risk/ops paths: _get_vwap_deviation returns None on any error and pre_trade_check soft-passes; broker_adapter.cancel_order returns True on indeterminate states — degraded infrastructure silently widens trading permissions.",
+        "SQLite is simultaneously the hot-path capital ledger, reconciliation store, and multi-process dashboard source; per-call connections plus 5s busy timeouts create cross-process lock contention windows while internal locks are held.",
+        "Module-level mutable global state (_VIX_HISTORY/_SPY_HISTORY in signal_pipeline, lazy singletons) undermines testability and introduces shared-state races.",
+        "Lock ordering is only documented locally (PositionStore._lock → DailyActivePool._lock; CapitalAllocator._lock → _db_lock); no global hierarchy is enforced, so deadlock risk grows as cross-component flows are added."
+      ]
+    },
+    "bugs": [
+      {
+        "file": "app/coordinator/capital_allocator.py",
+        "line_range": "141-211 (try_reserve + release; line numbers approximate)",
+        "severity": "high",
+        "category": "logic_error",
+        "description": "Observe-mode ledger drift via release-without-reserve. In try_reserve, when observe_only=True and the decision is BLOCKED_STRATEGY_CAP / BLOCKED_TOTAL_CAP / BLOCKED_UNKNOWN_BUCKET, the method returns True (the trade proceeds) but deliberately does NOT record the allocation (H7 fix: '只有 allowed 才记账'). However release() unconditionally decrements _allocations[bucket] by the full position_pct on close (clamped at 0), with no knowledge of whether that reserve was ever recorded. Every BLOCKED-but-allowed position that later closes subtracts reserve credit that was never added, stealing headroom from other strategies recorded in the same bucket. The stale docstring in reset_and_reconcile ('observe 模式下账本可能透支 (BLOCKED 事件也记账了)') describes the pre-H7 behavior, confirming this asymmetry is a regression introduced by the H7 fix.",
+        "impact": "In the current default observe_only=True mode, snapshot(), auto_capacity_report() (fallback path), get_recent_events() and all dashboard/daily_review capital figures systematically understate exposure. If Phase B flips observe_only=False without a preceding reset_and_reconcile, caps are enforced against a corrupted baseline; even with periodic reconcile, between cycles BLOCKED decisions are computed from understated 'current' values, so real over-cap trades are misclassified as ALLOWED.",
+        "fix": "Make release() strategy-aware: under the lock read recorded = _by_strategy.get(strategy, 0.0), compute actual = min(position_pct, recorded), and decrement both _allocations[bucket] and _by_strategy[strategy] by 'actual' only, logging a warning when actual < position_pct (indicates an unrecorded reserve, e.g. observe-mode BLOCKED pass-through). Alternatively record BLOCKED reserves into a separate shadow dict in observe mode so release can be symmetric. Also update the stale reset_and_reconcile docstring to match post-H7 semantics."
+      },
+      {
+        "file": "app/coordinator/capital_allocator.py",
+        "line_range": "141-200 (try_reserve; also release 202-211)",
+        "severity": "high",
+        "category": "missing_validation",
+        "description": "try_reserve performs no validation on position_pct. A NaN input (plausible from the documented order-path computation quantity×price/equity if price or equity is NaN) fails every comparison (NaN > cap is False; NaN > max_total is False), so decision becomes ALLOWED and the raw NaN is stored into _allocations[bucket] with no clamp. NaN then propagates through sum(self._allocations.values()), making every future cap comparison in every bucket False — the allocator permanently fails open. A negative position_pct similarly decrements the bucket, letting a caller manufacture cap headroom. Worse: after a NaN is stored, any subsequent release() in that bucket evaluates max(0.0, NaN - pct) which returns 0.0 (Python max with NaN first-arg semantics reversed here: 0.0 is the first argument so it wins), silently zeroing the bucket and wiping legitimate co-bucket reserves from other strategies.",
+        "impact": "One bad float from the order-sizing path silently disables all capital caps and can erase other strategies' recorded reserves. Currently masked because observe_only=True never blocks, but snapshots/auto reports immediately show NaN, and the moment Phase B enables enforcement the caps are dead. The partial self-heal on release makes the corruption intermittent and very hard to diagnose in production.",
+        "fix": "At the top of try_reserve (and release/force_set/compute_scale_factor) validate input: 'if not (position_pct > 0) or not math.isfinite(position_pct): logger.warning(...); return False'. Note that 'not (x > 0)' evaluates True for NaN, so this single check covers NaN, negative and zero. Add a unit test pinning try_reserve(nan) → False and try_reserve(-0.1) → False."
+      },
+      {
+        "file": "app/coordinator/capital_allocator.py",
+        "line_range": "560-630 (_load_persist_state / _persist_state / _persist_state_all)",
+        "severity": "medium",
+        "category": "logic_error",
+        "description": "Persistence gap for owner pools: _persist_state and _persist_state_all only write kind='bucket' and kind='strategy' rows to capital_state. _manual_reserved and _legacy_protected_reserved are never persisted, and _load_persist_state never restores them, so after a process restart both pools are 0.0 until StrategyCoordinator.reconcile() next runs (set_owner_pools/set_manual_reserved contain no persist calls).",
+        "impact": "In the post-restart window, try_reserve's total (sum(allocations) + manual + legacy) omits real manual/legacy exposure, so the max_total check is too permissive and auto_pool is overstated; a reserve executed in that window can push total exposure above max_total. Restart also produces spurious 0→x pool-transition log lines and a wrong first auto_capacity_report.",
+        "fix": "Persist the pools in capital_state (rows ('pool','manual',v,ts) and ('pool','legacy',v,ts)) inside set_owner_pools / set_manual_reserved / set_legacy_protected_reserved, and restore them in _load_persist_state. Alternatively gate try_reserve with a 'reconciled' flag that is only set after the first set_owner_pools/reconcile call post-startup, failing closed until pools are known."
+      },
+      {
+        "file": "app/coordinator/capital_allocator.py",
+        "line_range": "494-630 (_record_event / _persist_state / _persist_event)",
+        "severity": "medium",
+        "category": "concurrency",
+        "description": "All mutating operations (try_reserve, release, force_set, reconcile_with_positions) call _record_event and _persist_state while holding self._lock, and each of those opens a brand-new sqlite3 connection, executes, and commits (sqlite3.connect timeout=5.0 → up to 5s busy wait per connection). The ledger DB is also read by other processes (web_dashboard, daily_review), so a busy DB can stall a single reserve for up to ~5s per connection while self._lock is held, freezing every other thread's capital check. Two connections are opened per allowed reserve (event row + state row), doubling the cost. If the scheduler's asyncio event loop shares this thread, the entire loop blocks for the duration.",
+        "impact": "Latency spikes and head-of-line blocking on the hot order path: under DB contention (dashboard queries, position_sync writes to the same SQLite file) order submission can stall for seconds. This converts a reporting feature (P1-7 persistence) into an availability risk for order placement.",
+        "fix": "Capture the values to persist under self._lock (bucket, bucket_value, strategy, strategy_value, event fields) and perform the SQLite writes after releasing _lock; or push entries onto an in-memory queue drained by a single dedicated writer thread using one long-lived WAL connection. Either preserves ordering while removing disk I/O from the critical section."
+      },
+      {
+        "file": "app/pipeline/order_executor.py",
+        "line_range": "50-58 (_get_pdt_guard)",
+        "severity": "medium",
+        "category": "race_condition",
+        "description": "_get_pdt_guard uses unlocked check-then-act lazy initialization on the module global _pdt_guard. The module runs in a multi-threaded environment (scheduler_core comments explicitly describe concurrent scan_loop / monitor_loop callers, plus the position_sync background thread): two threads can both observe None, both construct PDTGuard, and the second assignment overwrites the first, orphaning any in-memory day-trade counts recorded on the first instance.",
+        "impact": "PDT (pattern day trader) round-trip counting can be undercounted if PDTGuard keeps in-memory state, risking real PDT violations — a regulatory/broker-account-level risk (account restrictions), not merely financial. If PDTGuard is DB-backed the impact degrades to duplicated initialization side effects.",
+        "fix": "Guard with a module-level threading.Lock and double-checked locking ('with _pdt_guard_lock: if _pdt_guard is None: _pdt_guard = PDTGuard()'), or construct PDTGuard eagerly during scheduler startup — it was made lazy only to avoid DB access at import time, and startup happens after the DB is available."
+      },
+      {
+        "file": "app/execution/broker_adapter.py",
+        "line_range": "606-638 (cancel_order)",
+        "severity": "medium",
+        "category": "error_handling",
+        "description": "cancel_order returns True not only for confirmed CANCELLING/CANCELLED terminal states but also when the follow-up order_list_query fails or returns an unexpected state ('其余/查询异常 → True+warning'). This is a documented deliberate tradeoff (DEB-20260904 #185, with position_sync as a 30s backstop), but True is the only signal upstream has: any caller that treats cancel success as safe-to-resubmit (retry / replace-order logic) can double exposure during the up-to-30s window before reconciliation detects that the 'cancelled' order actually filled.",
+        "impact": "A cancel that lost the race (order filled) combined with an immediate replacement order creates a doubled position for up to 30 seconds; if the replacement also fills, an oversized position persists until exit logic or the next reconciliation notices. The backstop bounds but does not prevent the double-submit.",
+        "fix": "Return a tri-state (e.g. True/False/None or a small result object with state CONFIRMED_CANCELLED / CONFIRMED_FILLED / UNKNOWN) so callers must await confirmation before resubmitting; minimally, have order_executor treat the indeterminate case as 'do not resubmit until position_sync confirms terminal state' by marking the symbol in a short cooldown keyed to the order id."
+      },
+      {
+        "file": "app/coordinator/capital_allocator.py",
+        "line_range": "632-648 (get_capital_allocator)",
+        "severity": "low",
+        "category": "race_condition",
+        "description": "The get_capital_allocator singleton uses unlocked check-then-act on _singleton; concurrent first calls can construct two CapitalAllocator instances (one discarded). Additionally, all parameters (caps, max_total_pct, observe_only, db_path) are silently ignored on every call after the first, so a caller passing db_path later receives an in-memory-only allocator with no error or warning.",
+        "impact": "If two threads race during startup, one subsystem can hold a reference to an orphaned allocator whose ledger diverges from the singleton (split-brain capital accounting). The ignored-args footgun can silently disable persistence for a caller that expects it.",
+        "fix": "Protect with a module-level lock and double-checked locking; on subsequent calls, log a warning when materially different args (db_path / observe_only / caps) are passed. Better: construct once in the existing DI container during single-threaded startup."
+      },
+      {
+        "file": "app/pipeline/signal_pipeline.py",
+        "line_range": "57-64 (_VIX_HISTORY / _SPY_HISTORY globals)",
+        "severity": "low",
+        "category": "concurrency",
+        "description": "Module-level mutable buffers _VIX_HISTORY and _SPY_HISTORY are shared global state with no synchronization. Individual list.append calls are atomic in CPython, but the documented trim to _HISTORY_MAX_ENTRIES (the trimming code is in a truncated region — needs confirmation) using slice-reassignment is not atomic, and readers (check_rapid_regime_change) can observe a partially-trimmed or inconsistent window.",
+        "impact": "Rapid-regime-change detection could occasionally evaluate a stale or partially-updated 5-minute VIX/SPY window, producing a missed or spurious regime-change gate decision. Low probability, but this pattern is a classic source of intermittent misbehavior as thread counts grow.",
+        "fix": "Replace both lists with collections.deque(maxlen=_HISTORY_MAX_ENTRIES): append is thread-safe, oldest entries are discarded automatically, and no manual trim race exists. If timestamp-based expiry (HISTORY_MAX_SECONDS) is required, guard append+prune with a small threading.Lock."
+      },
+      {
+        "file": "app/core/engine.py",
+        "line_range": "150-154 (ExecutionEngine.shutdown)",
+        "severity": "low",
+        "category": "resource_leak",
+        "description": "ExecutionEngine.shutdown() clears self.pending_orders without attempting to cancel them at the broker and without clearing self.order_book. Working orders remain live at Futu with no local tracking after shutdown. (Abstract base class — concrete implementations may override; needs confirmation.)",
+        "impact": "On a shutdown path taken while orders are working, live broker orders are orphaned: no cancel, no fill tracking; the next startup must rediscover them via position_sync, potentially after adverse fills.",
+        "fix": "In shutdown, iterate pending_orders and best-effort cancel via cancel_order (with tri-state semantics), then clear; also flush or persist order_book for recovery. At minimum, make the base-class contract explicit: subclasses must cancel-or-escalate pending orders before clearing."
+      }
+    ],
+    "logic_issues": [
+      {
+        "file": "app/pipeline/signal_pipeline.py",
+        "line_range": "28-45 (_get_vwap_deviation)",
+        "severity": "medium",
+        "category": "business_logic",
+        "description": "Systemic fail-open posture in the risk chain: _get_vwap_deviation swallows every exception and returns None, and the docstring states pre_trade_check will 'soft pass' (软放行) when the value is unavailable. Combined with broker_adapter.cancel_order returning True on indeterminate states, the system's default on data/infra failure is to widen trading permissions rather than restrict them.",
+        "impact": "During market-data outages or partial failures — exactly when market behavior is most dangerous — VWAP-based risk gates silently stop gating. Degraded-data regimes can pass signals that would otherwise be rejected, and nothing distinguishes 'gate passed' from 'gate skipped' in the audit trail.",
+        "fix": "Distinguish 'checked and passed' from 'skipped': emit an Alert or counter (e.g. risk_gate_skipped{gate=vwap}) whenever None is returned, and add a config threshold (max consecutive soft-passes per symbol/session) after which the gate fails closed. The soft-pass default can remain, but it must be observable and bounded."
+      },
+      {
+        "file": "app/playbook/exit_engine.py",
+        "line_range": "54-74 (_is_overnight_position)",
+        "severity": "low",
+        "category": "edge_case",
+        "description": "When entry_time_str is timezone-naive, _is_overnight_position compares _entry.date() directly against ET today. If any upstream writer stores naive UTC timestamps (common for DB/ISO strings without offset), entries made after 20:00 ET carry a UTC date one day ahead, so on the following trading day they evaluate as same-day and OVERNIGHT_GAP_STOP is skipped. Whether naive strings actually occur depends on upstream writers (truncated context — needs confirmation).",
+        "impact": "Positions entered in the late/after-hours session and stored naive-UTC would not receive the overnight deep-loss fast exit the next morning — precisely the scenario the rule targets — and note_exit_gap evidence collection would also be skipped for them.",
+        "fix": "Make the naive branch explicit and safe: treat naive input as ET via _entry = _entry.replace(tzinfo=_now_et()) before comparing (and document the assumption), or reject naive strings with a warning counter and fix upstream writers to always emit offset-aware ISO strings."
+      },
+      {
+        "file": "app/pipeline/order_executor.py",
+        "line_range": "60-80 (_with_symbol_lock_release)",
+        "severity": "low",
+        "category": "concurrency",
+        "description": "The decorator derives the release key from position.direction and position.owner_strategy (defaulting owner to 'main'). Correctness depends on every acquisition site using the identical (symbol, direction, owner) triple and on _close_position never releasing the lock internally — otherwise the finally block double-releases or releases a mismatched key. Acquisition sites are in truncated regions (needs confirmation).",
+        "impact": "A mismatched release either leaves the symbol lock held (blocking all future trades on that symbol) or prematurely frees it (allowing concurrent open/close on the same symbol — the exact race the lock exists to prevent).",
+        "fix": "Centralize key derivation: have the acquire call return a token (symbol, direction, owner) that _close_position carries and the decorator releases verbatim; log an anomaly when release finds no matching held lock (indicating mismatch or double release)."
+      },
+      {
+        "file": "app/core/engine.py",
+        "line_range": "40-42 (BaseEngine.is_healthy)",
+        "severity": "low",
+        "category": "missing_validation",
+        "description": "is_healthy() requires heartbeat() to have been called within 60s, but no code in the provided context invokes heartbeat() periodically (FutuBrokerAdapter has its own separate heartbeat thread that does not touch BaseEngine). Engines are 'healthy' for the first 60s after construction regardless of state, then permanently 'unhealthy' unless a subclass wires heartbeat calls.",
+        "impact": "If any supervision or health-gating consumes is_healthy(), it will either always degrade after 60s (trading halted by a false alarm) or never be consulted (dead code giving false confidence). Both outcomes are bad for a production health signal.",
+        "fix": "Wire heartbeat() into each engine's active loop (e.g. at the top of every scan/monitor cycle), or derive health from component liveness (last successful broker call, last processed event timestamp) instead of a manually maintained timestamp."
+      },
+      {
+        "file": "app/coordinator/capital_allocator.py",
+        "line_range": "221-248 (snapshot)",
+        "severity": "low",
+        "category": "business_logic",
+        "description": "CapitalSnapshot.by_strategy is documented to actually contain the bucket view ('by_strategy 字段是 bucket 视图 (向后兼容现有调用方)'), while a separate by_strategy_snapshot() method returns the true per-strategy view. Two near-identical names on the same class carry different semantics.",
+        "impact": "Dashboard/daily_review consumers reading snapshot().by_strategy assuming per-strategy values will mis-attribute exposure whenever bucket_map maps multiple strategies into one bucket (e.g. fast_lane→main): one 'strategy' row can show 80% that is actually two strategies combined, misleading capital diagnostics.",
+        "fix": "Rename the field to by_bucket (keeping a deprecated by_bucket alias or property for compatibility) or populate by_strategy with the true _by_strategy dict and add a separate by_bucket field; update dashboard consumers accordingly."
+      },
+      {
+        "file": "app/core/scheduler_core.py",
+        "line_range": "95-125 (PositionStore.add lock ordering)",
+        "severity": "low",
+        "category": "concurrency",
+        "description": "Lock ordering is documented only locally: PositionStore._lock → DailyActivePool._lock (scheduler_core add()) and CapitalAllocator._lock → CapitalAllocator._db_lock (persistence). There is no global lock-order registry, and flows that touch several subsystems (order_executor touches symbol locks + capital allocator + position store in one path) rely purely on convention to avoid cycles. The codebase's own history (P0-4a RLock reentrance fix, explicit '锁外调 (避免双重 lock)' comments) shows this is a live failure mode.",
+        "impact": "A future code path that acquires DailyActivePool._lock or CapitalAllocator._db_lock and then calls into PositionStore/CapitalAllocator inverts the documented order and can deadlock the trading loop.",
+        "fix": "Define and enforce one documented global lock hierarchy (e.g. PositionStore._lock → DailyActivePool._lock → SymbolLockManager → CapitalAllocator._lock → _db_lock), add a debug-mode thread-local held-lock stack that asserts acquisition order, and replace cross-component locking for non-critical side effects (pool sync, persistence) with async queues."
+      }
+    ],
+    "optimization_suggestions": [
+      {
+        "file": "app/coordinator/capital_allocator.py",
+        "category": "performance",
+        "description": "Replace per-call sqlite3.connect/commit in _persist_state/_persist_state_all/_persist_event with a single long-lived WAL connection (or a dedicated writer thread draining a queue), and move all disk I/O outside self._lock by capturing values under the lock and writing after release.",
+        "expected_impact": "Reserve/release critical section drops from O(disk sync, up to 5s under busy timeout) to O(memory); eliminates cross-thread head-of-line blocking on the order path and removes 2 connection setups per allowed reserve."
+      },
+      {
+        "file": "app/pipeline/signal_pipeline.py",
+        "category": "maintainability",
+        "description": "Convert _VIX_HISTORY/_SPY_HISTORY module globals to bounded collections.deque(maxlen=30) (or encapsulate in a small locked class); apply the same to CapitalAllocator._events, whose trim 'self._events = self._events[-500:]' reallocates a list on every event past the cap.",
+        "expected_impact": "Removes trim races and O(n) re-slice allocation on hot paths; makes the rapid-regime-change window deterministic under concurrency."
+      },
+      {
+        "file": "app/pipeline/order_executor.py",
+        "category": "maintainability",
+        "description": "Continue the in-progress decomposition of the monoliths: order_executor.py (5771 lines), scheduler_core.py (3136), position_sync.py (2888), playbook/pipeline.py (9453 per exit_engine header). order_executor functions take the whole 'scheduler' object as a parameter — replace with narrow ports (MarketDataPort, RiskGatePort, BrokerPort) so the execution layer stops depending on scheduler internals.",
+        "expected_impact": "Smaller review/blast radius per change, a testable execution layer without a live scheduler, and structural elimination of coupling-driven bugs such as the symbol-lock key mismatch risk."
+      },
+      {
+        "file": "app/pipeline/order_executor.py",
+        "category": "scalability",
+        "description": "Centralize lazy singletons (_pdt_guard, get_capital_allocator, get_symbol_lock_manager, get_rejection_logger) in the existing app/core DI container with eager, single-threaded startup construction instead of scattered unlocked lazy init.",
+        "expected_impact": "Eliminates the entire class of lazy-init races (PDT guard, capital allocator split-brain) and makes dependency wiring explicit and testable at negligible startup cost."
+      },
+      {
+        "file": "app/execution/broker_adapter.py",
+        "category": "performance",
+        "description": "The adapter performs synchronous Futu SDK calls and per-call SQLite access from threads that may share the asyncio event loop. Wrap blocking broker/DB calls in asyncio.to_thread / run_in_executor at the async boundary (or document that all trading paths are thread-only), and cache the equity lookups used by _notional_sanity_check with a short TTL to avoid a broker round-trip on every submit.",
+        "expected_impact": "Prevents event-loop stalls during broker latency spikes (OpenD reconnects can take seconds); equity caching removes one synchronous RPC from the order-submission hot path."
+      }
+    ],
+    "overall_assessment": {
+      "code_quality_score": 7,
+      "architecture_score": 6,
+      "risk_level": "medium",
+      "top_3_priorities": [
+        "Fix CapitalAllocator ledger integrity before the Phase B enforce-mode switch: observe-mode release-without-reserve drift (H7 regression), NaN/negative position_pct validation, and persistence of the manual/legacy owner pools",
+        "Move CapitalAllocator SQLite persistence out of the _lock critical section (background writer thread or post-lock writes) to remove multi-second stalls from the order-submission path",
+        "Harden fail-open paths: tri-state cancel_order semantics with a resubmit cooldown, and observable/bounded soft-pass behavior for the VWAP risk gate"
+      ],
+      "summary": "The codebase shows unusually strong remediation discipline: dated fix annotations (P0/P1, Task #34, RFC-080, DEB-20260903 #97), invariants pinned by tests (EXTERNAL_CLOSE_DUP_SQL), fail-close behavior on broker disconnect for orders and position queries, and a remark-whitelist ownership model that safely defaults unknown orders to MANUAL. The prior-round fixes appear genuine in the current code. The remaining defects concentrate in CapitalAllocator — the component slated to become the hard capital gate in Phase B: observe-mode releases subtract reserves that were never recorded (a regression introduced by the H7 no-record-on-blocked fix), unvalidated position_pct can poison the ledger with NaN and permanently fail caps open (with a nasty side effect where a later release zeroes the whole bucket), the manual/legacy pools are not persisted across restarts, and persistence performs synchronous SQLite I/O while holding the allocator lock, which can stall every capital check for up to the 5s busy timeout. Secondary risks are the lazy-init race on PDTGuard (regulatory exposure), cancel_order returning True on indeterminate states (a documented tradeoff that still leaves a bounded double-submit window), and unsynchronized module-level history buffers. Note that the provided context is truncated for the large files (order_executor 5771 lines, position_sync 2888, scheduler_core 3136): connection lifecycle in _reconcile_playbook_execution_states, symbol-lock acquisition sites, and the history-buffer trim code could not be verified, so issues depending on those regions are flagged as needing confirmation; line numbers for the large files are approximate. Recommended order of work: fix the allocator integrity items first (they gate the planned enforce-mode switch), then de-block the persistence path, then tighten the fail-open semantics — after which the system's risk level would justifiably drop to low."
+    }
+  },
+  "error": null
+}

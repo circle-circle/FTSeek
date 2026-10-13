@@ -1,0 +1,323 @@
+===============================================================================================
+FTSeek-US v3 交易策略复查对比
+===============================================================================================
+
+模型                         耗时    输出tok    推理tok defects   exit发现   提案     数据问题
+-----------------------------------------------------------------------------------------------
+qwen3.8-max              398s    18454    13265       9        5    5        8
+deepseek-v4.1-flash      301s    27716    15306       8        6    7        9
+kimi-k3                  606s    25756    16927       8        6    7        8
+glm-5.3-prime            515s    44607    35811      10        6    7        8
+glm-5.3                  872s    52371    40428      13        8    7        8
+
+===============================================================================================
+盈利提升提案清单（按模型，含验证方式）
+===============================================================================================
+
+### qwen3.8-max (5 个提案)
+  P1 [S] Widen low-vol hard stop and add entry noise filter
+      改动: In exit_policy.yaml low bucket, change LONG max_loss_pct from 0.3 to 0.6 and SHORT from 0.4 to 0.8; add atr_st
+      预期: sl_hit 115 trades lost -3702, average about -$32. Reducing sl_hit share from 43% to 30% removes about 34 stops
+      验证: shadow/replay with the same 265 entries; compare sl_hit share, average loss, max adverse excursion, and daily loss
+  P2 [M] Enable live MFE-adaptive trailing and stepped profit lock
+      改动: Allow adaptive_trailing for live/main via explicit config rather than PLAYBOOK_SIM-only hard gate; set target_
+      预期: TRAILING_STOP currently realizes 0.6% against MFE 1.42, capture about 42%. Raising capture to 55% adds about 0
+      验证: A-B replay/shadow of identical entries; require higher realized/MFE capture without increasing tail loss or exit churn
+  P3 [S] Kill legacy STRUCTURE_EXIT, FLASH_EXIT, and time_stop emitters
+      改动: Audit all exit_reason constants, gate legacy emitters behind explicit enabled flags, set flags false, and log 
+      预期: STRUCTURE_EXIT -3305, FLASH_EXIT -1284, time_stop -538, combined -5127. If 40%-60% is avoidable false-exit los
+      验证: shadow mode logs would-be legacy exits and replay compares outcomes; monitor that >2% tail losses do not increase
+  P4 [M] True breakeven/gap-stop invariant and overnight max loss
+      改动: Emit BREAKEVEN_STOP only when peak_profit >= trigger and stop_price >= entry + cost. Add OVERNIGHT_LOSS_STOP a
+      预期: Directly addresses the impossible BREAKEVEN_STOP -6035 and similar long-hold overnight tail losses. Conservati
+      验证: unit tests for invariant; replay overnight positions; shadow alert when BREAKEVEN_STOP would be emitted without valid breakeven state
+  P5 [M] Unify stop SSOT and exit telemetry
+      改动: Make StopLossConfig delegate to exit_policy or remove conflicting dynamic_exit stop overrides. Record effectiv
+      预期: Does not directly change exits but removes stop-source ambiguity and makes future parameter tuning valid. Expe
+      验证: schema validation, shadow reconciliation of initial_sl versus exit_policy-computed stop, and exit_reason allowlist checks
+
+### deepseek-v4.1-flash (7 个提案)
+  P1 [S] Fix the trailing band floor (proportional instead of absolute) + resto
+      改动: app/playbook/adaptive_trailing.py: replace the fixed min_drawdown_pct=0.4 clamp with min(0.4, max(0.12, 0.5*MF
+      预期: The 0.4% floor binds for ~69% of the book (184/265 trades have cohort MFE < 0.667%). At the book's average MFE
+      验证: Replay: recompute exit decisions offline from stored 1-minute bars for the 265 trades under old vs new band; then 5-10 day shadow run with the env override vs baseline, comparing realized capture ratio (realized/MFE) per trade, not just PnL.
+  P2 [S] Enforce the 45-minute grace period at a single choke point; remove ear
+      改动: Add one dispatcher-level guard that reads global_hold_protection (min_hold_minutes_after_entry 45, allowed_dur
+      预期: STRUCTURE_EXIT (-$3,305) + FLASH_EXIT (-$1,284) = -$4,589 = 62% of the -$7,429 net on 37 trades (avg hold < 0.
+      验证: Shadow: run the same trading day with the guard enabled in log-only mode, emit both the would-be exit and the actual exit, and compare forward 30/60-minute returns of the position after the blocked moment (this directly tests whether the early exit destroyed value).
+  P3 [L] Convert ratcheted/breakeven stops into real broker-side stop orders an
+      改动: On every ratchet arm (breakeven, trailing band move, scale-out floor), place/amend a real Futu stop order at t
+      预期: Directly targets the tail: one BREAKEVEN_STOP trade lost -$6,035 = 81% of total net (-$7,429). A hard ceiling 
+      验证: Shadow first: log would-be stop orders and their levels vs actual fills for 2 weeks, measure slippage_bps distribution; then enable real orders for a single high-notional bucket before rolling out.
+  P4 [S] Instrument the trade record so every exit is diagnosable (unblocks all
+      改动: Add to trade_records: holding_minutes (non-null for every closed trade), position_notional_at_entry/exit, sl_l
+      预期: Not a direct PnL gain, but ~49% of the sample (129/265: sl_hit 115, time_stop 7, tp_hit 5, MOC 2) currently ha
+      验证: Schema-level: assert non-null on new columns in the exit writer, and reconcile sum(pnl_pct x notional) per reason against total_pnl_usd for the historical sample.
+  P5 [M] Fix the low-vol bucket's structurally negative risk/reward and gate en
+      改动: In exit_policy.yaml vol_bucket_multipliers.low.direction_override, stop deriving max_loss_pct from the median 
+      预期: The low bucket currently prices 0.4% TP against 0.3% SL: EV at the observed 16.3% scalping WR = 0.163x0.4 - 0.
+      验证: Replay the 265 historical trades against the new bucket thresholds and the entry gate (offline counterfactual, no capital); A/B the yaml values only after the gate's replay WR exceeds the required WR with margin.
+  P6 [M] Constant-$-risk sizing: make notional a function of stop distance, and
+      改动: In the order/sizing path, compute notional from a fixed $ risk budget: notional = risk_budget / effective_stop
+      预期: Implied notional from the stats is systematically inverted: sl_hit implies ~$24.8k/trade (-0.13% avg, $32/trad
+      验证: Offline counterfactual over the 265 trades: recompute PnL with risk-parity sizing using each trade's recorded stop distance; only then shadow-run live sizing for 2 weeks alongside the current scheme (log both notionals, execute the old one).
+  P7 [M] Make overnight gap risk an order, not a poll; reconcile the six daily-
+      改动: Place a real overnight protective stop (>= overnight_loss_stop_pct) before the close for any position carried 
+      预期: The -$6,035 overnight loss occurred with 46.3h hold and a realized -2.98% ~ the configured overnight_loss_stop
+      验证: Shadow: log the overnight stop levels and the next-day open gap distribution for 2 weeks to size the true exposure before switching from poll to order.
+
+### kimi-k3 (7 个提案)
+  P1 [S] Fix the adaptive-trailing 0.4% drawdown floor (the giveback clamp)
+      改动: In adaptive_trailing_drawdown_pct: min_dd = min(0.4, 0.30*MFE) (or config default adaptive_trailing_min_drawdo
+      预期: Floor alone reproduces the observed 0.44pp giveback (MFE 0.48 - 0.4 floor - slippage = realized 0.04). Halving
+      验证: Replay: re-run the 265 closed trades' MFE/peak paths through the modified trailing function offline (pure function, no I/O by design); then 2-week shadow via existing harness/shadow_bridge (config/exit_profiles.yaml) before config flip.
+  P2 [S] Shadow-disable the scalping strategy pending edge re-validation
+      改动: Config flag to route scalping signals to shadow-only (log-only, no orders) for 2 weeks; keep voting_llm live. 
+      预期: If scalping's era-adjusted expectancy is still negative, direct saving equals its loss rate (-3511 per 265-tra
+      验证: Shadow A/B via existing shadow_bridge; compare shadow scalping pnl (with fixed trailing params) vs live voting_llm over the window; also segment scalping pnl by date to rule out pre-fix-era contamination.
+  P3 [M] Stop-distance noise floor + 5-minute entry confirmation
+      改动: exit_policy.yaml: replace low-bucket direction_override max_loss_pct 0.3/0.4 with effective floor max(1.0xATR,
+      预期: sl_hit share 43%->~30%: ~34 fewer stop-outs x $32 = +$1.1K direct, plus survivors converting into the trailing
+      验证: Replay the 115 sl_hit trades against 1-min bars with the widened stop: count how many would have survived to reach their recorded MFE vs stopped; requires intraday bars (MAE is not logged — see data_consistency_issues). Then shadow A/B config.
+  P4 [M] Breakeven-exit invariant + per-trade dollar risk cap
+      改动: exit_engine: invariant check at exit logging (BREAKEVEN implies armed_sl>=entry and MFE>=trigger, else relabel
+      预期: Tail-risk removal, not expectancy: the -6035 trade was 81% of total net loss and 1.6x the entire sl_hit cohort
+      验证: Unit tests for the invariant and sizing formula; replay the specific 46.3h trade's quote path to identify which rule actually fired; shadow-enforce the dollar cap for 1 week (log would-have-been-blocked sizes).
+  P5 [S] Feed playbook realized pnl into DrawdownController (close the document
+      改动: Single hook in playbook close path calling DrawdownController.record_trade_pnl (mirror order_executor C4 point
+      预期: Does not add profit directly; makes the 3% daily-loss brake real for the stack that produced the -6035 day. Pr
+      验证: Integration test + 1 week observe-mode logging comparing the six daily-loss defenses' views before relying on enforcement.
+  P6 [S] Unify pre-close config and keep trailing armed into the close
+      改动: Merge exit_rules.pre_close_exit and exit_rules.pre_close into one block (single window, single loss policy); r
+      预期: Protects the +2263 pre-close cohort's winners from un-trailed reversal in the last 15 min and stops loser exit
+      验证: Replay last-30-min paths of the 22 PRE_CLOSE_EXIT trades with trailing left armed; config-load test asserting single pre-close block.
+  P7 [M] Wire the bucket take_profit_pct as reduce-only limit orders (replay-ga
+      改动: Census consumers of vol_bucket take_profit_pct (currently likely decorative since scale_out is disabled); wire
+      预期: tp_hit is currently 1.9% of exits while avg MFE (0.48%) exceeds the low-bucket TP (0.4%) — profit-taking machi
+      验证: Offline replay comparison (TP-partial vs trailing-only) on the 265-trade MFE paths; A/B config in shadow_bridge for 2 weeks.
+
+### glm-5.3-prime (7 个提案)
+  P1 [M] Risk-parity sizing + enforce CapitalAllocator caps
+      改动: Size every entry as risk_budget_usd / (entry - stop) so dollar risk is constant across the 0.3%-5% stop disper
+      预期: Stats show positive avg pct (+0.04%) but -$7,429 total: loser notional is 2.5-20x winner notional (sl_hit ~$24
+      验证: Replay: recompute trade_records PnL as recorded pct x counterfactual constant-risk notional (no live capital). Shadow: run allocator in observe mode and count BLOCKED_STRATEGY_CAP / BLOCKED_TOTAL_CAP events for 2 weeks before enforcing.
+  P2 [S] Overnight gap protection for soft stops
+      改动: In the pre-close rule, flat any position whose effective_sl >= entry (breakeven/profit-lock) instead of holdin
+      预期: The single BREAKEVEN_STOP gap trade = -$6,035 = 81% of net loss; the 3% overnight backstop missed at 2.98%. El
+      验证: Replay: for all overnight-held positions in trade_records, compute the next-open vs entry gap-through distribution to size the exposure class. Shadow: log 'would have flattened at pre-close' decisions for 2 weeks without acting.
+  P3 [S] Stop geometry & trailing capture retune
+      改动: vol_bucket_multipliers.low: max_loss_pct 0.3/0.4 -> 0.9, take_profit 0.4 -> 1.4 (RR >= 1.5; recalibrate from M
+      预期: sl_hit share 43% -> ~30% (~30 fewer noise stops, +$0.8-1.5K); trailing capture 42% -> 60-70% of MFE (76 trades
+      验证: A/B via the existing shadow harness (config/exit_profiles.yaml shadow_bridge per the exit_policy.yaml header); replay the 265 trades' price paths with counterfactual stop/TP lines using recorded minute bars.
+  P4 [M] Cut exit latency for trailed/stopped positions
+      改动: Reduce exit scan to 10-15s (or quote-push event trigger) for any position with an active trail/breakeven line;
+      预期: TRAILING_STOP design exit ~0.85% (60% capture of MFE 1.42) vs realized 0.6% - ~0.25pp is scan/execution drag; 
+      验证: Shadow: log (decision price - fill price) per exit for 2 weeks at current cadence, then at 10s cadence on SIM positions; compare distributions.
+  P5 [S] Exit-reason taxonomy & telemetry repair
+      改动: ExitMonitor emits SL_INITIAL/SL_BREAKEVEN/SL_TRAIL_LOCK (parity with exit_engine rule [1]); persist peak_price
+      预期: No direct PnL, but it unlocks all other tuning: the 43% sl_hit bucket is currently uninterpretable (13 winners
+      验证: Dual-write old + new reason fields for 1 week and compare distributions; unit tests on the reason taxonomy.
+  P6 [S] Feed playbook PnL into DrawdownController
+      改动: Call DrawdownController.record_trade_pnl from the playbook close path (mirror of the order_executor C4 hook) s
+      预期: Risk containment rather than direct profit: scalping's -$3,511 is currently invisible to the daily 3% limit; o
+      验证: Shadow: compute daily drawdown with and without the playbook feed for 2 weeks and diff the would-block decisions.
+  P7 [M] Entry-quality gate for the scalping cohort
+      改动: At the SignalScore/consensus stage, require a minimum entry-quality bar for scalping (signal-strength threshol
+      预期: scalping: 129 trades, 16.3% WR, -$3,511 - the worst cohort and the main source of never-profitable entries (sl
+      验证: Replay entries with the gate applied (signal fields already logged); shadow-log gate decisions for 2 weeks before enforcing.
+
+### glm-5.3 (7 个提案)
+  P1 [S] Exit-rule forensic audit + stats re-baseline (gating step for everythi
+      改动: SQL: exit_reason × date(exit_time) × count × sum(pnl) from trade_records, overlaid with config-change dates (0
+      预期: If the yaml-disabled rules still fire post-2026-06-21, unwiring STRUCTURE_EXIT (-$3,305) + FLASH_EXIT (-$1,284
+      验证: Pure DB/log analysis + code grep; zero capital risk; no shadow trading needed.
+  P2 [S] Trailing entry-floor: stop never below entry once the trail arms
+      改动: In atr_stop_engine.compute_stop_lines, once profit_atr_signed ≥ activation threshold, final_stop = max(final_s
+      预期: TRAILING_STOP bucket: 76 trades, 39.5% WR → ~100% by construction; ~46 losing trailing exits (est. avg −0.25%)
+      验证: atr_stop_engine is explicitly pure/stateless ('便于单元测试与回测重放') — replay recorded per-position price paths with floor on/off; then A/B via the existing shadow system (config/exit_profiles.yaml harness/shadow_bridge) before touching live.
+  P3 [S] Gate the scalping entry flow (the weakest entry population)
+      改动: Disable strategies.scalping in unified_config, or raise its min_strength and add a follow-through filter (exit
+      预期: +$3,511/window (47% of net loss) if the stats window is representative; also removes ~half the sl_hit populati
+      验证: Shadow mode: keep generating scalping signals and log counterfactual exits without executing (the shadow_bridge/exit_profiles harness exists for exactly this); replay 30 days of scalping signals through the exit engine with the follow-through filter to measure missed winners.
+  P4 [M] Per-trade risk cap + finish CapitalAllocator enforcement (Phase B)
+      改动: Flip CapitalAllocator observe_only → False after a 2-week log-only period; add a sizing clamp qty ≤ (0.5% × eq
+      预期: The single BREAKEVEN_STOP trade (-$6,035 on ~$202K notional, 8-20× the book's implied $10-40K notionals) is 81
+      验证: Replay historical sizing decisions with the cap applied (counterfactual PnL on downsized trades); run 2 weeks in shadow-enforcement (log BLOCKED events without blocking) before flipping the flag.
+  P5 [S] Stop-width floor + clamp LLM custom stops (kill sub-noise stops)
+      改动: exit_policy.yaml vol_bucket low direction_override max_loss_pct 0.3/0.4 → floor at max(0.5%, 0.75×ATR%); stop_
+      预期: Modest direct PnL (sl_hit avg is only -$32/trade, and MFE 0.03% warns most stopped trades would not recover) —
+      验证: Replay the 115 sl_hit trades' recorded price paths with the wider stop: measure conversion-to-winner rate vs deeper per-stop loss. The MFE 0.03% column gives the prior — expect low conversion, which is why this is priority 5, not 1.
+  P6 [S] Repair exit telemetry: holding_hours, MFE, normalized exit_reason
+      改动: Populate holding_hours/entry_time on every exit writer (sl_hit's 115 rows are NULL — the largest bucket cannot
+      预期: No direct PnL, but it is the precondition for validating proposals 1-5 and for the BREAKEVEN_STOP forensics — 
+      验证: Unit tests on writers + a 1-week parallel-log comparison (old vs new fields) before switching reports.
+  P7 [M] Bank partial profit at +1.0×ATR (wire the existing FastLane rule)
+      改动: FastLaneExitPolicy already implements REDUCE 50% at 1×ATR profit (app/strategy/exit_policies.py) but appears u
+      预期: Converts part of the 0.44pp giveback into realized PnL before the round-trip: on the 76 trailing trades (MFE 1
+      验证: Replay with the existing shadow/exit_profiles A/B harness; first verify the executor's partial-close path handles REDUCE correctly (the scale_out deletion may have removed it).
+
+===============================================================================================
+止损止盈发现（exit_logic_findings，按 stat_fact 聚合跨模型）
+===============================================================================================
+
+* [1模型] sl_hit is 115/265 exits, 43%, total -3702, win rate 11.3%, a
+    qwen3.8-max: Low-vol max_loss_pct 0.3%/0.4% gives almost no noise budget. Combined with weak entry timing, many trades are 
+
+* [1模型] Average MFE 0.48% vs average realized 0.04%, about 0.44 perc
+    qwen3.8-max: Adaptive trailing is gated to PLAYBOOK_SIM only, while main breakeven/ratchet is disabled. Live profitable exc
+
+* [1模型] TRAILING_STOP is the main profit source: 76 trades, +4444, a
+    qwen3.8-max: Trailing is profitable but captures only about 42% of MFE and wins less than half the time. The SSOT comments 
+
+* [1模型] STRUCTURE_EXIT has 33 trades, total -3305, avg_pct -0.24, wi
+    qwen3.8-max: Config says structure/technical-breach exit is disabled, but stats still show it. Low MFE and negative avg_pct
+
+* [1模型] BREAKEVEN_STOP has 1 trade, -6035, avg_pct -2.98, holding_ho
+    qwen3.8-max: A true breakeven stop should require prior profit and stop price near entry. MFE 0.0 and -2.98% realized imply
+
+* [1模型] BREAKEVEN_STOP: 1 trade, -$6,035, avg_pct -2.98%, hold 46.3h
+    deepseek-v4.1-flash: Three compounding issues. (a) Label vs mechanism: a breakeven stop can only be armed after profit >= 0.4% (pla
+
+* [1模型] Average MFE 0.48% vs average realized 0.04% (0.44 pp givebac
+    deepseek-v4.1-flash: The drawdown band is clamped from BELOW at min_drawdown_pct=0.4: drawdown = min(max((1-capture)*MFE, 0.4), max
+
+* [1模型] sl_hit = 43% of exits (115/265), only 11.3% win rate, avg_mf
+    deepseek-v4.1-flash: Two distinct problems, and the data separates them. (1) Entry weakness: sl_hit's avg MFE is 0.03% — these trad
+
+* [1模型] TRAILING_STOP: +$4,444 total but only 39.5% win rate (76 tra
+    deepseek-v4.1-flash: The rule is a low-hit-rate, fat-tail harvester: 76 trades averaging +$58.5 with only 39.5% winners means the P
+
+* [1模型] STRUCTURE_EXIT: 33 trades, -$3,305 (44% of total net), avg h
+    deepseek-v4.1-flash: Both cohorts exit before or at the 45-minute grace boundary (0.5h and 0.3h) on trades that never developed (MF
+
+* [1模型] PRE_CLOSE_EXIT: 22 trades, +$2,263 total but avg_pct -0.11% 
+    deepseek-v4.1-flash: The pre-close rule is structurally asymmetric: it closes profitable positions at the bell (close_profit_atr 2.
+
+* [1模型] sl_hit = 115/265 (43.4%), WR 11.3%, avg_pct -0.13%, avg MFE 
+    kimi-k3: Both, but the stats localize the failure. The -0.13% average loss (which still includes 11.3% winners) implies
+
+* [1模型] avg MFE 0.48% vs avg realized 0.04% — 0.44pp giveback per tr
+    kimi-k3: The min_drawdown_pct=0.4 floor mathematically reproduces the observed giveback: drawdown = clamp(0.4 x MFE, 0.
+
+* [1模型] TRAILING_STOP: 76 trades, +4444 (main profit source), WR 39.
+    kimi-k3: The profit engine works but leaks at both ends of MFE: below MFE 1% the 0.4% floor eats 40-80% of the move (se
+
+* [1模型] STRUCTURE_EXIT: 33 trades, -3305, WR 30.3%, avg hold 0.5h, M
+    kimi-k3: The yaml disable-note cites exactly '33笔 -$3,106' — statistically the same cohort as the 33/-3305 in these sta
+
+* [1模型] BREAKEVEN_STOP: 1 trade, -6035 USD, -2.98%, WR 0%, hold 46.3
+    kimi-k3: A true breakeven stop is arithmetically incapable of this row: arming requires realized peak profit >= trigger
+
+* [1模型] tp_hit: only 5/265 trades (1.9%) despite avg MFE 0.48% excee
+    kimi-k3: The bucket take_profit_pct keys look like the same 'decorative knob' pattern the yaml itself documents for the
+
+* [1模型] sl_hit = 115/265 (43.4%) of exits, 11.3% WR, avg -0.13%, avg
+    glm-5.3-prime: Both stop-too-tight and weak entries, plus mixed semantics. (1) Low-bucket SL 0.3-0.4% is below the noise band
+
+* [1模型] Average MFE 0.48% vs average realized 0.04% - 0.44pp profit 
+    glm-5.3-prime: Three leaks: (1) the adaptive trailing floor (min_drawdown 0.4%) exceeds the median MFE (avg 0.48%, most winne
+
+* [1模型] TRAILING_STOP: 76 trades, +$4,444 (main profit source), but 
+    glm-5.3-prime: Trail distance exceeds typical profit at activation: a chandelier-style trail (2.0-3.5 ATR) activated at 1.2 A
+
+* [1模型] STRUCTURE_EXIT: 33 trades, -$3,305, 30.3% WR, avg hold 0.5h,
+    glm-5.3-prime: The stats cohort matches the yaml's own pre-disable note (33 trades, -$3,106) almost exactly - the window incl
+
+* [1模型] BREAKEVEN_STOP: 1 trade, -$6,035, -2.98%, 46.3h hold, MFE 0.
+    glm-5.3-prime: A breakeven stop is a monitor-side line, not an exchange order. The position was held ~2 overnights; price gap
+
+* [1模型] tp_hit: only 5 trades (100% WR, +$724, MFE 1.02 = realized 1
+    glm-5.3-prime: TP thresholds (3-9%) sit far above the realized MFE distribution (avg 0.48%; trailing bucket 1.42%), so TP is 
+
+* [1模型] sl_hit = 115/265 exits (43.4%), 11.3% WR, avg -0.13% (~-$32/
+    glm-5.3: Primarily weak entries, secondarily tight stops. MFE 0.03% on the sl_hit population means these trades never d
+
+* [1模型] Average MFE 0.48% vs average realized 0.04% — 0.44pp givebac
+    glm-5.3: Three leaks: (1) trailing geometry — the stop sits 0.8-1.3×ATR below entry at activation, so winners round-tri
+
+* [1模型] TRAILING_STOP: 76 trades, +$4,444 (the main profit source), 
+    glm-5.3: Activation threshold (1.2×ATR) < trail distance (2.0-2.5×ATR) ⇒ at the moment the trail arms, the stop is 0.8-
+
+* [1模型] STRUCTURE_EXIT: 33 trades, -$3,305, 30.3% WR, avg MFE 0.12%,
+    glm-5.3: The yaml disabled technical_breach after a backtest showed 33 trades / -$3,106 — the production stats show the
+
+* [1模型] BREAKEVEN_STOP: 1 trade, -$6,035 (-2.98%), 46.3h hold, MFE 0
+    glm-5.3: Three stacked failures: (1) MFE 0.0 with a BREAKEVEN_STOP label is self-contradictory — a breakeven stop requi
+
+* [1模型] tp_hit: only 5 trades (1.9% of exits), 100% WR, +$724 — take
+    glm-5.3: TP is gated by RR≥1.5 in the playbook chain and starved everywhere else by the same weak entries: with sl_hit 
+
+* [1模型] FLASH_EXIT: 4 trades, -$1,284, 0% WR, avg -1.69%, MFE 0.0, 0
+    glm-5.3: Flash exit sells into a 60-second volatility spike — by construction it realizes the worst fills (avg −1.69% v
+
+* [1模型] time_stop: 7 trades, -$538, avg -0.53%, WR 28.6% — a rule th
+    glm-5.3: Same divergence class as STRUCTURE_EXIT/FLASH_EXIT: declared dead, still firing (or stale stats). The −0.53% a
+
+===============================================================================================
+数据一致性存疑项
+===============================================================================================
+  [qwen3.8-max] exit_reason contains TRAILING_STOP, STRUCTURE_EXIT, FLASH_EXIT, and time_stop while exit_policy.yaml -> legacy emitters still active, playbook self-managed exits mixed into aggregate s
+  [qwen3.8-max] PRE_CLOSE_EXIT has positive total_pnl +2263 but avg_pct -0.11 and win_rate only 22.7 -> avg_pct is unweighted, excludes fees, uses wrong sign, or position sizing is ext
+  [qwen3.8-max] holding_hours is None for sl_hit, time_stop, tp_hit, and MOC exits -> immediate exit paths do not populate holding_hours, or entry/exit timestamps are
+  [qwen3.8-max] BREAKEVEN_STOP shows avg_mfe 0.0 and loss -2.98% after 46.3 hours -> mislabeled initial/overnight stop, gap through stop, stale peak_price, or entry/
+  [qwen3.8-max] FLASH_EXIT has avg_mfe 0.0, avg_hold_h 0.3, and avg_pct -1.69 -> MFE not updated before flash exit, quote/entry timestamp mismatch, or flash exit
+  [qwen3.8-max] Total net PnL is -7429 while average realized pct is +0.04% -> avg_pct is unweighted, pnl includes fees or different position sizes, or statist
+  [qwen3.8-max] MOC exit_reason is a Chinese string while other reasons are English constants -> localized log string written to DB instead of canonical enum
+  [qwen3.8-max] sl_hit avg_mfe is only 0.03 with 11.3% win rate -> tight low-vol stops plus delayed or low-frequency MFE tracking; needs tick-level
+  [deepseek-v4.1-flash] BREAKEVEN_STOP: 1 trade, avg_mfe 0.0%, avg_pct -2.98%, hold 46.3h, total -$6,035. -> The exit_reason records the stop-line type, not the trigger; the trade was most 
+  [deepseek-v4.1-flash] PRE_CLOSE_EXIT: 22 trades, total_pnl +$2,263 but avg_pct -0.11% and win_rate 22.7%. -> Dollar-weighted vs equal-weighted divergence driven by position-size dispersion 
+  [deepseek-v4.1-flash] sl_hit: avg_pct -0.13% with 115 trades, while every configured stop distance is 0.3%-2.7% (low bucke -> The vol-bucket direction_override was authored as '当前yaml预配置' (not yet consumed 
+  [deepseek-v4.1-flash] avg_hold_h is NULL for sl_hit (115), time_stop (7), tp_hit (5) and MOC (2) — 129/265 trades (49%), i -> holding_minutes is written only on some close paths (likely computed from an in-
+  [deepseek-v4.1-flash] FLASH_EXIT (4, all losers, -$1,284), STRUCTURE_EXIT (33), time_stop (7) all appear in production dat -> SSOT fragmentation: the reason strings are produced by a chain outside exit_poli
+  [deepseek-v4.1-flash] Implied notional per trade differs 2.5x between cohorts: sl_hit ≈ $24.8k (3702/115/0.0013), TRAILING -> Likely a combination of (a) no effective per-trade notional cap on the auto path
+  [deepseek-v4.1-flash] avg_mfe is exactly 0.0% for FLASH_EXIT (4 trades) and BREAKEVEN_STOP (1 trade), and 0.03% for sl_hit -> MFE is derived from poll snapshots (scan_interval_seconds 60) rather than from 1
+  [deepseek-v4.1-flash] tp_hit: 5 trades (1.9% of exits), avg realized 1.02%, 100% win rate — against configured take-profit -> The TP surface is not consumed on the dominant path (the same fragmentation as a
+  [deepseek-v4.1-flash] Net -$7,429 across 265 trades, with TRAILING_STOP +$4,444 as the only large positive contributor and -> Tail-risk concentration combined with an unenforced per-trade loss ceiling — a d
+  [kimi-k3] BREAKEVEN_STOP row: -2.98%, MFE 0.0%, hold 46.3h, while mainline breakeven.enabled=false -> Either an OVERNIGHT_GAP_STOP exit mislabeled BREAKEVEN (rule-id stamping gap), o
+  [kimi-k3] PRE_CLOSE_EXIT: avg_pct -0.11 (negative) with total_pnl +2263 (positive) and WR 22.7% -> avg_pct computed over a subset (rows with non-null pct), a sign error for SHORT 
+  [kimi-k3] sl_hit has an 11.3% WIN rate (≈13 profitable 'stop-loss hits') -> exit_reason stamped from the SL line's origin ('initial') rather than the rule t
+  [kimi-k3] avg_hold_h is NULL for 5 of 9 exit reasons (sl_hit, time_stop, tp_hit, FLASH_EXIT partial, MOC) -> Instrumentation gap in the writers for those exit paths (holding_hours not popul
+  [kimi-k3] Stats blend multiple config eras: STRUCTURE_EXIT 33 trades (config disabled 2026-06-21 citing exactl -> trade_records has no config-version column; per-rule stats are not date-segmente
+  [kimi-k3] MFE recorded as 0.0% on a 46.3h trade (BREAKEVEN_STOP) and FLASH_EXIT rows -> peak_price is restored from meta and lost on process restart (exit_engine docstr
+  [kimi-k3] MAE (max adverse excursion) is absent/all-zero in the stats extract -> MAE never instrumented in the exit/attribution writers (same class of gap as tra
+  [kimi-k3] Arithmetic DOES reconcile: by-reason pnl sums to -7429.0 exactly; counts sum to 265; count-weighted  -> n/a (consistency confirmed); this scopes remediation to labeling/instrumentation
+  [glm-5.3-prime] Weighted avg realized pct = +0.04% (bucket avg_pct x count reconciles to +0.046%) but total PnL = -$ -> Sizing anti-correlation and/or a cost-basis mismatch between the pct and pnl wri
+  [glm-5.3-prime] PRE_CLOSE_EXIT: total +$2,263 but avg_pct -0.11 and WR 22.7%. -> Partial-close accounting: exit_reason recorded at the final close while pnl accu
+  [glm-5.3-prime] sl_hit contains 13 winners (11.3% of 115) and its avg loss -0.13% is smaller than the configured low -> ExitMonitor labels all stop-line exits 'sl_hit' without the SL_INITIAL/SL_BREAKE
+  [glm-5.3-prime] The BREAKEVEN_STOP trade has MFE 0.0. -> peak_price not persisted/restored from meta on that path (exit_engine restores p
+  [glm-5.3-prime] holding_hours is null for sl_hit (115), time_stop (7), tp_hit (5) and MOC (2) - 129/265 trades (49%) -> Those exit code paths never populate holding_hours (or the stats join relies on 
+  [glm-5.3-prime] FLASH_EXIT (4), STRUCTURE_EXIT (33, -$3,305) and time_stop (7) appear in the stats although exit_pol -> Mixed-window statistics: the STRUCTURE cohort matches the yaml's pre-2026-06-21 
+  [glm-5.3-prime] exit_reason labels mix three conventions - lowercase (sl_hit, time_stop), uppercase (TRAILING_STOP,  -> No exit_reason namespacing by chain; the stats query spans both SIM and live wri
+  [glm-5.3-prime] Bucket PnL sums exactly to -$7,429 and counts sum to 265 (arithmetic is internally consistent), but  -> MAE never tracked on the exit paths (only peak/MFE is partially tracked); needs 
+  [glm-5.3] Average realized return is +0.04% (positive) while total net PnL is -$7,429 (negative); PRE_CLOSE_EX -> Mixed basis: pct computed from entry/exit prices, pnl from broker cash flows (co
+  [glm-5.3] BREAKEVEN_STOP: MFE 0.0 with 46.3h hold and a -2.98% loss. -> Either peak_price/MFE tracking is broken on that exit path (peak restored from m
+  [glm-5.3] holding_hours is NULL for exactly the sl_hit (115), time_stop (7), tp_hit (5) and MOC (2) buckets —  -> Those exit writers do not populate holding_hours (or entry_time) — e.g., the fas
+  [glm-5.3] exit_reason taxonomy is mixed-case and mixed-language: 'sl_hit' (lowercase), 'TRAILING_STOP'/'STRUCT -> Multiple exit chains (ExitMonitor, playbook exit_engine, an MOC/EOD closer) each
+  [glm-5.3] STRUCTURE_EXIT count (33) exactly matches the yaml's 2026-06-21 backtest figure ('33笔 -$3,106') with -> Stats window not re-baselined after config changes, or disabled flags not consum
+  [glm-5.3] PRE_CLOSE_EXIT: 22.7% WR and avg_pct -0.11% — but the config says pre_close has been 'profit-only' s -> Stale stats window or an un-honored loss_flat flag; the positive total (+$2,263)
+  [glm-5.3] Cross-foot checks: by-exit_reason pnl sums exactly to -$7,429; by-strategy sums to -$7,428 (off $1); -> The $1 gap is rounding of per-bucket aggregates; the real reliability problems a
+  [glm-5.3] By-strategy table shows only scalping and voting_llm, yet the yaml says playbook positions (DA/UE/re -> Either playbook trades are excluded from this stats query (then the by-exit_reas
+
+===============================================================================================
+自评
+===============================================================================================
+  qwen3.8-max            strategy=3.5/10 exit=3.0/10
+      - Widen low-vol hard stops and add entry noise filter to reduce the 43% sl_hit false-stop rate
+      - Enable live MFE-adaptive trailing and stepped profit lock to recover the 0.44pp average giveback
+      - Audit and disable legacy STRUCTURE_EXIT/FLASH_EXIT/time_stop emitters and unify exit_reason telemetr
+  deepseek-v4.1-flash    strategy=38/10 exit=30/10
+      - Fix app/playbook/adaptive_trailing.py's absolute 0.4% drawdown floor (replace with min(0.4, max(0.12
+      - Enforce global_hold_protection (45 min grace, allowed reasons only) at one dispatcher choke point an
+      - Instrument and cap: write sl_line_price/exit_price/slippage_bps/holding_minutes/notional on every ex
+  kimi-k3                strategy=35/10 exit=40/10
+      - Fix the adaptive_trailing 0.4% drawdown floor (app/playbook/adaptive_trailing.py) — it arithmeticall
+      - Root-cause the impossible BREAKEVEN_STOP -6035 (81% of net loss): add exit-reason invariants + SL-li
+      - Stop bleeding at entry: shadow-disable scalping (129 trades, 16.3% WR, -3511) and replace the circul
+  glm-5.3-prime          strategy=3/10 exit=4/10
+      - Enforce CapitalAllocator caps + risk-parity sizing (per-trade notional and dollar-risk caps in order
+      - Overnight gap protection for soft stops: flat any position whose effective_sl >= entry at pre-close 
+      - Stop geometry & trailing capture retune: low-bucket SL/TP 0.3/0.4 -> 0.9/1.4 (RR>=1.5, calibrated fr
+  glm-5.3                strategy=3/10 exit=4/10
+      - Run the exit_reason × exit_date forensic audit with config-hash attribution (S effort, zero risk): e
+      - Fix trailing-stop geometry: floor the stop at entry once the trail arms (max(final_stop, entry) in a
+      - Gate the scalping entry flow and cap per-trade risk (finish CapitalAllocator Phase B + qty ≤ 0.5% eq

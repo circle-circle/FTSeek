@@ -1,0 +1,288 @@
+{
+  "model": "deepseek-v4.1-flash",
+  "elapsed": 301.1342704296112,
+  "request_id": "4959587d-4693-9a42-a8b1-9f98b4795b1d",
+  "tokens_in": 22735,
+  "tokens_out": 27716,
+  "reasoning_tokens": 15306,
+  "retries": 0,
+  "parse_ok": true,
+  "result": {
+    "model_name": "claude-sonnet-4.5 (quant trading system architect review)",
+    "chain_defects": [
+      {
+        "file": "app/risk/exit_policy.yaml",
+        "line_range": "header docstring + exit_rules design_rationale + exit_rules_exclusivity (file shown without line numbers)",
+        "severity": "critical",
+        "category": "config_vs_behavior / SSOT fragmentation",
+        "description": "The SSOT declares TRAILING_STOP and STRUCTURE_EXIT dead ('TRAILING_STOP 84笔 -$3,773 → 禁用', 'STRUCTURE_EXIT 33笔 -$3,106 → 禁用, 误触发多', technical_breach.enabled=false, chandelier_trail.enabled=false), yet production shows TRAILING_STOP = 76 trades / +$4,444 (the ONLY materially profitable rule) and STRUCTURE_EXIT = 33 / -$3,305, plus FLASH_EXIT (4 / -$1,284) and time_stop (7 / -$538) which the file also declares deleted. The header itself admits the file does not govern PLAYBOOK_SIM/LIVE positions, which run _check_playbook_exit_rules in app/playbook/exit_engine.py with parameters from playbook meta + unified_config. Net effect: the documented tuning surface is disconnected from the rules actually producing 60%+ of exits.",
+        "evidence": "yaml design_rationale vs production table: TRAILING_STOP 76/4444, STRUCTURE_EXIT 33/-3305, FLASH_EXIT 4/-1284, time_stop 7/-538; yaml header 'PLAYBOOK_SIM / PLAYBOOK_LIVE 仓…不读本文件'",
+        "fix": "Publish a single exit-reason registry mapping each exit_reason string to the exact code path + config key that can emit it, and assert at startup that every reason observed in trade_records has a live producer. Then either (a) migrate the playbook factor_exit_rules into an include of exit_policy.yaml, or (b) mark the playbook block as the true SSOT for those reasons in this file. Do not tune parameters until this mapping exists."
+      },
+      {
+        "file": "app/risk/atr_stop_engine.py",
+        "line_range": "119-140 (resolve_trail_multiplier)",
+        "severity": "high",
+        "category": "silent config fallback",
+        "description": "resolve_trail_multiplier() reads exit_rules.chandelier_trail.multiplier_by_regime. In the current exit_policy.yaml chandelier_trail contains ONLY 'enabled: false' — the multiplier_by_regime map is absent. The code therefore silently falls back to raw_trail default 2.0 for every regime, while position_exit_monitor.py's own header advertises regime multipliers normal 2.5 / trending 3.5 / volatile 2.0. All regime-conditional trailing differentiation is dead and nobody notices because .get() defaults are permissive.",
+        "evidence": "atr_stop_engine.py:128-134 'by_regime = rules.get(\"chandelier_trail\", {}).get(\"multiplier_by_regime\", {})' + 'raw_trail = by_regime.get(key, 2.0)'; yaml chandelier_trail block has only enabled:false; position_exit_monitor.py:45-52 docstring claims regime multipliers are active",
+        "fix": "Add a startup validator (exit_policy_guardian) that fails loudly when a code-read key is absent, and re-introduce a real multiplier_by_regime block (normal 2.5 / trending 3.5 / volatile 2.0) or delete the regime path. Also log the resolved trail_mult per exit so trailing behavior is auditable."
+      },
+      {
+        "file": "app/strategy/exit_policies.py",
+        "line_range": "MainPipelineExitPolicy._evaluate_by_thesis, 'breakout' branch (pnl_pct <= -0.005 → CLOSE, priority 9)",
+        "severity": "high",
+        "category": "state-machine gap / grace-period bypass",
+        "description": "The breakout thesis rule closes the full position at -0.5% absolute, with no reference to global_hold_protection (min_hold_minutes_after_entry: 45, allowed_during_grace = circuit_breaker/earnings_guard/pre_close/atr_stop) and no ATR/volatility scaling. STRUCTURE_EXIT's observed profile — 33 trades, avg hold 0.5h, avg MFE 0.12%, avg -0.24% — matches a sub-grace, sub-ATR structural stop, not the configured ATR 2.0x / bucket max_loss. Same class as the playbook '[0.5] 早期紧SL: 入场后30min内未浮盈达标 → SL收紧到1%' rule in exit_engine.py.",
+        "evidence": "exit_policies.py breakout branch; exit_engine.py:326-358 rule list [0.5]; stats STRUCTURE_EXIT hold 0.5h / MFE 0.12%; yaml global_hold_protection.min_hold_minutes_after_entry=45",
+        "fix": "Route every CLOSE decision through one choke point that enforces global_hold_protection unless the reason is in allowed_during_grace. Convert the -0.5% breakout rule to REDUCE 0.5 after grace expires, or require breach confirmation (closed 5-min bar beyond the level AND distance >= 0.5 x ATR)."
+      },
+      {
+        "file": "app/coordinator/capital_allocator.py",
+        "line_range": "158-190 (try_reserve), 227-259 (release), 283-315 (compute_scale_factor)",
+        "severity": "critical",
+        "category": "risk cap not binding / accounting drift",
+        "description": "try_reserve() returns True unconditionally while observe_only=True ('observe_only=True 模式下永远返回 True (仅记录不阻断)'), so every stated cap (exit_policy.yaml max_position_pct 15, max_total_positions 8, max_daily_drawdown_pct 3.0 — the latter two explicitly documented as having zero consumers) is decorative on the write path. release(position.position_pct) on close uses the pct recorded at entry; any add/pyramid/partial exit that doesn't re-reserve leaves the ledger drifting, which then silently corrupts compute_scale_factor().",
+        "evidence": "capital_allocator.py docstring in try_reserve ('Phase B 剩余项: observe_only 切为 False'); yaml global block comments declaring max_daily_drawdown_pct and max_total_positions as zero-consumer; BREAKEVEN_STOP single trade -$6,035 at -2.98% ⇒ implied notional ≈ $202k (see exit_logic_findings[0])",
+        "fix": "Turn observe_only=False for the bucket(s) that carry auto risk, or add an independent hard assertion at the order executor: computed notional_pct <= max_position_pct else reject. Re-sync the ledger from the position snapshot after every fill (force_set) instead of relying on release() deltas."
+      },
+      {
+        "file": "app/risk/stop_loss_config.py",
+        "line_range": "24-45 (_DEFAULT_STOP_LOSS / _DEFAULT_TAKE_PROFIT), get_stop_loss_pct/get_take_profit_pct",
+        "severity": "high",
+        "category": "multiple competing stop authorities",
+        "description": "Three independent stop authorities coexist with different value ranges: (1) stop_loss_config.py reading unified_config dynamic_exit with defaults SL -3% / TP +10%; (2) exit_policy.yaml atr_stop with bucket max_loss 0.3%-5.0% and TP 0.4%-9.0%; (3) playbook factor_exit_rules / horizon_selector.short_horizon.fixed_stop_loss_pct=2.0 with rr_ratio 1.0. The sl_hit cohort's avg -0.13% matches none of them, which suggests the actually-binding stop on the dominant path is none of these configured values.",
+        "evidence": "stop_loss_config.py _DEFAULT_STOP_LOSS default -0.03 / _DEFAULT_TAKE_PROFIT 0.10; yaml low bucket LONG max_loss 0.3 / TP 0.4; horizon_selector.py:34-40 short_horizon fixed_stop_loss_pct 2.0 rr 1.0; stats sl_hit avg_pct -0.13",
+        "fix": "Log the *resolved* stop line, its source authority, and the fill price on every exit row (sl_line_price, sl_source, exit_price). Until that exists, no stop-distance conclusion is verifiable. Then collapse to one resolver with a documented precedence order."
+      },
+      {
+        "file": "app/risk/position_exit_monitor.py",
+        "line_range": "1-58 (module docstring rule list), scan scheduling via exit_policy.yaml exit_monitor.scan_interval_seconds",
+        "severity": "high",
+        "category": "race / latency between monitors",
+        "description": "The monitor is a 60-second poller (exit_monitor.scan_interval_seconds: 60, cooldown_seconds: 120) issuing market exits for levels crossed intrabar. All stops are therefore soft stops: between two scans price can travel arbitrarily, and the fill is whatever the market gives, not the stop line. The module docstring still advertises Flash Exit / Day Trade Mode / Scale Out / Chandelier as live rules 1-3 while the yaml disables them, so the module's self-description cannot be used to reason about which branch fired. Separately, an exit engine for playbook positions (exit_engine.py) and this in-process monitor both exist; the yaml asserts separation since 7/3 but nothing in the provided code proves a single-writer guard by position source_type.",
+        "evidence": "position_exit_monitor.py:14-58 docstring rules vs yaml flash_exit/scale_out/chandelier/day_trade_mode all removed or enabled:false; BREAKEVEN_STOP -2.98% fill with MFE 0.0; FLASH_EXIT avg -1.69% at 0.3h hold",
+        "fix": "For any ratcheted or breakeven stop, maintain a real broker-side stop order (Futu) and amend it on ratchet; keep the poller as a backstop only. Add a source_type ownership guard asserting exactly one monitor evaluates a given position, with a unit test."
+      },
+      {
+        "file": "app/risk/drawdown_control.py",
+        "line_range": "15-38 (six-authority registry comment) and the class body",
+        "severity": "medium",
+        "category": "accounting incompleteness",
+        "description": "The file's own registry documents six independent 'daily loss' authorities and states 'playbook 平仓 pnl 未喂入本控制器, 日回撤池当前仅主线平仓在喂 (order_executor C4 点)'. Since most exits in this dataset come from the playbook chain, the 3% daily drawdown guard is blind to the majority of realized loss, and the six authorities use mixed % and $ bases with independent state. This makes any 'the system stopped itself' assumption invalid and means a -$6,035 single-trade loss may not have tripped any daily guard.",
+        "evidence": "drawdown_control.py:15-38; BREAKEVEN_STOP -6035 in one trade = 81% of total net -7429",
+        "fix": "Feed playbook realized pnl into the same sink as main (single record_trade_pnl call site), then reduce the six authorities to a documented ordered set. Until then, add a per-trade hard $ loss ceiling inside the order/exit path (path-independent)."
+      },
+      {
+        "file": "app/playbook/horizon_selector.py",
+        "line_range": "30-48 (DEFAULT_CONFIG short/long horizon), 107-140 (select)",
+        "severity": "medium",
+        "category": "parameter collision between horizon config and exit rules",
+        "description": "short_horizon sets rr_ratio 1.0 / fixed_stop_loss_pct 2.0 / time_exit_hours 2.0, long_horizon sets rr_ratio 2.5 / overnight_gap_stop_pct 3.0 / time_exit_hours 999. These are consumed by the playbook exit chain that produces TIME_EXIT, OVERNIGHT_GAP_STOP and the [0.5] early tight SL. Because the horizon choice is a per-signal decision and the exit engine is shared, a single position's stop can be defined by horizon config while the trailing band is defined by adaptive_trailing config — no single place shows the resulting risk per trade. rr_ratio 1.0 with a sub-cost TP (low bucket TP 0.4%) is structurally negative EV.",
+        "evidence": "horizon_selector.py:34-40; stats: scalping 129 trades / -3511 / 16.3% WR; low bucket TP 0.4% vs SL 0.3% ⇒ required WR 42.9%",
+        "fix": "Compute and log implied reward:risk and required win rate per position at entry; reject entries whose required WR exceeds the strategy's trailing 30-day realized WR + a margin. Keep the check in the signal/sizing path so it applies to all horizons."
+      }
+    ],
+    "exit_logic_findings": [
+      {
+        "stat_fact": "BREAKEVEN_STOP: 1 trade, -$6,035, avg_pct -2.98%, hold 46.3h, avg_mfe 0.0% (single largest loss; 81% of the -$7,429 total net)",
+        "code_location": "app/playbook/exit_engine.py:35-52 (_is_overnight_position / OVERNIGHT_GAP_STOP semantics) + :326-358 rule [1] SL_BREAKEVEN vs rule [2] OVERNIGHT_GAP_STOP; app/risk/position_exit_monitor.py scan_interval 60s (exit_policy.yaml exit_monitor); exit_policy.yaml pre_close_exit.overnight_loss_stop_pct 0.03",
+        "severity": "critical",
+        "root_cause": "Three compounding issues. (a) Label vs mechanism: a breakeven stop can only be armed after profit >= 0.4% (playbook breakeven_at_pct) or 1.5% (main yaml, and main breakeven is disabled) — yet MFE = 0.0% for this row, so the ratchet could never have armed. The exit reason therefore records the stop-line *type*, not the actual trigger. (b) Fill vs line: all stops are soft (60s poll, no broker-side order), so a line at entry can fill 2.98% away. (c) -2.98% is numerically almost exactly the configured overnight_loss_stop_pct 0.03, and hold 46.3h means the position was carried overnight — the trade was almost certainly taken out by the overnight gap stop (which the code itself documents as having no gap check) and mislabeled. (d) Implied notional = 6035/0.0298 ≈ $202k, ~20x the average implied notional of other cohorts, so a position-size or unit inconsistency is also in play.",
+        "proposed_change": "1) Place a real broker-side stop at the ratcheted level whenever a ratchet arms (amend on each ratchet), so 'breakeven' cannot fill 3% away. 2) Persist sl_line_price, sl_source, trigger_rule, exit_price and slippage_bps per trade. 3) Rename/label the overnight rule distinctly (OVERNIGHT_LOSS_STOP) instead of inheriting the breakeven label. 4) Add a hard per-trade $ loss ceiling independent of the reason string.",
+        "expected_effect": "Removes the single largest loss source in the sample (up to +$6,035, i.e. the book flips from -$7,429 to roughly -$1,400 in this window) and makes every other stop-distance conclusion verifiable."
+      },
+      {
+        "stat_fact": "Average MFE 0.48% vs average realized 0.04% (0.44 pp giveback; TRAILING_STOP alone: MFE 1.42% vs realized 0.60%)",
+        "code_location": "app/playbook/adaptive_trailing.py:17-78 (adaptive_trailing_drawdown_pct: min_drawdown_pct default 0.4, target_capture_pct default 60, max_drawdown_pct default 1.2, env EXT_ADAPTIVE_TRAILING_MAX_DD)",
+        "severity": "critical",
+        "root_cause": "The drawdown band is clamped from BELOW at min_drawdown_pct=0.4: drawdown = min(max((1-capture)*MFE, 0.4), max_dd). For any trade whose peak MFE < 0.667%, the 0.4% floor allows giving back MORE than the 40% the capture formula intends (it is a floor, not a cap). At the book's average MFE of 0.48%, allowed giveback = 0.4% out of 0.48% ⇒ maximum capture 16.7%, i.e. realized ≈ 0.08% — which matches the observed book realized of 0.04%. Roughly 69% of the sample (sl_hit 115, STRUCTURE 33, PRE_CLOSE 22, time_stop 7, FLASH 4, BREAKEVEN 1, MOC 2 = 184/265 trades) has cohort avg MFE below 0.667%, so the floor binds for about two-thirds of the book. The giveback decomposition is internally consistent: TRAILING contributes 62.3 of the 116.3 total pp·trades (54%), sl_hit 18.4 (16%), STRUCTURE 11.9 (10%), PRE_CLOSE 7.7, FLASH 6.8, time_stop 5.8, BREAKEVEN 3.0 — summing to 116.3/265 = 0.44 pp exactly as reported.",
+        "proposed_change": "Replace the absolute floor with a proportional one: min_allowed_dd = min(0.4, max(0.12, 0.5 * MFE_pct)) so small-MFE trades keep ~50% capture while large-MFE trades stay bounded; keep max_drawdown_pct as the absolute cap; raise target_capture_pct 60 → 70 only after the floor fix is measured independently. Both are already env-overridable (EXT_ADAPTIVE_TRAILING_MAX_DD pattern), so expose EXT_ADAPTIVE_TRAILING_MIN_DD the same way.",
+        "expected_effect": "For MFE 0.48%: allowed giveback falls 0.40 → 0.24, capture 16.7% → 50%, i.e. +0.16pp per trailing trade. At the TRAILING cohort's own implied $/pp (~5444/45.6 pp·trades ≈ $97.5), +0.16pp × 76 trades ≈ +$1,200; recovering the unexplained extra 0.25pp of trailing giveback (realized 0.60 vs formula-implied 0.85 at MFE 1.42) via tighter scan/amend latency is worth ~+$1,850. Combined ≈ +$3,000 on this sample, before any spillover to the 184 small-MFE trades."
+      },
+      {
+        "stat_fact": "sl_hit = 43% of exits (115/265), only 11.3% win rate, avg_mfe 0.03%, avg -0.13%, total -$3,702",
+        "code_location": "app/risk/exit_policy.yaml exit_rules.atr_stop.vol_bucket_multipliers.low.direction_override (LONG max_loss_pct 0.3, SHORT 0.4; take_profit_pct 0.4) + hysteresis_pct 0.002; app/risk/atr_stop_engine.py compute_stop_lines; app/risk/stop_loss_config.py defaults (-3%)",
+        "severity": "critical",
+        "root_cause": "Two distinct problems, and the data separates them. (1) Entry weakness: sl_hit's avg MFE is 0.03% — these trades essentially never went favorable, so widening the stop would not rescue them; the binding constraint is entry selection/quality (plus a possible MFE sampling artifact, see data_consistency_issues). (2) Structurally negative-EV bucket parameters: the low-vol bucket pairs TP 0.4% with SL 0.3% (LONG), requiring a 42.9% win rate to break even before costs, while the observed scalping WR is 16.3% (0.163×0.4 − 0.837×0.3 = −0.186%/trade). Worse, the yaml's own derivation note says the SL was set from '亏损中位数×1.25' of that bucket — setting the stop at the median loser's size mathematically guarantees roughly half the bucket stops out by construction, which is exactly the 43% aggregate sl_hit share. A 0.3% stop on a stock with ATR% < 1.5% is ~0.2x ATR, i.e. inside spread + slippage noise. (3) Additionally, an avg fill of -0.13% is BETTER than the 0.3% stop line, which a genuine stop touch cannot produce — so part of this cohort is not filling at the configured line at all.",
+        "proposed_change": "Split the cohort before changing anything: (a) for the low bucket, stop deriving stops from the median loser — set max_loss_pct to max(0.6%, 0.5 × ATR%) and raise take_profit_pct 0.4 → 0.9 so required WR drops from 42.9% to ~35.7%; reduce size proportionally so $ risk per trade is unchanged. (b) Add an entry-side gate rejecting candidates whose implied required WR exceeds the strategy's realized WR, and rejecting ATR% below the level where the stop sits inside the round-trip cost band. (c) Emit MFE from 1-minute bars rather than 60s poll samples so the entry-quality question becomes answerable.",
+        "expected_effect": "Dollar impact: sl_hit implies $24.8k notional/trade vs TRAILING's $9.7k — losers are 2.5x larger than winners, so the dollar-weighted expectancy is worse than the percentage expectancy. Cutting the sl_hit count from 115 to ~80 while removing the structurally dead low-vol entries (which contribute at ≈ −0.186%/trade) plus keeping $ risk constant is a realistic +$1.5k to +$2.5k on this sample; the larger effect is that the reclaimed entries feed the (fixed) trailing engine instead of being stopped at noise."
+      },
+      {
+        "stat_fact": "TRAILING_STOP: +$4,444 total but only 39.5% win rate (76 trades, avg +0.60%, MFE 1.42%)",
+        "code_location": "app/playbook/adaptive_trailing.py (band definition, SIM-only source gate) + app/risk/atr_stop_engine.py:119-140 (resolve_trail_multiplier silent 2.0 fallback) + exit_policy.yaml chandelier_trail (enabled:false, no multiplier_by_regime)",
+        "severity": "high",
+        "root_cause": "The rule is a low-hit-rate, fat-tail harvester: 76 trades averaging +$58.5 with only 39.5% winners means the PnL is concentrated in a minority of large MFE trades. That is a legitimate design (do NOT disable it), but it has two vulnerabilities: (a) the 0.4% band floor truncates the small-MFE majority (see previous finding), and (b) the band is computed from a parameter map that no longer exists in the SSOT, so all regime differentiation is silently 2.0 — during trending regimes the trail is tighter than designed, converting a would-be trend rider into a 39.5%-WR coin flip, and (c) the adaptive band is gated to PLAYBOOK_SIM only ('The source gate is deliberately hard-coded to PLAYBOOK_SIM. Live must keep the factor-specific static drawdown'), so the SIM statistics used to justify any change do not describe LIVE exit behavior.",
+        "proposed_change": "Do not touch activation. Fix the band floor (proportional floor), restore multiplier_by_regime, and add per-exit logging of peak_profit_pct, band_pct, stop_price, fill_price. Additionally run a holdout split of the 76 trailing trades by MFE quartile to confirm the +$4,444 is not 2-3 trades carrying the rule; if the top quartile supplies >70% of the PnL, add a partial-profit rule at a fixed R multiple instead of relying solely on the trail.",
+        "expected_effect": "Preserves the +$4,444 engine while lifting realized capture from 0.60% toward 0.85-0.95% per trailing trade (+$1.9k to +$2.6k on this cohort), and restores the intended wider trail in trending regimes (fewer premature 39.5%-WR exits)."
+      },
+      {
+        "stat_fact": "STRUCTURE_EXIT: 33 trades, -$3,305 (44% of total net), avg hold 0.5h, avg MFE 0.12%; FLASH_EXIT: 4 trades, -$1,284, avg -1.69%, avg hold 0.3h, MFE 0.0%",
+        "code_location": "app/strategy/exit_policies.py (MainPipelineExitPolicy breakout branch: pnl_pct <= -0.005 → CLOSE, priority 9) + app/playbook/exit_engine.py:326-358 rule [0.5] early tight SL (30min) + exit_policy.yaml global_hold_protection (min_hold_minutes_after_entry 45, allowed_during_grace excludes structure/flash) and technical_breach.enabled:false",
+        "severity": "high",
+        "root_cause": "Both cohorts exit before or at the 45-minute grace boundary (0.5h and 0.3h) on trades that never developed (MFE 0.12% and 0.0%). The yaml explicitly deleted both rules, so the producers are outside the SSOT and outside global_hold_protection. Effectively the system pays the full spread/slippage and the worst part of the intraday noise distribution twice: once on entry, once on an immediate structural exit. Combined they account for -$4,589 = 62% of net loss, on only 37 trades (14% of count).",
+        "proposed_change": "Route every CLOSE through one dispatcher check that enforces global_hold_protection (fail-closed) unless the reason is in allowed_during_grace; delete or downgrade the -0.5% breakout rule (to REDUCE 0.5 after grace, or require a closed-bar breach of >= 0.5 x ATR); remove the 30-minute 'early tight SL to 1%' tightening or make it a ratchet on unrealized gains rather than a penalty on time.",
+        "expected_effect": "In pct terms, replacing these 37 trades (avg -0.397%) with the non-early-exit cohort expectancy (+0.111%/trade over the other 228) yields ~+4.1 pp·trades. In dollars the effect is larger because this cohort carries the bigger notionals: the realized dollars at stake are -$4,589, and a realistic recovery is +$0.5k to +$5k depending on whether their (larger) notional is retained under the standard exit path."
+      },
+      {
+        "stat_fact": "PRE_CLOSE_EXIT: 22 trades, +$2,263 total but avg_pct -0.11% and only 22.7% win rate; tp_hit: only 5 trades (2% of exits) at avg 1.02%",
+        "code_location": "app/risk/exit_policy.yaml exit_rules.pre_close_exit (close_profit_atr 2.0, loss_flat false, min_hold_minutes_before_pre_close 30) + exit_rules.pre_close (profit_exit min_profit_atr 2.0, loss_exit min_loss_atr 99, force_close_remaining false); TP sources: yaml vol_bucket take_profit_pct (0.4 / 3.0 / 9.0) vs app/risk/stop_loss_config.py _DEFAULT_TAKE_PROFIT (0.10 default)",
+        "severity": "medium",
+        "root_cause": "The pre-close rule is structurally asymmetric: it closes profitable positions at the bell (close_profit_atr 2.0) while deliberately leaving losers open overnight (loss_flat false, loss_exit min_loss_atr 99 = never). That caps the upside and carries the downside into gap risk — the same mechanic that produced the -$6,035 overnight loss. The cohort's positive dollar total with a negative average percentage and a 22.7% win rate indicates the $2,263 comes from a small number of very large positions (dollar-weighted vs equal-weighted divergence), not from a repeatable edge. Separately, tp_hit fires on only 5/265 trades at an average realized of 1.02% against configured targets of 3-10%, so the take-profit line is essentially never the binding exit — the profit engine is effectively trailing-only.",
+        "proposed_change": "1) Apply the overnight -3% protection as a real, broker-side order placed at/before the close rather than as a 60s-polled soft check after the open. 2) Record notional and $ contribution per exit row so dollar-weighted and percentage expectations can be reconciled. 3) Align the TP surface: either accept that TP is vestigial and remove tp_hit as a design assumption, or set TP per bucket at a level consistent with observed MFE (e.g., >= 1.5 x ATR) so the 5-trade rate is intentional rather than accidental.",
+        "expected_effect": "Removes the structural path that converts an overnight gap into a -3% fill (the mechanism behind the largest single loss); makes the -$3,305/-$4,589 early-exit cohorts the only remaining large negative concentration."
+      }
+    ],
+    "profit_proposals": [
+      {
+        "title": "Fix the trailing band floor (proportional instead of absolute) + restore regime multipliers",
+        "change": "app/playbook/adaptive_trailing.py: replace the fixed min_drawdown_pct=0.4 clamp with min(0.4, max(0.12, 0.5*MFE)); expose EXT_ADAPTIVE_TRAILING_MIN_DD (same env pattern as EXT_ADAPTIVE_TRAILING_MAX_DD at adaptive_trailing.py:57-70) so the change is reversible without a version-hash break. Optionally raise target_capture_pct 60→70 only after the floor change is measured separately. Concurrently restore chandelier_trail.multiplier_by_regime (normal 2.5 / trending 3.5 / volatile 2.0) in app/risk/exit_policy.yaml so atr_stop_engine.resolve_trail_multiplier (atr_stop_engine.py:119-140) stops silently defaulting to 2.0.",
+        "target_files": [
+          "app/playbook/adaptive_trailing.py",
+          "app/risk/exit_policy.yaml",
+          "app/risk/atr_stop_engine.py"
+        ],
+        "expected_impact": "The 0.4% floor binds for ~69% of the book (184/265 trades have cohort MFE < 0.667%). At the book's average MFE 0.48%, allowed giveback drops 0.40 → 0.24, lifting capture 16.7% → 50% (+0.16pp/trade). On TRAILING alone (76 trades, implied $97.5/pp): +$1.2k; recovering the extra 0.25pp of unexplained trailing giveback via tighter amend latency: +$1.85k. Bounded, low-variance change to the only profitable rule.",
+        "validation_method": "Replay: recompute exit decisions offline from stored 1-minute bars for the 265 trades under old vs new band; then 5-10 day shadow run with the env override vs baseline, comparing realized capture ratio (realized/MFE) per trade, not just PnL.",
+        "effort": "S",
+        "priority": 1
+      },
+      {
+        "title": "Enforce the 45-minute grace period at a single choke point; remove early STRUCTURE/FLASH exits",
+        "change": "Add one dispatcher-level guard that reads global_hold_protection (min_hold_minutes_after_entry 45, allowed_during_grace) and rejects any CLOSE whose reason is not in the allowed list. Downgrade exit_policies.py MainPipelineExitPolicy breakout branch (pnl_pct <= -0.005 → CLOSE) to REDUCE 0.5 post-grace, or require a closed 5-min bar breach of >= 0.5 x ATR. Disable the playbook '[0.5] early tight SL (30min → 1%)' in app/playbook/exit_engine.py:326-358 or convert it into a gain-based ratchet rather than a time-based penalty. Rename remaining structural reasons so the reason string maps 1:1 to a live rule.",
+        "target_files": [
+          "app/strategy/exit_policies.py",
+          "app/playbook/exit_engine.py",
+          "app/risk/exit_policy.yaml"
+        ],
+        "expected_impact": "STRUCTURE_EXIT (-$3,305) + FLASH_EXIT (-$1,284) = -$4,589 = 62% of the -$7,429 net on 37 trades (avg hold < 0.5h, MFE ~0.1%: pure noise exits). Redirecting them to the non-early-exit cohorts' expectancy (+0.111%/trade) is ~+4.1 pp·trades; in dollars, realistically +$0.5k (equal notional) up to ~+$5k (if their larger notional is retained).",
+        "validation_method": "Shadow: run the same trading day with the guard enabled in log-only mode, emit both the would-be exit and the actual exit, and compare forward 30/60-minute returns of the position after the blocked moment (this directly tests whether the early exit destroyed value).",
+        "effort": "S",
+        "priority": 2
+      },
+      {
+        "title": "Convert ratcheted/breakeven stops into real broker-side stop orders and add a hard per-trade $ loss ceiling",
+        "change": "On every ratchet arm (breakeven, trailing band move, scale-out floor), place/amend a real Futu stop order at the computed line instead of relying on the 60s poller (exit_policy.yaml exit_monitor.scan_interval_seconds). Add a path-independent per-trade hard loss ceiling (e.g. -X bps of equity) enforced in the exit/order path, independent of exit_reason, and log sl_line_price / sl_source / exit_price / slippage_bps.",
+        "target_files": [
+          "app/risk/position_exit_monitor.py",
+          "app/playbook/exit_engine.py",
+          "app/risk/atr_stop_engine.py",
+          "app/coordinator/capital_allocator.py"
+        ],
+        "expected_impact": "Directly targets the tail: one BREAKEVEN_STOP trade lost -$6,035 = 81% of total net (-$7,429). A hard ceiling near -$500-$1,000 per trade caps that at roughly -$0.5k to -$1k, i.e. up to +$5.5k on this sample. Also removes the soft-stop slippage premium visible in FLASH_EXIT (avg -1.69% at 0.3h hold, MFE 0.0%) and the unexplained 0.25pp trailing shortfall.",
+        "validation_method": "Shadow first: log would-be stop orders and their levels vs actual fills for 2 weeks, measure slippage_bps distribution; then enable real orders for a single high-notional bucket before rolling out.",
+        "effort": "L",
+        "priority": 3
+      },
+      {
+        "title": "Instrument the trade record so every exit is diagnosable (unblocks all other tuning)",
+        "change": "Add to trade_records: holding_minutes (non-null for every closed trade), position_notional_at_entry/exit, sl_line_price, sl_source (bucket/yaml/playbook/horizon), trigger_rule, exit_price, slippage_bps, mfe_pct + mfe_source + mfe_resolution (tick/1m/poll), peak_price, band_pct. Recompute historical MFE from 1-minute bars instead of 60s poll snapshots.",
+        "target_files": [
+          "app/risk/position_exit_monitor.py",
+          "app/playbook/exit_engine.py",
+          "app/storage (trade_records writer)"
+        ],
+        "expected_impact": "Not a direct PnL gain, but ~49% of the sample (129/265: sl_hit 115, time_stop 7, tp_hit 5, MOC 2) currently has NULL holding_hours, including time_stop — a time-based rule with no recorded time. Without this, no stop-distance or entry-quality conclusion (sl_hit MFE 0.03% being real vs a polling artifact) is falsifiable, and proposals 1-3 cannot be validated.",
+        "validation_method": "Schema-level: assert non-null on new columns in the exit writer, and reconcile sum(pnl_pct x notional) per reason against total_pnl_usd for the historical sample.",
+        "effort": "S",
+        "priority": 4
+      },
+      {
+        "title": "Fix the low-vol bucket's structurally negative risk/reward and gate entries by required win rate",
+        "change": "In exit_policy.yaml vol_bucket_multipliers.low.direction_override, stop deriving max_loss_pct from the median loser (which sets the stop-out rate near 50% by construction). Set max_loss_pct = max(0.6%, 0.5 x ATR%) and raise take_profit_pct 0.4 → 0.9 (required WR 42.9% → 35.7%), shrinking size proportionally so $ risk per trade is unchanged. Add an entry gate in the signal path rejecting candidates whose implied required WR exceeds the strategy's trailing realized WR, and rejecting ATR% low enough that the stop sits inside the round-trip cost band.",
+        "target_files": [
+          "app/risk/exit_policy.yaml",
+          "app/pipeline/signal_pipeline.py",
+          "app/playbook/horizon_selector.py"
+        ],
+        "expected_impact": "The low bucket currently prices 0.4% TP against 0.3% SL: EV at the observed 16.3% scalping WR = 0.163x0.4 - 0.837x0.3 = -0.186%/trade before costs, and scalping as a whole is -$3,511 over 129 trades. Moving required WR from 42.9% to 35.7% and eliminating the sub-noise stop realistically removes $1.5k-$2.5k of the sl_hit bleed and converts the survivors into trades that can reach the book's 0.48% average MFE.",
+        "validation_method": "Replay the 265 historical trades against the new bucket thresholds and the entry gate (offline counterfactual, no capital); A/B the yaml values only after the gate's replay WR exceeds the required WR with margin.",
+        "effort": "M",
+        "priority": 5
+      },
+      {
+        "title": "Constant-$-risk sizing: make notional a function of stop distance, and stop the loser/winnner size inversion",
+        "change": "In the order/sizing path, compute notional from a fixed $ risk budget: notional = risk_budget / effective_stop_distance_pct, subject to max_position_pct. Log both the budget and the realized risk per trade. This is the same choke point where capital_allocator.try_reserve is called (capital_allocator.py:158-190), so it also becomes the place to enforce a real cap once observe_only is switched off.",
+        "target_files": [
+          "app/coordinator/capital_allocator.py",
+          "app/pipeline/signal_pipeline.py"
+        ],
+        "expected_impact": "Implied notional from the stats is systematically inverted: sl_hit implies ~$24.8k/trade (-0.13% avg, $32/trade) while TRAILING implies ~$9.7k/trade (+0.60% avg, $58/trade) — losers carry ~2.5x the notional of winners, and the BREAKEVEN_STOP outlier implies ~$202k. Because the real edge is percentage-based, equalizing $ risk removes the amplification of the losing cohort and caps the tail. Rough: bringing the sl_hit cohort's dollar weight down to the winner cohort's level reduces the -$3,702 to roughly -$1.5k on this sample.",
+        "validation_method": "Offline counterfactual over the 265 trades: recompute PnL with risk-parity sizing using each trade's recorded stop distance; only then shadow-run live sizing for 2 weeks alongside the current scheme (log both notionals, execute the old one).",
+        "effort": "M",
+        "priority": 6
+      },
+      {
+        "title": "Make overnight gap risk an order, not a poll; reconcile the six daily-loss authorities",
+        "change": "Place a real overnight protective stop (>= overnight_loss_stop_pct) before the close for any position carried overnight (loss_flat false path in pre_close_exit), and feed playbook realized PnL into the same drawdown sink as main (drawdown_control.py currently only receives main-line closes). Then reduce the six competing daily-loss authorities to a documented ordered set with shared units.",
+        "target_files": [
+          "app/risk/exit_policy.yaml",
+          "app/playbook/exit_engine.py",
+          "app/risk/drawdown_control.py"
+        ],
+        "expected_impact": "The -$6,035 overnight loss occurred with 46.3h hold and a realized -2.98% ~ the configured overnight_loss_stop_pct 0.03, i.e. the rule existed but was enforced as a soft post-open check. Making it an order caps the specific mechanism responsible for 81% of net loss; feeding playbook PnL into the drawdown controller makes the 3% daily guard actually cover the majority of realized loss.",
+        "validation_method": "Shadow: log the overnight stop levels and the next-day open gap distribution for 2 weeks to size the true exposure before switching from poll to order.",
+        "effort": "M",
+        "priority": 7
+      }
+    ],
+    "data_consistency_issues": [
+      {
+        "observation": "BREAKEVEN_STOP: 1 trade, avg_mfe 0.0%, avg_pct -2.98%, hold 46.3h, total -$6,035.",
+        "why_suspicious": "A breakeven ratchet can only arm after profit >= 0.4% (playbook breakeven_at_pct) or 1.5% (main yaml, which is disabled), so MFE 0.0% is mutually exclusive with an armed breakeven stop. Additionally -2.98% ≈ overnight_loss_stop_pct 0.03 and 46.3h implies an overnight carry, and -$6,035 at -2.98% implies ~$202k notional — 20x the other cohorts' implied size. Three separate contradictions in one row.",
+        "likely_cause": "The exit_reason records the stop-line type, not the trigger; the trade was most likely an overnight gap/loss stop mislabeled as breakeven, filled far from the line because stops are soft (60s poll), with a position-size/unit inconsistency on top."
+      },
+      {
+        "observation": "PRE_CLOSE_EXIT: 22 trades, total_pnl +$2,263 but avg_pct -0.11% and win_rate 22.7%.",
+        "why_suspicious": "A negative equal-weighted average percentage cannot produce a positive dollar total unless the few winners are enormously larger than the losers (or pnl_usd and pnl_pct are computed on different bases). 5 winners out of 22 generating +$2,263 is extreme concentration.",
+        "likely_cause": "Dollar-weighted vs equal-weighted divergence driven by position-size dispersion (or partial-fill/partial-close accounting where pct is measured on the residual position). Not necessarily a bug, but it means avg_pct is not a usable per-strategy expectation for this reason code."
+      },
+      {
+        "observation": "sl_hit: avg_pct -0.13% with 115 trades, while every configured stop distance is 0.3%-2.7% (low bucket LONG 0.3%, SHORT 0.4%) and ATR stops are 1.5-3.0 x ATR.",
+        "why_suspicious": "A stop fill should be at or worse than the stop line, never better. An average fill of -0.13% is tighter than the tightest configured stop, so either the effective stop in force is not the configured one, or the recorded pct is not the price move.",
+        "likely_cause": "The vol-bucket direction_override was authored as '当前yaml预配置' (not yet consumed by the guardian at that time), so the live bucket may use a different value, OR sl_hit is applied whenever price touches a computed line at a 60s tick with the exit price taken from a different reference. Needs the resolved sl_line_price per row."
+      },
+      {
+        "observation": "avg_hold_h is NULL for sl_hit (115), time_stop (7), tp_hit (5) and MOC (2) — 129/265 trades (49%), including the largest cohort.",
+        "why_suspicious": "time_stop is by definition a holding-time rule, yet it has no holding time recorded. Nearly half the sample cannot be time-analyzed, which blocks any 'death zone' analysis (the yaml's own rationale depends on 1-4h holding statistics).",
+        "likely_cause": "holding_minutes is written only on some close paths (likely computed from an in-memory position object present in only one monitor), so rows produced by the other path get NULL."
+      },
+      {
+        "observation": "FLASH_EXIT (4, all losers, -$1,284), STRUCTURE_EXIT (33), time_stop (7) all appear in production data while exit_policy.yaml declares them removed/deleted ('flash_exit … 代码+接线已删', 'STRUCTURE_EXIT … 禁用', 'DEAD RULE: time_stop … 被 time_exit 替代').",
+        "why_suspicious": "Either the records are stale relative to the declared deletion, or a second code path (the playbook chain, which explicitly does not read this file) still emits them. position_exit_monitor.py's own docstring still lists Flash Exit and Day Trade Mode as live rules, reinforcing the ambiguity.",
+        "likely_cause": "SSOT fragmentation: the reason strings are produced by a chain outside exit_policy.yaml. The 'deleted' claims in the yaml cover only the main/ORB path."
+      },
+      {
+        "observation": "Implied notional per trade differs 2.5x between cohorts: sl_hit ≈ $24.8k (3702/115/0.0013), TRAILING ≈ $9.7k (4444/76/0.006), BREAKEVEN ≈ $202k.",
+        "why_suspicious": "In one account, the same strategy should not systematically size losers 2.5x larger than winners, and a single 20x position should trip any max_position_pct (15 in exit_policy.yaml). Either sizing is anti-correlated with outcome, or pnl_usd and pnl_pct are not computed on a consistent notional across reason codes.",
+        "likely_cause": "Likely a combination of (a) no effective per-trade notional cap on the auto path (capital_allocator observe_only=True returns True unconditionally) and (b) mixed accounting bases per close path."
+      },
+      {
+        "observation": "avg_mfe is exactly 0.0% for FLASH_EXIT (4 trades) and BREAKEVEN_STOP (1 trade), and 0.03% for sl_hit (115 trades).",
+        "why_suspicious": "A position held 46.3h with MFE exactly 0.0% is implausible; the whole sl_hit cohort also converging at ~0.03% suggests a measurement artifact rather than market behavior. MFE is sampled on a 60s poll, so a fast adverse move between ticks records no favorable excursion.",
+        "likely_cause": "MFE is derived from poll snapshots (scan_interval_seconds 60) rather than from 1-minute OHLC bars; short-lived or immediately-adverse positions record 0/NaN, biasing the sl_hit MFE downward and contaminating the 'giveback' statistic (0.48 vs 0.04)."
+      },
+      {
+        "observation": "tp_hit: 5 trades (1.9% of exits), avg realized 1.02%, 100% win rate — against configured take-profit levels of 0.4% / 3.0% / 9.0% per bucket and a 10% default in stop_loss_config.py.",
+        "why_suspicious": "Realized 1.02% matches no configured TP level, and a 2% incidence means the TP line is effectively never the binding exit. The stated 'DAY_TRADE_TP 13笔 100%WR +$13K' justification for the 1.5% breakeven trigger also cannot be reproduced from this sample.",
+        "likely_cause": "The TP surface is not consumed on the dominant path (the same fragmentation as above), or TP is being hit as a soft check with a different reference price."
+      },
+      {
+        "observation": "Net -$7,429 across 265 trades, with TRAILING_STOP +$4,444 as the only large positive contributor and a single BREAKEVEN_STOP row at -$6,035.",
+        "why_suspicious": "Removing one trade flips the system from a large loss to roughly -$1,394. Any performance attribution, Sharpe estimate or parameter optimization computed on this sample is dominated by a single observation and is not statistically meaningful.",
+        "likely_cause": "Tail-risk concentration combined with an unenforced per-trade loss ceiling — a data-quality statement about the sample as much as about the strategy."
+      }
+    ],
+    "overall_assessment": {
+      "strategy_soundness_score": 38,
+      "exit_logic_score": 30,
+      "top_3_actions": [
+        "Fix app/playbook/adaptive_trailing.py's absolute 0.4% drawdown floor (replace with min(0.4, max(0.12, 0.5*MFE)) via a new env override) and restore chandelier_trail.multiplier_by_regime in exit_policy.yaml — this is the single largest quantified giveback (TRAILING accounts for 62.3 of the 116.3 total pp·trades of giveback, i.e. 54%) and is an S-effort, env-reversible change.",
+        "Enforce global_hold_protection (45 min grace, allowed reasons only) at one dispatcher choke point and remove/downgrade the sub-grace STRUCTURE_EXIT and FLASH_EXIT producers (app/strategy/exit_policies.py breakout branch, app/playbook/exit_engine.py rule [0.5]) — 37 trades for -$4,589, i.e. 62% of the total net loss, on positions held under 30 minutes with essentially zero MFE.",
+        "Instrument and cap: write sl_line_price/exit_price/slippage_bps/holding_minutes/notional on every exit row, place real broker-side stop orders on ratchet, and enforce a hard per-trade $ loss ceiling — the single BREAKEVEN_STOP trade (-$6,035, -2.98% on a stop nominally at entry, MFE 0.0%, 46.3h hold) is 81% of the entire net loss and is currently undiagnosable."
+      ],
+      "summary": "The system is not short of rules; it is short of a single authority. Three stop configs, six daily-loss guards and two exit engines coexist, and the yaml that presents itself as the SSOT explicitly does not govern the playbook positions that produce most of these exits — including the only profitable rule (TRAILING_STOP +$4,444) and both of the large losers (STRUCTURE_EXIT -$3,305, FLASH_EXIT -$1,284). On the evidence, sl_hit's 43% share / 11.3% WR is primarily an entry-quality problem (avg MFE 0.03%) compounded by a structurally negative low-vol bucket (TP 0.4% vs SL 0.3% requires a 42.9% win rate against an observed 16.3%), not merely a stop that is too tight. The 0.44pp system-wide giveback is arithmetically explained by the trailing band's absolute 0.4% floor — at the book's average MFE of 0.48% it caps capture at 16.7%, which reconciles almost exactly with the observed 0.04% realized. The -$6,035 'breakeven' loss is a label/fill contradiction: a ratchet that could not have armed (MFE 0.0%) and a soft, 60-second-polled stop that filled ~3% from the line on an overnight carry, at an implied notional (~$200k) that suggests the 15% position cap was not binding (capital_allocator is in observe_only, returning True unconditionally). Highest-value sequence: fix the trailing band floor, kill the sub-grace exits, then convert stops to real orders with a hard $ ceiling — the first two are S-effort and replay/shadow-validatable, the third removes the tail that dominates this sample. Caveats: full app/risk/exit_rules/trailing_stop.py, the playbook factor_exit_rules config block, the trade_records schema/writer, per-row trade data (to verify the dollar-weighting inconsistencies) and account equity were not provided; several conclusions above (especially the $202k implied notional and the -0.13% sl_hit fill) are marked as needing those artifacts to be conclusive."
+    }
+  },
+  "error": null
+}

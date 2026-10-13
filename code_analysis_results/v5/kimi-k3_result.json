@@ -1,0 +1,421 @@
+{
+  "model": "kimi-k3",
+  "elapsed": 625.6207594871521,
+  "request_id": "f0ea5ed9-6d96-95f6-afbc-5e78159d494c",
+  "tokens_in": 29402,
+  "tokens_out": 27121,
+  "reasoning_tokens": 16678,
+  "retries": 0,
+  "parse_ok": true,
+  "finish_reason": "stop",
+  "raw_content": "",
+  "result": {
+    "model_name": "qwen3.7-max (analyst, config.LLM_MODEL default) / deepseek-v4.1-flash (challenger, config.py 2026-09-14)",
+    "prompt_issues": [
+      {
+        "location": "SYSTEM_PROMPT",
+        "severity": "high",
+        "category": "calibration",
+        "description": "信息edge判定的样本窗口缺陷: 用『今日盘前是否异动』作为『信息是否已被价格反映』的唯一判据, 对>24h的旧信息系统性误判。一条3天前已充分消化的earnings beat, 只要今日盘前平静, 即被判为『尚未被价格反映→真edge→可给HIGH』。这恰是score_band HIGH判据②的输入, 导致陈旧已定价新闻被升级为高确信交易。",
+        "evidence": "「判定依据不是新闻的\"年龄\"，而是**该信息是否已被价格反映**。判断材料 = 盘前异动」「若信息尚未被反映(盘前无异动/量能不支撑)且可溯源核实 → 这是真 edge 来源，可作为高分论据」",
+        "fix": "改为: 盘前平静仅在信息首次可交易时点<24h时构成『未反映』证据; >24h的信息须提供『仍在重定价中』的正向证据(如新跟进报道/评级调整/连续放量), 否则一律按背景陈述处理, 不进入HIGH判据①。"
+      },
+      {
+        "location": "SYSTEM_PROMPT",
+        "severity": "high",
+        "category": "blind_spot",
+        "description": "prompt要求与采集能力失配: SHORT三问要求回答『逼空风险自评(拥挤空头/低流通/逼空燃料)』且『三问答不全→改SKIP』, 但data_collector全量代码中没有任何short interest/借券费率/空头拥挤数据源(已核: 仅metric/recommendation/insider/peers/news/calendar/profile)。模型要么编造空头数据(违反反虚构硬规), 要么空泛作答触发强制SKIP——做空链路结构上被数据缺口绑架。同时『催化剂时效多少小时』要求的精度也无数据支撑。",
+        "evidence": "「③逼空风险自评(拥挤空头/低流通/逼空燃料)。三问答不全 → 改 SKIP 并在 skip_reason 说明缺哪问」",
+        "fix": "二选一: (a)新增short interest数据源(FINRA bi-weekly或券商API); (b)改prompt为『若输入无空头拥挤数据, ③以evidence_gaps标注\"无数据\"作答, 不视为答不全, 但score_band不得给HIGH』。"
+      },
+      {
+        "location": "CHALLENGER",
+        "severity": "high",
+        "category": "blind_spot",
+        "description": "三重结构性缺陷: (a)反锚定自相矛盾——challenger_user第一行即披露「候选方向 = X」, 却要求「把你在\"不看分析师结论\"下独立倾向的方向填入 independent_direction (作为防锚定观测)」。单调用内先给方向再要求独立判断, 锚定在结构上不可避免, independent_direction作为防锚定观测值不可信。(b)数据视图截断: `json.dumps(view...)[:_cap]` 可能在数值/字符串中间切断, 证伪官基于残缺JSON核验——要么误报『来源不明数字』(数字在完整数据里但被截掉), 要么对被截段的真实幻觉失明。(c)同源同盲: 证伪官与分析师看同一份data_text, 上游数据腐败(如3个月前的情绪缓存)对两者同等不可见, 证伪覆盖不了数据层错误——这正是107/107同向的深层原因之一, 重构未解决。",
+        "evidence": "「【证伪任务 — 第14轮 P9】候选方向 = {initial_analysis.get('direction','?')}」+「把你在\"不看分析师结论\"下独立倾向的方向填入 independent_direction (作为防锚定观测)」+「return json.dumps(view, ensure_ascii=False, indent=2)[:_cap]」",
+        "fix": "两调用设计: Call A只给原始数据问独立方向(不见分析师任何输出); Call B给数据+分析师结论+Call A结果做证伪。数据视图改为分section预算+section清单manifest, 禁止在值中间截断。向证伪官注入数据新鲜度元数据(见Q1), 使『数据过期』成为可证伪理由。"
+      },
+      {
+        "location": "calibration",
+        "severity": "high",
+        "category": "gaming",
+        "description": "score_band HIGH判据①使用模型自评的claim_type——模型既写论据又给自己的论据打标签, 等于自评阅卷。要拿HIGH只需把任一条论据标成product_catalyst/earnings_beat。下游ic_writer._classify_claim存在(signal_gate import可见)但未作为band判定的仲裁方(所见代码中_score_band_applied取自_llm_out自身)。",
+        "evidence": "「HIGH = 同时满足全部3条: ①bull/bear_case中至少1条claim_type为product_catalyst或earnings_beat(公司独有事件)…」",
+        "fix": "band落地前由代码独立复判claim_type(ic_writer._classify_claim或独立LLM小调用), 自标签仅作shadow对照; 自评vs复判不一致率落盘为prompt合规指标。"
+      },
+      {
+        "location": "USER_TEMPLATE",
+        "severity": "medium",
+        "category": "gaming",
+        "description": "数字锚点要求可被『空洞锚定』绕过: 每条论据附任意一个输入数字(如现价)即满足机检『含≥1个输入数据中的数字』, 而论据本体仍是通用修辞。『纯定性通用句将被机检记为generic』的generic判定是语义判断, 机检可靠性存疑(判定代码未提供, 待验证)。",
+        "evidence": "「bull_case/bear_case 每条论据必须含 ≥1 个输入数据中的数字锚点; 本股特有命名实体不能替代数字锚点; 纯定性通用句将被机检记为 generic 违约」",
+        "fix": "锚点必须与claim_type的预期来源段绑定(估值类必须含PE/PB段数字、内部人类必须含MSPR段数字——估值锚定机检已是此模式, 推广到全部枚举); 并将『数字是否为论据的承重条件』纳入证伪官逐条核验项。"
+      },
+      {
+        "location": "USER_TEMPLATE",
+        "severity": "medium",
+        "category": "bias",
+        "description": "方向不对称的执行残留: 文本宣称「多空对称适用…不存在\"某方向天然更需谨慎\"的全局规则」, 但强制力不对称——SHORT三问答不全→强制SKIP; 而多空镜像义务(BUY需同等具体上行催化剂+时效)无任何违约后果(只说『同属不合格论据』)。同理『5日涨幅>20%必须提示追高风险』无『5日跌幅>20%提示追空/超卖风险』镜像。净效果: 空头信号摩擦>多头, 与宣称的对称原则不符。",
+        "evidence": "「三问答不全 → 改 SKIP」 vs 「多空镜像义务 (对称): direction=BUY 时 bull_case 同样必须给出同等具体的上行催化剂与时效 — \"跌多了该反弹\"与\"涨多了该跌\"同属不合格论据」(无后果条款) ; 「如果5日涨幅>20%，必须在risks中提及追高风险」(无镜像)",
+        "fix": "给BUY镜像义务同等后果(缺上行催化剂/时效→SKIP), 或明文记录该不对称为结构性设计并从「唯一允许的方向不对称」声明中修正; 补-20%/5日的追空风险提示镜像条款。"
+      },
+      {
+        "location": "USER_TEMPLATE",
+        "severity": "medium",
+        "category": "blind_spot",
+        "description": "PE=0与亏损混淆的规则仍在, 而数据源无法区分: prompt强制「如果PE为负或0，说明该股亏损或无盈利，必须在bear_case中提及」, 但collect_snapshot `float(row.get('pe_ttm_ratio',0) or 0)` 把字段缺失与负PE都压成0。_fundamental_view修复了错键(恒0)问题, 但Futu对亏损股/缺数字段同返0的根因未消——强制bear论据仍可能被缺数触发(pitfall #22的复发通道)。",
+        "evidence": "「如果PE为负或0，说明该股亏损或无盈利，必须在bear_case中提及」 + code: `float(row.get('pe_ttm_ratio',0) or 0)`",
+        "fix": "数据层保留None并产出pe_status(negative/unavailable/ok), 用Finnhub netProfitMarginTTM<0交叉确认亏损; prompt规则改挂在pe_status='negative'上, unavailable时记入evidence_gaps而非bear_case。"
+      },
+      {
+        "location": "CHALLENGER",
+        "severity": "medium",
+        "category": "contract",
+        "description": "证伪层静默失效: 「如果挑战者不可用, 返回None(不影响Pass1结果)」——JSON解析失败/超时/截断均无告警、无gate惩罚, 决策悄悄退化为单模型。challenger输出schema达12键含数组而max_tokens=2000(enable_thinking=False), 长输出截断→解析失败是常态化风险。另: config注释记载9/14对flash的同构实弹验证在temp=0.4下进行, 而9/21温度收口后全链路强制LLM_TEMPERATURE=0.0——验证配置与生产采样不再一致(待验证影响, 属假设)。",
+        "evidence": "「如果挑战者不可用, 返回None(不影响Pass1结果)」+ config.py: 「实弹反证: 若把 enable_thinking 打开…content 为空 → JSON 解析必败 → 静默退化\"同模型自我辩论\"」+「LLM_TEMPERATURE = float(_read_env(\"DA_LLM_TEMPERATURE\") or \"0.0\")」",
+        "fix": "challenger_status(ok/parse_fail/timeout/truncated)落盘并进gate reasons; 解析失败率>5%告警; max_tokens提到4000或精简必选键; 在temp=0.0下重跑同构实弹补验证。"
+      },
+      {
+        "location": "CHALLENGER",
+        "severity": "medium",
+        "category": "contract",
+        "description": "DISAGREE的『≥2条反证』数量阈值是双刃剑: 防凑数的同时制造反向仪式化——为达到2条而抬举次要反证(该prompt自己记载的病灶: 旧挑战者107/107都能找到4条missed_risks), 或单条致命硬伤(如核心EPS数字系编造)按规则只能给PARTIAL不能翻向。",
+        "evidence": "「你找到了≥2条有数据出处的具体反证, 且足以推翻方向 → DISAGREE」「找到反证但不足以推翻方向(只够降低确信度) → PARTIAL_AGREE」",
+        "fix": "改为严重度加权: 1条实质硬伤(数字失实/因果断裂)即可DISAGREE; 数量要求只应用于一般性反证。"
+      },
+      {
+        "location": "SYSTEM_PROMPT",
+        "severity": "medium",
+        "category": "calibration",
+        "description": "HIGH判据②的『放量确认』在RFC-133删除量比/换手率后失去量化基准: prompt禁止用昨日口径量比判断今日信息反映, 但未提供任何盘前量能基线(盘前成交量 vs 什么?)。模型只能凭空定义『放量』, 或违规回看昨日量比——规则删除了唯一量具却没给替代品。同时|涨跌幅|<2%的硬阈值制造伪精度(1.9% vs 2.1%被类别化)。",
+        "evidence": "「已伴随盘前大幅同向异动(放量确认)」+「⚠️盘前时段量比/换手率为上一交易日收盘口径, 不得用于判断今日信息是否已被反映 — RFC-133 时点错配修正」",
+        "fix": "采集层增加盘前成交量基线(如vs 20日同时段均值)注入数据段; 或将判据改为定性清单(盘前价格连续单向推进+价差扩大)并明示2%为参考量级非硬阈值。"
+      },
+      {
+        "location": "SYSTEM_PROMPT",
+        "severity": "low",
+        "category": "bias",
+        "description": "止损距离 steering: 「直接给 2-5% 区间内的止损即可」把个股的波动结构差异压成统一区间, 模型可能为迁就区间扭曲thesis自然的失效位; 且既然执行层会钳制, 模型表达的止损信息量被主动降低。另: 「因果链至少3层(宏观→板块→个股)」的配额会迫使纯技术面标的硬编宏观叙事。",
+        "evidence": "「直接给 2-5% 区间内的止损即可; 小于2%易落入噪声扫损区」「3. 因果链至少3层(宏观→板块→个股 或 事件→估值→价格)」",
+        "fix": "要求模型给thesis自然失效位+标注『执行层将钳制』(双值落盘供复盘); 因果链改为『至少3层或声明\"纯技术/事件驱动, 无宏观传导\"』。"
+      },
+      {
+        "location": "USER_TEMPLATE",
+        "severity": "low",
+        "category": "bias",
+        "description": "prompt膨胀与补丁考古: system+user内嵌至少9个日期戳补丁(2026-08-11/08-14/08-25×3/09-01/09-07/09-14×2, RFC-120/133, DEB轮次引用), 规则间交互冲突风险上升(如止损2-5%与ATR化invalidation_triggers并存), 且长prompt稀释关键条款注意力。PROMPT_HASH指纹机制已存在, 具备安全重写条件。",
+        "evidence": "「⚠️ 飞刀几何一致性 (2026-09-14 新增, 机器可执行)…」「(2026-08-25 修复旧两条规则互斥, DEB-20260825 第12轮§C)」等密集版本戳",
+        "fix": "重著v3合并版(条款按主题归并, 历史叙事移至changelog), 用PROMPT_HASH切分基线做shadow A/B验证违约率不升。"
+      }
+    ],
+    "source_chain_issues": [
+      {
+        "source": "social_sentiment (sentiment_cache / Futu社区)",
+        "severity": "critical",
+        "category": "staleness",
+        "description": "实测: sentiment_cache 36行, 最后采集2026-07-10 23:25(~3个月前)。DA prompt的拥挤警示机检条件(>85%一边倒须出sentiment_crowded论据)若消费此缓存, 将以7月情绪触发10月的机检义务。消费路径未在所给代码中(假设: 该库属FTSeek侧Reddit/HN情绪, DA用collect_community_sentiment实时拉取)——但collect_community_sentiment失败即静默return [], 实时通道是否健康不可知。两侧都看不到任何面向LLM的新鲜度标注代码。",
+        "code_location": "social_sentiment.db (实测); data_collector.py collect_community_sentiment ~lines 155-166",
+        "fix": "所有情绪数据注入必须带as_of时间戳+age; age>2个交易日标注『情绪数据过期(截至X), 仅作背景』且不参与>85%机检触发; 采集失败与真空分开标注。"
+      },
+      {
+        "source": "strategy_memory.db → signal_gate + 『交易经验参考』注入",
+        "severity": "high",
+        "category": "silent_failure",
+        "description": "实测: 0字节, 自2026-08-04起。signal_gate核心职责『用个股历史+pattern匹配给信号打质量分』在空库上运行2个多月, quality_score在无历史支撑下照常产出PASS/WARN/BLOCK, 且reasons中无『memory empty』标注——gate层面的精度剧场。同时DA prompt的『近期交易经验』注入源枯竭, 学习回路(经验→门控→经验)事实死亡, 无任何告警。",
+        "code_location": "signal_gate.py lines 1-80 (evaluate_signal docstring); strategy_memory.db (实测)",
+        "fix": "启动健康检查(文件size/mtime); gate reasons强制携带memory_empty/claim_ic_unavailable标记且quality_score降权; 修复写入路径或正式退役并在代码中删除引用。"
+      },
+      {
+        "source": "alpha.db (claim IC缓存) → signal_gate._load_claim_ic_for_gate",
+        "severity": "high",
+        "category": "silent_failure",
+        "description": "实测: alpha.db 0表。_load_claim_ic_for_gate读load_claim_ic()失败即except返回None, Gate的论据有效性检查(claim IC)静默禁用——设计上用于『检查论据有效性』的门控维度实际从未运行。",
+        "code_location": "signal_gate.py lines ~30-36",
+        "fix": "load失败时在gate输出显式记录claim_ic_status=unavailable; 修复alpha_backfill生产链或移除该检查避免假安全感。"
+      },
+      {
+        "source": "signals.db",
+        "severity": "medium",
+        "category": "silent_failure",
+        "description": "实测: 0表。所给代码中ic_writer写入目标是FTSeek signal_snapshots.db(另一文件), signals.db的属主与消费者不明(需更多上下文)。若任何DA/FTSeek组件以它为信号源, 则完全失明且无报错。",
+        "code_location": "signals.db (实测); 消费者未定位",
+        "fix": "定位属主; 加schema初始化+空表健康检查; 若无消费者则归档删除防误读。"
+      },
+      {
+        "source": "news_quality.db news_classifications",
+        "severity": "medium",
+        "category": "coverage_gap",
+        "description": "实测: 全历史仅37行。而llm_audit显示news_classifier feature被调用(llm_calls n=15131跨16个feature)——调用与落库严重不匹配(假设: 写入路径损坏或该表已被取代, 待验证)。若DA新闻段渲染依赖质量分, 该维度等同不存在。",
+        "code_location": "news_quality.db (实测); llm_audit.db llm_calls features",
+        "fix": "对账llm_calls news_classifier调用数与表写入数; 修复写入或正式废弃; 废弃时同步删除prompt/下游对该信号的引用。"
+      },
+      {
+        "source": "Finnhub company-news / stock/metric / recommendation / insider / peers / calendar",
+        "severity": "high",
+        "category": "error_leak",
+        "description": "错误与空数据同形: collect_finnhub_news对非list响应(如429返回的dict)一律return []——限流静默变成『无新闻』; collect_fundamentals等把{\"_error\": ...}向上抛, 渲染层如何过滤未在所给代码中(待验证)——若prompt构造器直接dump, 错误文本将以『数据』身份进入prompt; 若直接丢弃, section静默消失且不降级数据充分性标注(待验证充分性计数是否含失败维)。无retry/backoff, 单key, curl 15s超时。",
+        "code_location": "data_collector.py _curl_json ~lines 110-120; collect_finnhub_news 171-212; collect_fundamentals 568-609",
+        "fix": "全部collector统一返回{status: ok|empty|failed, data, as_of, error}; 渲染层只接受ok, failed显式渲染为『【采集失败: source, reason】』并计入充分性分母; 429加retry(2次指数退避)。"
+      },
+      {
+        "source": "Futu news_search / stock_feed (新闻/社区/研报)",
+        "severity": "high",
+        "category": "silent_failure",
+        "description": "code!=0与真空同返[], LLM无法区分『近期无新闻』(事实断言)与『新闻源挂了』(数据缺口)。模型会据此写出『新闻面无催化/无负面』这类可被证伪但证伪官同样失明的论断(同源同盲)。",
+        "code_location": "data_collector.py lines 129-170 (collect_news/collect_research_reports/collect_community_sentiment)",
+        "fix": "同上status信封; 『无新闻』断言仅允许在status=ok且窗口内有拉取记录时成立。"
+      },
+      {
+        "source": "snapshot/kline (OpenD子进程)",
+        "severity": "medium",
+        "category": "silent_failure",
+        "description": "信号量限流(默认4并发)治理了连接风暴(好), 但字段级`or 0`强转把缺失压成0: volume=0(停牌vs无人问津)、turnover=0、pe=0(亏损vs缺数)全部不可区分。现价有『为0→强制SKIP』硬门(好), 但成交量等其余字段无同等守卫。盘前effective_price若pre_price=0(无量盘前), 单标的回退路径未在所给代码中(批量路径注释要求调用方过滤, 单标的路径待验证)。",
+        "code_location": "data_collector.py lines 60-127 (_opend_subprocess_run), 242-283, 363-404",
+        "fix": "采集层保留None, 仅在presentation层归一化并标注; volume=0纳入充分性判定; pre_price=0或盘前量低于阈值时effective_price回退prev_close并显式标注。"
+      },
+      {
+        "source": "覆盖缺口 (决策相关未采集项)",
+        "severity": "high",
+        "category": "coverage_gap",
+        "description": "已核data_collector全量: (a)无short interest/借券——SHORT三问必答题无数据(见prompt_issues); (b)无宏观硬日期日历——证伪官被要求核验『重大风险与硬日期风险(财报/CPI/FOMC)是否已覆盖』, 但CPI/FOMC日期无任何数据源, 模型只能凭训练记忆答日期(幻觉高发区); (c)无期权持仓/IV/put-call(仅有derivatives异动脚本); (d)insider/财报日历/peers/板块已覆盖(好), earnings日历有degraded标注(全代码唯一的新鲜度标注范式, 未推广)。",
+        "code_location": "data_collector.py (全量); challenger_system_v2 「d. 风险完备性: 重大风险与硬日期风险(财报/CPI/FOMC)是否已覆盖」",
+        "fix": "优先级: short interest > 宏观日历(静态文件+API混合即可) > 期权流; 将earnings calendar的_quality/degraded标注范式推广为全局status信封。"
+      },
+      {
+        "source": "Finnhub 单key速率与韧性",
+        "severity": "medium",
+        "category": "rate_limit",
+        "description": "单FINNHUB_KEY, 每标的~8个端点(metric/recommendation/insider×2/profile/calendar/peers/news), 5+标的串行curl(~40+调用); 免费档限额下429无重试无熔断, 一次限流=当次分析多个维度静默缺失→充分性降级→SKIP增多或带伤分析(哪个发生取决于充分性实现, 待验证)。慢变端点(metric/profile/recommendation)无缓存, 每日重复拉取浪费配额。",
+        "code_location": "data_collector.py _curl_json + 各collect_*; config.py FINNHUB_KEY",
+        "fix": "retry+指数退避; 慢变端点24h缓存(带as_of); 429/5xx与空结果分别计数落盘。"
+      }
+    ],
+    "quality_proposals": [
+      {
+        "title": "数据新鲜度信封 (freshness/status envelope) — 全链路",
+        "change": "所有collector统一返回{status: ok|empty|failed|stale, data, as_of}; prompt数据段每个section头部渲染『【source=X as_of=... status=...】』; 『数据充分性』flag计算纳入staleness与failed(不只查存在性); 失败section显式渲染为采集失败而非消失; 对实测死库(sentiment 3个月/strategy_memory 0B/alpha空/signals空)加启动健康检查+告警。",
+        "target_files": [
+          "data_collector.py",
+          "llm_synth.py (data_text构造)",
+          "deep_analyzer.py",
+          "signal_gate.py"
+        ],
+        "expected_effect": "根除absence/failure/stale三态混淆; score_band HIGH判据③从『维度存在』升级为『维度新鲜可用』; 证伪官获得『数据过期』这一新证伪维度; 死库2个月无人知的事故类不再发生。",
+        "validation_method": "replay: 用llm_audit落盘的历史输入回放, 注入合成staleness/failure, 验证SKIP/LOW路由按预期触发且data_quality_note如实描述; 影子运行2周对比充分性flag分布",
+        "effort": "M",
+        "priority": 1
+      },
+      {
+        "title": "PE=0消歧: 亏损 vs 缺数 (pitfall #22根因封闭)",
+        "change": "snapshot采集保留None不压0; _fundamental_view产出pe_status(negative/unavailable/ok), 用Finnhub netProfitMarginTTM<0交叉确认亏损; prompt规则『PE为负或0必须提bear』改挂pe_status='negative', unavailable记入evidence_gaps。",
+        "target_files": [
+          "data_collector.py",
+          "llm_synth.py"
+        ],
+        "expected_effect": "消除系统性幻影看空论据(每只缺PE数据的股票被强制注入『亏损公司』bear claim), bear_case精确率提升。",
+        "validation_method": "replay: 筛历史pe=0样本, 统计bear_case中PE论据出现率前后对比(缺数型应降至~0)",
+        "effort": "S",
+        "priority": 1
+      },
+      {
+        "title": "edge判定stale-news修正 (校准块窗口修复)",
+        "change": "SYSTEM_PROMPT校准原则改为: 盘前平静仅在信息首次可交易<24h时可作『未被价格反映』证据; 更旧信息须给『仍在重定价』正向证据(跟进报道/评级调整/连续量能), 否则只作背景, 不进入HIGH判据。",
+        "target_files": [
+          "llm_synth.py SYSTEM_PROMPT"
+        ],
+        "expected_effect": "减少『3天前已定价新闻+今日盘前平静→HIGH确信』的系统性误判, HIGH档精确率提升。",
+        "validation_method": "ic_tracking: 给决策打『核心论据信息年龄』标签, PROMPT_HASH切分前后对比HIGH档IC与HIGH占比",
+        "effort": "S",
+        "priority": 1
+      },
+      {
+        "title": "信号门诚实化 + 学习回路死活裁决",
+        "change": "gate reasons强制携带memory_empty/claim_ic_unavailable/regime_unavailable标记, 空记忆时quality_score标注低置信; 修复strategy_memory写入路径(含SKIP反事实的shadow记分, 防存活者偏差)或正式退役并删除引用; 死库超期(如mtime>7天)告警。",
+        "target_files": [
+          "signal_gate.py",
+          "strategy_memory.py",
+          "ic_writer.py"
+        ],
+        "expected_effect": "gate输出不再暗示不存在的历史支撑; 学习回路要么复活要么诚实缺席; 修复后的经验统计含SKIP反事实, 避免只对已成交信号打分的存活者偏差。",
+        "validation_method": "shadow: 空库单测验证reasons标记; 修复后replay历史信号重算quality_score对比",
+        "effort": "S",
+        "priority": 1
+      },
+      {
+        "title": "证伪官两阶段反锚定 + 完整数据视图",
+        "change": "_run_challenger拆两调用: Call A仅原始数据问独立方向(不见分析师输出); Call B给数据+分析师论据+Call A结果做证伪。数据视图改分section预算+section manifest, 禁止值中间截断。challenger_status(ok/parse_fail/timeout)落盘进gate reasons; max_tokens 2000→4000。",
+        "target_files": [
+          "llm_synth.py _run_challenger",
+          "pipeline.py (jsonl字段)"
+        ],
+        "expected_effect": "independent_direction首次成为可信的防锚定观测; 消除截断导致的误报/失明; 证伪层失效率从不可见变为可监控。",
+        "validation_method": "replay: 对历史上107/107同向样本重跑, 观测independent_direction分歧率是否>0(诚实信号)及verdict分布变化; 影子对比challenger_anchor_divergence口径",
+        "effort": "M",
+        "priority": 2
+      },
+      {
+        "title": "claim_type独立复判 (堵HIGH档自评通道)",
+        "change": "score_band落地前用代码侧ic_writer._classify_claim对论据文本独立复判, HIGH判据①以复判结果为准; 模型自标签仅作shadow, 不一致率落盘。",
+        "target_files": [
+          "llm_synth.py (band裁定处)",
+          "ic_writer.py"
+        ],
+        "expected_effect": "HIGH档不再可通过自我贴标获得; band区分度(band→IC单调性)改善。",
+        "validation_method": "ic_tracking: PROMPT_HASH切分, 对比前后HIGH占比及HIGH档后续收益",
+        "effort": "S",
+        "priority": 2
+      },
+      {
+        "title": "SHORT三问数据落地",
+        "change": "新增short interest数据源(或用已有turnover+share_outstanding构造换手代理)注入数据段; prompt补『无空头数据时③以evidence_gaps作答不算答不全但禁给HIGH』。",
+        "target_files": [
+          "data_collector.py",
+          "llm_synth.py"
+        ],
+        "expected_effect": "做空决策从不答即SKIP/编造数据, 变为可证伪; 空头信号恢复供给且质量可控。",
+        "validation_method": "shadow: 统计空头thesis中证伪官『来源不明数字』标注数前后变化",
+        "effort": "M",
+        "priority": 2
+      },
+      {
+        "title": "Finnhub韧性层 (retry/cache/错误分类)",
+        "change": "_curl_json加429识别+retry(2次指数退避); 慢变端点(metric/profile/recommendation)24h缓存带as_of; 错误分类(rate_limit/timeout/empty)计数落盘。",
+        "target_files": [
+          "data_collector.py"
+        ],
+        "expected_effect": "降低瞬时故障造成的静默维度缺失, 减少带伤分析与伪『数据不充分』SKIP。",
+        "validation_method": "replay: fault-injection(mock 429/timeout)验证status标注与重试行为; 影子期统计section-presence率",
+        "effort": "M",
+        "priority": 2
+      },
+      {
+        "title": "宏观硬日期日历注入",
+        "change": "静态文件+API混合的FOMC/CPI/NFP日历注入data_text; 风险日历机检从『财报前3日不开仓』扩展至CPI/FOMC当日提示; 证伪官d维核验从此有数据支撑。",
+        "target_files": [
+          "data_collector.py",
+          "llm_synth.py"
+        ],
+        "expected_effect": "消除模型凭训练记忆编CPI/FOMC日期的幻觉区; 事件盲区开仓减少。",
+        "validation_method": "replay: 历史CPI/FOMC日回放, 统计risks覆盖率和证伪官d维『不通过』率",
+        "effort": "S",
+        "priority": 3
+      },
+      {
+        "title": "prompt v3整合重写 + 违约率基线",
+        "change": "合并9+个日期戳补丁为主题化条款(历史叙事移changelog); 条款冲突审查(止损区间vs ATR化trigger等); 以generic论据率/tripwire合规率/证伪官数字核验通过率为合规基线指标。",
+        "target_files": [
+          "llm_synth.py"
+        ],
+        "expected_effect": "降低规则冲突与注意力稀释; token成本下降; 合规率可测。",
+        "validation_method": "shadow: PROMPT_HASH天然切分新旧基线, A/B对比合同违约率与决策分布",
+        "effort": "M",
+        "priority": 3
+      }
+    ],
+    "mislead_risks": [
+      {
+        "location": "情绪数据段 (social_sentiment)",
+        "risk": "3个月前情绪无时间戳注入时, 模型与拥挤机检(>85%一边倒)都把7月情绪当10月事实",
+        "concrete_scenario": "7月散户对某股极度看多(90%)入缓存; 10月DA分析时触发sentiment_crowded义务, bear_case被迫写入『散户拥挤』论据, 模型据此降级一个情绪早已退潮的多头——或反向给出一个建立在过期拥挤上的空头。",
+        "fix": "as_of+age强制渲染; age>2交易日标注过期且不参与机检触发条件。"
+      },
+      {
+        "location": "collect_news / collect_community_sentiment / collect_finnhub_news 渲染",
+        "risk": "absence与failure同形(都渲染为无内容), 模型把采集失败断言为『无新闻/无催化/无负面』的事实陈述",
+        "concrete_scenario": "财报暴雷当日Finnhub 429限流→新闻段为空→bull_case写『消息面平静无负面』, BUY指令建立在恰好缺失的负面事件上; 证伪官同源同盲无法发现。",
+        "fix": "status信封: failed显式渲染『【采集失败】』; 『无X』类断言仅允许在status=ok时输出。"
+      },
+      {
+        "location": "collect_fundamentals等 {\"_error\": ...} 返回值",
+        "risk": "错误dict泄漏进prompt被当作数据, 或section静默消失且不计入数据充分性(渲染层行为未在所给代码, 待验证)",
+        "concrete_scenario": "metric超时→{\"_error\": \"timeout 15s\"}若被dump, 模型看到非数据文本; 若被丢弃而充分性计数不含失败维, 『充分 ✓』flag错误背书, HIGH判据③放行。",
+        "fix": "渲染层key白名单+failed显式标注+失败维计入充分性分母。"
+      },
+      {
+        "location": "snapshot字段`or 0`强转 (pe_ttm_ratio/volume/turnover)",
+        "risk": "哨兵值0与真值0不可分: PE=0=亏损也=缺数; volume=0=停牌也=无人问津; 配合『PE为负或0必须提bear』规则, 缺数被强制翻译成亏损看空论据",
+        "concrete_scenario": "Futu对小盘股PE字段返空→0→模型义务性写入『公司亏损』bear_case(历史实测: 修复前100%分析看到PE=0/EPS=0, 每只股票被注入虚假看空——SKILL.md pitfall #22); 复发通道仍在。",
+        "fix": "采集层保None, presentation层产出pe_status等语义标签(见Q2)。"
+      },
+      {
+        "location": "盘前effective_price锚定",
+        "risk": "全部价位(入场/止损/止盈)被指令锚定到单个稀薄盘前成交价; 低流动盘前的单笔wild print成为所有价格基准; pre_price=0的回退路径单标的情况未明(待验证)",
+        "concrete_scenario": "$6小盘股盘前500股成交打出-30%, DA按prompt铁律『严禁锚定昨收』把所有价位锚到该print, 开盘后真实流动性恢复, 指令价格带整体失真。",
+        "fix": "effective_price=pre_price需满足盘前量阈值(如>10k股或>$50k名义), 否则回退昨收并标注『盘前量不足』; 两个价格都渲染让模型自行表态。"
+      },
+      {
+        "location": "collect_finnhub_news时间字段",
+        "risk": "\"time\": \"%m-%d\"无年份+UTC换算(utcfromtimestamp), 与ET交易日可错1天; edge判定依赖『信息vs今日盘前反应』的时间对齐, 错位直接污染校准判据②",
+        "concrete_scenario": "UTC 10-12 01:00的新闻=ET 10-11 21:00(盘后), 渲染为『10-12』; 模型把它当今日盘前前的新鲜信息, 而市场其实昨夜已有反应窗口。",
+        "fix": "ISO日期含年+转America/New_York+附相对年龄(『2天前』)。"
+      },
+      {
+        "location": "collect_earnings_calendar的ET偏移hack",
+        "risk": "`timedelta(hours=-4) if 3 <= month <= 11 else -5`按月近似DST, 3月1-8日与11月2-30日偏移错误; 午夜边界附近『today』翻转一天, 未来财报过滤与『财报前3日不开仓』日期错位",
+        "concrete_scenario": "11月初ET 00:30运行, 错误偏移使today错为昨天, 明天(真正)的财报被判为2天后, 『前3日不开仓』提示日期标注错误。",
+        "fix": "zoneinfo.ZoneInfo('America/New_York')替换手工偏移。"
+      },
+      {
+        "location": "_challenger_data_view [:_cap]截断",
+        "risk": "JSON在任意字符处截断(可能在数字/字符串中间), 证伪官基于残缺数据核验: 完整数据里存在的数字因被截而误报『来源不明数字』, 被截section里的真实幻觉则永久失明",
+        "concrete_scenario": "基本面section恰好在cap边界被截→证伪官无法核验ROE引用→要么误报(噪声稀释真信号)要么放过编造的ROE; challenged_claims的counter_evidence可信度整体贬值。",
+        "fix": "分section预算+manifest, 整段取舍, 永不截值; 截断发生时在prompt中明示『以下section未提供给你』。"
+      },
+      {
+        "location": "中文prompt+英文数据的语言混合",
+        "risk": "证据转述的翻译漂移: 英文新闻的 hedging/severity 在中文论据中丢失或加重, 数字前的限定词(~, expected, up to)脱落",
+        "concrete_scenario": "\"is exploring strategic alternatives\"被转述为『拟出售公司』进入bull_case, 催化剂强度被高估一档; 证伪官对照原文才能发现, 但其视图可能被截断(叠加M-截断风险)。",
+        "fix": "evidence字段强制保留原文verbatim片段(英文原文引用)+中文解读并列, 机检核数字在原文出现。"
+      },
+      {
+        "location": "tripwires自由文本threshold vs invalidation_triggers单位规定",
+        "risk": "单位双轨: invalidation_triggers已规定单位(USD/百分点/无量纲量比, 好), 但tripwires的threshold自由文本(『低于$5B』)单位随意(B/M混用); 市值渲染单位($B)与原始total_market_val(美元)跨层换算依赖渲染代码正确(未全量可见, 待验证)",
+        "concrete_scenario": "模型写tripwire『市值跌破$5B』而原始数据市值单位是百万; 未来tripwire_checker恢复enforce时按字面核销→误核销或永不核销。",
+        "fix": "渲染层统一单位后缀; tripwire schema加unit枚举; enforce前对存量tripwires做单位审计。"
+      },
+      {
+        "location": "score_band判据②的2%阈值与『放量确认』",
+        "risk": "伪精度剧场: |盘前涨跌|1.9% vs 2.1%被类别化为不同确信档; 且RFC-133禁用昨日口径量比后『放量』无定义, 模型可能违规回看量比或凭空编造量能描述",
+        "concrete_scenario": "模型在thesis中写『盘前缩量, 信息未反映』, 其『缩量』判断实际引用了被禁用的昨日口径量比——规则与可用数据的矛盾制造系统性违规。",
+        "fix": "注入盘前量能基线字段; 或将判据改定性清单并明示阈值为量级参考。"
+      },
+      {
+        "location": "『数据充分性: 充分 ✓』头部flag",
+        "risk": "单点信任: prompt禁止模型自行清点(『禁止自行估计维度数』『禁止自行清点维度』), 若flag计算(代码未提供, 待验证)只查存在性不查新鲜度/失败态, 『充分』为过期数据背书",
+        "concrete_scenario": "全部section存在但情绪3个月前+metric采集失败被静默丢弃→flag仍『充分 ✓』→HIGH判据③通过→高确信指令建立在死数据上。",
+        "fix": "flag计算纳入status信封(Q1); flag旁渲染各维status一览让模型可交叉质疑。"
+      },
+      {
+        "location": "collect_finnhub_news的low_relevance降级",
+        "risk": "ticker未见于标题时降级取最新N条并标low_relevance=true——若渲染层丢弃该标记(待验证), 市场级泛新闻被读作个股催化",
+        "concrete_scenario": "半导体板块普涨泛报道被注入某小盘芯片股的数据段, 模型写成product_catalyst论据, HIGH判据①放行。",
+        "fix": "渲染显式标注『低相关降级』; 机检禁止low_relevance条目支撑product_catalyst/earnings_beat。"
+      },
+      {
+        "location": "校准统计与gate pattern统计(学习回路修复后)",
+        "risk": "存活者/选择偏差: 已成交信号才有结果, SKIP永无反事实记分→任何『pattern胜率』只反映被取走的交易; 且news_classifications全历史37行级样本, 任何统计皆噪声。该偏差已被实证过一次(『近14日命中29%』论据被删除), 结构性根源未除",
+        "concrete_scenario": "gate(修复后)报『PULLBACK_LIMIT pattern胜率72%』基于n=7已成交样本, 而同期被SKIP的同类信号反事实表现未知; 仓位hint据此放大。",
+        "fix": "SKIP反事实shadow记分(假设成交的假想P&L); 所有统计强制带n, n<30不展示不消费。"
+      },
+      {
+        "location": "analyst_consensus / insider_sentiment的period字段",
+        "risk": "Finnhub recommendation按月、insider-sentiment按月度记录, 若渲染不带period(待验证), 模型把上月评级/上季MSPR引为当前事实——prompt强制『必须引用买入占比和分析师数量』『必须引用具体MSPR数值』, 强制引用放大过期引用的确定性",
+        "concrete_scenario": "评级period为2个月前, 模型写『18家机构72%买入』于bull_case, 期间评级已下调; 强制引用规则使过期数字获得论据级地位。",
+        "fix": "渲染强制带period+age天; age>45天标注过期且只作背景。"
+      }
+    ],
+    "overall_assessment": {
+      "prompt_quality_score": 7,
+      "source_chain_score": 3.5,
+      "top_3_actions": [
+        "全链路新鲜度/status信封(Q1): collector统一{status,as_of}返回, 失败/过期/空三态分离渲染, 『数据充分性』flag纳入新鲜度, 对实测死库(sentiment ~3个月/strategy_memory 0B/alpha空/signals空)加健康告警——当前最大的单一风险是LLM在死数据上被『充分 ✓』背书产出高确信指令",
+        "封闭三条直接制造虚假thesis的失配: PE=0消歧(Q2, pitfall #22复发通道), SHORT三问的short-interest数据落地(Q7, 当前要么强制SKIP要么诱发编造), edge判定的stale-news窗口修复(Q3, 盘前平静≠旧信息未定价)",
+        "证伪层完整性: 两调用反锚定+禁止值中间截断+parse失败显式落盘告警(Q5), 并对score_band HIGH判据①做claim_type独立复判(Q6)——否则证伪官与自评标签共同构成『看起来有制衡』的剧场"
+      ],
+      "summary": "DA prompt是少见的工程化程度高的LLM契约: 机检条件(飞刀几何/chase_cap方向语义/invalidation_triggers枚举/照抄式data_quality_note)、反游戏条款(禁凑数/反方留空合法/数据不足禁作逃生通道)、证伪官从审查官到证伪官的重构、PROMPT_HASH基线切分, 均为成熟设计, 故给7分。扣分项: 校准块用『今日盘前平静』判定旧信息未定价(系统性HIGH误判); HIGH判据①依赖模型自评claim_type(自评阅卷); 证伪官候选方向首行泄露+数据视图任意截断+与分析师同源同盲(反锚定是名义的); SHORT三问要求采集层不存在的空头数据; 方向对称宣称与执行强制力不符; 9+日期戳补丁致膨胀。信息源链路是薄弱环(3.5分): 实测6个持久化存储中5个死亡或过期(sentiment ~3个月/strategy_memory自8-04零字节/alpha空/signals空/news_classifications全历史37行), 而消费它们的gate与prompt注入无任何显式降级标注——gate的quality_score在空记忆上照常产出, 属精度剧场; 采集层普遍以return []混淆失败与真空, {\"_error\"} dict的渲染层处置不可见(需更多上下文确认是否泄漏), 单Finnhub key无retry, `or 0`强转制造哨兵值歧义, earnings calendar的degraded标注范式证明团队会做但全库唯一。最危险的整体模式: prompt层精心构建的机器可核验性, 建立在未被核验新鲜度的数据底座上——证伪官能抓数字编造, 却对所有上游数据腐败结构性失明。注: 数据充分性flag计算、数据段渲染器(error dict过滤/low_relevance与period标注)、sentiment_cache消费路径、signals.db属主未在所给上下文中, 相关结论已标注待验证。"
+    }
+  },
+  "error": null,
+  "salvaged": "inner_quote_fix"
+}
