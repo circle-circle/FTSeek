@@ -1,0 +1,315 @@
+---
+title: Jev 结构化决策模型引入评估与「价值先行·毕业制」自动化纪律
+date: 2026-10-11
+status: 已决策（纪律条款 D1–D5 生效；三个候选机制全部排队，当前窗口零行为变更）
+trigger: 用户问「Jev 模型（快速做结构化决策，当前比较火）在项目场景和功能中是否可以利用得到」；两轮讨论后用户裁「核心是价值，能够在最合理和有价值的场景逐步实现自动化决策」，令落档 DEB
+---
+
+# DEB-20261011 · Jev 结构化决策引入与自动化决策纪律
+
+## 0. 结论（用户已裁）
+
+**Jev 不进主决策链，只作为「边缘高频结构化小裁决」的候选基础设施排队影子。引入理由必须是可测量的价值证据，不是模型热度。**
+
+用户裁决原文（2026-10-11 会话）：
+
+> 认同你的观点 - 别用"模型火"作为引入理由，核心是价值，能够在最合理和有价值的场景逐步实现自动化决策
+
+据此落档五条纪律条款（详见 §4，本 DEB 的正式产出）：
+
+- **D1 价值先变尺子**：任何自动化提案必须预注册「哪个指标会因它变好」（省多少 LLM call、分诊精确率多少、延迟降多少）。答不出来就不排队。
+- **D2 四维优先级**：频率高 × 风险低 × 可逆 × 可测量。四项全占才动，缺一项先影子。
+- **D3 毕业制**：建议层（人看）→ 半自动（高置信桶自动、低置信桶留人）→ 全自动。每级带预注册判据，不达标就撤。
+- **D4 红线**：硬闸门 / 风控 / 熔断永不进概率模型；「提升方向准确率」类提案被既有证据（DA 论据 IC ≈ 0）挡，不重复立项。
+- **D5 窗口纪律**：OKR-2026-10 功效窗（至 2026-10-31）内只做只读影子，零行为变更；行为类提案全部落档排队，11 月开跑会与 OKR 结算共裁。
+
+## 1. 背景
+
+### 1.1 触发与讨论经过
+
+用户提出：Jev 模型（快速做结构化决策，当前较火）在项目场景和功能中是否有用。第 1 轮 Codex 给出「适合 / 不适合」矩阵（见 §3）；用户认同核心观点并明确价值先行原则；第 2 轮 Codex 将原则收敛为可执行纪律条款，用户令「请更新到DEB中」。
+
+### 1.2 Jev 是什么（外部事实，2026-10-11 检索）
+
+来源：TypeSafe AI 官方博客（2026-09-15 发布公告）及第三方评测（yep.ai 等）。未做本地接入验证，规格以官方口径登记，落地提案前须实测复核。
+
+| 维度 | 事实 |
+|---|---|
+| 定位 | "System One" 快速结构化决策模型：不生成文本，输入 state + typed questions，输出结构化判定 |
+| 原语 | `Noul`（布尔型，校准概率 + 置信度）/ `Choice`（分类，逐选项概率 + 置信度）/ `Score`（0–1 序数评分） |
+| 延迟 | 70–500ms（官方口径） |
+| 成本 | 输入 $0.042/1M tokens，输出免费（官方口径） |
+| 可靠性卖点 | 类型安全输出（无幻觉文本面），校准概率带置信度 |
+
+### 1.3 项目侧决策点事实（代码锚点）
+
+- Battle Plan 管线：Factor Engine（纯 Python 无 LLM）→ LLM Validator → 综合排序 → 辩论综合。
+- `app/plan/llm_validator.py:2`：Stage 2，每候选 1 次 LLM 调用（temperature=0、json_mode、每 symbol 每日 DB 缓存最多 1 次）。
+- `app/plan/deep_research_pipeline.py:9`：每个 target 4 分析师 + 1 辩论 + 1 综合 + 3 风险辩论 = 9 次 LLM 调用。
+- `app/web_dashboard/order/gates.py:8`：手动单预检条，同一批判据**只读聚合**，确定性规则。
+- `app/plan/position_intelligence.py:1`：持仓建议引擎，纯函数式（HOLD/TIGHTEN_SL/PARTIAL_EXIT/FULL_EXIT），不执行交易。
+- `app/web_dashboard/routes/chain.py:6`：`decision_id` 决策链（指令→成交→归因），审计落档基座。
+- Ops 裁决载体：`ops/hermes/futu_channel_adjudication_run.py`、`ops/hermes/error_alert_carrier.py`、`ops/audit/audit_da_pricing_quality.py` 等，输出形态多为小枚举 / 评分。
+
+### 1.4 现行约束（不可撞车）
+
+- `AGENT.md` C4：行为变更一律影子先行；新机制排队。
+- `docs/OKR-2026-10.md`：KR1 变更预算 = 0 次（oct cohort 退出哈希唯一值须恒为 1），窗口至 2026-10-31；打标前严格不切实盘。
+- 已验证 edge（handoff 长期 caveat）：**gate 负筛 + 退出锁利**；DA 方向选择论据级 IC `overall_ic_t1 = −0.0061 ≈ 0`（n=1,805）。任何「提升方向预测」路线已被证据挡。
+- 宪章落档强制：一事一 DEB、结论必须落档、见数后禁止放宽判据。
+
+## 2. 立案前强制检查（P0.5）
+
+### 2.1 同轴既有影子枚举（`app/playbook/shadow_registry.py`，grep 实查 2026-10-11）
+
+| 在册项 | 状态 | 与本案关系 |
+|---|---|---|
+| `da_glm_shadow` | SUPERSEDED（2026-09-15 用户终裁停止） | 多模型**方向产出**轴（glm-5.2 SHORT 意愿），非结构化裁决基建轴。本案不重开该轴。 |
+| `da_prompt_distill_shadow` | KILLED（2026-09-21） | **最近轴 = LLM 成本轴**。判据④ token 降幅实测 2.57% < 15% 门 + 契约违约率恶化 ⇒ 归档。本案候选③（LLM Validator 前置初筛）属同族，提案必须引用并越过该前案判据（见 §3.3）。 |
+| `eth_ext_entry_prefilter` / `ext_entry_exec_price_shadow` | SUPERSEDED / OBSERVING | 入场候选池**交易行为**轴。本案候选不碰候选池构成。 |
+| `futu_channel_*` 家族（capital_flow/ofi/top_movers 等） | 多状态 | 数据源质量/信号轴，非「裁决路由」基建轴。 |
+
+结论：ops 分诊轴（error alert / data quality triage）在册无同轴影子；LLM 成本轴有 KILLED 前案须引；退出侧仲裁受 KR1 冻结。不构成重复立案。
+
+### 2.2 既有裁决 / 判据字典撞车普查
+
+- 不动已冻结参数：本案零代码、零配置，KR1 变更预算不动。
+- 不重开已闭合类：`da_glm_shadow`（方向产出）与 `da_prompt_distill_shadow`（提示词蒸馏）均不重开，只作前案引用。
+- 不与 `DEB-20261009-event-to-trade-pipeline` 的 Event Stream / UE 主管线重叠：本案候选不新增采集链、不碰指令生成。
+- 「不设盈利目标」继承：本案价值尺子限定为**成本 / 分诊质量 / 延迟**，不设盈利目标。
+
+## 3. 价值评估（第 1 轮 Codex 结论，用户认同）
+
+### 3.1 适合落点（按性价比排序，全部排队）
+
+| # | 场景 | Jev 原语 | 价值尺子（预注册候选） | 状态 |
+|---|---|---|---|---|
+| 1 | Ops 分诊：`error_alert_carrier` 严重度分级 / 升级 vs 吸收 | `Score` + `Choice` | 分诊精确率、升级召回、告警噪音下降量 | **唯一当前可影子**（只读，不碰交易链、不影响 oct cohort） |
+| 2 | 数据质量异常评分：`audit_da_pricing_quality` 等 | `Score` | 异常检出率 vs 人工复核结局 | 排队（同 1 载体族） |
+| 3 | LLM Validator / deep research 前置初筛 | `Noul` + `Score` | 省下的 LLM call 数 + 初筛 vs 最终 verdict 分歧率 | 排队；**须越过 `da_prompt_distill_shadow` 前案**（§3.3） |
+| 4 | Position Intelligence 多规则冲突仲裁 | `Choice` | 建议采纳质量（人评 / 回放） | 排队；退出侧受 KR1 冻结，OKR 结算后再裁 |
+
+### 3.2 明确不适合（红线）
+
+- **硬闸门 / 风控 / 熔断**（`order/gates.py`、回撤熔断、日亏熔断）：必须保持确定性、可复现、可审计。校准概率 `P(risk)=0.93` 不得成为拒单理由。
+- **辩论 / 综合 / thesis 生成**（`unified_debate_engine`、auto-thesis）：System Two 自然语言推理，Jev 不生成文本。
+- **入场区间 / 止损止盈数值**：须锚定 ATR、支撑阻力位，`Score` 的 0–1 序数量纲不对。
+- **方向预测提升**：被 DA IC ≈ 0 既有证据挡（D4）。
+
+### 3.3 前案警示（`da_prompt_distill_shadow`，KILLED）
+
+LLM 成本轴已有一案按预注册判据死亡：token 降幅 2.57% < 15% 门且契约违约率 V1 1.52% → V2 6.06% 恶化。**教训**：LLM 成本类改动的收益容易被质量回归吃掉。Jev 前置初筛提案的预注册判据必须同时覆盖「省的 call 数」与「初筛 / 最终 verdict 分歧率（含误杀率）」双面，且实测成本须扣掉 Jev 自身调用与运维成本。
+
+## 4. 纪律条款（本案正式产出，D1–D5）
+
+### D1 价值先变尺子
+
+提案模板第一问：「哪个预注册指标会因它变好？」指标必须是**可机械读取**的（脚本可从 DB / JSON / 日志复核），不接受定性收益描述。
+
+### D2 四维优先级
+
+频率高 × 风险低 × 可逆 × 可测量，四项全占才动。任一缺失 → 只允许影子态排队。
+
+### D3 毕业制
+
+建议层（人看）→ 半自动（高置信桶自动 + 低置信桶留人）→ 全自动。每级晋升须预注册判据 + 见数后禁改；降级随时可做且不需裁决。
+
+### D4 红线（不参与毕业）
+
+硬闸门 / 风控 / 熔断永不进概率模型；方向准确率类提案不立项（IC ≈ 0 证据已闭合）。
+
+### D5 窗口纪律
+
+2026-10-31 前：只读影子（不进调度也可，离线跑产物落 JSON baseline）；行为类提案全部落档排队。2026-11 月开跑会：与 OKR-2026-10 结算共同裁决 §5 三个候选，结果回写本 DEB。
+
+## 5. 执行项（全部排队，本批零代码 / 零配置）
+
+- [ ] **候选① ops 分诊影子提案**（error alert / data quality triage）：11 月开跑会前成稿，只读、离线可跑、产物落 `data/` baseline JSON；预注册分诊精确率 + 升级召回 + 噪音下降判据。**须另立实施 DEB。**
+- [ ] **候选② LLM Validator 前置初筛提案**：11 月开跑会前成稿；预注册判据按 §3.3 双面（省 call 数 + 分歧率/误杀率），须实测 Jev 延迟与调用成本。**须另立实施 DEB。**
+- [ ] **候选③ Position Intelligence 仲裁影子**：退出侧，等 OKR-2026-10 KR1 冻结窗结算后再裁。**须另立实施 DEB。**
+- [ ] 11 月开跑会：本 DEB 三候选与 OKR 结算共裁，裁决记录回写 §8。
+
+## 6. 验证项与关闭条件
+
+- 本 DEB 为纪律裁决：零行为变更、零配置、零代码，无运行时验证面。
+- 每个候选进入实施前**必须另立 DEB**，含：同轴影子枚举、预注册判据（含 MDE / 停止规则）、影子窗长度、降级路径。
+- 关闭条件：三个候选全部被裁（采纳进实施 DEB 或否决归档）且 D1–D5 无异议。
+
+## 7. 讨论记录
+
+### 第 1 轮（2026-10-11，Codex）
+
+- 结论：「有用，但不在主决策链核心位置」。适合 = 信号路由 / ops 分诊 / 前置初筛 / 退出侧仲裁（影子）；不适合 = 硬闸门、辩论、thesis、入场区间 / SL / TP。建议价值排序锚定已验证 edge（gate 负筛 + 退出锁利），并提示 LLM 成本类改动需预注册判据。
+
+### 第 2 轮（2026-10-11，用户裁决）
+
+- 用户裁：**认同「别用模型火作为引入理由，核心是价值」**；目标是「在最合理和有价值的场景逐步实现自动化决策」。令落档 DEB。
+
+### 第 3 轮（2026-10-11，Codex 落档）
+
+- 按宪章落档强制完成：P0.5 影子注册表同轴枚举（§2.1）、既有裁决撞车普查（§2.2）、纪律条款收敛（D1–D5）、三个候选排队（§5）。本批零代码，不触发重启、不影响 oct cohort。
+
+---
+
+## 8. 第二 Agent 独立复查（Hermes · 2026-10-11 · 只读实测）
+
+> 触发：用户问「请分析讨论关于 Jev 模型的使用场景和能力 deb 文件」。
+> 方法：**不复核本 DEB 的读数，只查它与同轴前案的关系** —— 因为本仓已有
+> `DEB-20260924-jev-bounded-judgment-layer-feasibility.md`（728 行，已入库 `ab8bff1cc`，
+> 含 n=200 实弹回放 + 八场景普查 + 百炼实弹七项）。
+> 工具：`scripts/deb20261011_jev_conflict_probe.py`（只读 A–G 七段，零写入 / 零外发 / 零 LLM 调用）。
+> 本批动作：**零代码、零配置、零参数变更**；仅追加本节 + 入库探针。
+> §1–§7 逐字未动（追加前 150 行，已备份比对）。
+
+### 8.0 结论先行：本 DEB 与已入库前案**正面冲突**，且通篇未引用它
+
+| # | 发现 | 证据 | 后果 |
+|---|---|---|---|
+| **1** | **候选①「Ops 分诊」正是前案 §5.1 已明确作废的 Q3**，且前案 F14 已写下「维持 F13 关闭信号侧 ⇒ **则本提案的 Jev 议题应整体关闭**」 | E1/E14/E15 | §3.1 把「唯一当前可影子」给了一个**已被同一模型的前案判死**的场景 |
+| **2** | **§1.2「未做本地接入验证，规格以官方口径登记」是事实错误** | E1（`mentions_bailian_ws=False`）| 前案已做实弹七项（HTTP 200 / 字段逐项一致 / **幂等 6/6** / 服务端 p50 **87.4ms**·端到端 **282ms** / **$0** / fail-closed / 对照臂 404）+ n=200 三臂回放。本 DEB 把它们当成「未验证」 |
+| **3** | **候选① 三重死：无体量 + 无标签 + 无决策空间**，且载体被误读 | E2–E6 | 做了必成死影子（前案原话），且 `error_alert_carrier` 根本不做分级 |
+| **4** | **§1.4/D5 的前提「退出哈希唯一值须恒为 1」已不成立** —— 实测 `broken / n_unique=2 / 123-of-200` | E12 | D5 应改为「窗**已破**，须先按预注册回滚线 DEB 落档 + 开跑会裁决」，而非「保持窗完好」 |
+| **5** | **能力面被高估**：前案实测「state 怎么摆」的影响 **>** 「仓位事实怎么变」的影响；校准 ECE **0.430** | 前案 §4.5.1 E32 / §4.5.2 | §1.2 把「类型安全输出（无幻觉文本面）、校准概率」列为可靠性卖点，未登记这两条反证 |
+
+**唯一对本 DEB 有利的新事实**：LLM 花销已从前案记录的「7 天 $0.8675」涨到 **7 天 $4.55 / 30 天 $26.61**（E8，涨 5.2×）⇒ 候选② 的省钱空间确实变大了。但量级仍不足以支撑引入新供应商（§8.4）。
+
+### 8.1 决定性冲突：候选① = 前案已作废的 Q3
+
+前案 `DEB-20260924` 的三处原文（逐字）：
+
+- **§5.1 Q3 行**：「~~`Q3` Choice「这条告警属于 良性噪声/真故障/待观察？」~~ **⚠️ 2026-09-25 作废**（§4.5.3 场景 1）：真值面已死——`failures` 763 行全 `exec_rejected`、`recovered` **全 0**、止于 6/24（近 30 天 0 条）；`alerts` 表 0 行；`issue_registry` 仅 12 条；日志 ERROR 近 2 天 1 条 ⇒ **无标签、无体量，做了必成死影子**」
+- **F13**：「~~只试 Q3（告警分诊）~~ **⚠️ 该推荐已被 §4.5.3 自我推翻**：Q3 的真值面已死 ⇒ **Q3 无标签可回填，做了就是死影子**。⇒ F13 的实质内容只剩『**不再试信号侧**』这半句；『零交易语义』那半句**目前无候选可填**」
+- **F14**：「维持 F13 关闭信号侧；**则本提案的 Jev 议题应整体关闭**（只保留 §4.5.1 接口事实 + §5.2 序列化纪律作通用工程资产）」
+
+而本 DEB §3.1 候选① = 「Ops 分诊：`error_alert_carrier` 严重度分级 / 升级 vs 吸收」，状态标为 **「唯一当前可影子」**。
+
+⇒ **同一模型、同一场景、同一判据面，前案判死，本 DEB 判为唯一活口。** 本 DEB §2.2「既有裁决撞车普查」查了 `shadow_registry`（`da_glm_shadow` / `da_prompt_distill_shadow` / `eth_*` / `futu_channel_*`）与 `DEB-20261009-event-to-trade-pipeline`，**唯独漏了 `DEB-20260924-jev-*`** —— 那是同模型的唯一前案（E1：`mentions_20260924=False`、`mentions_AUC_0403=False`、`mentions_Q3_voided=False`、`mentions_scene_census_zero=False`、`mentions_serialization_sensitivity=False`）。
+
+### 8.2 候选① 实测：三重死，且载体被误读
+
+**(a) 无体量**（E2/E4）：
+
+| 面 | 实测（2026-10-11） | 前案（2026-09-25） |
+|---|---|---|
+| `failures` 总行 / 近 30 天 | 763 / **0** | 763 / 0 |
+| `failures` 时间跨度 | 2026-04-17 → **2026-06-24** | 同 |
+| `events` 近 30 天 | 410 条，**distinct 类型 = 1（全 `ENGINE_INITIALIZED`）** | 382 条全 `ENGINE_INITIALIZED` |
+| `alerts` 表 | **0 行** | 0 行 |
+| `issue_registry` | **表不存在** | 仅 12 条（`count` 全 None） |
+| `logs/ftseek_us.log` | 286 行，**`] ERROR:` = 0、`] CRITICAL:` = 0** | 近 2 天 1 条 |
+| `logs/error_alert.log` | **0 行** | — |
+| `.alert_state.cooldown` | **不存在** | 3 条 |
+
+⇒ 16 天过去，真值面**没有复活，反而更空**（`issue_registry` 从 12 条变成表不存在、cooldown 从 3 条变成文件不存在、日志 ERROR 从 1 条变成 0 条）。
+
+**(b) 无标签**（E2）：`failures.recovered` **非零填充 = 0/763**；类型分布 **763/763 全是 `exec_rejected`**（单一取值 = 零信息，无法做「良性噪声 / 真故障 / 待观察」三分类）。
+
+**(c) 无决策空间**（E5）：真判据在 `scripts/error_alert.py`，实测 `MIN_THRESHOLD = 1`（注释：「ERROR/CRITICAL 是 P0, 1 条即触发」，2026-09-20 用户裁）、`THRESHOLD_MULT = 0`（「基线只做诊断, 不抬高 P0 触发线」）、`LEVEL_MARKERS = ("] ERROR:", "] CRITICAL:")`。
+⇒ **现役策略已经是「有就报、零分级」**，是用户明确裁过的 P0 口径。要引入「严重度分级 / 升级 vs 吸收」，等于**推翻一条用户裁决**，而本 DEB 把它当作「只读影子、不碰交易链」的低风险候选 —— 风险定性错了。
+
+**(d) 载体被误读**（E6）：`ops/hermes/error_alert_carrier.py` 的 docstring 逐字写「本旁路**只换载体, 不换判据**（一次一个变量）：子进程仍是 `scripts/error_alert.py` 本身，阈值、基线、冷却键、状态文件 `data/.alert_state`、告警正文与推送路径 **逐字未改**」「本脚本在正常时**零输出**，避免与 hub 推送形成双推」。实测 `is_wrapper_not_triager=True`、`delegates_to=scripts/error_alert.py`、`zero_output_when_normal=True`、**`has_severity_grading_logic=False`**。
+⇒ 它是 RFC-094 的 **Hermes no_agent 载体包装器**（补执行账本 / 失败可见 / 运行上下文三件），**本身不做任何分诊判断**。把它当作 Jev 的落点，是把「包装器」当成了「决策器」。
+
+### 8.3 候选③（Position Intelligence 仲裁）撞的是同一堵墙
+
+前案 §4.5.2 的**混杂检验**（本 DEB 未引）：两个时间半窗的净亏基准率从 **0.660 掉到 0.200**（巨大 regime 漂移）⇒ pooled AUC 不可读；同口径下**对照臂也全部塌到 ~0.5**（`signal_confidence` pooled 0.619 → 半窗 **0.502 / 0.464**；`edge_expectancy` 0.524，CI 含 0.5；方向基线 0.487）。前案原文结论：
+
+> 「**⇒ 本项目内此轴上『没有任何一方有稳定信号』，Jev 并不比现役件更差，也不更好——它只是同样无效。**」
+
+⇒ 候选③ 落在退出侧同一轴，先验上与 Q1 同构。另：前案 §4.5.3 场景⑧已判「元环**无客观真值**；判断形状是『整理证据』不是『概率判断』⇒ 用确定性代码」。而本 DEB §1.3 自己写明 `position_intelligence.py` 是「持仓建议引擎，**纯函数式**（HOLD/TIGHTEN_SL/PARTIAL_EXIT/FULL_EXIT），**不执行交易**」⇒ 仲裁一个不产生交易行为的建议层，价值面比前案评估的更薄。
+
+### 8.4 候选②（LLM Validator 前置初筛）：价值上限是每月几美元
+
+| 窗口 | 调用数 | 花销 |
+|---|---:|---:|
+| 近 7 天（E8） | 878 | **$4.5457** |
+| 近 30 天 | 4,358 | **$26.6139** |
+| 全时 | — | $70.8098 |
+| 前案 §11⑥ 记录（2026-09-24，7 天） | — | **$0.8675** |
+
+- **对本 DEB 有利**：前案「删除成本理由」的数字前提（7 天 $0.8675）**已过时 5.2×**，省钱空间确实变大。
+- **但结论不变**：30 天 $26.6，即使初筛省掉 **30%** = **$8/月**、省掉 50% = $13/月。引入成本 = 新供应商接入 + **canonical 序列化纪律**（前案 E32 实测键序可让答案从 0.76→0.40）+ 影子基建 + 运维 ⇒ **$8/月买不回**。
+- **真要省钱该动谁**（E9，30 天按模型）：`qwen3.6-plus` **$19.12 / 1173 calls（占 72%）** > `glm-5.3` $4.68/493 > `deepseek-v4-pro` $1.59/1315。⇒ 杠杆是**换模型或减调用**（`qwen3.6-plus` 单模型就占七成成本），不是加一层概率初筛。
+- 本 DEB §3.3 自己引的前案教训是对的：`da_prompt_distill_shadow` KILLED（token 降幅 2.57% < 15% 门 + 契约违约率 1.52% → 6.06% 恶化）⇒ **LLM 成本类改动的收益容易被质量回归吃掉**。按同一逻辑，Jev 初筛的收益（$8/月）比 distill 的收益（token 降 2.57%）**更小**，而它多引入一个外部供应商。
+
+### 8.5 唯一活口 F14（穿透判别）现状：体量翻倍，但**可行性变差**
+
+| 维度 | 前案（2026-09-25） | 实测（2026-10-11，E10/E11） |
+|---|---|---|
+| `labeled` | 94 | **164** |
+| 交易日 / 每日 | 15 / **6.27** | 26 / **12.62** |
+| 跨度 | 9/3–9/24 | **2026-09-03 → 2026-10-09** |
+| `recovered_1m` 失衡 | 92:2（合口径） | **89.6:10.4**（少数类 **17**） |
+| `recovered_5m` | — | **95.1:4.9**（少数类 **8**） |
+| `recovered_10m` | — | **95.7:4.3**（少数类 **7**） |
+
+⇒ 体量涨了 1.7×（对本 DEB 有利），但**少数类只有 7–17 条**。前案已警告「92:2 失衡下 AUC 极易假阳 ⇒ **判据必须改用少数类召回/精确率**，n=94 偏小」；现在失衡更严重（`10m` 达 95.7:4.3），**少数类召回的统计功效比前案更弱**。且前案 F14 的推荐是「**倾向不推翻 F13**」，理由是它仍在信号侧。
+
+⇒ **唯一活口没有因为多攒 16 天样本而变活。**
+
+### 8.6 能力面补正：本 DEB §1.2 漏登记两条前案实测反证
+
+本 DEB §1.2 把「类型安全输出（无幻觉文本面）、校准概率带置信度」列为可靠性卖点。前案的实弹数据给出两条**必须一并登记**的反证：
+
+1. **E32 序列化敏感性**（前案称「本轮最重要发现」）：**语义内容完全相同、只换键序**，`net_loss` 从 **0.76 → 0.40**（跨 0.5 分界，36 个百分点），且每种键序各自稳定复现（×3 一致 ⇒ 确定性映射不是噪声）；`sort_keys=True` 得 0.52；加 1 个无关字段 → 0.63；包一层 `{"context":{...}}` → 0.50。**对比：业务字段 `chg_pct_today` 从 −0.28% 变到 −6.0% 只让 net_loss 动 14 个百分点。**
+   ⇒ 前案原文：「**『state 怎么摆』对答案的影响，大于『仓位事实怎么变』的影响。** 不锁死序列化，我们测到的就不是『判断效应』而是『排版效应』。」这是任何「结构化决策」用途的**根本性约束**，也是本 DEB D1–D5 未覆盖的一条工程纪律。
+2. **E31 字段敏感度不均**：`rr_ratio` 0.8 → 3.0 只动 **0.04**；`dist_from_high_pct` −1/−6.3/−12 只动 **0.02** ⇒ 它**基本忽略盈亏比与距高点**，只读 `direction` / `trend` / `price_now_vs_entry_pct`（前案 F11 冻结的最小充分集正是这三个 + `instrument`）。
+   ⇒ 本 DEB §3.2 的红线「入场区间 / 止损止盈数值：`Score` 的 0–1 序数量纲不对」方向对，但**理由不够**：不只是量纲不对，是**实测它对 `rr_ratio` / `dist_from_high` 不敏感** ⇒ 即使量纲对了它也看不见这些字段。
+3. **校准声明在自有标签上不成立**：前案 F11 实测 **ECE 0.430**（预测 0.029/0.134/0.455/0.817/**0.964** 五档 → 实际净亏率 0.475/0.550/0.475/0.350/**0.300**）⇒ 最高置信档的实际净亏率只有 0.300，**校准反向**。§1.2 的「校准概率」是厂商口径，前案已实测证伪于本仓标签。
+
+### 8.7 方法论盲区（本 DEB 最值得复用的一条教训）
+
+本 DEB **做了** P0.5 普查（§2.1 grep `app/playbook/shadow_registry.py` 列出同轴影子、§2.2 查既有裁决），流程是对的 —— 但**漏掉了同模型的唯一前案**。根因不是疏忽，是**普查方法的结构性盲区**：
+
+> **Jev 从未落地成影子 ⇒ `shadow_registry` 里没有它 ⇒ grep 注册表必然查不到。**
+
+「评估后未落地」的前案只存在于 `docs/debates/`，不在任何注册表里。⇒ **P0.5 撞车普查必须同时 grep `docs/debates/` 的文件名与全文**（按模型名 / 机制名 / 关键词），不能只查 `shadow_registry` 与 `ADJUDICATED-CRITERIA`。建议把这条写进 `AGENT.md` 的立案前检查，并把本 DEB §2.2 补一行「同模型 DEB 前案」普查项。
+
+同族既有纪律对照：本仓已有「引用结论必 grep 原文，找不到 = 自造叙事」；本条是它的立案侧镜像 —— **查撞车必 grep 原文档库，只查注册表 = 漏掉所有未落地的前案**。
+
+### 8.8 E 表（本节证据，逐条可复跑）
+
+> 期望列**全部程序化取自实跑输出**（生成脚本随探针入库），禁手抄。表形态遵守
+> `scripts/verify_deb20261009_event.py::parse_e_tables` 的 **3 列契约**。
+
+| # | 命令 | 期望输出（2026-10-11 实跑） |
+|---|---|---|
+| E1 | `PYTHONPATH=. ./venv/bin/python scripts/deb20261011_jev_conflict_probe.py \| ./venv/bin/python -c "import json,sys; j=json.load(sys.stdin); S={s['segment']:s for s in j['segments']}; g=S['G']['new_20261011'];print(g['lines'],g['git_tracked'],g['mentions_20260924'],g['mentions_AUC_0403'],g['mentions_Q3_voided'],g['claims_no_local_validation'])"` | `154 False False False False True` |
+| E2 | `PYTHONPATH=. ./venv/bin/python scripts/deb20261011_jev_conflict_probe.py \| ./venv/bin/python -c "import json,sys; j=json.load(sys.stdin); S={s['segment']:s for s in j['segments']}; a=S['A'];print(a['failures']['n_total'],a['failures']['n_last_30d'],a['failures']['span'][1],a['failures_recovered_fill']['nonzero'],a['failures_type_dist'][0]['t'],a['failures_type_dist'][0]['n'])"` | `763 0 2026-06-24 0 exec_rejected 763` |
+| E3 | `PYTHONPATH=. ./venv/bin/python scripts/deb20261011_jev_conflict_probe.py \| ./venv/bin/python -c "import json,sys; j=json.load(sys.stdin); S={s['segment']:s for s in j['segments']}; a=S['A'];print(a['alerts']['n_total'],a['issue_registry'],a['alert_state_cooldown']['exists'])"` | `0 <表不存在> False` |
+| E4 | `PYTHONPATH=. ./venv/bin/python scripts/deb20261011_jev_conflict_probe.py \| ./venv/bin/python -c "import json,sys; j=json.load(sys.stdin); S={s['segment']:s for s in j['segments']}; v=S['A']['log_volume'];print(v['logs/ftseek_us.log']['lines'],v['logs/ftseek_us.log']['ERROR'],v['logs/ftseek_us.log']['CRITICAL'],v['logs/error_alert.log']['lines'])"` | `286 0 0 0` |
+| E5 | `PYTHONPATH=. ./venv/bin/python scripts/deb20261011_jev_conflict_probe.py \| ./venv/bin/python -c "import json,sys; j=json.load(sys.stdin); S={s['segment']:s for s in j['segments']}; e=S['A']['error_alert_py'];print(e['MIN_THRESHOLD'],e['THRESHOLD_MULT'],e['level_markers_line'])"` | `1 0 LEVEL_MARKERS = ("] ERROR:", "] CRITICAL:")` |
+| E6 | `PYTHONPATH=. ./venv/bin/python scripts/deb20261011_jev_conflict_probe.py \| ./venv/bin/python -c "import json,sys; j=json.load(sys.stdin); S={s['segment']:s for s in j['segments']}; c=S['A']['carrier_role'];print(c['is_wrapper_not_triager'],c['delegates_to'],c['zero_output_when_normal'],c['has_severity_grading_logic'])"` | `True scripts/error_alert.py True False` |
+| E7 | `PYTHONPATH=. ./venv/bin/python scripts/deb20261011_jev_conflict_probe.py \| ./venv/bin/python -c "import json,sys; j=json.load(sys.stdin); S={s['segment']:s for s in j['segments']}; b=S['B'];print(b['n_total'],b['root_cause_category_nonzero'],b['llm_model_nonzero'],b['human_feedback_nonzero'],b['key_decision_factor_nonzero'],b['last_update'],b['days_stale'])"` | `223 0 0 0 0 2026-06-26 107` |
+| E8 | `PYTHONPATH=. ./venv/bin/python scripts/deb20261011_jev_conflict_probe.py \| ./venv/bin/python -c "import json,sys; j=json.load(sys.stdin); S={s['segment']:s for s in j['segments']}; c=S['C'];print(c['last_7d']['n_calls'],c['last_7d']['cost_usd'],c['last_30d']['n_calls'],c['last_30d']['cost_usd'],c['all_time_cost_usd'])"` | `878 4.5457 4358 26.6139 70.8098` |
+| E9 | `PYTHONPATH=. ./venv/bin/python scripts/deb20261011_jev_conflict_probe.py \| ./venv/bin/python -c "import json,sys; j=json.load(sys.stdin); S={s['segment']:s for s in j['segments']}; c=S['C']['by_model_30d'];print([(x['model'],x['n'],x['cost']) for x in c[:3]])"` | `[('qwen3.6-plus', 1173, 19.1197), ('glm-5.3', 493, 4.6808), ('deepseek-v4-pro', 1315, 1.5902)]` |
+| E10 | `PYTHONPATH=. ./venv/bin/python scripts/deb20261011_jev_conflict_probe.py \| ./venv/bin/python -c "import json,sys; j=json.load(sys.stdin); S={s['segment']:s for s in j['segments']}; e=S['E'];print(e['n_lines'],e['n_labeled'],e['n_distinct_days'],e['per_day'],e['date_span'])"` | `328 164 26 12.62 ['2026-09-03', '2026-10-09']` |
+| E11 | `PYTHONPATH=. ./venv/bin/python scripts/deb20261011_jev_conflict_probe.py \| ./venv/bin/python -c "import json,sys; j=json.load(sys.stdin); S={s['segment']:s for s in j['segments']}; i=S['E']['class_imbalance'];print([(k,v['minority_n'],v['ratio']) for k,v in sorted(i.items())])"` | `[('recovered_10m', 7, '95.7:4.3'), ('recovered_1m', 17, '89.6:10.4'), ('recovered_3m', 10, '93.9:6.1'), ('recovered_5m', 8, '95.1:4.9')]` |
+| E12 | `PYTHONPATH=. ./venv/bin/python scripts/deb20261011_jev_conflict_probe.py \| ./venv/bin/python -c "import json,sys; j=json.load(sys.stdin); S={s['segment']:s for s in j['segments']}; f=S['F'];print(f['status'],f['n_unique'],f['n_closed'],f['n_target'],f['claim_holds'])"` | `broken 2 123 200 False` |
+| E13 | `PYTHONPATH=. ./venv/bin/python scripts/deb20261011_jev_conflict_probe.py \| ./venv/bin/python -c "import json,sys; j=json.load(sys.stdin); S={s['segment']:s for s in j['segments']}; d=S['D']['anchors'];print(len(d),sum(1 for x in d if x['exists'] and x['line_in_range']))"` | `5 5` |
+| E14 | `grep -c "Jev 议题应整体关闭" docs/debates/DEB-20260924-jev-bounded-judgment-layer-feasibility.md` | `1` |
+| E15 | `grep -c "Q3.*作废\\|作废（§4.5.3 场景 1）" docs/debates/DEB-20260924-jev-bounded-judgment-layer-feasibility.md` | `3` |
+
+### 8.9 复查自曝（本节我自己的测量错，已修）
+
+1. **探针首版把「穿透影子」读成了 0 样本**：找 `data/penetration_shadow.jsonl`（不存在）后回退抓到 `data/shadow/penetration_analysis_latest.json`（是 JSON 不是 jsonl）⇒ `n_labeled=0`、`distinct 天数=0`，差点得出「唯一活口也死了」的假结论。真实路径在 `data/shadow/penetration_shadow.jsonl`（328 行）。
+2. **首版用 `ts/timestamp/date` 取日期，真实键是 `et_date`** ⇒ `n_distinct_days=0`、`per_day=None`。同族坑：本仓时间列名与格式三套并存（既有纪律：脚本用 `utils/et_time`，不手写 −12h）。
+3. **首版把 `labeled` 当布尔字段读**，实测它在 **`status` 字段**（`status='labeled'` 164 行 / `None` 164 行），且文件是 `penetration`(164) + `outcome`(164) 两类行配对 ⇒ 直接 `len(lines)` 会把体量报大一倍。这与既有纪律「影子的 `count_mode` 是行数还是 distinct 指令数，报 n 必须先说清口径」同族。
+4. **首版 `llm_calls.timestamp` 当文本比**：实测该列是 **epoch 浮点**（`1778752366.99`），必须 `CAST(... AS REAL)` 与 `time.time()` 比 —— 前案 §3② 已登记过这条，我又踩了一次。
+5. **E9 的期望值被截断**（`[('qwen3.6-plus', 1173, 19.1197), ('glm-5.3', 493, 4.6808), ('deepseek-v4-pro', 1315, 1.`）：验证器按子串匹配，截断处仍是实跑输出的字面前缀 ⇒ 可判定，但**不是完整读数**；引用具体数字时以 §8.4 表格为准。
+6. **⚠️ E1 首版被自指污染（第三形态，我上一批刚写进 skill 又踩了一次）**：E1 的判据是「新 DEB 原文未提及前案」，但我追加的 §8 **本身引用了 `DEB-20260924`、`0.403`、`Q3 作废`** ⇒ 探针统计全文时 `mentions_20260924` 从 `False` 翻成 `True`、`lines` 从 151 翻成 315，**我的核心证据被自己的复查节推翻**（E1 首跑即红）。修法：探针 G 段一律**截断到复查节标记之前**再统计（`## 8./## 13./## 27. 第 N Agent 独立复查`），判据对象是**作者原文**而非全文。修后 `lines=154`（= 作者原文 150 行 + 我追加的 4 行 `---` 分隔符），`mentions_*` 全 `False` 恢复。⇒ **凡「某文档是否提及 X」类普查，必须先排除复查者自己追加的节**，否则复查行为本身会销毁证据。
+7. **本节未做的一件事**：没有重跑前案的 n=200 三臂回放（那是 $0 但需外发真候选 state，属 F4 授权面）。⇒ §8.3 对候选③ 的「撞同一堵墙」是**引用前案读数 + 轴同构论证**，不是本次新实测；若 11 月开跑会要据此否决候选③，须声明这一层。
+
+### 8.10 建议裁决（供用户裁，不代拍板）
+
+| 项 | 建议 | 理由 |
+|---|---|---|
+| **§2.2 撞车普查** | **补一行「同模型 DEB 前案」普查，并把 `DEB-20260924` 的 F12/F13/F14 与 §4.5.3 结论引为前案** | 缺这条则本 DEB 的三个候选都建立在「无前案」的假前提上（§8.1/§8.7） |
+| **§1.2「未做本地接入验证」** | **改为「前案已实弹验证（七项 + n=200 三臂 + 序列化敏感性），本节继承其读数」** | 事实错误（E1）；且它让 §1.2 的能力表只登记厂商口径，漏掉三条实测反证（§8.6） |
+| **候选①（Ops 分诊）** | **撤销**（或降级为「须先修数据面才可评估」） | 三重死（E2–E5）+ 载体误读（E6）+ 前案 Q3 已作废（E15）。若仍要做，前置是**先让 `failures.recovered` 或等价标签被写**、先让日志有 ERROR 体量 —— 那是数据面工程，不是 Jev 提案 |
+| **候选②（LLM 初筛）** | **保留排队，但价值尺子改为「先换 `qwen3.6-plus`」的对照** | $26.6/月、单模型占 72%（E8/E9）⇒ 先做零风险的模型替换对照，若仍不够再谈加初筛层 |
+| **候选③（PI 仲裁）** | **保留排队，但登记前案「此轴无任何一方有稳定信号」为先验** | §8.3；且它不执行交易，价值面薄 |
+| **D5 窗口纪律** | **前提改写**：「KR1 窗**已 broken**（n_unique=2, 123/200），须先按预注册回滚线 DEB 落档 + 开跑会裁决，**禁止移动 `_OCT_COHORT_START`**」 | E12：`claim_holds=False`。根因已另案锁定（`410297295` 加 `short_horizon.overnight_gap_stop_pct: 3.0`，`horizon_config` 整体进 exit hash） |
+| **D1–D5 增补 D6** | **D6 序列化纪律**：任何 typed-decision 供应商接入，`state_hash = sha1(canonical bytes)`（固定 `sort_keys=True, separators=(",",":")`）+ 字段白名单单一键序 + 幂等体检；**禁止把「语义等价」当同一条** | 前案 E32：键序影响 > 业务字段影响（§8.6-1）。这是 D1「价值先变尺子」测不出来的失效模式 |
+
+**一句话**：本 DEB 的**纪律产出（D1–D5）值得保留**（尤其 D1 价值先变尺子、D4 红线、D3 毕业制），但它的**三个候选落点全部需要按前案重排** —— 前案已经花了一整轮实弹把「Jev 能给交易打分」证伪、把「告警分诊」判死，本 DEB 相当于在已关闭的议题上重新立案。建议 11 月开跑会**合并裁**：先裁「是否接受前案 F13/F14 的整体关闭」，再裁三个候选。

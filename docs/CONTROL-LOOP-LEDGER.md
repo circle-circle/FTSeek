@@ -105,7 +105,7 @@ PnL 上, 拿 PnL 偏差当纠正信号只会引导对噪声调参。意图只能
 | crontab-da-true-reverse-shadow | DA 分析师/独立挑战者真反向影子 (`scripts/da_true_reverse_shadow.py`, 系统 crontab 非 Hermes, RFC-125 阶段0) | 50 20 * * 1-5 (DA 常规完成后、bridge 推送前) | 只读扫描当日 DA checkpoint, 捕获 BUY↔SELL_SHORT 独立真反向、挑战者反证/失效机制/翻向条件, 幂等写 `data/shadow/da_true_reverse.jsonl`; 不改 DA 合成、指令、执行 | 断流或事件数与 checkpoint 复核不一致; DA 超时晚完成则该日缺失, 次日幂等补扫仍需人工核对 |
 | 2d69370d5c91 | 盘前综合预检 | 0 20 * * 1-5 | 数据源健康+IC+OKR盘前验证 | 数据新鲜度/可用性 |
 | 9ac3efd8c5e7 | Deepulse 科技情报日报 | 30 20 * * 1-5 | 外部情报 (开环输入, 非反馈) | — |
-| 7a40dd7c9e94 | 盘后综合复盘 | 0 4 * * 2-6 | 归因/告警/方向分析 (合并5旧job) | 成对口径误差 |
+| 7a40dd7c9e94 | 盘后综合复盘 | 0 5 * * 2-6 (2026-10-11 DST 前置右移) | 归因/告警/方向分析 (合并5旧job) | 成对口径误差 |
 | 3a6c83bbd84c | deep-analysis 盘后复盘+记忆更新 | 0 5 * * 2-6 | 记忆沉淀 | — |
 | 6af0648e3eb3 | alpha-backfill (SPY alpha+论文级IC) | 30 6 * * 2-6 | IC 测量数据回填 | — |
 | 2254de46fe64 | dc双口径日对比 | 40 5 * * 2-6 | 传感器标定: 收盘口径×策略退出配对 | 口径分歧 |

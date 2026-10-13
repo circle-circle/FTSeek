@@ -20,6 +20,7 @@ be_family_gate_check.py  # 存量测量/回填环, 台账回填待专项
 borrow_rate_snapshot.py  # 存量测量/回填环, 台账回填待专项
 capital_flow_daily_aggregate.py  # 存量测量/回填环, 台账回填待专项
 cf_pullback_limit_replay.py  # 存量测量/回填环, 台账回填待专项
+rfc123_planned_entry_anchor_backtest.py  # 2026-10-11 RFC-123 第2层观察轨日更重放 (只读诊断, 非控制环路: TTL反事实+滚动JSON; 用户裁「执行」)
 condition_expectancy_report.py  # 存量测量/回填环, 台账回填待专项
 config_key_census.py  # 存量测量/回填环, 台账回填待专项
 da_blocked_signal_cf_eval.py  # 存量测量/回填环, 台账回填待专项

@@ -1,15 +1,14 @@
 # 辩论库机器索引 (index_generated.md)
 
-> **本文件由 `scripts/build_debate_index.py` 生成** (2026-10-08), 请勿手改。
+> **本文件由 `scripts/build_debate_index.py` 生成** (2026-10-11), 请勿手改。
 > 决策摘要以 [README.md](README.md) 手工索引为准; 本页只做全量清单与漏登对账。
 
-共 **191** 个 DEB 文件。
+共 **197** 个 DEB 文件。
 
 ## 漏登对账
 
-⚠️ 以下 **12** 个近 14 天新文件未在 README 索引收录 (需补登):
+⚠️ 以下 **14** 个近 14 天新文件未在 README 索引收录 (需补登):
 
-- `DEB-20260926-composite-bear-veto-falsification.md`
 - `DEB-20260928-averaging-down-separability.md`
 - `DEB-20260928-ext-exec-price50-shadow.md`
 - `DEB-20260928-profitability-and-loss-reduction-survey.md`
@@ -19,10 +18,13 @@
 - `DEB-20260930-earnings-direction-replay.md`
 - `DEB-20261003-reentry-quick-tp-deletion.md`
 - `DEB-20261003-weekly-optimizer-p26-rebuild.md`
+- `DEB-20261008-model-long-bias-decomposition.md`
+- `DEB-20261008-ops-hardening-batch.md`
+- `DEB-20261008-playbook-pipeline-refactor-roadmap.md`
 - `DEB-20261008-premarket-trend-continuation-verdict.md`
 - `DEB-20261008-profit-ladder-scaleout-feasibility.md`
 
-📦 历史归档 **153** 个未登文件 (执行记录类, 不强制登记, 本页全量清单可查):
+📦 历史归档 **154** 个未登文件 (执行记录类, 不强制登记, 本页全量清单可查):
 
 - `DEB-20260626-okr_trading_chain.md`
 - `DEB-20260626-simulate_architecture.md`
@@ -177,6 +179,7 @@
 - `DEB-20260923-eth-scan-efficiency.md`
 - `DEB-20260923-shadow-board-caliber-fixes.md`
 - `DEB-20260923-ue-long-cut-replay.md`
+- `DEB-20260926-composite-bear-veto-falsification.md`
 
 ## 全量清单 (按日期)
 
@@ -370,6 +373,12 @@
 | [DEB-20261003-sim-live-arm-routing-convergence](DEB-20261003-sim-live-arm-routing-convergence.md) | 2026-10-03 | (未标注) | 1 | 234 |
 | [DEB-20261003-weekly-optimizer-p26-rebuild](DEB-20261003-weekly-optimizer-p26-rebuild.md) | 2026-10-03 | ✅ **已裁决并落地** — 用户 2026-10-03 裁「A」(退役收敛), 当日执行完毕 (见 §8 执行记录)。此前同日早批已裁「同意 停推送 + 复用已有的周报显示真实参数与影子参数效果对比」(P0-1/P0-3/周报承接, commit 00cccd060) | - | 127 |
 | [DEB-20261007-entry-pricing-reprice-mfe-capture](DEB-20261007-entry-pricing-reprice-mfe-capture.md) | 2026-10-07 | (未标注) | 7 | 666 |
-| [DEB-20261008-direction-gates-long-short-bias](DEB-20261008-direction-gates-long-short-bias.md) | 2026-10-08 | (未标注) | - | 367 |
+| [DEB-20261008-direction-gates-long-short-bias](DEB-20261008-direction-gates-long-short-bias.md) | 2026-10-08 | (未标注) | - | 599 |
+| [DEB-20261008-model-long-bias-decomposition](DEB-20261008-model-long-bias-decomposition.md) | 2026-10-08 | (未标注) | - | 110 |
+| [DEB-20261008-ops-hardening-batch](DEB-20261008-ops-hardening-batch.md) | 2026-10-08 | (未标注) | - | 132 |
+| [DEB-20261008-playbook-pipeline-refactor-roadmap](DEB-20261008-playbook-pipeline-refactor-roadmap.md) | 2026-10-08 | (未标注) | - | 882 |
 | [DEB-20261008-premarket-trend-continuation-verdict](DEB-20261008-premarket-trend-continuation-verdict.md) | 2026-10-08 | (未标注) | - | 88 |
 | [DEB-20261008-profit-ladder-scaleout-feasibility](DEB-20261008-profit-ladder-scaleout-feasibility.md) | 2026-10-08 | ADJUDICATED（2026-10-08 用户裁「继续」批推 F1–F4 按建议执行） | - | 200 |
+| [DEB-20261009-event-to-trade-pipeline](DEB-20261009-event-to-trade-pipeline.md) | 2026-10-09 | (未标注) | - | 2478 |
+| [DEB-20261009-unified-session-scan-dispatch](DEB-20261009-unified-session-scan-dispatch.md) | 2026-10-09 | (未标注) | 2 | 640 |
+| [DEB-20261011-jev-structured-decision-automation-discipline](DEB-20261011-jev-structured-decision-automation-discipline.md) | 2026-10-11 | (未标注) | 3 | 151 |
