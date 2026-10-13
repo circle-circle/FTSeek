@@ -142,6 +142,17 @@ def test_eth_specific_fields_survive_rich_card():
         assert "$28.21" in text                 # 止损线
 
 
+def test_negative_surprise_renders_miss_label_and_sign():
+    """渲染层符号安全 (2026-10-13): 空侧事件门不看 beat/miss (RFC-099),
+    负 surprise 不得出「超预期: +-8.0%」— 标签与符号都跟值走。"""
+    msg = trade_entry("US.X", "SELL_SHORT", 5, 925.0, session="premarket",
+                      extra={"earnings_surprise_pct": -8.04})
+    txt = msg.render_text()
+    assert "财报不及预期: -8.0%" in txt
+    assert "+-" not in txt
+    assert "财报超预期" not in txt
+
+
 def test_premarket_field_label_follows_session():
     msg = trade_entry("US.X", "BUY", 1, 10.0, session="premarket",
                       extra={"ext_change_pct": 2.0})

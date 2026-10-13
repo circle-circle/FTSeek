@@ -126,8 +126,12 @@ def test_push_filled_key_survives_hub_exception(tmp_path, monkeypatch):
 #   推送却写死 direction="BUY" 显示"买入/做多", stop_source 恒 "(-5%)" 而空头 SL 在上方 +5%。
 # 本组钉住: rec["side"] → payload.direction → 渲染文案 全链一致, 防空头臂后续回归。
 
-def _capture_card(monkeypatch, mod, tmp_path, rec, pos_id):
-    """跑一次 _push_filled, 返回富卡 PushMessage (真实 trade_entry 构造 + 渲染)。"""
+def _capture_card(monkeypatch, mod, tmp_path, rec, pos_id, chg=15.9):
+    """跑一次 _push_filled, 返回富卡 PushMessage (真实 trade_entry 构造 + 渲染)。
+
+    chg 可参数化 (2026-10-13 方向依据行): 依据行文案引用 chg 与跳空闸的相对关系,
+    fixture 必须与 side 自洽 (SHORT ≥ 3% / LONG < 3%), 否则断言的文案自相矛盾。
+    """
     monkeypatch.setattr(mod, "_PUSH_DEDUP", tmp_path / "dedup.json")
     monkeypatch.setattr(mod, "_probe_mode", lambda: False)
     sent = []
@@ -139,7 +143,7 @@ def _capture_card(monkeypatch, mod, tmp_path, rec, pos_id):
 
     import app.push as _ap
     monkeypatch.setattr(_ap, "get_push_hub", lambda: _Hub(), raising=False)
-    ok = mod._push_filled("US.ACN", 23, 212.529, 210.0, "premarket", {}, 15.9,
+    ok = mod._push_filled("US.ACN", 23, 212.529, 210.0, "premarket", {}, chg,
                           4000000, rec, pos_id)
     assert ok is True and len(sent) == 1
     return sent[0]
@@ -174,3 +178,40 @@ def test_push_filled_missing_side_falls_back_to_buy(tmp_path, monkeypatch):
     msg = _capture_card(monkeypatch, mod, tmp_path, {"initial_sl": 9.5}, "pos-noside")
     assert msg.payload["direction"] == "BUY"
     assert "买入/做多" in msg.render_text()
+
+
+# ── ④ 方向依据行 (2026-10-13 用户裁「修」: RFC-099 幅度定方向必须成行可见) ──
+# 事故形态 (用户实录): C LONG「财报超预期 +4.4%」与 GS SHORT「财报超预期 +13.0%」同屏,
+#   卡上无任何一行解释为何同为"超预期"却一空一多 ⇒ 被误读为方向逻辑不一致。
+# 修法 = 呈现层补「方向依据」行 (跳空 vs 3% 闸), 零交易行为变更; 研究臂不得冒用 RFC-099 依据。
+
+def test_push_filled_short_side_shows_gap_basis(tmp_path, monkeypatch):
+    """GS 10/13 实况形态: 跳空 +3.32% ≥ 3% 闸 → 回落做空, 依据必须成行。"""
+    mod = _load("m_basis_short")
+    msg = _capture_card(monkeypatch, mod, tmp_path,
+                        {"side": "SHORT", "initial_sl": 971.84}, "pos-gs-basis", chg=3.32)
+    for text in (msg.render_text(), msg.render_markdown()):
+        assert "方向依据: 盘前跳空 +3.32% ≥ 跳空闸 3%" in text
+        assert "回落做空" in text
+        assert "RFC-099 幅度定方向, 财报不定方向" in text
+
+
+def test_push_filled_long_side_shows_momentum_basis(tmp_path, monkeypatch):
+    """C 10/13 实况形态: +1.32% < 3% 闸 → 动量做多。"""
+    mod = _load("m_basis_long")
+    msg = _capture_card(monkeypatch, mod, tmp_path,
+                        {"side": "LONG", "initial_sl": 124.79}, "pos-c-basis", chg=1.32)
+    for text in (msg.render_text(), msg.render_markdown()):
+        assert "方向依据: 盘前 +1.32% < 跳空闸 3%" in text
+        assert "动量做多" in text
+
+
+def test_push_filled_research_arm_has_no_rfc099_basis(tmp_path, monkeypatch):
+    """研究臂判据 = 非财报动量 (无财报事件) ⇒ 不得冒用 RFC-099 依据行 (🧪 标已在)。"""
+    mod = _load("m_basis_research")
+    msg = _capture_card(monkeypatch, mod, tmp_path,
+                        {"side": "LONG", "initial_sl": 9.5,
+                         "gate_mode": mod.RESEARCH_GATE_MODE}, "pos-research-basis")
+    txt = msg.render_text()
+    assert "方向依据" not in txt
+    assert "🧪" in txt

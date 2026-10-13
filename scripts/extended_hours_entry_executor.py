@@ -622,6 +622,20 @@ def _push_filled(symbol, fqty, fpx, plan_px, session, earn, chg, vol, rec, pos_i
         #   rec["side"] ∈ {"LONG","SHORT"} (_execute 构造 rec 时必带); 缺失回退 "BUY" = 原字面行为。
         _is_short = str(rec.get("side") or "").upper() == "SHORT"
         _sl_sign = "+" if _is_short else "-"   # 空头 SL 在上方, 多头在下方 (与 initial_sl 几何同源)
+        # 方向依据成行 (2026-10-13 用户裁「修」): RFC-099 方向由跳空幅度定、财报好坏不定
+        #   方向 —— 同一张「财报超预期」上下文行下多空并存会被误读为方向矛盾 (C +1.32% 多
+        #   vs GS +3.32% 空 实例)。仅严格臂: 研究臂判据是非财报动量 (已有 🧪 标), 不得
+        #   冒用 RFC-099 依据。措辞与 _direction 三元式同源 (SHORT=跳空≥闸 / LONG=未及闸),
+        #   不复述入场带 — 带是 LONG 资格闸, 到不了推送的必然已在带内。
+        if not is_research:
+            if _is_short:
+                extra_lines.append(
+                    f"📐 方向依据: 盘前跳空 {chg:+.2f}% ≥ 跳空闸 {SHORT_GAP_MIN:g}%"
+                    " → 回落做空 (RFC-099 幅度定方向, 财报不定方向)")
+            else:
+                extra_lines.append(
+                    f"📐 方向依据: 盘前 {chg:+.2f}% < 跳空闸 {SHORT_GAP_MIN:g}%"
+                    " → 动量做多 (RFC-099 幅度定方向, 财报不定方向)")
         return bool(hub.push(_m(
             symbol=symbol, direction=("SELL_SHORT" if _is_short else "BUY"),
             qty=int(fqty), price=float(fpx),

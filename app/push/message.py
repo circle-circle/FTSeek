@@ -492,7 +492,11 @@ def _extra_lines(p: Dict[str, Any]) -> List[str]:
     try:
         es = p.get("earnings_surprise_pct")
         if es is not None:
-            out.append(f"📰 财报超预期: +{float(es):.1f}%")
+            # 标签与符号跟值走 (2026-10-13): 空侧事件门 (RFC-099) 不看 beat/miss,
+            # 负 surprise 不得渲染成「超预期: +-8.0%」。正值渲染与旧文案逐字相同
+            # (test_push_unified_channel 钉住 +142.3% 原样)。
+            _esv = float(es)
+            out.append(f"📰 {'财报超预期' if _esv >= 0 else '财报不及预期'}: {_esv:+.1f}%")
         ec = p.get("ext_change_pct")
         if ec is not None:
             out.append(f"🕒 {_phase_cn(p) or '延长时段'}涨跌: {float(ec):+.2f}%")
