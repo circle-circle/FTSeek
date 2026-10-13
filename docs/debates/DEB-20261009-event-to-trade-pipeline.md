@@ -2842,3 +2842,56 @@ SKIP（n=986）按 tier_score 分桶：**差(<5，正确跳过) 644（65%）** |
 | E145 | `grep SNDK data/shadow/eod_depth_gate_shadow.jsonl \| grep 2026-10-09 \| ./venv/bin/python -c "import sys,json; r=json.loads(sys.stdin.readline()); print(round(r['depth_net_pct'],4), r['would_revoke'])"` | 含 `-2.5294 True` |
 | E146 | `./venv/bin/python -c "import sqlite3; c=sqlite3.connect('file:data/ftseek_us.db?mode=ro',uri=True); q=lambda s:c.execute(s).fetchone()[0]; tot=q(\"SELECT ROUND(SUM(COALESCE(pnl_net,realized_pnl)),2) FROM trade_records WHERE substr(exit_time,1,10)='2026-10-12'\"); ov=q(\"SELECT ROUND(SUM(COALESCE(pnl_net,realized_pnl)),2) FROM trade_records WHERE substr(exit_time,1,10)='2026-10-12' AND exit_reason='OVERNIGHT_GAP_STOP'\"); print('total',tot,'overnight',ov,'intraday',round(tot-ov,2))"` | 含 `total -233.52` `overnight -293.03` `intraday 59.51` |
 | E147 | `./venv/bin/python -c "import json; d=json.load(open('data/reports/entry_confirm_variants_20261012.json')); a=d['arms']['V0_true2min']; print(round(a['net_value_usd']), a['day_clustered']['distinguishable'])"` | 含 `1798 False`（untracked WIP 产物，盘内可读）|
+
+---
+
+## 41. RFC-123 第2层观察轨滚动证据快照 #1（2026-10-13 · 只读存档 · 裁决前证据）
+
+> 性质：第2层规则锚日更重放（RFC-123 附G，cron `53 5 * * 2-6`）4 交易日滚动读数存档，**零行为变更**。
+> 触发：用户「要」（批准登记裁决前滚动证据）。**RFC-123 文档当前是另一 agent WIP（` M`），按归属纪律不追加其文档，改存档本 DEB**；脚本 `rfc123_planned_entry_anchor_backtest.py` 同为其附G WIP（265+/21−，--daily/ttl_backtest/_v2_overlap），只读实跑不提交。
+> 纪律（RFC-123 附E/G）：**只筛方向不裁决，无预注册阈值**；裁决须扩窗全史 + 独立预注册；⛔ 现在不得改 planned_entry 生成（阶段0 测现状 LLM 锚，改了=换被测量变量=作废重攒）。
+> 可复现：`./venv/bin/python scripts/rfc123_planned_entry_anchor_backtest.py --until 2026-10-12`（冻结窗）。
+
+### 41.1 窗口
+
+双锚影子 792 行 / 4 交易日 [10-07,10-08,10-09,10-12] / 匹配已平仓 26 笔 / bar 覆盖 26/26。actual total_pnl −$49.19。**adr035_overlap 26/26 ⇒ 同样本非独立**（与 ADR-035 v2 配对集完全重叠）。
+
+### 41.2 病灶依旧：LLM 计划价 73% 够不到
+
+可达 = **7/26（27%）**，够不到 = **19/26（73%）**。LONG 可达 6/19（计划价<区间低 11/19 = 等回踩没等到）；SHORT 可达 1/7（计划价>区间高 6/7 = 等反抽没等到）。
+
+### 41.3 规则锚回测（稳健轴 fill_rate/entry_imp；cf_pnl/净vs实际 有偏见 RFC-123 附D，不可信）
+
+| 锚 | 成交 | 错过 | 成交率 | 改善$/股 | 漏单实际PnL(赢/亏) |
+|---|---|---|---|---|---|
+| llm_plan(现状) | 10 | 16 | 38% | +3.23 | +184.33 (13/3) |
+| **or_low** | 13 | 13 | **50%** | +2.90 | +302.36 (10/3) |
+| or_mid | 24 | 2 | 92% | +1.13 | +9.78 (1/1) |
+| vwap | 24 | 2 | 92% | +0.93 | +9.78 (1/1) |
+| atr_dip_0.5 | 3 | 23 | 12% | +6.62 | −74.01 (16/7) |
+| atr_dip_1.0 | 0 | 26 | 0% | — | −49.19 (19/7) |
+
+核心：or_low 成交率 **50% vs llm 38%**（可达性优），但每股改善 +2.90 vs +3.23（llm 单次折扣略深，只是极少成交）⇒ **or_low 优势在「可达」不在「更便宜」**。开盘区间宽度/ATR 中位 0.31×，回踩 or_low 深度/ATR 中位 0.15×（浅，所以等得到）。
+
+### 41.4 第3层 TTL 回退：补漏赢家 vs 占折扣 不可兼得
+
+or_low_ttl5：limit_fill **5** / market_fallback **21** / ttl_exceeds_hold 0（cf_pnl +82.88）。or_low_ttl15：limit_fill 10 / market_fallback 11 / ttl_exceeds_hold 5（cf_pnl −33.04）。⇒ **ttl5 下 81%（21/26）退化市价进**，限价折扣基本没占到——与 §35.2「TTL 无清晰赢家」一致。第3层「补漏赢家」（不错过整笔）与「占折扣」（限价成交）在此样本不可兼得。
+
+### 41.5 阶段0 双锚影子毕业判据进度（同窗 4 日，792 行）
+
+- 判据① 生成锚缺失率 = **0/792 = 0.00%**（门槛<1%）✓ PASS
+- 判据② 触发分歧率 = **339/792 = 42.80%**（门槛≥5%）✓ PASS；272（80%）生成锚更激进 / 67 live更激进；divergence_pct 中位 1.03% / p75 2.51% / >2% 占 44.8%
+- 判据③（分歧样本按生成锚判定的含费PnL不低于现行）+ ④（护栏触顶无异常）+ ≥10交易日：**未达（当前 4/10，还差 6 交易日，~10-20）**
+
+### 41.6 裁决前立场（快照#1 不改变任何纪律）
+
+1. or_low 可达性优（50%vs38%）是稳健信号，但 **NET benefit 未证**（cf_pnl 有偏 + 漏赢家 +302.36 + 同样本非独立）——与被动挂价 KILL 前科（逆向选择，MAE 深度单调恶化）同源张力，第2层须自证 NET（含机会成本）优于现状 LLM 锚。
+2. ⛔ 不据本快照改 planned_entry 生成 / 不动阶段0 / 不预设第2层阈值（防购物）。
+3. 下一快照随日更 cron 滚动；裁决窗 = 阶段0 满 10 交易日（~10-20）后裁判据③，再独立预注册第2层。
+
+### 41.7 E 表（实跑抽出字面量，冻结窗复现）
+
+| # | 命令 | 期望输出 |
+|---|---|---|
+| E148 | `./venv/bin/python scripts/rfc123_planned_entry_anchor_backtest.py --until 2026-10-12 --json-out /tmp/rfc123_l2_snap.json >/dev/null 2>&1; ./venv/bin/python -c "import json; d=json.load(open('/tmp/rfc123_l2_snap.json')); print(d['reachability']['reach'], d['reachability']['unreach'], d['limit_backtest']['or_low']['fill'], d['ttl_backtest']['or_low_ttl5']['market_fallback'])"` | 含 `7 19 13 21`（可达/够不到/or_low成交/ttl5市价回退）|
+| E149 | `./venv/bin/python -c "import json; rows=[json.loads(l) for l in open('data/entry_timing_shadow.jsonl',errors='replace') if l.strip()]; da=[r['dual_anchor'] for r in rows if r.get('dual_anchor')]; miss=sum(1 for x in da if x.get('gen_source')=='missing'); div=sum(1 for x in da if x.get('trigger_divergent')); print(f'{miss/len(da)*100:.2f} {div/len(da)*100:.2f} {len(da)}')"` | 含 `0.00 42.80 792`（缺失率/分歧率/样本）|
