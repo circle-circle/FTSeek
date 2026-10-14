@@ -2838,7 +2838,7 @@ SKIP（n=986）按 tier_score 分桶：**差(<5，正确跳过) 644（65%）** |
 
 | # | 命令 | 期望输出 |
 |---|---|---|
-| E144 | `./venv/bin/python -c "import json; d=json.load(open('data/shadow/eod_depth_gate_report_latest.json')); print(d['trigger_settled_n'], d['trigger_sum_delta'], d['trigger_miskill_n'], d['verdict'])"` | 含 `7 -629.01 5 KEEP_SAMPLING` |
+| E144 | `./venv/bin/python -c "import json; print(json.load(open('data/shadow/eod_depth_gate_report_latest.json'))['verdict'])"` | 含 `GATE_NOT_WORTH`（⚠️10-14 修正：原期望 `7 -629.01 5 KEEP_SAMPLING` 是 latest 报告的时点读数，settler 每日覆盖必漂移；SNDK/AMD 结算后 verdict 已迁移且为终态不可逆——见 §42.2/§42.4 自纠②）|
 | E145 | `grep SNDK data/shadow/eod_depth_gate_shadow.jsonl \| grep 2026-10-09 \| ./venv/bin/python -c "import sys,json; r=json.loads(sys.stdin.readline()); print(round(r['depth_net_pct'],4), r['would_revoke'])"` | 含 `-2.5294 True` |
 | E146 | `./venv/bin/python -c "import sqlite3; c=sqlite3.connect('file:data/ftseek_us.db?mode=ro',uri=True); q=lambda s:c.execute(s).fetchone()[0]; tot=q(\"SELECT ROUND(SUM(COALESCE(pnl_net,realized_pnl)),2) FROM trade_records WHERE substr(exit_time,1,10)='2026-10-12'\"); ov=q(\"SELECT ROUND(SUM(COALESCE(pnl_net,realized_pnl)),2) FROM trade_records WHERE substr(exit_time,1,10)='2026-10-12' AND exit_reason='OVERNIGHT_GAP_STOP'\"); print('total',tot,'overnight',ov,'intraday',round(tot-ov,2))"` | 含 `total -233.52` `overnight -293.03` `intraday 59.51` |
 | E147 | `./venv/bin/python -c "import json; d=json.load(open('data/reports/entry_confirm_variants_20261012.json')); a=d['arms']['V0_true2min']; print(round(a['net_value_usd']), a['day_clustered']['distinguishable'])"` | 含 `1798 False`（untracked WIP 产物，盘内可读）|
@@ -2894,4 +2894,52 @@ or_low_ttl5：limit_fill **5** / market_fallback **21** / ttl_exceeds_hold 0（c
 | # | 命令 | 期望输出 |
 |---|---|---|
 | E148 | `./venv/bin/python scripts/rfc123_planned_entry_anchor_backtest.py --until 2026-10-12 --json-out /tmp/rfc123_l2_snap.json >/dev/null 2>&1; ./venv/bin/python -c "import json; d=json.load(open('/tmp/rfc123_l2_snap.json')); print(d['reachability']['reach'], d['reachability']['unreach'], d['limit_backtest']['or_low']['fill'], d['ttl_backtest']['or_low_ttl5']['market_fallback'])"` | 含 `7 19 13 21`（可达/够不到/or_low成交/ttl5市价回退）|
-| E149 | `./venv/bin/python -c "import json; rows=[json.loads(l) for l in open('data/entry_timing_shadow.jsonl',errors='replace') if l.strip()]; da=[r['dual_anchor'] for r in rows if r.get('dual_anchor')]; miss=sum(1 for x in da if x.get('gen_source')=='missing'); div=sum(1 for x in da if x.get('trigger_divergent')); print(f'{miss/len(da)*100:.2f} {div/len(da)*100:.2f} {len(da)}')"` | 含 `0.00 42.80 792`（缺失率/分歧率/样本）|
+| E149 | `./venv/bin/python -c "import json; rows=[json.loads(l) for l in open('data/entry_timing_shadow.jsonl',errors='replace') if l.strip()]; da=[r['dual_anchor'] for r in rows if r.get('dual_anchor') and str(r['dual_anchor'].get('date'))<='2026-10-12']; miss=sum(1 for x in da if x.get('gen_source')=='missing'); div=sum(1 for x in da if x.get('trigger_divergent')); print(f'{miss/len(da)*100:.2f} {div/len(da)*100:.2f} {len(da)}')"` | 含 `0.00 42.80 792`（缺失率/分歧率/样本。⚠️10-14 修正：加冻窗过滤 `date≤2026-10-12`，原命令读增长型 jsonl 会随新交易日漂移——见 §42.4 自纠②）|
+
+---
+
+## 42. RFC-079 EOD 深水闸 B19 正式裁决：GATE_NOT_WORTH（Hermes · 2026-10-14 · 只读登记）
+
+> 触发：2026-10-14 06:30 CST settler 例行运行到达 B19 机械判负；预注册判据到达 = 必须落档（用户裁「登记」，处置 = 方案A 维持 record-only）。
+> 性质：只读登记，零行为变更。§40.5「KEEP_SAMPLING 继续攒样」表述被本节取代（其「无现成 fix」结论不变，且被正式裁决强化）。
+
+### 42.1 裁决事实
+
+- 报告（generated_at `2026-10-14T06:30:02`）：`trigger_settled_n=9`（≥8）/ `trigger_sum_delta=−293.98`（≤0）/ `trigger_miskill_n=5`（>1）→ **verdict=GATE_NOT_WORTH**。newly_settled=5（其中 trigger 行 2：SNDK 10-09 +169.79、AMD 10-12 +165.24）；unsettled_backlog=1；not_held_n=3（RIVN/MU 10-13 PRE_CLOSE_EXIT 正确不计隔夜）。
+- 判定逻辑 = settler `_verdict()` 硬编码，自注「B19 机械判定（与 2026-09-09 预注册逐字一致，RFC-095 未改任何阈值/方向）」——**非人为裁量**。
+- 迁移路径：10-10 报告 n=7/ΣΔ−629.01/KEEP_SAMPLING → 周二 06:30 轮未刷新报告（周二 08:15 本线程 E144 实跑仍返回 `7 -629.01 5 KEEP_SAMPLING`；漏跑成因未深挖，周三轮 newly_settled=5 一次补齐 = 累计幂等设计无数据丢失，再复发再查）→ 周三 06:30 n=9 → NOT_WORTH。`_verdict` 第二分支：n≥8 时 (ΣΔ≤0 ∨ miskill>1) 即 NOT_WORTH；KEEP_SAMPLING 只存在于 n<8。
+- **自纠①**：本线程 10-13 曾述「加 SNDK → n=8 → 仍 KEEP_SAMPLING」为标签误写——n=8 时机械判定即 GATE_NOT_WORTH（KEEP_SAMPLING 仅 n<8）；「B19 不满足、无现成 fix」结论本身不变。
+
+### 42.2 终态性质：miskill 不可逆 → 转硬闸路径正式关闭
+
+5 条 miskill 行（would_revoke=True 但隔夜修复、Δ<−$5）已 settled=true 永久冻结、只增不减 → `miskill≤1` 数学上不可达；n≥8 同样冻结 → **verdict=GATE_NOT_WORTH 在任何未来样本下不变**（GRADUATION_LINE_HIT 永不可达）。调深阈值（如 −3.5%）= 阈值购物禁止；新阈值重切 = 新门，须全新预注册。
+
+### 42.3 正确拦截不能赎罪——全量枚举（settler 去重口径：by trade_id 取首 arm）
+
+| 组 | n | ΣΔ | 明细（标的/arm_date/Δ$）|
+|---|---|---|---|
+| avoid（Δ>+5）| 4 | **+574.28** | RIVN 09-22 +137.52 · QCOM 10-07 +101.73 · **SNDK 10-09 +169.79** · **AMD 10-12 +165.24** |
+| miskill（Δ<−5）| 5 | **−868.26** | M 09-10 −109.12 · AVGO 09-24 −160.16 · COIN 09-29 −177.15 · ALK 09-30 −211.83 · SPCX 10-08 −210.00 |
+| 合计 | 9 | **−293.98** | 与报告 trigger_sum_delta 逐分吻合（中性 \|Δ\|≤5 = 0 笔）|
+
+- SNDK +169.79 与 §40.5 预测值逐分一致；AMD 10-12 arm（depth −3.471%）周二再实证：10-09 开仓持有 4 天、615.45→576.19（−6.4%）、OVERNIGHT_GAP_STOP −357.49、mfe 0.22% = 墓地形态（§27「被拖成多夜」实物）。
+- **最近两个 trigger 行（SNDK/AMD）都是正确拦截**——门没有失灵，是 **−2.5% 深度区分度不足**：拦住真左尾的同时以更高频率误杀隔夜修复票（5/9）。判据级死亡，非实现 bug。
+
+### 42.4 处置（用户「登记」= 批准方案A）
+
+1. **影子维持 record-only 续采**：零成本零行为；续采价值 = 隔夜左尾监测面（每晚 EOD 豁免深水 arm 仍可见）+ settler 管道保温。停采须另裁（减法原则）+ shadow_registry 状态变更（ADJUDICATED/RETIRED）——本次不做。
+2. **隔夜 gap 左尾 = 已知无覆盖风险（本节即落档）**：两日 OVERNIGHT_GAP_STOP 合计 **−650.52**（SNDK −293.03 + AMD −357.49），深水闸解药关闭。剩余方向：① 入场质量（candidate C 阶段0，5/10 交易日 on track，§41 + RFC-123 附E 时序）② 更上游的 carry/持有决策（任何新提案须独立预注册，不触冻结窗判据面）。在新提案过预注册前，系统对隔夜左尾**无武装**——不再假装存在 fix。
+3. **自纠②（E 表漂移缺陷，本次已修）**：§40.6 E144 原期望 `7 -629.01 5 KEEP_SAMPLING` 钉在**每日覆盖的 latest 报告**时点读数上——结算后必漂移红；已改钉终态不变量（verdict）。§41.7 E149 原命令读**增长型 jsonl** 未冻窗；已加 `date≤2026-10-12` 过滤（修正后复测 `0.00 42.80 792` ✓）。**类级教训：E 表期望只允许钉三类东西——冻窗（--until/date 过滤）、冻结行（settled 行/不可变 DB 历史行）、终态不变量（单调不可逆字段）；禁钉滚动 latest 文件与增长型 jsonl。**
+
+### 42.5 10-13 session 复查摘要（本节上下文；全链正常，逐笔取证见本线程复查）
+
+10 笔了结净 −73.58 = 日内 +235.40（DA 5 executed 全 win + EXT 盘前 3 笔全胜 +62.85（UNH/C/GS，`EXT-2026-10-13-*-premarket` did 归属完整）+ META +155.10）+ 隔夜了结 −308.98（AMD −357.49 / SNOW +48.51）。NULL pnl / 重复行 / 非 BOOKED intents / TEST 污染全零；open_positions=0 进 10-14；equity $99,315.56 / 回撤 −0.37% / green。门三源一致：影子 15 arm = 8 ABANDONED（=DB entry_confirm_reversed 8 行精确相等）+ 7 CONFIRMED（=5 成交 + CRM/SHOP 确认后再被 chase_cap 拦 2）；abandoned opp_cost 全负（−0.04~−0.54%）= 全日净避亏，含 AMD 晨间 gap 后二次入场被拒（防报复性重开）。missed 3 条全有合法门归因（chase_cap 禁追线 / 证伪门 VWAP 斜率逆向）。八大影子 10-13 行齐全（intraday_reentry 停写 = `enabled:false` 配置内设计）；session 日志 ERROR/CRITICAL/Traceback=0；DA carrier stderr 修复生效（candidates=51 正常摘要，周一 stdout 污染假警报闭环）；周二盘前重启（RFC-142/132 app 批，ET 02:30 安全窗）首日实盘验证通过；阶段0 双锚第 5 日 283 行（缺失 0/分歧 81），L2 观察轨 5 日窗正常（or_low fill 52% vs llm 39%、reach 27%）。
+
+### 42.6 E 表（实跑抽出字面量；只钉冻结源/终态不变量）
+
+| # | 命令 | 期望输出 |
+|---|---|---|
+| E150 | `./venv/bin/python -c "import json; print(json.load(open('data/shadow/eod_depth_gate_report_latest.json'))['verdict'])"` | 含 `GATE_NOT_WORTH`（终态不变量，§42.2）|
+| E151 | `grep -o "与 2026-09-09 预注册逐字一致" scripts/settle_eod_depth_gate_shadow.py \| head -1` | 含 `与 2026-09-09 预注册逐字一致`（机械判定非人裁）|
+| E152 | `./venv/bin/python -c "import json; rows=[json.loads(l) for l in open('data/shadow/eod_depth_gate_shadow.jsonl',errors='replace') if l.strip()]; [print(r['symbol'],r['arm_date'],r['cf_delta'],r['would_revoke']) for r in rows if (r.get('symbol'),str(r.get('arm_date'))) in [('US.SNDK','2026-10-09'),('US.AMD','2026-10-12')]]"` | 含 `169.79 True` `165.24 True`（冻结结算行）|
+| E153 | `./venv/bin/python -c "import sqlite3; c=sqlite3.connect('file:data/ftseek_us.db?mode=ro',uri=True); t,n=c.execute(\"SELECT ROUND(SUM(COALESCE(pnl_net,realized_pnl)),2), COUNT(*) FROM trade_records WHERE exit_reason='OVERNIGHT_GAP_STOP' AND substr(exit_time,1,10) IN ('2026-10-12','2026-10-13')\").fetchone(); print(t,n)"` | 含 `-650.52 2`（不可变历史行）|
