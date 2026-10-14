@@ -299,10 +299,17 @@ def _effective_sl(direction: str, entry: float, initial_sl: float, peak_profit_p
 
 
 def replay_trade(tr: dict, bars: list[dict], exit_cfg: dict, var: dict,
-                 params: dict, ordering: str, slippage_bps: float) -> dict:
+                 params: dict, ordering: str, slippage_bps: float,
+                 anchor: dict | None = None) -> dict:
     """单笔回放. ordering: 'pess' (不利极值先触) / 'opt' (有利极值先触).
 
     返回 {exit_price, reason, held_min, mfe_pct} — 数学与 _check_playbook_exit_rules 对齐.
+
+    anchor (DEB-20261014, 可选, 默认 None=全路径回放不变): 状态锚定续放 —
+    {"t": aware ET 退出时刻, "peak_pct": 实盘录得的峰值%, "px": 实盘出场价}.
+    从锚定 bar (含) 起扫, peak 状态用实盘实测值初始化, 线数学不变 (SSOT).
+    用途: 1m 全路径重放在触发时序上失真 (实测 reason_match 0.588), 而对
+    「BE/trail 已实际触发的笔」从实盘记录状态向后续放不依赖前段路径重建.
     """
     direction, entry, qty = tr["direction"], tr["entry"], tr["qty"]
     initial_sl = tr["initial_sl"] or (entry * 0.975 if direction == "LONG" else entry * 1.025)
@@ -330,6 +337,13 @@ def replay_trade(tr: dict, bars: list[dict], exit_cfg: dict, var: dict,
         tp_active = True
 
     peak_profit_pct = 0.0
+    if anchor:  # 状态锚定续放 (DEB-20261014): 实盘退出状态起扫, 默认路径不受影响
+        peak_profit_pct = float(anchor.get("peak_pct") or 0.0)
+        bars = [b for b in bars if b["t"] >= anchor["t"]]
+        if not bars:
+            return {"exit_price": float(anchor.get("px") or tr["live_exit"]),
+                    "reason": "ANCHOR_NO_BARS", "held_min": 0.0,
+                    "mfe_pct": peak_profit_pct}
     sign = 1.0 if direction == "LONG" else -1.0
 
     def _pct(px):
