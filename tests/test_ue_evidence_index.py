@@ -938,7 +938,11 @@ def prescreen_on(stubbed_brief, monkeypatch):
     router = _e2e_router()
     base_cfg = ue._cfg
     over = {"universe_expansion.input_prescreen": True,
-            "universe_expansion.input_prescreen_max_symbols": 30}
+            "universe_expansion.input_prescreen_max_symbols": 30,
+            # [ADR-046 2026-10-14] 借券段默认关: 真 load_borrow_rates 会读生产
+            #   borrow_rate_series.jsonl (非密封), 既有断言须零漂移。接线验证在
+            #   TestBriefBorrowSnapshotSection 显式开 + 注入 rates。
+            "universe_expansion.borrow_snapshot_brief": False}
     monkeypatch.setattr(ue, "_cfg",
                         lambda k, d=None: over[k] if k in over else base_cfg(k, d))
     monkeypatch.setattr(ue, "_build_router", lambda: router)
@@ -1348,3 +1352,63 @@ class TestRealPolicyWiring:
         finally:
             cc.get_config = saved_get
             A._cfg_cache = saved_cache
+
+
+# ══ [ADR-046 2026-10-14] 借券快照段: 端到端接线 (显式开 + 注入 rates, 零真数据) ══
+class TestBriefBorrowSnapshotSection:
+    """病灶: 规则10 要求"材料无借券数据→UNKNOWN/false", 但台账从未进 brief ⇒
+    10-02 起 UE 空头 11/11 被源头过滤全杀。修复 = 渲染已采集快照进材料。
+    本类钉**接线活体** (fixture 全绿≠接线活): 段落进正文 + 事实进索引 +
+    两条 fail-open 路径 (加载炸/初筛死) 材料零改动。"""
+
+    _RATES = {
+        "US.VRTX": {"rate_pct": 2.5, "rate_asof": "2026-09-12", "shortable": True,
+                    "pool": 50000.0, "age_days": 0, "stale": False},
+        "US.NIO": {"rate_pct": None, "rate_asof": "2026-09-12", "shortable": False,
+                   "pool": None, "age_days": 0, "stale": False},
+    }
+
+    def _enable(self, prescreen_on, monkeypatch, rates=None, boom=False):
+        prescreen_on.cfg["universe_expansion.borrow_snapshot_brief"] = True
+        import app.playbook.planned_executability as pe
+        if boom:
+            def _raise(*a, **k):
+                raise RuntimeError("borrow loader down")
+            monkeypatch.setattr(pe, "load_borrow_rates", _raise)
+        else:
+            _rates = self._RATES if rates is None else rates
+            monkeypatch.setattr(pe, "load_borrow_rates", lambda *a, **k: _rates)
+
+    def test_section_rendered_and_indexed(self, prescreen_on, monkeypatch):
+        self._enable(prescreen_on, monkeypatch)
+        brief = ue._build_clue_brief("")
+        assert "[借券快照" in brief
+        assert ("[借券] US.VRTX shortable=yes pool=50,000 fee=2.5% "
+                "(as of 2026-09-12)") in brief
+        assert "[借券] US.NIO shortable=no" in brief  # 不可借照实渲染 (过滤器语义不变)
+        bw = [e for e in ue.brief_evidence_index() if e["source"] == "borrow_snapshot"]
+        assert {e["event_key"] for e in bw} == {"borrow:VRTX", "borrow:NIO"}
+        assert {tuple(e["symbols"]) for e in bw} == {("VRTX",), ("NIO",)}
+        assert all(e["text"] in set(ue._LAST_BRIEF_MATERIALS) for e in bw)
+
+    def test_loader_failure_keeps_brief_identical(self, prescreen_on, monkeypatch):
+        prescreen_on.cfg["universe_expansion.borrow_snapshot_brief"] = False
+        off = ue._build_clue_brief("")
+        self._enable(prescreen_on, monkeypatch, boom=True)
+        on = ue._build_clue_brief("")
+        assert on == off  # fail-open: 加载炸 = 材料零改动
+
+    def test_prescreen_death_skips_borrow_section(self, prescreen_on, monkeypatch):
+        """初筛 fail-open 不变量延伸: prescreen 炸 ⇒ 借券段同缺 (联动门 _ps_lines)。"""
+        self._enable(prescreen_on, monkeypatch)
+
+        def _boom(base=None):
+            raise RuntimeError("policy exploded")
+
+        monkeypatch.setattr(ue, "_scan_phase_policy", _boom)
+        prescreen_on.cfg["universe_expansion.borrow_snapshot_brief"] = False
+        baseline = ue._build_clue_brief("")
+        prescreen_on.cfg["universe_expansion.borrow_snapshot_brief"] = True
+        on = ue._build_clue_brief("")
+        assert on == baseline
+        assert "[借券快照" not in on

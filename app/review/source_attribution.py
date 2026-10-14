@@ -8,8 +8,17 @@ PLAYBOOK_SOURCE_SQL = """CASE
         WHEN raw_instruction_json LIKE '%topup_pool%' THEN 'topup'
         WHEN raw_instruction_json LIKE '%universe_expansion%'
              OR decision_id LIKE 'universe_expansion:%' THEN 'UE直写'
+        WHEN raw_instruction_json LIKE '%ue_fresh_event%' THEN 'DA-UE新事件'
         WHEN raw_instruction_json LIKE '%ue_candidate%' THEN 'DA-UE确认'
         ELSE 'DA自选' END"""
+# [2026-10-14 RFC-136 execute转正 · rfc117_v3] 'DA-UE新事件' 腿: fresh-event 批
+#   (da_fresh_event_batch --execute) 的指令由 pipeline Stage 6b 写
+#   origin="ue_fresh_event" (仅 ue_only 模式; Path A da_feed 并入 DA 主链的仍
+#   origin="ue_candidate" → 'DA-UE确认' 腿)。用户裁决 2026-10-14: 三源分账
+#   (DA自选 / DA-UE确认 / DA-UE新事件) 以实盘(SIM)交易测量各腿效果。
+#   CASE 序: ue_fresh_event 腿必须在 ue_candidate 腿**之前** — 若 raw 同时含两个
+#   字面量 (如透传字段带 _source="ue_candidate"), 更具体的腿先归因。
+#   版本号 rfc117_v2→v3 (daily/weekly funnel 落库字段同步)。
 # [RFC-117 P2 复核 2026-09-29] decision_id 前缀腿 (rfc117_v2): UE inject 的 SKIP 行
 #   raw_instruction_json 只含 {"admission":...} 块、无 universe_expansion 字面量,
 #   仅靠 raw LIKE 会把 9 条历史 UE SKIP 行误归 'DA自选' (实测 DB), 污染
@@ -39,4 +48,4 @@ def aggregate_source_direction(rows: Iterable[Dict]) -> Dict[str, int]:
 
 
 def source_labels() -> List[str]:
-    return ["DA自选", "DA-UE确认", "UE直写", "topup"]
+    return ["DA自选", "DA-UE确认", "DA-UE新事件", "UE直写", "topup"]

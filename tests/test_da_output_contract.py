@@ -797,7 +797,7 @@ class TestRound14:
         # 2026-09-14 v0.79 盘前数据有效性批 (VIX 代理 / 覆盖审计子项 / 板块脉搏日期守卫 /
         #   快照 T-1 口径标注): 三处版本号同步升, 本行是同步棘轮 (历史漏更两次, 见
         #   CHANGELOG 头注 "改 skill 代码的提交必须同步改 SKILL.md 的 version:")。
-        assert frontmatter_version == latest_changelog_version == "0.95"
+        assert frontmatter_version == latest_changelog_version == "0.96"
         assert '.Path(__file__).resolve().parents[1] / "SKILL.md"' in pipeline
         assert "^version:" in pipeline
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -58,7 +59,15 @@ def test_load_fresh_scan_requires_premarket_and_freshness(tmp_path):
     assert scan is None and reason == "no_premarket_attempt"
 
 
-def test_shadow_command_is_isolated_and_execute_is_production(tmp_path):
+def test_command_output_dir_isolated_in_both_modes(tmp_path):
+    """[2026-10-14 execute转正·clobber防护] --output-dir 两种模式恒隔离。
+
+    病灶: execute 原实现不传 output_dir ⇒ pipeline 默认落生产 data/ 根,
+    Stage 6b 的 opportunity_scan bridge/deep_sector_rotation/dynamic_blacklist
+    会被 1-3 个候选的版本覆盖 (DA 主链当日文件, 15+ 消费方)。execute 的
+    唯一生产触点 = DB 指令 (save_instruction 走 adapter 真 DB 路径) ⇒
+    两模式命令的唯一允许差异 = --no-db-write。
+    """
     shadow = MOD.build_command(
         "/venv/bin/python", Path("/skill/pipeline.py"), False,
         tmp_path / "shadow", tmp_path / "context")
@@ -71,4 +80,39 @@ def test_shadow_command_is_isolated_and_execute_is_production(tmp_path):
         "/venv/bin/python", Path("/skill/pipeline.py"), True,
         tmp_path / "shadow", tmp_path / "context")
     assert "--no-db-write" not in execute
-    assert "--no-pool-write" not in execute
+    assert "--no-pool-write" in execute  # pool 恒关 (合入生产池另裁, RFC-136 附录)
+    assert execute[execute.index("--output-dir") + 1] == str(tmp_path / "shadow")
+
+
+def test_select_fresh_candidates_excludes_same_day_db_symbols():
+    """[2026-10-14] 当日已有指令标的进批前剔除 (UPSERT by date+symbol 防覆盖)。"""
+    scan = {
+        "batch_id": "UE:fresh",
+        "surfaced": [
+            {"symbol": "MU", "direction": "LONG", "confidence": 0.5},
+            {"symbol": "RARE", "direction": "LONG", "confidence": 0.5},
+            {"symbol": "US.NOK", "direction": "SHORT", "confidence": 0.4},
+        ],
+    }
+    rows = MOD.select_fresh_candidates(scan, max_candidates=3,
+                                       exclude_symbols=frozenset({"MU", "NOK"}))
+    assert [row["symbol"] for row in rows] == ["US.RARE"]
+    # 不传 exclude_symbols = 旧行为 (全进批)
+    rows_all = MOD.select_fresh_candidates(scan, max_candidates=3)
+    assert [row["symbol"] for row in rows_all] == ["US.MU", "US.RARE", "US.NOK"]
+
+
+def test_same_day_instruction_symbols_reads_db_and_fails_open(tmp_path):
+    db = tmp_path / "ftseek_us.db"
+    connection = sqlite3.connect(db)
+    connection.execute("CREATE TABLE playbook_instructions (date TEXT, symbol TEXT)")
+    connection.executemany("INSERT INTO playbook_instructions VALUES (?, ?)", [
+        ("2026-10-14", "US.CAT"), ("2026-10-14", "US.RIVN"), ("2026-10-13", "US.OLD"),
+    ])
+    connection.commit()
+    connection.close()
+    got = MOD.same_day_instruction_symbols(db, "2026-10-14")
+    assert got == frozenset({"CAT", "RIVN"})  # 裸化 + 只取当日
+    # fail-open: 库缺失/日期为空 → 空集 (不因查询故障毙整批)
+    assert MOD.same_day_instruction_symbols(tmp_path / "missing.db", "2026-10-14") == frozenset()
+    assert MOD.same_day_instruction_symbols(db, "") == frozenset()

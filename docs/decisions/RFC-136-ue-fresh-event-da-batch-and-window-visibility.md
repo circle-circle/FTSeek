@@ -113,3 +113,60 @@
   ET 窗守卫写 `skipped_outside_window` 后 rc=0 退出。输出前缀改为中性 `[DA-main]`。
 - **回滚**: `e0d574cc1a3c` 恢复原 agent prompt/workdir, `9476e44276dc` 删除或恢复
   原 EST 说明; 两侧 `da_main_carrier.py` 同步回滚。数据面回滚无迁移。
+
+### D. 2026-10-14 execute 转正 (用户裁决, SIM 盘以交易测量) — 知情破例留痕
+
+- **裁决原文** (2026-10-14, Feishu): "目前是sim 虚拟盘，execute 能否开启，不走影子，
+  通过交易测量效果 做好交易标的源源分类" + 带外补充 "覆盖DA主链的同名文件的影响
+  也需要解决"。同批批准 P0 借券注入 ("如可行 同意")。
+- **知情破例**: 跳过原转正门 "≥10 交易日影子攒样"。依据: ① 影子仅 6 日且空头存活
+  3/3=100% LONG / 0 SHORT — 空头供给已结构性断绝 (见下 D-P0), 继续攒样 = 攒纯多头
+  废样, 违背"禁纯单向多头"原则; ② SIM 盘实弹成交 (含滑点/退出/费用全链路) 本身就是
+  比 fwd_ret_t1 快照更完整的测量面 (用户 9/12 阶段裁决"该出手出手"、8/14"能回测/
+  实测裁决不默认攒样"的延伸); ③ 先例 RFC-082 知情破例须留痕 — 本节即留痕。
+- **D-P0 同批前置 (ADR-046 语义, 代码落 llm_universe_scan.py)**: UE brief 新增
+  借券快照段 (borrow_rate_series.jsonl → 具名标的 shortable/pool/fee 行, 联动初筛
+  fail-open)。病灶: ADR-044 规则10 "材料无借券数据→UNKNOWN/false" + 台账从未进
+  brief ⇒ 10-02 起 UE 空头 11/11 被 RFC-117 源头过滤全杀 (DEB-20261014 三线分析
+  实证)。不先修此项, execute 只放多头进来 = 测量窗作废。BRIEF_TEMPLATE_VERSION
+  v5→v6 (攒样系列以此切分; 影子 6 日样本作废重开, 知情接受)。
+- **clobber 防护 (用户点名)**: `--execute` 原实现不传 --output-dir ⇒ pipeline 默认
+  落生产 data/ 根, Stage 6b 的 opportunity_scan_<date>.json (bridge, 15+ 消费方:
+  scheduler_core/_try_load_bridge、da_supply_reconcile_check、rubric、dashboard…)
+  会被 1-3 候选版本**覆盖**, deep_sector_rotation/dynamic_blacklist 同被空版 clobber。
+  修复: build_command 两种模式**恒传** --output-dir (本批目录) — execute 的唯一生产
+  触点 = playbook_instructions DB 直写 (save_instruction 走 adapter 真 DB 路径, 不随
+  output_dir)。gate jsonl/checkpoint 留本批目录 = 结算路径与影子期连续。
+  契约测试: test_command_output_dir_isolated_in_both_modes。
+- **UPSERT 防覆盖去重**: Stage 6b 按 date+symbol UPSERT — fresh-event 候选与当日
+  DA 主链指令同标的会覆盖既有行 (方向可翻转、triggered/executed 被冲 ⇒ 已成交仓位
+  的指令行显示未执行 → 重复执行风险)。修复: same_day_instruction_symbols() 进批前
+  剔除当日已有指令标的 (shadow/execute 同口径; fail-open=查询失败不毙批)。这也与
+  本批定位一致: 新事件**扩标的**, 重判存量不扩量。事件账本留痕 same_day_db_excluded。
+- **三源分账 (用户点名"源头分类")**: pipeline Stage 6b 两处 origin 写入点按
+  self.ue_only 分流 — fresh-event 批指令 origin="ue_fresh_event" (Path B), Path A
+  (da_feed 并入 DA 主链) 仍 "ue_candidate", DA 自选仍 ""。source_attribution
+  rfc117_v2→v3 新增 'DA-UE新事件' 腿 (CASE 序在 ue_candidate 前, 防 raw 同含两
+  字面量误归; 边界测试在 test_review_source_attribution)。daily/weekly funnel 版本戳
+  同步 v3。skill 版本 0.95→0.96 (CHANGELOG 同步)。
+- **pool 合入生产 = 延后另裁**: --no-pool-write 两模式恒开 (隔离目录下 pool 文件是
+  孤儿, 无人读)。生产池合入需改 pipeline pool 路径语义, 且会反哺 borrow_rate_snapshot
+  覆盖面 (正反馈), 属独立决策 — 不在本批。
+- **预注册 kill 线 (回滚判据, 2026-10-14 起算)**:
+  K1. 接线死亡: execute 开闸后 3 个交易日内 fresh-event 腿 DB 新增指令 = 0 且非
+      供给原因 (UE 有 LONG/SHORT surfaced 而 DB 无行) → 回滚查线。
+  K2. 空头复活失败: P0 落地后 5 个交易日内 UE SHORT 候选 borrow_data_basis=MATERIAL
+      占比仍 = 0 (材料进了 brief 但 LLM 不引用/池覆盖为 0) → 升级 P1 (扩池或
+      basis-aware 过滤) 另裁, execute 可继续 (多头腿有效)。
+  K3. 净亏损线: fresh-event 腿 ('DA-UE新事件' 分账) 累计 ≥8 笔已平或 ≥15 交易日,
+      费后净额 ≤ -$500 → 回滚 --execute (删 crontab 该词), 复盘再裁。
+  K4. 覆盖事故: 任何一次生产 opportunity_scan/deep_sector_rotation/dynamic_blacklist
+      被本批覆盖 (da_supply_reconcile_check 或 watchdog 报警溯源到本批) → 立即回滚。
+- **回滚**: crontab 两行删 `--execute` (即时生效, 单 token); 代码回滚 = revert 本批
+  commit。数据面零迁移 (影子/execute 产物同目录, mode 字段区分)。
+- **验证计划 (活体, 非 fixture)**: ① 次日 08:00 ET da_feed scan: universe_scan.log
+  health 行出现 "借券快照:N", scan jsonl 出现 borrow_data_basis=MATERIAL 的 SHORT;
+  ② 09:10 ET fresh-event 首批 execute: 事件账本 mode=execute status=complete,
+  playbook_instructions 出现 origin=ue_fresh_event 行 (若供给存在); ③ T+1 三源分账
+  SQL (rfc117_v3) 可读 'DA-UE新事件' 腿。TOO_EARLY 判例: 当晚无供给 ≠ 接线死,
+  以 ①② 的 3 日窗为准 (K1)。

@@ -232,7 +232,7 @@ PROMPT_HASH_V2 = hashlib.sha1(SYSTEM_PROMPT_V2.encode("utf-8")).hexdigest()[:12]
 #                           **不可**当分段键 (每天都变)。
 # 不改动 PROMPT_HASH_V2 的定义与取值: 它是既有 thinking-eval A/B 预注册判据的切分键,
 #   改它等于中途换尺子。brief 侧变更改用 brief_template_hash 切分, 两者并列落库。
-BRIEF_TEMPLATE_VERSION = "ue_brief_v5"  # v5=初筛ATR输入 + v2.14证据分层契约
+BRIEF_TEMPLATE_VERSION = "ue_brief_v6"  # v6=v5+借券快照段 (ADR-046: 规则10 MATERIAL 可判, 修空头供给归零)
                                          #  v3 = P2.1 材料索引 + P2.2 输入初筛段
 # [P3.1 2026-09-13, DEB-20260910 §18.2] 生成值留档口径版本。
 #   planned_* 记的是"生成时刻的数值与口径", 而 default_stop_pct/default_tp_pct/
@@ -2018,6 +2018,64 @@ def _render_input_prescreen(summary: Dict[str, Any]) -> List[Dict[str, Any]]:
     return lines
 
 
+def _render_borrow_snapshot(named: List[str],
+                            rates: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """[ADR-046 2026-10-14] 具名标的借券快照事实 (short_check.borrow_feasible 判定材料)。
+
+    病灶 (DEB-20261014 三线分析实证): ADR-044 规则10 要求"材料无借券数据 →
+    borrow_data_basis=UNKNOWN 且 borrow_feasible=false", 但 borrow_rate_series.jsonl
+    (scripts/borrow_rate_snapshot.py 每日对活跃池采集) **从未渲染进 brief** ⇒
+    10-02 起 UE 空头候选 11/11 全标 UNKNOWN/false ⇒ RFC-117 源头过滤
+    (pipeline.py `provided ∧ borrow_feasible is False → skip`) 全杀, 空头供给归零。
+    修复 = 把已采集台账递给 LLM, 让规则10 的 MATERIAL 分支可判 (单一变量:
+    只补材料, prompt 规则文本与过滤器语义都不动)。
+
+    数据源复用 planned_executability.load_borrow_rates() (含 stale 标注, 无数据
+    不编造)。只渲染快照覆盖到的具名标的; 未覆盖者由节标题统一声明 (=无数据 →
+    UNKNOWN, 规则10 兜底) — 不逐行渲染"无数据", 避免撑爆 brief。
+    诚实边界: 快照只覆盖活跃池, 榜外发现 (UE 的核心价值) 常不在池 ⇒ 未覆盖
+    标的仍走 UNKNOWN→过滤, 属 P1 (扩池/basis-aware 过滤) 另裁范围, 本节不粉饰。
+
+    `rates` 可注入 (测试用); 默认 None = 现场加载, 任何异常 → [] (fail-open,
+    段落缺失 = 修复前行为, 不回归不阻断扫描)。
+    """
+    if rates is None:
+        try:
+            from app.playbook.planned_executability import load_borrow_rates
+            rates = load_borrow_rates()
+        except Exception as exc:
+            print(f"  [warn] 借券快照加载失败 (降级, 不阻断): {exc}")
+            return []
+    if not rates or not named:
+        return []
+    norm: Dict[str, Dict[str, Any]] = {}
+    for k, v in rates.items():
+        norm[str(k).upper().replace("US.", "")] = v
+    facts: List[Dict[str, Any]] = []
+    seen = set()
+    for sym in named:
+        key = str(sym).strip().upper().replace("US.", "")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        info = norm.get(key)
+        if not isinstance(info, dict):
+            continue
+        shortable = info.get("shortable")
+        tag = "yes" if shortable is True else ("no" if shortable is False else "unknown")
+        pool = info.get("pool")
+        rate = info.get("rate_pct")
+        asof = str(info.get("rate_asof") or "")[:10]
+        stale = " 数据陈旧慎用" if info.get("stale") else ""
+        text = (f"[借券] US.{key} shortable={tag}"
+                + (f" pool={int(pool):,}" if isinstance(pool, (int, float)) else "")
+                + (f" fee={rate}%" if isinstance(rate, (int, float)) else "")
+                + f" (as of {asof}{stale})")
+        facts.append(_fact("borrow_snapshot", text, symbols=[key],
+                           published_at=asof or None, event_key=f"borrow:{key}"))
+    return facts
+
+
 def _build_clue_brief(manual_clue: str = "") -> str:
     # [U8 2026-08-25 / P2.1 / P2.5 2026-09-12] 材料索引与指纹 — 供 _evidence_grounded /
     #   _classify_evidence_citation 做"引证是否真实存在于今日输入"的代码核验。
@@ -2299,6 +2357,11 @@ def _build_clue_brief(manual_clue: str = "") -> str:
     #   放在最后: 此时全部 gather 已完成, 具名集合才是完整的。
     global _LAST_INPUT_PRESCREEN
     _LAST_INPUT_PRESCREEN = {}
+    # [ADR-046] _named/_ps_lines 提到 prescreen 门外初始化: 借券快照段复用同一具名
+    #   集合, 且以"初筛段确实渲染了行"为联动门 — 初筛关/炸/无行 ⇒ 借券段同缺,
+    #   守"初筛 fail-open = 材料零改动"不变量 (test_fail_open_yields_no_section...)。
+    _named: List[str] = []
+    _ps_lines: List[Dict[str, Any]] = []
     if bool(_cfg("universe_expansion.input_prescreen", True)):
         #   具名集合的取法有两处刻意选择 (都是"别把最该判的挤掉"):
         #   ① **排除 feedback_table** — 那是"近7日浮现回顾", 配套 prompt 规则本就是
@@ -2343,6 +2406,17 @@ def _build_clue_brief(manual_clue: str = "") -> str:
                       f"{len(_ps.get('context_only') or [])}仅背景/"
                       f"{len(_ps.get('unknown') or [])}未定"
                       + ("" if _ps.get("status") == "ok" else f"({_ps.get('status')})"))
+    # ── [ADR-046 2026-10-14] 借券快照段 (附加段; fail-open; 规则10 MATERIAL 判定材料) ──
+    #   放在初筛段之后: 同属"可交易性判定材料", 且此时具名集合 (_named) 已完整。
+    #   联动门 _ps_lines: 初筛段没渲染 (关/炸/无行) ⇒ 借券段同缺 (零材料改动不变量)。
+    #   只渲染快照覆盖到的标的; 加载失败/无覆盖 → 段落缺失 = 修复前行为, 不回归。
+    if bool(_cfg("universe_expansion.borrow_snapshot_brief", True)) and _ps_lines:
+        _bw_facts = _render_borrow_snapshot(_named)
+        if _bw_facts:
+            parts.append("\n[借券快照 (short_check.borrow_feasible 判定材料; 每日采集, 仅覆盖活跃池) — "
+                         "未列出的具名标的=无借券数据(按规则10 UNKNOWN)]")
+            parts.extend(_take_facts(_bw_facts, source="borrow_snapshot"))
+            health.append(f"借券快照:{len(_bw_facts)}")
     # [P2.1 2026-09-12] 材料行由**索引派生** — 索引在 gather 现场逐条登记, 与正文同源。
     #   原实现在此处把 parts 按 "\n" 拆行再用 `not startswith("[")` 排除节标题, 该谓词
     #   同时误杀了 `[CRITICAL/…]`/`[HIGH/EARNINGS]`/`[HIGH/INSIDER_CLUSTER]` 等**事实行**

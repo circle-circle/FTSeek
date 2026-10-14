@@ -12,6 +12,10 @@ RAW_SOURCES = [
     ('{"source":"deep_analysis","origin":"ue_candidate"}', "DA-UE确认"),
     ('{"source":"universe_expansion"}', "UE直写"),
     ('{"source":"topup_pool"}', "topup"),
+    # [rfc117_v3 2026-10-14] fresh-event 批 execute 转正: origin="ue_fresh_event"
+    ('{"source":"deep_analysis","origin":"ue_fresh_event"}', "DA-UE新事件"),
+    # CASE 优先级边界: raw 同含两字面量时, 更具体的 ue_fresh_event 腿先归因
+    ('{"origin":"ue_fresh_event","_source":"ue_candidate"}', "DA-UE新事件"),
 ]
 
 
@@ -64,14 +68,20 @@ def test_daily_signal_funnel_reports_source_direction(tmp_path, monkeypatch):
         "INSERT INTO playbook_instructions VALUES "
         "('2026-09-29', 'SKIP', 0, '{\"admission\": {\"verdict\": \"PASS\"}}', 'universe_expansion:2026-09-29:ADBT')"
     )
+    # [rfc117_v3] fresh-event 批 execute 转正腿: origin="ue_fresh_event" → 'DA-UE新事件'
+    connection.execute(
+        "INSERT INTO playbook_instructions VALUES "
+        "('2026-09-29', 'SELL_SHORT', 1, '{\"source\":\"deep_analysis\",\"origin\":\"ue_fresh_event\"}', 'DA-z')"
+    )
     connection.commit()
     connection.close()
     generator = DailyReviewGenerator()
     monkeypatch.setattr(generator, "db_path", db_path)
     funnel = generator._get_signal_funnel("2026-09-29")
-    assert funnel["source_attribution_version"] == "rfc117_v2"
+    assert funnel["source_attribution_version"] == "rfc117_v3"
     assert funnel["by_source_direction"] == {
         "DA-UE确认·BUY": 1,
+        "DA-UE新事件·SELL_SHORT": 1,
         "UE直写·SELL_SHORT(未执行)": 1,
         "UE直写·SKIP(未执行)": 1,
     }
@@ -95,7 +105,7 @@ def test_weekly_signal_funnel_reports_source_direction(tmp_path, monkeypatch):
     monkeypatch.setattr(generator, "db_path", db_path)
     monkeypatch.setattr(generator, "output_dir", tmp_path)
     funnel = generator._get_weekly_signal_funnel("2026-09-28", "2026-09-29")
-    assert funnel["source_attribution_version"] == "rfc117_v2"
+    assert funnel["source_attribution_version"] == "rfc117_v3"
     assert funnel["by_source_direction"] == {"DA-UE确认·BUY": 1}
 
 
