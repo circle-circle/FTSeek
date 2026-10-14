@@ -26,6 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.utils.timezone import ET
+from app.core.db_utils import a9_clean_where, era_clean_where
 
 ROOT = Path(__file__).resolve().parents[1]
 SHADOW_DIR = ROOT / "data" / "shadow"
@@ -306,7 +307,8 @@ def _sec_exec_gate():
     BLOCK (负期望) 的比例 — 量化"若 edge 门实装, 会拦掉多少我们实际下的单"。
     """
     recs = _read_jsonl(SHADOW_DIR / "exec_gate_audit.jsonl")
-    lines = ["【下单前收口审计 (全来源: DA/UE/内部)】"]
+    lines = ["【下单前收口审计 (全来源: DA/UE/内部)】",
+             "  (结局回填口径: 现役时代>=2026-07-01 + clean/real + 剔A9首跑批; 判据 A10/A9)"]
     if not recs:
         lines.append("  暂无样本 (盘中未执行 / 刚上线) — 产出后自动显示")
         return lines
@@ -320,10 +322,16 @@ def _sec_exec_gate():
         _db = ROOT / "data" / "ftseek_us.db"
         if _db.exists():
             _c = sqlite3.connect(f"file:{_db}?mode=ro", uri=True)
+            # A10 现役时代 + A9 首跑测试批排除 (2026-10-14): 结局回填是表现类读数,
+            # 旧时代 1M 大单/人工单与首跑仙股批都会把 BLOCK vs PASS 的 $ 均值带偏
+            # (SSOT: app/core/db_utils; 账户级对账类读数才豁免, 此处不属)。
+            _era = era_clean_where(_c)
+            _a9 = a9_clean_where(_c)
             for _sym, _d, _n, _pnl in _c.execute(
                 "SELECT symbol, date(entry_time), COUNT(*), "
                 "SUM(COALESCE(pnl_net, realized_pnl, 0)) FROM trade_records "
-                "WHERE entry_time IS NOT NULL GROUP BY symbol, date(entry_time)"):
+                "WHERE entry_time IS NOT NULL " + _era + " " + _a9 + " "
+                "GROUP BY symbol, date(entry_time)"):
                 _pnl_by_key[(_sym, _d)] = (_n, _pnl)
             _c.close()
     except Exception:

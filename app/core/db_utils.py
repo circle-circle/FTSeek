@@ -78,6 +78,52 @@ def a9_clean_where(conn) -> str:
         cols = set()
     return A9_CLEAN_PERFORMANCE_WHERE if "metadata_json" in cols else ""
 
+# ══════════════════════════════════════════════════════════════════════════
+# A10 现役时代口径 (SSOT, 2026-10-14 用户裁「后续统计和数据筛选过滤旧数据」)
+# ══════════════════════════════════════════════════════════════════════════
+# 现役自动化系统 2026-07 起 (playbook 时代, ~10万资金, 单笔名义 p50≈$5.5k)。
+# 2026-04~06 为 1M 资金旧时代 (MAIN_PIPELINE/SCALPING, 单笔名义 $17k~$1.14M),
+# 含人工在富途 APP 平的 legacy 单 (ORCL 4/24 净 +$17,843 = 全库头条净益 +$12,526
+# 的 142%; XLF 6/2 direction_mismatch +$8,544)。
+#
+# 混时代读数会翻符号 (2026-10-14 实测, RFC-143): 全库净 +$12,526 vs 现役时代
+# −$1,455; 方向腿结论同样翻 (混时代「SHORT 两腿皆负」是旧时代人工 SHORT 单的
+# 伪影, 现役口径 SHORT +$90≈0 / LONG −$1,544, 原「SHORT 证伪」结论已撤回)。
+#
+# 判据 (docs/ADJUDICATED-CRITERIA.md A10): **表现类**读数 (净/胜率/RR/IC/方向腿/
+# 回放基线) 默认拼本谓词; 账户级资金对账 (钱真的动了) 与费用/成本标定豁免 —
+# 豁免的消费方须在代码注释显式留痕 (与 A9 豁免同律)。改边界 = 重新裁决。
+#
+# 边界 2026-07-01 与 scripts/long_expectancy_ledger.py ERA_START (DEB-20260816
+# §九9.4 口径 SSOT) 一致; 不取 6/27 playbook 分界是因 6/24-26 的 PLAYBOOK_SIM
+# 行仍按旧资金量级下单 (~$30k/笔), 7/1 起名义额才稳定在 $3-6k 带。
+#
+# 用法 (拼进 WHERE, 已含前导 AND):
+#     conn.execute(f"SELECT ... FROM trade_records WHERE exit_price>0 {ERA_CLEAN_PERFORMANCE_WHERE}")
+# 需要「含旧时代」对照口径时不要拼本常量, 另算一遍并显式标注。
+CURRENT_ERA_START = "2026-07-01"
+ERA_CLEAN_PERFORMANCE_WHERE = (
+    "AND trade_date >= '" + CURRENT_ERA_START + "' "
+    "AND COALESCE(data_quality,'') IN ('clean','real') "
+    "AND COALESCE(source_type,'') NOT IN ('POSITION_SYNC','MANUAL')"
+)
+
+
+def era_clean_where(conn) -> str:
+    """返回现役时代+数据质量谓词; 表缺任一列时返回空串 (fail-open, 同 a9_clean_where).
+
+    取舍与 A9 一致: 宁漏排除旧时代行, 不可让报表因旧库/异构 fixture 的 schema
+    差异整张崩掉。data_quality 为 NULL 的行按 IN ('clean','real') 排除 — 与
+    scripts/expectancy_ic_backtest.py 既定清洗口径一致 (2026-10-14 实测全库 0 行 NULL)。
+    """
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(trade_records)")}
+    except Exception:  # pragma: no cover - 载体不可读时不崩报表
+        cols = set()
+    if {"trade_date", "data_quality", "source_type"} <= cols:
+        return ERA_CLEAN_PERFORMANCE_WHERE
+    return ""
+
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _DATA_DIR = _PROJECT_ROOT / "data"
 

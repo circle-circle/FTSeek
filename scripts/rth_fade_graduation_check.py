@@ -17,7 +17,8 @@
   在 `config/unified_config.yaml:1530` 实际为 **true (enforce 已激活)**, 代码缺省值才是 false ——
   早前本文写"默认 false = record-only"描述的是代码缺省, 与生产配置不符, 已勘误。
 - **落地方案**: 走 RTH 空头通道 (= 已存在、已在成交的那条), **不需要**延长时段开空成交能力。
-  实测该通道 (trade_records, 剔 P3_DUP_CLEANUP/external_close, 8/25 起) 有真实成交与净额。
+  实测该通道 (trade_records, 剔 P3_DUP_CLEANUP/EXTERNAL_CLOSE 大小写不敏感, 8/25 起,
+  现役时代口径 A10) 有真实成交与净额。
 - 另一条路 (ETH 开空) 仍是**未证实项** ⇒ 本规则的执行不依赖它。
 """
 import json
@@ -63,7 +64,13 @@ def _net_usd(r: dict) -> float:
 def channel_readiness():
     """RTH 空头通道实况 (只读 sqlite; 剔非策略平仓)。"""
     try:
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))
+        from app.core.db_utils import era_clean_where
         c = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+        # A10 现役时代口径 (2026-10-14 用户裁): 当前 entry_time>=8/25 窗口天然在现役
+        # 时代内, 拼谓词是防窗口放宽后 4-6 月 1M 旧时代大单倒灌 (SSOT: db_utils)。
+        era = era_clean_where(c)
         row = c.execute("""
             SELECT COUNT(*),
                    ROUND(AVG(pnl_pct)*100, 2),
@@ -71,14 +78,19 @@ def channel_readiness():
                    SUM(CASE WHEN COALESCE(pnl_net, realized_pnl) > 0 THEN 1 ELSE 0 END)
             FROM trade_records
             WHERE direction LIKE '%SHORT%'
-              AND exit_reason NOT IN ('P3_DUP_CLEANUP', 'external_close')
+              -- 2026-10-14 大小写修复: DB 混存 'EXTERNAL_CLOSE'/'external_close' 两态,
+              -- SQLite IN 大小写敏感, 旧写法只剔小写 (ORCL 4/24 人工单即大写态,
+              -- 此前靠 entry_time>=8/25 窗口挡住, 窗口一放宽即漏)。UPPER(NULL)=NULL
+              -- ⇒ 未平仓行排除语义与旧写法一致。
+              AND UPPER(exit_reason) NOT IN ('P3_DUP_CLEANUP', 'EXTERNAL_CLOSE')
               AND entry_time >= '2026-08-25'
-        """).fetchone()
+        """ + era).fetchone()
         c.close()
         n, avg, net, win = row
         if not n:
             return "RTH 空头通道: 近期无干净成交样本"
-        return (f"RTH 空头通道实况(8/25起, 剔非策略平仓): {n} 笔, 均 {avg:+.2f}%/笔, "
+        return (f"RTH 空头通道实况(8/25起, 剔非策略平仓·大小写不敏感, 现役时代口径A10): "
+                f"{n} 笔, 均 {avg:+.2f}%/笔, "
                 f"净 ${net:+.0f}, 胜 {win}/{n} ({100*win/n:.0f}%)")
     except Exception as e:
         return f"RTH 空头通道实况: 读取失败 ({e})"
