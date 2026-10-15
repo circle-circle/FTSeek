@@ -1,5 +1,17 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-15 全量回归闸门修复 + main 快进合并（用户令「合并+push」）
+
+**触发**: 用户授权 main FF 合并 + push。
+**闸门经过**（诚实记录，非一次过）: 首轮全量 15 红 → 逐根归因 = 10-12~14 断档期存量红 8 类 + 本日修复引入 2 类 + 真瞬态 1 类：
+- 存量红（断档期产物未过守卫）: RFC-142 的 `app.risk.exit_reasons`/`live_fee_reconciliation` 未入隔离环境加载清单 + 沙箱 schema 缺 `net_pnl_pct`（exit_recovery ×4）；BRIEF_TEMPLATE v5→v6 两钉未跟（RFC-136 有意升级）；RFC-080 共享门钉点未随 RFC-132 结构前移；`da_gate_block_audit.py` 字面 sqlite3.connect 撞 chokepoint；两个一次性核验脚本只在 ~/.hermes 未入库（已回库 + sha256 对账 + 顺手修掉其一的 except:pass）。
+- 本日引入: 我新增的三条 ADJUDICATED note 缺回源锚（补 DEB/RFC 锚）；`ue_short_boost_shadow` 终态后消费者未认领（补 _CONSUMER_ACK + 防爬升钉同步）。
+- 真瞬态: okr_latest.json 05:01 抓到 `ALLOW_REAL_TRADING=true`+waiver 已过期 ⇒ KR4 alarm=True——**告警是真且正确**（正是设计要抓的状态），07:31 收旗后重生成产物即消。
+- 设计性修复: entry_confirm 基线复现右删失（冻结须含结算日界）；intraday 语义静默回放语料冻结到标定窗（语料随活跃日增长使抑制率自然坍塌，非归一化失效）；coordinator 异步排空等待 2s→10s（高负载假红）。
+**验证**: 全量 `pytest tests/ -q` = **7198 passed / 0 failed / 72 skipped**（终轮 13:16）；`git merge-base --is-ancestor main HEAD` 纯快进成立。
+**合并**: main FF 至本分支 HEAD + push origin（main 与 rfc-060-phase1-hotfixes 同推）。
+**边界**: 无行为变更批次之外的混入；vault 产物单列 `[vault]` 提交。
+
 ## 2026-10-15 棘轮双执法面合并（审计 P3）
 
 **触发**: 审计发现棘轮家族分两互不重叠的执法面——CI 面 5 类（naive-now/except-pass/utc4/pipeline-size/W456）只在 push 时跑，无 push 日工作树漂移无人捕。
