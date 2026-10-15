@@ -13,6 +13,7 @@ brief 整段接线由 test_brief_builder_wires_borrow_section 静态守卫 +
 import inspect
 import os
 import sys
+import yaml
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -33,6 +34,7 @@ RATES = {
                "pool": None, "age_days": 0, "stale": False,
                "origin": "borrow_rate_series_jsonl"},
 }
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "unified_config.yaml")
 
 
 def test_renders_covered_symbols_with_borrow_fields():
@@ -84,3 +86,6 @@ def test_brief_builder_wires_borrow_section():
     assert "borrow_snapshot_brief" in src          # config kill-switch 在位
     assert "_render_borrow_snapshot(_named)" in src  # 消费 prescreen 具名集合
     assert "ue_brief_v6" == BRIEF_TEMPLATE_VERSION   # 版本戳已升 (攒样切分键)
+    with open(CONFIG_PATH, encoding="utf-8") as config_file:
+        config = yaml.safe_load(config_file)
+    assert config["universe_expansion"]["borrow_snapshot_brief"] is True

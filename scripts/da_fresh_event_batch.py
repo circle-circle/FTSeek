@@ -102,14 +102,15 @@ def load_fresh_scan(
 
 
 def same_day_instruction_symbols(db_path: Path = DEFAULT_DB_PATH,
-                                 trade_date: str = "") -> FrozenSet[str]:
+                                 trade_date: str = "") -> Optional[FrozenSet[str]]:
     """[2026-10-14 execute转正] 当日 playbook_instructions 已有指令行的裸 symbol 集合。
 
     用途: fresh-event 候选进批前剔除当日已被 DA 主链 (或上一批 fresh-event) 裁决过
     的标的 — Stage 6b 按 date+symbol UPSERT, 同标的会**覆盖**既有指令行 (方向可翻转、
     triggered/executed 状态被冲掉 ⇒ 已成交仓位的指令行显示未执行 → 重复执行风险)。
     且本批定位 = 新事件驱动**扩标的**, 重判存量指令不扩量只添撞车。
-    fail-open: 查库失败返回空集 (宁可交给 UPSERT 覆盖仲裁兜底, 不因查询故障毙整批)。
+    查询失败返回 None: execute 调用方必须 fail-closed 跳过本批 (不能绕过 UPSERT
+    防覆盖前置过滤); shadow 可降级为空集继续攒样。
     """
     if not trade_date:
         return frozenset()
@@ -122,8 +123,8 @@ def same_day_instruction_symbols(db_path: Path = DEFAULT_DB_PATH,
         finally:
             con.close()
     except Exception as exc:
-        print(f"[WARN] 当日已有指令查询失败 (fail-open 不过滤): {exc}", file=sys.stderr)
-        return frozenset()
+        print(f"[ERROR] 当日已有指令查询失败: {exc}", file=sys.stderr)
+        return None
     return frozenset(str(r[0]).upper().replace("US.", "") for r in rows if r and r[0])
 
 
@@ -231,6 +232,17 @@ def run(args: argparse.Namespace) -> int:
     # [2026-10-14 execute转正·UPSERT防覆盖] 当日已有指令标的剔除 (shadow/execute 同口径:
     #   重复裁决浪费 DA LLM 额度并污染攒样; execute 下还会覆盖既有指令行)。
     existing_today = same_day_instruction_symbols(args.db, date)
+    if existing_today is None:
+        if args.execute:
+            _append_event(args.event_path, {
+                **base_event,
+                "status": "dedup_query_failed",
+                "ue_batch_id": scan.get("batch_id", ""),
+            })
+            print("[fresh-event] execute skipped: same-day instruction query failed",
+                  file=sys.stderr)
+            return 2
+        existing_today = frozenset()
     deduped = sorted({
         str(row.get("symbol") or "")
         for row in scan.get("surfaced", [])

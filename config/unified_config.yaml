@@ -2255,6 +2255,9 @@ universe_expansion:
   evidence_grounding_enforce: false
   # U9 (2026-08-25 建议②): 扫描时注入当日 regime 摘要 (与执行端同源)。回滚: false。
   scan_regime_brief: true
+  # [ADR-046 2026-10-14] UE brief 借券快照段开关。true=把 borrow_rate_series
+  # 台账渲染进 short_check 判定材料; false=回到修复前"段落缺失"行为。回滚: false。
+  borrow_snapshot_brief: true
   # U11 (2026-08-26, 用户裁"确认时间点×10min"): 开盘+10min 确认门 (两段式第二段)。
   #   21:10 CST scan 生成假设; 开盘+10min 用真实盘中价裁决信息是否已被价格反映
   #   (双季 cron 双挂: EDT 21:40 / EST 22:40 CST = 09:40 ET, 见 crontab 注释)。

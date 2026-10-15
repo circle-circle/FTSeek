@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import argparse
 import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -102,7 +103,7 @@ def test_select_fresh_candidates_excludes_same_day_db_symbols():
     assert [row["symbol"] for row in rows_all] == ["US.MU", "US.RARE", "US.NOK"]
 
 
-def test_same_day_instruction_symbols_reads_db_and_fails_open(tmp_path):
+def test_same_day_instruction_symbols_distinguishes_query_failure(tmp_path):
     db = tmp_path / "ftseek_us.db"
     connection = sqlite3.connect(db)
     connection.execute("CREATE TABLE playbook_instructions (date TEXT, symbol TEXT)")
@@ -113,6 +114,25 @@ def test_same_day_instruction_symbols_reads_db_and_fails_open(tmp_path):
     connection.close()
     got = MOD.same_day_instruction_symbols(db, "2026-10-14")
     assert got == frozenset({"CAT", "RIVN"})  # 裸化 + 只取当日
-    # fail-open: 库缺失/日期为空 → 空集 (不因查询故障毙整批)
-    assert MOD.same_day_instruction_symbols(tmp_path / "missing.db", "2026-10-14") == frozenset()
+    assert MOD.same_day_instruction_symbols(tmp_path / "missing.db", "2026-10-14") is None
     assert MOD.same_day_instruction_symbols(db, "") == frozenset()
+
+
+def test_execute_skips_batch_when_same_day_query_fails(tmp_path, monkeypatch):
+    """execute 下查库失败必须 fail-closed, 不得绕过当日 UPSERT 防覆盖过滤。"""
+    event_path = tmp_path / "events.jsonl"
+    scan = {"batch_id": "UE:fresh", "surfaced": [
+        {"symbol": "RARE", "direction": "LONG", "confidence": 0.5},
+    ]}
+    monkeypatch.setattr(MOD, "load_fresh_scan", lambda *args, **kwargs: (scan, "complete"))
+    monkeypatch.setattr(MOD, "same_day_instruction_symbols", lambda *args, **kwargs: None)
+    args = argparse.Namespace(
+        execute=True, force=True, max_candidates=3, max_age_hours=1.0, timeout=1,
+        python="python", pipeline=Path("pipeline.py"), scan_path=Path("scan.jsonl"),
+        event_path=event_path, db=tmp_path / "missing.db", output_dir=tmp_path / "out",
+        context_dir=tmp_path / "context",
+    )
+    assert MOD.run(args) == 2
+    events = MOD._read_jsonl(event_path)
+    assert events[-1]["status"] == "dedup_query_failed"
+    assert not (tmp_path / "out").exists()
