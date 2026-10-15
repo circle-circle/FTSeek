@@ -199,10 +199,13 @@ ADJUDICATED: dict[str, dict] = {
                 "(docs/debates/DEB-20260928-ext-exec-price50-shadow.md)。",
     },
     "ue_short_boost_shadow": {
-        "read_at": "2026-10-03", "recheck_after": "2026-10-10", "needs_user": False,
-        "note": "临时读数: n=54/60 (decision_id 去重), 末行 2026-09-28; "
-                "事件驱动写方最大自然间隙 11 天, 尚未达主门。10/10 重看并建/跑 "
-                "结算器; 未到门前不抬待裁 (DEB-20260805-supply §四.3)。",
+        "read_at": "2026-10-15", "recheck_after": "", "needs_user": True,
+        "note": "2026-10-15 审计复核: 产物冻结 n=54/60 (decision_id 去重, 末行 2026-09-28) — "
+                "写方 (UE 直写 inject 链, llm_universe_scan L4243-4258) 已随 2026-10-06 cron 摘除 "
+                "(UE fresh-event 批改走 da_fresh_event_batch) 而停止 ⇒ 主门 n=60 在现路径下"
+                "不可达。处置待用户裁: (a) 按已冻结 54 笔 T+1 结算 + 标「样本未达门」 "
+                "(b) 判「供给路径消亡」按停止规则冻结归档。10/10 的「建结算器」承诺从未履行, "
+                "NO_EVAL_SCRIPT 挂账恰好掩盖了逾期机制 (审计回流断裂形态⑤)。",
     },
     "gap_chase_gate": {
         "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
@@ -253,6 +256,34 @@ ADJUDICATED: dict[str, dict] = {
                 "(观测: OOS 同向-45→-43, 尾部占比 86.4%, 只记录不结论)。证伪不立即换假设 (KR3 明令); "
                 "SHORT 腿攒至 n≥30 重跑同脚本, 闹钟 10/17。 (读数出处: registry verdict_history 10/4 条目 "
                 "+ data/shadow/kr3_final_adjudication.json + docs/OKR-2026-09.md 变更记录 10/4 行)",
+    },
+    # ── 2026-10-15 全链路审计 P1-3 对账批新增 ──
+    "eth_held_exit_shadow": {
+        "read_at": "2026-10-15", "recheck_after": "2026-10-30", "needs_user": True,
+        "note": "在采未注册(禁止态)补登。⚠️ 待用户裁: 审计发现 commit 80d8817ba (10-09 拆分批, "
+                "自述零行为变更) 已把 RFC-127 §3.2 **阶段1 语义**无开关上线 (pipeline.py:3324 "
+                "_release_eth_held_exit_for_rth_takeover: ETH HELD 零成交 intent 在 RTH 开盘自动"
+                "归档释放 + 恢复 SL/BE/trailing/EOD 评估), 而 RFC-127 头部仍写「阶段1 未实施, "
+                "待影子判据+用户二次裁决」、§4 判据从未满足 (影子面仅 2 行); docs 全域无授权记录。"
+                "副作用: 影子面缩为「移交失败」子集 (选择偏差), 10-09 后零新增。",
+    },
+    "post_ca4487": {
+        "read_at": "2026-10-15", "recheck_after": "", "needs_user": False,
+        "note": "在采未注册(禁止态)补登。观测窗在跑: 10-14 收盘 n_closed=28/200, single_version, "
+                "hash 缺失 0。无可裁决事项 (判决面=oct_cohort BROKEN 终局已定); PERMANENT_MEASURE "
+                "挂账防机械迁 READY。窗口进度重看=OKR 结算日 (10-31)。",
+    },
+    "ext_entry_earnings_criterion_shadow": {
+        "read_at": "2026-10-15", "recheck_after": "2026-10-31", "needs_user": False,
+        "note": "在采未注册(禁止态)补登。在采健康 (10-15 07:55 仍写, 5765 行/16 ET日, "
+                "legacy_blocked_new_pass=493)。判据②读数面=10 月财报季裁决「修口径放回多少票」, "
+                "故重看窗=10-31 (财报季末/OKR 结算窗)。",
+    },
+    "entry_anchor_dual": {
+        "read_at": "2026-10-15", "recheck_after": "2026-10-21", "needs_user": False,
+        "note": "n 轴达标 (anchor_recorded=1120≥300) 但预注册第一腿「影子期≥10 个交易日」未达 "
+                "(现 6 日, 10-07 起, ~10-20 满) ⇒ 不构成待裁; 结算器仍缺 (eval_script=None, "
+                "阶段1 裁决前必补, RFC-123 阶段1 未授权不动)。",
     },
     "penetration_shadow": {
         "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
@@ -419,8 +450,13 @@ ADJUDICATED: dict[str, dict] = {
     },
     "eth_earnings_direction_path": {
         # 已读数待攒样: 尺子修好后出了真读数, 判据未过 ⇒ 维持攒样, 不到用户面前。
-        "read_at": "2026-09-26", "recheck_after": "2026-10-10", "needs_user": False,
-        "note": "9/26 首轮实跑 earnings_direction_check.py **失败** (FileNotFoundError: "
+        "read_at": "2026-10-15", "recheck_after": "2026-10-31", "needs_user": False,
+        "note": "📐 10-15 复读 (产物 112 行 / 17 distinct 日, 9/21~10-14, cron 在跑): "
+                "①相位标定 112/112=100%; distinct 日 17≥15 ⇒ 「覆盖率稳定」轴已可判; "
+                "②SHORT n=26(<30✗) 净均值+23.80 净中位+86.23 胜率57.7% / LONG n=12(<30✗) "
+                "净均值−107.70 净中位−38.31 胜率41.7% ⇒ 判据未过 (两方向 n 不足 + LONG 净<0), "
+                "维持攒样。⚠️ min_n=30 数总行数(112) vs 预注册门槛数每方向笔数 双轴错配仍在 "
+                "(未擅改 min_n=改判据)。│9/26 首轮实跑 earnings_direction_check.py **失败** (FileNotFoundError: "
                 "/root/.hermes/cache/scratch/replay_earnings_criterion_final.json — 脚本依赖"
                 "一次性回放产物, 该目录 72h 自动清理 ⇒ eval 结构性不可重跑 = 尺子坏了, "
                 "非影子断供)。产物本体健康 (cron 20 4 * * 2-6 在跑)。"
@@ -505,10 +541,11 @@ ADJUDICATED: dict[str, dict] = {
     # B21 n 轴实测 276 (门 20) 早已达标, 但因不在注册表 ⇒ 一个月从未被读过。
     # 三条登记当日已实跑判据 (见各自 verdict_history), 故 read_at=登记日; 不是"没读就登记"。
     "eod_depth_gate": {
-        "read_at": "2026-09-26", "recheck_after": "2026-10-26", "needs_user": False,
-        "note": "B19 实跑 n=2/8 ΣΔ=+28.40 误杀=1 ⇒ 判据 2/3, n 不足自动续观 (不待裁)。"
-                "同批修计数锚: report 原无 n/n_total/n_events/stats 任一键 ⇒ current_n 恒 0 "
-                "(gap_chase_gate 同型假象), 现补顶层 n=n_trig (判据轴=去重仓数, 非 arm 行数)。 (读数出处: 判据字典 B19, docs/ADJUDICATED-CRITERIA.md)",
+        "read_at": "2026-10-14", "recheck_after": "", "needs_user": False,
+        "note": "2026-10-14 终裁 GATE_NOT_WORTH (终态, DEB-20261009 §42, 用户裁「登记」): "
+                "n=9(≥8)/ΣΔ=−293.98(≤0)/miskill=5(>1), miskill 永久冻结 ⇒ verdict 不可逆, "
+                "转硬闸路径正式关闭; 处置=record-only 续采 (§42.4-1), 停采另裁 ⇒ 终态不再设重看闹钟。"
+                "│历史: 2026-09-26 实跑 n=2/8 ΣΔ=+28.40 误杀=1 ⇒ 判据 2/3, n 不足自动续观。",
     },
     "eth_exit_forgone_upside": {
         # ✅ 2026-09-26 用户裁 **A 案** (n 轴口径: 维持字面集合含 tighten, 不重注册不重攒) ⇒
@@ -583,10 +620,16 @@ ADJUDICATED: dict[str, dict] = {
                 "verdict=KEEP_SAMPLING — 负向读数但 n 未满 40, 按预注册攒满再机械判, 不提前裁。",
     },
     "rfc104_eth_event_plan": {
-        "read_at": "2026-10-03", "recheck_after": "2026-10-10", "needs_user": False,
-        "note": "graduation_check (10/03 09:08): 7/7 日 ✓, 计划带 0-44 ✓, 但覆盖率 "
-                "全行 PASS 仅 3/7 日 (fail 5 行/4 日) ⇒ verdict=NOT_READY, 阶段1 (影子消费) "
-                "不立项; 继续观察覆盖率是否收敛 (判据要求连续 7 日无漏票)。",
+        "read_at": "2026-10-15", "recheck_after": "2026-10-31", "needs_user": True,
+        "note": "graduation_check (10-15 10:08 自动跑, cron 8 10 * * 2-6 — 9/26「计数锚读陈旧快照」"
+                "缺陷已由该 cron 修复): ledger 33 行/15 交易日 (PASS 14/FAIL 11/NO_DATA 8) ⇒ "
+                "①交易日数 15≥7 ✅ ②覆盖率 100% 仅 6/15 日 ❌ (9 日漏票: 09-24/28/30, 10-01/06/07/08/09/13) "
+                "③计划条数带 [0,44] ❌ (09-28 两窗 45/49, 均值 47.0 ⇒ 附注「计划层可能正在退化成盲扫」) "
+                "⇒ verdict=NOT_READY, 阶段1 不立项。⚠️ 待用户裁: (a) 判据②从未在 15 日达成 "
+                "(最好 6/15) — 阶段0 是否已实质 FAIL 而非继续攒样; (b) 判据③上界 44 持续被破 "
+                "(均值 47.0) — 「计划层真退化」还是「上界估错」属改判据=重裁。另: 注册表 "
+                "eval_script 原挂错 (eth_event_plan.py=攒计划器), 已改指 "
+                "eth_event_plan_graduation_check.py (2026-10-15 审计 P1-3)。",
     },
     "ext_entry_exec_price_shadow": {
         "read_at": "2026-10-03", "recheck_after": "2026-10-21", "needs_user": False,
@@ -946,7 +989,11 @@ REGISTRY: list[ShadowItem] = [
         ],
         notes="阶段0=只埋点记录分歧, 判定仍完全用现行 effective_anchor (RFC-123 原文)。"
               "eval_script 待攒样后补 (阶段1 裁决前须先写结算器, 防「有入口无出口」— 台账 :172 教训)。"
-              "回滚: YAML 开关 false + systemctl restart (playbook.* 热重载穿不透), 数据留档。",
+              "回滚: YAML 开关 false + systemctl restart (playbook.* 热重载穿不透), 数据留档。"
+              "2026-10-15 审计读数: anchor_recorded=True 行 **1120 ≥ min_n=300** ✓ (覆盖 6 个 "
+              "distinct 日 10-07~10-14) — 但预注册判据第一腿是「影子期 ≥10 个交易日」∧①-④, "
+              "现仅 6 日 ⇒ **n 轴达标 ≠ 判据达标** (双轴陷阱, 同 eth_relative_volume_gate 10-08 "
+              "形态); 未擅改 min_n (改=重裁), ADJUDICATED 已挂 10-15 说明, ~10-20 满 10 交易日。",
     ),
     # ── 既有影子 (Phase 0 / 7月) — 代表性事项, 非穷举 ──
     ShadowItem(
@@ -2144,7 +2191,7 @@ REGISTRY: list[ShadowItem] = [
                             "预注册冻结 (改=重裁)。",
         eval_script="scripts/settle_eod_depth_gate_shadow.py",
         created="2026-09-08",
-        last_evaluated="2026-09-26",
+        last_evaluated="2026-10-14",
         verdict_history=[
             {"date": "2026-09-26", "verdict": "KEEP_SAMPLING (n=2/8)",
              "evidence": "补登记当日实跑: trigger_settled_n=2 (门 8, ✗) ΣΔ=+28.40 误杀=1 "
@@ -2156,6 +2203,17 @@ REGISTRY: list[ShadowItem] = [
                          "/ M 9/10 −110.50 / RIVN 9/21 +131.79), 与判据字典回溯证据 "
                          "(8/1-9/8 24笔 ΣΔ=+$410 误杀0) 同向, 但其中 3 笔在影子窗前 "
                          "(arm_date 最早 9/8) ⇒ 只能作背景, 不得当判据样本。"},
+                         {"date": "2026-10-14", "verdict": "GATE_NOT_WORTH (终态, settler 机械判定)",
+                          "evidence": "DEB-20261009 §42 (用户裁「登记」= 批准方案A): 10-14 06:30 "
+                                     "settler 判负 — trigger_settled_n=9(≥8) / ΣΔ=−293.98(≤0) / "
+                                     "miskill=5(>1); miskill 行 settled=true 永久冻结只增不减 ⇒ "
+                                     "误杀≤1 数学不可达 ⇒ verdict 在任何未来样本下不变, "
+                                     "转硬闸路径正式关闭 (「门非失灵, 是 −2.5% 深度区分度不足」; "
+                                     "avoid 4 笔 +574.28 / miskill 5 笔 −868.26)。"
+                                     "处置=record-only 续采, 停采须另裁。出处 "
+                                     "docs/debates/DEB-20261009-event-to-trade-pipeline.md:2901-2940; "
+                                     "判据字典 B19 已同日回写。10-15 06:30 报告复读: n=9 / "
+                                     "ΣΔ=−293.98 / miskill=5 / verdict=GATE_NOT_WORTH 稳定。"},
         ],
         intent="overnight_loser_exempt",
         cross_ref=("overnight_kill_criterion",),
@@ -2463,8 +2521,15 @@ REGISTRY: list[ShadowItem] = [
                             "上界 44=盲扫基线防计划爆炸) "
                             "③连续 7 个交易日无漏票 ⇒ 阶段 1 (影子消费) 立项; "
                             "回滚: 删 cron 行 (计划只读工件, 删除即静默)。",
-        eval_script="scripts/eth_event_plan.py",
+        eval_script="scripts/eth_event_plan_graduation_check.py",
         created="2026-09-24",
+        last_evaluated="2026-10-15",
+        verdict_history=[{"date": "2026-10-15", "verdict": "NOT_READY (阶段0 判据未过, 阶段1 不立项)",
+                          "evidence": "graduation_check 10-15 10:08 自动跑 (cron 8 10 * * 2-6): "
+                                     "ledger 33 行/15 交易日 ⇒ ①交易日数 15≥7 ✅ ②覆盖率100% 仅 "
+                                     "6/15 日 ❌ (9 日漏票) ③条数带 [0,44] ❌ (09-28 两窗 45/49, "
+                                     "均值 47.0)。两个待裁 (ADJUDICATED 同载): 阶段0 是否实质 FAIL; "
+                                     "上界 44 持续被破属判据问题还是计划层退化 (改判据=重裁)。"}],
         notes="调度: 盘前 T-1 20:30 ET (CST 08:30 Tue-Sat) + 盘后 T-0 15:45 ET (CST 03:45 Tue-Sat); "
               "幂等键=(et_date, symbol, session, phase); 原子写 app/utils/atomic_write.py; "
               "三处收紧 (REVIEW-20260924 §3): ①不预筛 ②不择优 ③不是策略卡; "
@@ -2995,7 +3060,11 @@ REGISTRY: list[ShadowItem] = [
         notes="补登 (2026-09-26 RFC-109②): 写方=llm_universe_scan 指令写入环 (开关只读一次)。"
               "count_mode=distinct:decision_id (每指令一样本, 防重跑灌水)。"
               "2026-10-03 临时读数 54/60, 重看闹钟 10/10。",
-        no_adjudication_reason="NO_EVAL_SCRIPT: 判据已预注册 (主门 n=60, 补登时 52/60) 但无结算执行体 — 达门前建 eval 或届时人工结算",
+        no_adjudication_reason="NO_EVAL_SCRIPT: 判据已预注册 (主门 n=60 单侧 α=0.025 δ=2pp) "
+                               "但无结算执行体; ⚠️ 2026-10-15 审计: 写方 (UE 直写 inject 链) 已随 "
+                               "2026-10-06 cron 摘除 (UE fresh-event 批改走 da_fresh_event_batch) "
+                               "而停止 ⇒ n=60 主门在现路径下不可达, 产物冻结 54/60 于 2026-09-28, "
+                               "处置 (冻结结算 or 归档) 须用户裁",
         count_mode="distinct:decision_id",
     ),
     ShadowItem(
@@ -3330,6 +3399,96 @@ REGISTRY: list[ShadowItem] = [
               "周检/哨兵不可见, B21/B22 缺口族第 4 例)。采集维持: cron 2a0eb17a475e 保留 "
               "(build_symbol_trading_cards.py 消费 jsonl + A类避损核查仍有效), 仅输出累计行"
               "文案标「已裁 FAIL」。治理: 不得以本判据新建入场信号/prompt 注入或门。",
+    ),
+    # ── 2026-10-15 全链路审计 P1-3 对账批: 「在采未注册 = 军规禁止态」补登 ×3 ──
+    ShadowItem(
+        id="eth_held_exit_shadow",
+        name="ETH HELD→RTH 会话升级影子 (RFC-127 阶段0 record-only) ⚠️选择偏差中",
+        status=ShadowStatus.OBSERVING,
+        description="ETH 窗内限价腿 TERMINAL 后 intent 卡 HELD、RTH 开盘仍被锁死 (SL 评估被 "
+                    "blocked_exits 跳过) 的 record-only 观测 (RFC-127, 2026-10-01 起; 首例行=10-01 "
+                    "US.ACN 23 股卡死地面真值)。写方 app/playbook/eth_held_exit_shadow.py "
+                    "(build_eth_held_rth_event + emit, 幂等 event_id=ETH-HELD-RTH:sha256(intent_id)), "
+                    "接线 pipeline.py:3330 (resume_close 之后, try/except 保险丝)。零行为变更。",
+        data_path="data/shadow/eth_held_exit_escalation.jsonl",
+        config_key=None,  # 无开关; 真停采只能摘 pipeline 接线
+        min_n=3,
+        count_mode="distinct:intent_id",
+        graduation_criteria="RFC-127 §4 逐字 (阶段1 启用门): ①≥5 个交易日 且 ≥3 个独立 HELD 意图命中 "
+                            "(或单意图 SL 越线暴露 ≥$500, 取先到) ②命中意图 100% 满足 RTH开盘+剩余>0+"
+                            "无并发ACTIVE腿 ③无害性反证 (升级窗内回落优于补腿成本=0 例) ④单意图 ≤2 次告警 "
+                            "⇒ 提请阶段1 行为变更 (须用户二次裁决)",
+        eval_script=None,
+        eval_on_demand=True,
+        no_adjudication_reason="NO_EVAL_SCRIPT: 判据已预注册 (RFC-127 §4) 但无结算执行体 — "
+                               "达门前建 eval 或人工结算",
+        created="2026-10-01",
+        notes="唯一消费者 observe_nightly_supply.py:259-272 (今日有行即 P1 finding)。"
+              "现 n=2 (10-01 ACN / 10-08 PEP)。⚠️ **2026-10-15 审计发现 (待用户裁)**: "
+              "commit 80d8817ba (10-09, pipeline 拆分批, message 自述「零行为变更」) 实际携带了 "
+              "pipeline.py:3324 `_release_eth_held_exit_for_rth_takeover` — ETH HELD 零成交 intent "
+              "在 RTH 开盘被自动归档释放 (release_exit_intent reason=rth_intraday_takeover) + "
+              "blocked.discard + continue, 即 **RFC-127 §3.2 阶段1 语义已无开关上线**; "
+              "RFC-127 头部至今仍写「阶段1 未实施, 待影子判据+用户二次裁决」, §4 判据从未满足 "
+              "(影子面仅 2 行)。副作用: 成功移交时 continue 跳过本影子发射 ⇒ 影子面缩为「移交失败」"
+              "子集 (选择偏差), 10-09 后零新增。docs 全域无该行为授权记录。",
+    ),
+    ShadowItem(
+        id="post_ca4487",
+        name="post_ca4487 清洁观测窗 (KR1 换版后, DEB-20261009 §28.11)",
+        status=ShadowStatus.OBSERVING,
+        description="OKR-2026-10 KR1 退出哈希窗 2026-10-08 换版 (34c7→ca4487) ⇒ 主窗终局 BROKEN 后 "
+                    "另立的只读清洁观测面。写方 scripts/daily_invariant_check.py 的 "
+                    "config_freeze.post_ca4487 块 (常量 L149-150, 查询 L218-226, 产出 L320-352), "
+                    "cron 5 5 * * 2-6。只报告不判分不告警 (not_okr_2026_10_kr1_verdict=true)。",
+        data_path="data/invariant_check_latest.json (config_freeze.post_ca4487 块)",
+        config_key=None,
+        min_n=200,
+        count_mode="json_key:config_freeze.post_ca4487.n_closed",
+        graduation_criteria="DEB-20261009 §28.11 逐字: 起点 2026-10-09 (10/08 新旧哈希同日交错, "
+                            "不作清洁边界); 期望哈希 exit-ca4487172a6f; 目标提示 200 笔 (非判据, "
+                            "只作进度); 只读不调 rec()/不参与 status 取劣/不改 oct_cohort; "
+                            "出现新哈希只显示 hash_drift。禁止条款: 不得替代或改写 oct_cohort "
+                            "BROKEN 终局。",
+        eval_script=None,
+        eval_on_demand=True,
+        no_adjudication_reason="PERMANENT_MEASURE: OKR 功效观测窗, 无可裁决事项 (判决面是 "
+                               "oct_cohort BROKEN 终局已定); min_n=200 是进度提示不是判据, "
+                               "不得机械迁 READY_TO_EVALUATE",
+        created="2026-10-10",
+        notes="OKR 关联: docs/OKR-2026-10.md (2026-10-15 已补 KR1 BROKEN 终局回写)。"
+              "10-14 收盘读数: n_closed=28/200, single_version, hash 缺失 0 "
+              "(data/invariant_check_latest.json)。DEB F13 估达标需 30-40 交易日。"
+              "无代码消费方 (OKR-2026-10 面板 okr_2026_10_scoring 未落地, 权威读数=本块+人工)。",
+    ),
+    ShadowItem(
+        id="ext_entry_earnings_criterion_shadow",
+        name="财报判据② 新旧口径对照台账 (日历 actual vs period 陈旧, RFC-097)",
+        status=ShadowStatus.OBSERVING,
+        description="同一批 EXT 候选上「旧判据 (company_earnings surprise>0 + period 龄窗) vs 新判据 "
+                    "(当日 Finnhub 日历 epsActual>epsEstimate)」的裁决对照, 逐票-ET日一行, 回答"
+                    "「修口径放回多少票」。写方 scripts/extended_hours_entry_executor.py:2201-2245 "
+                    "(_record_earnings_criterion_shadow), 开关 EXT_EARNINGS_CRITERION_SHADOW "
+                    "(默认 true) 真门控写方 (:133-135, 注册表 config_key 警告的**正例**)。零交易影响。",
+        data_path="data/ext_entry_earnings_criterion_shadow.jsonl",
+        config_key="EXT_EARNINGS_CRITERION_SHADOW",
+        min_n=20,
+        count_mode="where:legacy_blocked_new_pass=True",
+        graduation_criteria="RFC-097 §预注册判据逐字: ①涨幅带: 自生效日起攒 ≥20 笔延长时段成交 ⇒ "
+                            "净均值≥0 维持, <0 或长期不足 ⇒ 删 .env.us 该行回滚; ②对照台账 "
+                            "legacy_blocked_new_pass 的日去重计数 ⇒ 10 月财报季裁决「修口径放回多少票」, "
+                            "并与 §3.3「温和票 +$23.09/笔」交叉验证; 单票级别不得用比 tick 计数 "
+                            "(会被上游闸波动稀释)。",
+        eval_script=None,
+        eval_on_demand=True,
+        no_adjudication_reason="NO_EVAL_SCRIPT: 判据已预注册 (RFC-097 L106-109) 但无结算执行体 — "
+                               "交易日去重计数届时人工或建 eval",
+        created="2026-09-22",
+        notes="2026-10-15 读数: 5765 行 / 16 ET日 / 2026-09-22~10-14; legacy_blocked_new_pass "
+              "True=493。write-only 无代码消费方 (唯一读数=人工 + RFC-097 一次性实证脚本 "
+              "verify_earnings_criterion.py)。计数轴注: min_n=20 数的是对照行 "
+              "(where:legacy_blocked_new_pass=True), 与判据①的「延长时段成交笔数」不同轴, "
+              "判据①须另行按成交口径读。回滚: EXT_EARNINGS_CRITERION_SHADOW=false (无需重启)。",
     ),
 ]
 
