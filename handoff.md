@@ -1,5 +1,12 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-15 棘轮双执法面合并（审计 P3）
+
+**触发**: 审计发现棘轮家族分两互不重叠的执法面——CI 面 5 类（naive-now/except-pass/utc4/pipeline-size/W456）只在 push 时跑，无 push 日工作树漂移无人捕。
+**落地**（`2465c9a2a`）: `scripts/nightly_ratchet_guard.py` 每晚 04:50（周二至周六）复跑这 5 个测试文件（测试即判据单一真源，不复制逻辑），红则 hub 告警 + exit 1（裸 traceback 同被 error_alert 崩溃尾检测覆盖）；cron+台账基线登记。首跑 33 passed。
+**验证**: 生产首跑全绿。
+**下一步**: 明早 04:50 首轮自动运行自查；剩 main FF 合并+push（待授权）、策略面 DEB（待立项）。
+
 ## 2026-10-15 推送旁路批（3 个活跃迁移 hub + 4 个核实免迁）
 
 **触发**: 审计 P2-4（8-29 后新增 8 个直连旁路）→ 用户令「继续」。
