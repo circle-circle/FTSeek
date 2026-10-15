@@ -103,6 +103,10 @@ _PRODUCTION_DATA_SEAMS = (
     #   按同纪律登记, 防测试写生产影子台账。
     ("app.playbook.eth_held_exit_shadow", "_ETH_HELD_EXIT_SHADOW_PATH", "path",
      "eth_held_exit_escalation.jsonl"),
+    # 2026-10-15 (审计 P2-6): 盘后推送持久去重状态 — tracking_flow 推送侧逐次读写,
+    #   登记为缝防测试写生产去重状态 (否则重推判据在测试与生产间互染)。
+    ("app.playbook.pipeline_parts.tracking_flow", "_TRACK_PUSH_STATE", "path",
+     "playbook_evening_tracking_push_state.json"),
 )
 
 

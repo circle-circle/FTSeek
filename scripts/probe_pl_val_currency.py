@@ -40,8 +40,11 @@ def probe(trd_env_name: str) -> dict:
     )
     out = {"env": trd_env_name, "ok": False, "rows": [], "verdict": None}
     try:
+        # 2026-10-15 修复: 原键名 FUTU_REAL_ACCOUNT/FUTU_SIM_ACCOUNT 在 .env.us 不存在
+        # (真实键名 REAL_ACCOUNT_ID/SIMULATE_ACCOUNT_ID) ⇒ acc_id 退化为 0, 探的是富途
+        # 默认账户而非目标账户 (假绿风险, 审计 P2-1)。
         acc_id = os.getenv(
-            "FUTU_REAL_ACCOUNT" if trd_env_name == "real" else "FUTU_SIM_ACCOUNT", ""
+            "REAL_ACCOUNT_ID" if trd_env_name == "real" else "SIMULATE_ACCOUNT_ID", ""
         )
         ret, data = ctx.position_list_query(
             trd_env=trd_env,

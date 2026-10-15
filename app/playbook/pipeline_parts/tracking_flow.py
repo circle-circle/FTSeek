@@ -1,9 +1,49 @@
 """盘后追踪流 (阶段 6 迁自 app/playbook/pipeline.py)。"""
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
+
+_logger = logging.getLogger(__name__)
+
+# 2026-10-15 (审计 P2-6): 盘后推送持久去重状态 — 内存标志 _playbook_tracked_date
+# 跨重启即丢 + hub 去重仅 60s 内存 ⇒ 持夜仓日每次重启都重推 (10-14 实证推了 3 次)。
+_TRACK_PUSH_STATE = Path("data/playbook_evening_tracking_push_state.json")
+
+
+def _evening_push_fingerprint(db, today: str) -> str:
+    """当日指令终态指纹: 任一指令 outcome/退出价/净额变化 ⇒ 指纹变 ⇒ 允许重推。"""
+    rows = sorted(
+        (
+            str(i.get("id")), str(i.get("outcome")),
+            str(i.get("exit_price")), str(i.get("pnl_net")),
+        )
+        for i in (db.get_instructions_by_date(today) or [])
+    )
+    return hashlib.md5(json.dumps(rows).encode("utf-8")).hexdigest()
+
+
+def _evening_push_already_sent(db, today: str, fp: str) -> bool:
+    try:
+        st = json.loads(_TRACK_PUSH_STATE.read_text(encoding="utf-8"))
+        return st.get("date") == today and st.get("fingerprint") == fp
+    except Exception:
+        return False  # 状态缺失/损坏 → 当作未推 (宁可多推一次不丢推送)
+
+
+def _evening_push_mark_sent(today: str, fp: str) -> None:
+    try:
+        _TRACK_PUSH_STATE.write_text(json.dumps({
+            "date": today, "fingerprint": fp,
+            "pushed_at": datetime.now().isoformat(timespec="seconds"),
+        }), encoding="utf-8")
+    except Exception as e:
+        _logger.warning(f"[playbook] 盘后推送去重状态写失败 (下轮可能重推一次): {e}",
+                        exc_info=True)
 
 
 def run_playbook_track(
@@ -143,7 +183,13 @@ def run_playbook_track(
             logger.debug(f"[playbook] signal_lifecycle 同步失败 (不影响主流程): {e}")
 
         try:
-            PlaybookPusher(db).push_evening_tracking(today)
+            # 持久去重 (跨重启): 内容指纹一致 ⇒ 跳过重推; 有变化 (新结算/改价) ⇒ 照推
+            _fp = _evening_push_fingerprint(db, today)
+            if not force and _evening_push_already_sent(db, today, _fp):
+                logger.info(f"[playbook] 盘后追踪 {today} 已推送且内容无变化, 跳过重推")
+            else:
+                PlaybookPusher(db).push_evening_tracking(today)
+                _evening_push_mark_sent(today, _fp)
         except Exception as e:
             logger.debug(f"[playbook] 盘后推送失败 (不影响追踪): {e}")
 

@@ -1,6 +1,7 @@
 # RFC-117 UE LONG 接入 DA 质量链（双向 feed + 直写通道动量闸）
 
 - **日期**：2026-09-29 | **状态**：**已落地**（用户当日裁决"3 不用影子模式，有助于提升交易质量的可以直接上"）
+- **⚠️ 2026-10-15 状态勘误**：直写 inject 链路已于 2026-10-06 随 UE fresh-event 改造下 cron ⇒ 本 RFC 的「直写通道动量闸」（`long_momentum_gate_enabled`）自此 **dormant**（生产面无调用者；手动跑 inject 仍生效）。`da_candidate_feed_long` 走 DA bridge 路径不受影响。
 - **用户裁决原文**（2026-09-29）：「1+2 同意 但是2 只用glm-5.3和deepseek-v4.1-flash 两个不同模型对比即可，3 不用影子模式，有助于提升交易质量的可以直接上」
 - **类型**：L2（交易行为变更：UE LONG 指令供给面收窄 + DA 深分析池扩面）
 - **回滚**：`universe_expansion.long_momentum_gate_enabled=false`（关直写闸）/ `universe_expansion.da_candidate_feed_long=false`（关 feed LONG 腿，恢复 2026-08-03 只取 SHORT 语义）——两开关独立，YAML 热重载或下轮 cron 新进程生效

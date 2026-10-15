@@ -703,7 +703,8 @@ def test_exit_full_fill_updates_records_and_removes_position(
     ).fetchone()
     connection.close()
     assert positions == 0
-    assert trade == (11.0, "lock_in", "900003", 100.0)
+    # RFC-142 exit_reason 归一化层 (app/risk/exit_reasons.py): lock_in → SL_TRAIL_LOCK 入库
+    assert trade == (11.0, "SL_TRAIL_LOCK", "900003", 100.0)
     with exit_executor._AUDIT_LOG.open() as handle:
         audit = json.loads(handle.read().splitlines()[-1])
     assert audit["fully_filled"] is True

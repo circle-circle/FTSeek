@@ -50,6 +50,65 @@ def _set_threshold(monkeypatch, thr):
     monkeypatch.setattr(cc, "get_config", lambda: _Cfg())
 
 
+# ── 8. 双臂化 (2026-10-15 审计 P2-2: LIVE 臂武装时须评 REAL 账户, 不恒用 SIM 单例) ──
+
+def _patch_armed(monkeypatch, armed):
+    import app.playbook.pipeline_parts.risk_gates as rg
+    monkeypatch.setattr(rg, "_live_arm_currently_armed", lambda: armed)
+
+
+def _set_real_equity(monkeypatch, eq):
+    class _St:
+        current_equity = eq
+
+    class _CS:
+        _state = _St() if eq is not None else None
+
+    import app.risk.capital_safety as cs_mod
+    monkeypatch.setattr(
+        cs_mod, "get_capital_safety_system_for_arm", lambda arm: _CS())
+
+
+def test_live_arm_not_armed_evaluates_default_only(tmp_path, monkeypatch):
+    """LIVE 未武装 ⇒ 只评默认臂, 不产 REAL 臂面 (现状行为不变)。"""
+    _write_base(tmp_path, "2026-08-27", 100000)
+    _set_equity(monkeypatch, 99000)
+    _patch_armed(monkeypatch, False)
+    r = P._check_daily_loss_circuit("2026-08-27")
+    assert r["triggered"] is False
+    assert set(r["arms"]) == {"default"}
+    assert not (tmp_path / "baseline_real.json").exists(), "未武装不得建 REAL 基线文件"
+
+
+def test_live_arm_breach_trips_even_if_sim_fine(tmp_path, monkeypatch):
+    """LIVE 武装 + REAL 臂破线 ⇒ 熔断 (修前: 恒用 SIM 单例, REAL 臂亏损被漏判)。"""
+    _write_base(tmp_path, "2026-08-27", 100000)          # 默认臂基线
+    (tmp_path / "baseline_real.json").write_text(        # REAL 臂基线
+        json.dumps({"date": "2026-08-27", "equity": 50000}))
+    _set_equity(monkeypatch, 99000)                      # 默认臂 -1% 不触发
+    _set_real_equity(monkeypatch, 48000)                 # REAL 臂 -4% 触发
+    _patch_armed(monkeypatch, True)
+    r = P._check_daily_loss_circuit("2026-08-27")
+    assert r["triggered"] is True
+    assert r["arms"]["real"]["triggered"] is True
+    assert r["arms"]["default"]["triggered"] is False
+
+
+def test_real_arm_read_failure_fails_open_keeps_default(tmp_path, monkeypatch):
+    """REAL 臂净值源异常 ⇒ 该臂 fail-open 跳过, 默认臂判定不受影响。"""
+    _write_base(tmp_path, "2026-08-27", 100000)
+    _set_equity(monkeypatch, 96000)                      # 默认臂 -4% 触发
+    _patch_armed(monkeypatch, True)
+
+    import app.risk.capital_safety as cs_mod
+    def _boom(arm):
+        raise RuntimeError("real arm source down")
+    monkeypatch.setattr(cs_mod, "get_capital_safety_system_for_arm", _boom)
+    r = P._check_daily_loss_circuit("2026-08-27")
+    assert r["triggered"] is True
+    assert r["arms"]["real"] is None
+
+
 # ── 1. 触发判据 ──
 def test_triggers_at_threshold_and_beyond(tmp_path, monkeypatch):
     _write_base(tmp_path, "2026-08-27", 100000)

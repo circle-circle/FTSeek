@@ -18,25 +18,44 @@ _DAILY_LOSS_BASELINE_DEFAULT = (
 )
 
 
-def _check_daily_loss_circuit(
+def _live_arm_currently_armed() -> bool:
+    """LIVE 臂当前是否处于武装态 (配置 enabled ∧ ALLOW_REAL_TRADING ∧ waiver 活跃)。
+
+    探测失败 → False (不额外加 REAL 面 = 维持现状行为; REAL 臂自身每指令还有
+    live_execution_gate 把守, 此处只是日亏熔断的覆盖面)。
+    """
+    try:
+        import os
+        from app.core.config_container import get_config
+        from app.playbook.live_arm_gate import read_live_probe_waiver
+        arm = get_config().get_dotted("playbook.live_manual_arm", {}) or {}
+        if not bool(arm.get("enabled", False)):
+            return False
+        if os.getenv("ALLOW_REAL_TRADING", "false").strip().lower() != "true":
+            return False
+        return bool(read_live_probe_waiver().get("active"))
+    except Exception:
+        return False
+
+
+def _daily_loss_circuit_one_arm(
     today: str,
-    *,
-    baseline_path: Optional[Path] = None,
+    get_capital_safety,
+    baseline_path: Path,
+    arm_label: str,
 ) -> Optional[Dict[str, Any]]:
-    """账户级日亏熔断, 带滞回 latch。"""
-    baseline_path = Path(baseline_path or _DAILY_LOSS_BASELINE_DEFAULT)
+    """单臂日亏熔断评估 (滞回 latch 落 baseline_path)。None = 本臂 fail-open 跳过。"""
     from app.utils.timezone import now_et
 
     try:
-        from app.risk.capital_safety import get_capital_safety_system
-        capital_safety = get_capital_safety_system()
+        capital_safety = get_capital_safety()
         equity = (
             float(capital_safety._state.current_equity or 0)
             if capital_safety._state else 0.0
         )
     except Exception as error:
         logger.warning(
-            f"[playbook] 日亏熔断: 净值读取失败, 本轮跳过 (fail-open): {error}"
+            f"[playbook] 日亏熔断({arm_label}): 净值读取失败, 本轮跳过 (fail-open): {error}"
         )
         return None
     if equity <= 0:
@@ -62,7 +81,7 @@ def _check_daily_loss_circuit(
                 "latched": False,
             }))
         except Exception as error:
-            logger.warning(f"[playbook] 日亏熔断: 基线落盘失败: {error}")
+            logger.warning(f"[playbook] 日亏熔断({arm_label}): 基线落盘失败: {error}")
         return None
 
     baseline_equity = float(base.get("equity") or 0)
@@ -97,7 +116,7 @@ def _check_daily_loss_circuit(
     if latched != was_latched:
         if latched:
             logger.critical(
-                f"🚨 [playbook] 日亏熔断触发: 净值 {loss_pct * 100:.2f}% "
+                f"🚨 [playbook] 日亏熔断触发({arm_label}): 净值 {loss_pct * 100:.2f}% "
                 f"≤ {threshold * 100:.2f}% "
                 f"(基线 ${baseline_equity:,.0f} → 现值 ${equity:,.0f}) "
                 f"| 停新开, 平仓照常; "
@@ -105,7 +124,7 @@ def _check_daily_loss_circuit(
             )
         else:
             logger.warning(
-                f"[playbook] 日亏熔断解除: 净值回升至 {loss_pct * 100:.2f}% ≥ "
+                f"[playbook] 日亏熔断解除({arm_label}): 净值回升至 {loss_pct * 100:.2f}% ≥ "
                 f"{release_threshold * 100:.2f}% 放行线 → 恢复新开仓"
             )
         try:
@@ -120,7 +139,7 @@ def _check_daily_loss_circuit(
             }))
         except Exception as error:
             logger.warning(
-                f"[playbook] 日亏熔断: latch 落盘失败 (跨重启会丢失触发态): {error}"
+                f"[playbook] 日亏熔断({arm_label}): latch 落盘失败 (跨重启会丢失触发态): {error}"
             )
 
     return {
@@ -132,6 +151,43 @@ def _check_daily_loss_circuit(
         "threshold_pct": round(threshold * 100, 2),
         "release_threshold_pct": round(release_threshold * 100, 2),
     }
+
+
+def _check_daily_loss_circuit(
+    today: str,
+    *,
+    baseline_path: Optional[Path] = None,
+) -> Optional[Dict[str, Any]]:
+    """账户级日亏熔断, 带滞回 latch。
+
+    2026-10-15 双臂化 (审计 P2-2): 原实现恒用 `get_capital_safety_system()` 默认单例
+    (=AUTO_TRADE_ACCOUNT 臂, 现为 SIM), 不随执行臂切换 — 与历史「双路径查不同账户」
+    熔断事故同族。现: 默认臂恒评; LIVE 臂武装时 (配置 enabled ∧ ALLOW_REAL_TRADING ∧
+    waiver 活跃) 加评 REAL 臂 (独立 latch 文件 `<stem>_real.json`), 任一臂触发即熔断。
+    """
+    baseline_path = Path(baseline_path or _DAILY_LOSS_BASELINE_DEFAULT)
+
+    from app.risk.capital_safety import get_capital_safety_system
+    default_verdict = _daily_loss_circuit_one_arm(
+        today, get_capital_safety_system, baseline_path, "默认臂")
+
+    arms: Dict[str, Any] = {"default": default_verdict}
+    real_verdict = None
+    if _live_arm_currently_armed():
+        from app.risk.capital_safety import get_capital_safety_system_for_arm
+        real_baseline = baseline_path.with_name(baseline_path.stem + "_real.json")
+        real_verdict = _daily_loss_circuit_one_arm(
+            today, lambda: get_capital_safety_system_for_arm("real"),
+            real_baseline, "REAL臂")
+        arms["real"] = real_verdict
+
+    triggered = any(v and v.get("triggered") for v in arms.values())
+    if default_verdict is None and real_verdict is None:
+        return None
+    base = dict(default_verdict or real_verdict or {})
+    base["triggered"] = triggered
+    base["arms"] = arms
+    return base
 
 
 def _auto_execute_preflight(
