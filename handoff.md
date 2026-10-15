@@ -1,5 +1,23 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-15 P1 修复批·代码面（P1-1 双 cron 静默崩 + error_alert 盲区 + P1-6 W4 棘轮红，已重启生效）
+
+**触发**: 全链路审计 P1-1/P1-6 → 用户令「全做」。
+**修复**: ①`short_supply_funnel_report.py:136` 双 NULL 崩溃（`float(None)` 笔误，9/20 起静默 25 天）→ `or 0.0` + 双 NULL 计数透出报表；②`capital_flow_daily_aggregate.py` 子进程裸 `python3`（无 numpy，9/24 起静默 21 天，父 rc=0 掩盖）→ `sys.executable` + 子失败 exit 1（失败必须可见）；③`error_alert.py` 新增 `orphan_traceback_events` 裸 Traceback 崩溃尾检测（三条件：文件尾=裸 traceback 块 ∧ mtime 在窗口内 ∧ 前一行非 ERROR/CRITICAL 防双计）——补齐「只认 `] ERROR:` 前缀」的构造性盲区；④`daily_review.py:679` debug-in-except → warning+exc_info（W4 棘轮红）。裸 python3 全仓横扫：可执行面仅 capflow 一处（余为 docstring 示例），crontab/shell 干净。
+**验证**: `test_error_alert.py` 32 passed（含 4 个新盲区钉子）；W456/daily_review/capital-flow 套件 52+38 绿；漏斗报表手动实跑 **25 天来首次成功**；capital_flow_replay 手动实跑 rc=0，verdict 刷新 `all_gates_pass=false`（inflow/outflow 不过、placebo p=0.42，门维持现状）；自引入 W6 违规（新 warning 缺 exc_info）被棘轮当场抓到并修复；重启后冒烟 **7/7**（启动段 13:40:59）。
+**边界**: 不触交易行为；cron 脚本改动无需重启（新进程加载），daily_review 改动经本次重启生效。
+**下一步**: error_alert 新检测面上线后首轮自证（若今晚 21:10 fresh-event execute 崩了应当可见）；`data/exit_ledger.db` 孤儿文件与 `.env.us` FUTU_TRADE_ENV 废弃键留 P2 清理。
+
+## 2026-10-15 P1 修复批·治理面（P1-2 handoff 追补 + P1-3 注册表对账 + P1-4 OKR 回写 + P1-5 指针批）
+
+**触发**: 同「全做」。**各批提交**: `68b7b5f1e`（P1-2）/ `13201de07`（P1-3）/ `d1d8b0ade`（P1-4）/ `d46408bb7`（P1-5）。
+**P1-2**: handoff 追补 10-12~14 三段（17 提交，起草 agent 只读重建 + 主会话审插）：RFC-142 多模型审计修复/RFC-132 LIVE 镜像终态/RFC-143 A10 口径 SSOT/DEB-20261014 几何轴 CLOSED/门景观三连审计等；附验证状态清单（哪些只有 commit message 自述、哪些未记录重启）。
+**P1-3**: 注册表对账——补登 3 项禁止态（eth_held_exit_shadow / post_ca4487[PERMANENT_MEASURE 防机械 READY] / ext_entry_earnings_criterion_shadow）；eod_depth_gate 10-14 终裁 GATE_NOT_WORTH 回写+闹钟结案；ue_short_boost_shadow 冻结 54/60（写方链 10-06 已退役）→ needs_user；eth_earnings_direction_path 10-15 复读（SHORT 26/LONG 12 双不足，LONG 净负）；rfc104 NOT_READY 落档 + eval_script 挂错修正（原指攒计划器）；entry_anchor_dual 双轴说明（n 达标但 ≥10 交易日腿未达，~10-20）；台账补登 Hermes 一次性 job 64a9a5085416（存量红转绿）。`ue_long_momentum_gate` 核实**未在采**不注册（但其生产键 `long_momentum_gate_enabled` 现为死键，待立项）。契约测试 23 passed。
+**P1-4**: OKR-2026-10 回写 KR1 BROKEN 终局（10-08 换版事实 + 10-10 方案 A 裁决 + post_ca4487 窗），变更记录补行。
+**P1-5**: AGENT.md OKR 指针 09→10（过期 15 天）+ 注册表计数改非字面量；**新建 CLAUDE.md 指针**（Claude Code 接线补上）；宪章「七律」→「九律」；判据字典 B19 回写 10-14 终裁；RFC-136/DEB-20261014 头部矛盾修正；PROJECT-PORTRAIT 系时点快照不动。
+**⚠️ 新发现·待用户裁（本批最大单件）**: commit `80d8817ba`（10-09 拆分批，自述零行为变更）**实际携带 RFC-127 阶段1 语义上线**——`pipeline.py:3324` `_release_eth_held_exit_for_rth_takeover`：ETH HELD 零成交 intent 在 RTH 开盘自动归档释放 + 恢复 SL/BE/trailing/EOD 评估，无开关、无授权记录（docs 全域零命中），RFC-127 头部仍写「阶段1 未实施待二次裁决」、§4 启用判据（≥5 交易日∧≥3 意图）从未满足（影子面仅 2 行）；副作用=阶段0 影子面缩为「移交失败」子集（选择偏差，10-09 后零新增）。选项：追认（补授权+修 RFC-127 头部+重写判据面）/ 回滚（恢复纯 record-only）/ 挂开关默认关。已在注册表条目+ADJUDICATED 留痕。
+**下一步**: ①RFC-127 未授权行为变更待裁（见上）；②ue_short_boost 两路处置待裁；③rfc104 阶段0 是否实质 FAIL + 条数带上界 44 待裁；④P2/P3 队列（event_stream 保留策略、推送纪律 8 旁路、盘后重复推送持久 dedup、HTB 借券费敏感性、chase_cap enforce 核实等）仍待授权。
+
 ## 2026-10-15 P0-2 手动平仓单向门拆除（用户裁口径 + 用户裁方案，已重启生效）
 
 **触发**: 全链路审计 P0-2（手动实盘「能开不能平」：看板买入无闸、平仓被 `ALLOW_REAL_TRADING=false` 拦截）→ 用户裁口径「手动平仓除富途 App 外也可走 web dashboard」→ 方案二选一中用户裁「拆闸对齐设计」。
