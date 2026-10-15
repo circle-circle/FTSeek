@@ -1,6 +1,6 @@
 # FTSeek-US Agent Notes
 
-> **多模型协作必读**：本文件（运维/架构规矩）→ `handoff.md`（进度状态）→ **`docs/specs/multi-agent-collaboration-charter.md`（协作宪章：角色协议/数据口径七律/落档强制/变更纪律）** → 相关 DEB。验证期（2026-07-24→08-29）已结束；8/31 终裁已于 8/23 作废（DEB-20260823 三判决，用户裁不 STOP、延续打磨模拟）。当前阶段（2026-08-24→09-30）按 `docs/OKR-2026-09.md`：退出参数全月冻结（判据字典 C1/C7）、预注册单假设检验（KR3）、四锁+毕业门禁+用户签字前严格不切实盘（C2）；新机制仍排队，行为变更一律影子先行（C4）。
+> **多模型协作必读**：本文件（运维/架构规矩）→ `handoff.md`（进度状态）→ **`docs/specs/multi-agent-collaboration-charter.md`（协作宪章：角色协议/数据口径九律/落档强制/变更纪律）** → 相关 DEB。验证期（2026-07-24→08-29）已结束；8/31 终裁已于 8/23 作废（DEB-20260823 三判决，用户裁不 STOP、延续打磨模拟）。当前阶段（2026-10-04→10-31）按 `docs/OKR-2026-10.md`：34c7 单版本功效窗（KR1 已 BROKEN 终局走回滚线, KR2 n=200 攒样中）、KR3 已两腿证伪达成（10-15）、四锁+毕业门禁+用户签字前严格不切实盘（KR4）；新机制仍排队，行为变更一律影子先行（C4）。（指针 2026-10-15 修正：此前误指 OKR-2026-09，过期 15 天）
 
 ## 运维
 
@@ -30,7 +30,8 @@
   `shadow_board._board_actionable` / `pending_adjudication_carrier` (state 变化才推) /
   D2' 入场确认门日报双面自动续观静默。影子/证伪事项到期必须**当日结算入注册表**
   (判据 FAIL ≠采集自动停: 先查 `_CONSUMER_ACK`/消费方再动 cron); 在采影子未注册 = 禁止态,
-  注册表 (62→69 项) 是唯一 SSOT。
+  注册表是唯一 SSOT（项数以 `app/playbook/shadow_registry.py` 实载为准——此处不写具体数,
+  防计数漂移成谎言; 2026-10-15 审计实测 79 项时本文仍写 69）。
 - **新增推送必须走 `app/push/` hub**（去重/聚合/健康监控），禁止直连 notifier 或自写 webhook。存量 5 个旁路不动，08-29 后按"谁先出 bug 谁先迁"处理。
 - **新增熔断/regime 类机制前先查分层地图**：熔断见 `docs/circuit-breaker-map.md`（6 层正交，禁造平行层）；regime 合一待 shadow 分歧率数据（减法R2-5c）。
 - **归档/删除前的零引用验证必须覆盖五个调用面**：仓内 import / crontab / systemd / **Hermes prompt 文本**（`/root/.hermes/cron/jobs.json`）/ **`.git/hooks`**（2026-09-06 实证：`check_undefined_names.py` 被 pre-commit §5.5 引用，却在减法 R2 被当零引用归档，门禁静默失效 ~40 天）—— archive/ 目录必须零 import。
