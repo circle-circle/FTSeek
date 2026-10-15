@@ -98,6 +98,7 @@ class DailyReviewGenerator:
         capital_state = self._get_capital_state(date)
         attribution_data = self._analyze_attribution(date)       # Phase 4: 新增
         plan_vs_actual = self._get_plan_vs_actual(date)          # Phase 4: 新增
+        overnight_risk = self._analyze_overnight_risk(date, trades)
         
         # ── Phase 5: 逐笔交易深度分析 (新增 2026-05-02) ──
         trade_analyses = self._analyze_per_trade(trades)
@@ -150,6 +151,7 @@ class DailyReviewGenerator:
             
             # Phase 4: 计划对比
             'plan_vs_actual': plan_vs_actual,
+            'overnight_risk': overnight_risk,
             
             # 旧版字段保留
             'key_learnings': self._extract_learnings_v2(attribution_data, closed_trades),
@@ -816,12 +818,15 @@ class DailyReviewGenerator:
             'executed_targets': [],
             'missed_opportunities': [],
             'unplanned_trades': [],
+            'planned_details': [],
+            'direction_provenance': {},
         }
 
         try:
             instructions = self._query(
                 "SELECT symbol, direction FROM playbook_instructions "
-                "WHERE date = ? AND direction IN ('BUY','SELL_SHORT')",
+                "WHERE date = ? AND (direction IN ('BUY','SELL_SHORT') "
+                "OR skip_reason = 'entry_confirm_reversed')",
                 (date,)
             )
             planned_symbols = sorted({r['symbol'] for r in instructions})
@@ -873,10 +878,175 @@ class DailyReviewGenerator:
             # 执行率
             result['execution_rate'] = round(len(result['executed_targets']) / len(planned_symbols), 4)
 
+            confirm_rows = self._load_entry_confirm_directions(date)
+            detailed_rows = self._query(
+                "SELECT id, symbol, direction, executed, execution_state, skip_reason, "
+                "decision_id, raw_instruction_json FROM playbook_instructions "
+                "WHERE date = ? AND (direction IN ('BUY','SELL_SHORT') "
+                "OR skip_reason = 'entry_confirm_reversed') ORDER BY id",
+                (date,)
+            )
+            reverse_abstain_symbols = []
+            for row in detailed_rows:
+                try:
+                    raw_instruction = json.loads(row.get('raw_instruction_json') or '{}')
+                except (TypeError, ValueError):
+                    raw_instruction = {}
+                if raw_instruction.get('source') != 'deep_analysis':
+                    continue
+                original_direction = row.get('direction')
+                if original_direction not in ('BUY', 'SELL_SHORT'):
+                    confirm = confirm_rows.get(row.get('decision_id') or '', {})
+                    original_direction = confirm.get('direction')
+                if original_direction not in ('BUY', 'SELL_SHORT'):
+                    original_direction = 'UNKNOWN'
+
+                ue_direction = raw_instruction.get('ue_direction') or ''
+                normalized_ue_direction = str(ue_direction).upper()
+                ue_da_reverse = (
+                    original_direction == 'BUY'
+                    and normalized_ue_direction in ('SHORT', 'SELL_SHORT')
+                ) or (
+                    original_direction == 'SELL_SHORT'
+                    and normalized_ue_direction in ('LONG', 'BUY')
+                )
+                challenger_abstain = '弃权' in str(raw_instruction.get('debate_outcome') or '')
+                risk_tags = []
+                if ue_da_reverse:
+                    risk_tags.append('UE_DA_REVERSE')
+                if challenger_abstain:
+                    risk_tags.append('CHALLENGER_ABSTAIN')
+                if ue_da_reverse and challenger_abstain:
+                    risk_tags.append('UE_DA_REVERSE_CHALLENGER_ABSTAIN')
+                    reverse_abstain_symbols.append(row['symbol'])
+
+                final_state = (
+                    'EXECUTED' if row.get('executed')
+                    else (row.get('skip_reason') or row.get('execution_state') or 'PENDING')
+                )
+                result['planned_details'].append({
+                    'symbol': row['symbol'],
+                    'decision_id': row.get('decision_id') or '',
+                    'source': raw_instruction.get('source'),
+                    'original_direction': original_direction,
+                    'final_direction': row['direction'],
+                    'final_state': final_state,
+                    'gate_reason': row.get('skip_reason') or '',
+                    'ue_direction': ue_direction,
+                    'ue_da_reverse': ue_da_reverse,
+                    'challenger_abstain': challenger_abstain,
+                    'risk_tags': risk_tags,
+                })
+
+            result['direction_provenance'] = {
+                'original_buy': sum(
+                    1 for row in result['planned_details']
+                    if row['original_direction'] == 'BUY'
+                ),
+                'original_sell_short': sum(
+                    1 for row in result['planned_details']
+                    if row['original_direction'] == 'SELL_SHORT'
+                ),
+                'original_direction_unknown': sum(
+                    1 for row in result['planned_details']
+                    if row['original_direction'] == 'UNKNOWN'
+                ),
+                'original_direction_unknown_symbols': sorted({
+                    row['symbol'] for row in result['planned_details']
+                    if row['original_direction'] == 'UNKNOWN'
+                }),
+                'executed': sum(
+                    1 for row in result['planned_details']
+                    if row['final_state'] == 'EXECUTED'
+                ),
+                'entry_confirm_abandoned': sum(
+                    1 for row in result['planned_details']
+                    if row['gate_reason'] == 'entry_confirm_reversed'
+                ),
+                'other_blocked': sum(
+                    1 for row in result['planned_details']
+                    if row['final_state'] != 'EXECUTED'
+                    and row['gate_reason'] != 'entry_confirm_reversed'
+                ),
+                'ue_da_reverse_challenger_abstain': len(reverse_abstain_symbols),
+                'ue_da_reverse_challenger_abstain_symbols': sorted(
+                    set(reverse_abstain_symbols)
+                ),
+                'policy': 'record-only; DA direction and execution unchanged',
+            }
+
         except Exception as e:
             logger.debug(f"[plan_vs_actual] 获取失败: {e}")
 
         return result
+
+    def _load_entry_confirm_directions(
+        self, date: str, ledger_path: Optional[Path] = None
+    ) -> Dict[str, Dict[str, str]]:
+        """Read original directions for entry-confirm SKIP rows without DB writes."""
+        direction_mapping = {
+            'LONG': 'BUY',
+            'SHORT': 'SELL_SHORT',
+            'BUY': 'BUY',
+            'SELL_SHORT': 'SELL_SHORT',
+        }
+        path = ledger_path or (
+            Path(__file__).resolve().parents[2]
+            / 'data' / 'shadow' / 'entry_confirm_forward.jsonl'
+        )
+        if not path.exists():
+            return {}
+        rows = {}
+        try:
+            with path.open('r', encoding='utf-8') as handle:
+                for line in handle:
+                    try:
+                        row = json.loads(line)
+                    except (TypeError, ValueError):
+                        continue
+                    if row.get('date') != date or not row.get('decision_id'):
+                        continue
+                    raw_direction = str(row.get('direction') or '').upper()
+                    rows[str(row['decision_id'])] = {
+                        'direction': direction_mapping.get(raw_direction, raw_direction),
+                        'outcome': row.get('outcome') or '',
+                    }
+        except OSError as error:
+            logger.debug(f"[plan_vs_actual] entry-confirm ledger read failed: {error}")
+        return rows
+
+    def _analyze_overnight_risk(self, date: str, trades: List[Dict]) -> Dict[str, Any]:
+        """Summarize legacy positions closed today; observation only."""
+        def net_pnl(trade: Dict) -> float:
+            value = trade.get('pnl_net')
+            if value is None:
+                value = trade.get('realized_pnl', 0) or 0
+            return float(value or 0)
+
+        legacy = [
+            trade for trade in trades
+            if str(trade.get('exit_time') or '').startswith(date)
+            and trade.get('trade_date') != date
+        ]
+        gap_stop = [
+            trade for trade in legacy
+            if trade.get('exit_reason') == 'OVERNIGHT_GAP_STOP'
+        ]
+        worst = min(legacy, key=net_pnl) if legacy else None
+        return {
+            'legacy_exit_count': len(legacy),
+            'legacy_exit_net_pnl': round(sum(net_pnl(trade) for trade in legacy), 2),
+            'overnight_gap_stop_count': len(gap_stop),
+            'overnight_gap_stop_net_pnl': round(
+                sum(net_pnl(trade) for trade in gap_stop), 2
+            ),
+            'worst_legacy_symbol': worst.get('symbol') if worst else '',
+            'worst_legacy_net_pnl': round(net_pnl(worst), 2) if worst else 0.0,
+            'attention_required': bool(gap_stop or (legacy and sum(
+                net_pnl(trade) for trade in legacy
+            ) < 0)),
+            'policy': 'record-only; overnight exit rules unchanged',
+        }
     
     # =========================================================================
     #  基础统计
@@ -1474,6 +1644,10 @@ class DailyReviewGenerator:
                 'max_drawdown_symbol': summary.get('max_position_drawdown_symbol'),
                 'max_drawdown_n': summary.get('max_position_drawdown_n', 0),
                 'open_trades': _open_rows,
+                'direction_provenance': report.get('plan_vs_actual', {}).get(
+                    'direction_provenance', {}
+                ),
+                'overnight_risk': report.get('overnight_risk', {}),
                 'trades': [{'code': str(t.get('symbol', '') or ''),
                             # DEB-20260904 #212: pnl_net 键存在但为 NULL 时
                             # dict.get 的 default 不生效 — 与 846 行同款的 NULL 感知回退

@@ -898,6 +898,45 @@ class ObsidianWriter:
         _overnight_block = (
             "\n\n## 过夜持仓 (未平, 盈亏未落袋)\n" + open_list if open_list else ""
         )
+        direction_provenance = data.get('direction_provenance') or {}
+        direction_lines = []
+        if direction_provenance:
+            direction_lines = [
+                f"- **DA 原始方向**: BUY {direction_provenance.get('original_buy', 0)} | "
+                f"SELL_SHORT {direction_provenance.get('original_sell_short', 0)}",
+                f"- **最终执行**: 已成交 {direction_provenance.get('executed', 0)} | "
+                f"入场确认放弃 {direction_provenance.get('entry_confirm_abandoned', 0)} | "
+                f"其他闸门 {direction_provenance.get('other_blocked', 0)}",
+                f"- **UE-DA 反向且挑战者弃权**: "
+                f"{direction_provenance.get('ue_da_reverse_challenger_abstain', 0)} "
+                f"({', '.join(direction_provenance.get('ue_da_reverse_challenger_abstain_symbols') or [])})",
+            ]
+            if direction_provenance.get('original_direction_unknown'):
+                direction_lines.append(
+                    "- **原始方向缺失**: "
+                    f"{direction_provenance.get('original_direction_unknown', 0)} "
+                    f"({', '.join(direction_provenance.get('original_direction_unknown_symbols') or [])})"
+                )
+        direction_block = (
+            "\n\n## 方向产出与执行状态\n" + "\n".join(direction_lines)
+            if direction_lines else ""
+        )
+        overnight_risk = data.get('overnight_risk') or {}
+        overnight_risk_lines = []
+        if overnight_risk.get('legacy_exit_count'):
+            overnight_risk_lines = [
+                f"- **今日平仓遗留仓**: {overnight_risk.get('legacy_exit_count', 0)} 笔 | "
+                f"净 {float(overnight_risk.get('legacy_exit_net_pnl', 0)):+.2f}",
+                f"- **OVERNIGHT_GAP_STOP**: {overnight_risk.get('overnight_gap_stop_count', 0)} 笔 | "
+                f"净 {float(overnight_risk.get('overnight_gap_stop_net_pnl', 0)):+.2f}",
+                f"- **最差遗留仓**: {overnight_risk.get('worst_legacy_symbol') or 'n/a'} | "
+                f"净 {float(overnight_risk.get('worst_legacy_net_pnl', 0)):+.2f}",
+                "- **处置**: 仅观测留痕；隔夜退出规则未自动调整",
+            ]
+        overnight_risk_block = (
+            "\n\n## 隔夜遗留仓风险\n" + "\n".join(overnight_risk_lines)
+            if overnight_risk_lines else ""
+        )
         # 2026-09-03 复盘批: 原行 `- **最大回撤**: {data.get('max_drawdown', 0):.2%}` 双重说谎 —
         #   ①无任何调用方写入 max_drawdown 键 (daily_review._generate_summary 从不产它) → 恒 0.00%,
         #     却与"当日净亏 -49 + 水下过夜仓"并列显示 = 常量退化 (军规"基数自检"同类);
@@ -921,7 +960,7 @@ class ObsidianWriter:
 - **最大单笔持仓回撤**: {_dd_line}
 
 ## 交易明细 (仅已平仓)
-{trade_list}{_overnight_block}
+{trade_list}{_overnight_block}{direction_block}{overnight_risk_block}
 
 ## 归因总结
 <!-- Agent 自动生成 -->
