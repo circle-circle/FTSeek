@@ -1,5 +1,19 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-15 RFC-141 v2 判尺修订落地（用户看日志裁「明显不合理，直接优化落地」）
+
+**触发**: 用户看 21:38 live 日志（INTC SHORT 锚$92.32 现价$92.33 = **+1.6bp 纯价差跳动即弃单**）判不合理。v1 前瞻 54 行复核：弃单率 61%（33/54）、<5bp 噪声杀 3 笔、CONFIRMED opp_cost 中位 **+0.36% 已超判据③ 0.3% 轨迹**（结算器实测 c3=False）。
+**病灶**: ①混尺（锚=arm 时 ask/bid 成交侧 × 复核=last trade，价差跳动被当方向信息）②一次性终态（单点采样定生死，指令盘前一次生成当日无再生通道）。
+**落地**（`eedb9e16f`，9 文件；RFC-141 §5.10 先行修订，判据①②③④阈值逐字不动）:
+- `entry_confirm_gate.py`: 判尺 **mid-vs-mid**（两端 bid/ask 有效才用，否则回落 legacy 混尺 + `ruler_used` 留痕；`opp_cost_pct` 定义不变保判据③同尺）+ **grace 2-of-3**（首见逆向进 grace 不即弃；≥2 票逆向才 ABANDONED；任一同侧即 CONFIRMED；断价不消耗票数；耗尽不足票=确认 fail toward trade）+ **弃单后 +5m/+10m 观测补记**（`type=entry_confirm_post` 纯观测，裁决日分解真避免 vs 误杀）。`pending_count` 含 watch（否则 scheduler 不再调 sweep 丢补记）。
+- `auto_execute_flow.py`: gate 调用传 `scheduler`（arm 瞬间快照 `mid_arm`）。
+- `settle_entry_confirm_forward.py`: schema v1/v2 双代通吃 + `_gen` 标签；**裁决窗 = v2 首行 date 起**（样本门 n≥60∨≥10 交易日自重计），v1 窗出 `legacy_v1_window` 留痕不裁决（两源不混算，§5.9 同纪律）；判据③只用现行代行；post 行不进 _agg。
+- `daily_review.py`: post 观测行按类型精确跳过（防覆盖主判定行 outcome；历史行无 type 键须兼容——首轮误用白名单被契约测试抓红，已修为黑名单）。
+- 配置三键：`entry_confirm_ruler: mid` / `grace_sweeps: 3` / `grace_votes: 2`。**回滚 v1 逐字** = `ruler: legacy` + `grace_sweeps: 0` + restart。
+**§5.9 张力并陈**（未装没看见）: 预注册回放判「多探测无净 edge」测的是**旧混尺**；mid尺×持续性交互未被回放覆盖 ⇒ v2 前瞻样本=该交互首次实测，若 FAIL 优先归因 §5.9 而非尺子。
+**验证**: 门契约+接线 68 例 / 棘轮家族 41 例 / 邻域 10 例全绿；全量 7207 passed 中 2 红已闭合（direction_mapping=本批引入已修；coordinator 异步排空=全量负载假红，单跑绿且与本批无交集，沿用 10s 等待语义未动）。23:14 restart 生效，冒烟 7/7；生产实证：v2 arm 行已出（`US.CAT SHORT 锚=$730.22 mid_arm=730.335 ruler=mid grace=2/3`），重启孤儿自愈按 C6 契约放行。
+**待办**: v2 裁决窗自 2026-10-15 起攒样（cron 37 6 * * 2-6 自动分代）；裁决日读 `entry_confirm_post` 行分解真避免/误杀。
+
 ## 2026-10-15 全量回归闸门修复 + main 快进合并（用户令「合并+push」）
 
 **触发**: 用户授权 main FF 合并 + push。
