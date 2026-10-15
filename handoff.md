@@ -1,6 +1,28 @@
 # FTSeek-US · HANDOFF
 
-## 2026-10-15 Playbook 盘后追踪口径修正（已入库，待重启）
+## 2026-10-15 WIP 复核代提交 + 统一重启闭环
+
+**触发**: 用户令「请检查其他 WIP 的内容，确认是否可以代提交，完成后重启」。
+**复核与提交**: 逐项审计当前 WIP 后按可回滚边界分 5 笔入库：
+`da7b48b8b`（DA 方向/隔夜复盘口径）、`1e65eac1e`（fresh-event 去重查询 fail-closed
+与借券快照开关显式化，含提交钩刷新的 pipeline 快照）、`3c4adbbca`（Playbook 盘后
+口径）、`5f7755a73`（10/13–10/14 vault 产物）、`5d4e906ae`（handoff 切档与 agent
+治理接线）。`handoff` 档案 payload 校验 sha1
+`4bff26a1698f69e4487d4cdc25854c588b6c3297`；因历史原文含尾随空格，治理提交按
+「逐字迁移优先」跳过 whitespace 钩。
+**验证**: 相关回归合并跑 `pytest -q tests/test_playbook_feishu_push.py
+tests/test_direction_provenance_review.py tests/test_daily_review.py
+tests/test_postmarket_drawdown_caliber.py tests/test_da_fresh_event_batch.py
+tests/test_da_output_contract.py tests/test_ue_borrow_brief.py
+tests/test_ue_evidence_index.py tests/test_review_source_attribution.py`
+= **214 passed / 1 warning**；`py_compile` 通过；除逐字历史档案外 `git diff --check`
+通过。提交后工作树与 `app/ scripts/` 部署面均干净。
+**重启闭环**: 重启前置 SQL 显示仅 `US.CAT` 一笔 SIM 未平仓（durable exit ledger
+接管）；`systemctl restart ftseek-us` 后新 PID `1333304`，
+`startup_smoke_check.py --wait 90` 七项全绿（ConfigValidator/漂移/热重载/SSOT/
+双臂安全/退出快循环/零 Traceback-CRITICAL，exit=0）。未 push（用户未令）。
+
+## 2026-10-15 Playbook 盘后追踪口径修正（已入库，已统一重启）
 
 **触发**: 用户核查 10/14 盘后报告，发现「执行 7/61」、混合已平/持仓 PnL、
 亏损单负捕获率与 ORCL「未达入场价」表述误导。
@@ -11,7 +33,7 @@
 `-$110`、合计 `-$85`；ORCL 拒因为 `thesis_drift_invalidate`；RIG 毛捕获 60% /
 净捕获 25%。`pytest -q tests/test_playbook_feishu_push.py` = **18 passed**，
 `git diff --check` 通过。
-**提交**: `3c4adbbca`。Python 改动需重启才生效；本条入库后等待统一重启。
+**提交**: `3c4adbbca`。Python 改动已随本日统一重启加载。
 
 ## 2026-10-15 RFC-136/Hermes commit 复查问题修复批（已入库）
 
