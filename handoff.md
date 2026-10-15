@@ -1,5 +1,19 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-15 P2 修复波（探针假绿 / 日亏熔断双臂化 / HTB 敏感性 / 盘后推送持久去重 + 两个快项）
+
+**触发**: 用户令「继续」清队列（P2 中零 SIM 行为变更项 + 两个遗留小项）。
+**落地**（`5a472b643`）:
+- **陈旧测试修复**：`test_exit_full_fill_updates_records_and_removes_position` 确红（RFC-142 的 10-13 引入，exit_reason 归一化 lock_in→SL_TRAIL_LOCK 后断言未跟）→ 断言改归一化值，文件 45 passed。
+- **死键 hygiene**：`short_boost_shadow` yaml 显式 false（对齐 KILLED 终态，真停采=10-06 cron 摘除）；`long_momentum_gate_enabled` 保留+dormant 注释（唯一调用链 10-06 下 cron，手动跑仍生效）；RFC-117 头部状态勘误。
+- **P2-1 探针假绿修复**：`probe_pl_val_currency.py` 改读真实键名 `REAL_ACCOUNT_ID/SIMULATE_ACCOUNT_ID`（原键不存在 ⇒ acc_id=0 探错账户）。
+- **P2-2 日亏熔断双臂化**：`_check_daily_loss_circuit` 重构——默认臂恒评（测试缝不变）；LIVE 臂武装（配置 enabled ∧ ALLOW_REAL_TRADING ∧ waiver 活跃）时加评 REAL 臂（独立 latch 文件 `_real.json`），任一臂触发即熔断；REAL 臂读数失败 fail-open 不影响默认臂。+3 钉子测试，12 passed。
+- **P2-5 HTB 敏感性落地**（9/24 承诺「裁决前须跑」销账）：`scripts/htb_borrow_fee_sensitivity.py` 实测——rth_fade 影子 30%×1d 极端情景费 $106.85 vs 费前净 $618.79 = **费用非约束**；EXT 实盘空侧费前净 **−$131.57**（借券费非主因，净额本身为负——策略问题不是费用问题）。产物 `data/htb_borrow_fee_sensitivity.json`。
+- **P2-6 盘后推送持久去重**：指纹（指令 id/outcome/exit_price/pnl_net）落 `data/playbook_evening_tracking_push_state.json`，同内容跨重启不重推（10-14 重推 3 次的根因），内容变化仍照推；+3 契约测试；conftest 缝登记（offline_chain_driver 不触该路径，无需双登记）。
+**验证**: 目标套件 92 passed + 棘轮家族（W456/census/except_pass/naive-now）全绿——**W6 又抓到本批一处自引入**（tracking_flow warning 缺 exc_info，已修）；重启后冒烟 7/7（启动段 16:18:50）。
+**边界**: SIM 面零行为变更（双臂化仅在 LIVE 武装时加面，当前 waiver 过期=LIVE 未武装）；热重载会读到 `short_boost_shadow=false`（调用面已下 cron，零影响）。
+**下一步**: P2 余量——推送旁路 8 个迁移评估（含真钱 live_deal_push）须单独批；P3（event_stream 保留策略/棘轮双执法面/熔断地图/main FF）与策略面 DEB（信心倒挂/IC 侵蚀/闸门拦反）待用户划范围。
+
 ## 2026-10-15 ue_short_boost 冻结结算归档 + RFC-104 阶段0 FAIL 关停（用户双裁决落地）
 
 **触发**: P1-3 注册表对账带出的两个待裁 → 用户裁「冻结样本结算后归档」+「判阶段0 FAIL 关停」。
