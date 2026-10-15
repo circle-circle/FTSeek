@@ -259,13 +259,10 @@ ADJUDICATED: dict[str, dict] = {
     },
     # ── 2026-10-15 全链路审计 P1-3 对账批新增 ──
     "eth_held_exit_shadow": {
-        "read_at": "2026-10-15", "recheck_after": "2026-10-30", "needs_user": True,
-        "note": "在采未注册(禁止态)补登。⚠️ 待用户裁: 审计发现 commit 80d8817ba (10-09 拆分批, "
-                "自述零行为变更) 已把 RFC-127 §3.2 **阶段1 语义**无开关上线 (pipeline.py:3324 "
-                "_release_eth_held_exit_for_rth_takeover: ETH HELD 零成交 intent 在 RTH 开盘自动"
-                "归档释放 + 恢复 SL/BE/trailing/EOD 评估), 而 RFC-127 头部仍写「阶段1 未实施, "
-                "待影子判据+用户二次裁决」、§4 判据从未满足 (影子面仅 2 行); docs 全域无授权记录。"
-                "副作用: 影子面缩为「移交失败」子集 (选择偏差), 10-09 后零新增。",
+        "read_at": "2026-10-15", "recheck_after": "2026-10-30", "needs_user": False,
+        "note": "在采未注册(禁止态)补登 + 同日裁决闭环: 用户裁「追认」(RFC-127 §7 知情破例"
+                "留痕) — 10-09 由 80d8817ba 携带上线的阶段1 变体语义 (release 移交盘中) "
+                "追认为现役; 影子重定位=移交失败监测面, 10-30 重看失败子集读数。",
     },
     "post_ca4487": {
         "read_at": "2026-10-15", "recheck_after": "", "needs_user": False,
@@ -3403,7 +3400,7 @@ REGISTRY: list[ShadowItem] = [
     # ── 2026-10-15 全链路审计 P1-3 对账批: 「在采未注册 = 军规禁止态」补登 ×3 ──
     ShadowItem(
         id="eth_held_exit_shadow",
-        name="ETH HELD→RTH 会话升级影子 (RFC-127 阶段0 record-only) ⚠️选择偏差中",
+        name="ETH HELD→RTH 会话升级影子 (RFC-127, 移交失败监测面)",
         status=ShadowStatus.OBSERVING,
         description="ETH 窗内限价腿 TERMINAL 后 intent 卡 HELD、RTH 开盘仍被锁死 (SL 评估被 "
                     "blocked_exits 跳过) 的 record-only 观测 (RFC-127, 2026-10-01 起; 首例行=10-01 "
@@ -3431,7 +3428,11 @@ REGISTRY: list[ShadowItem] = [
               "blocked.discard + continue, 即 **RFC-127 §3.2 阶段1 语义已无开关上线**; "
               "RFC-127 头部至今仍写「阶段1 未实施, 待影子判据+用户二次裁决」, §4 判据从未满足 "
               "(影子面仅 2 行)。副作用: 成功移交时 continue 跳过本影子发射 ⇒ 影子面缩为「移交失败」"
-              "子集 (选择偏差), 10-09 后零新增。docs 全域无该行为授权记录。",
+              "子集 (选择偏差), 10-09 后零新增。docs 全域无该行为授权记录。"
+              "✅ **2026-10-15 用户裁「追认」** (RFC-127 §7 知情破例留痕): 阶段1 变体语义"
+              " (归档释放移交盘中, 零新订单 — 比 §3.2 预注册的 MARKET 补腿更保守) 追认为"
+              "现役; §4 原判据面失效留档不再使用; 本影子重新定位=「移交失败」监测面 "
+              "(新行=该移交而未移交的残余风险, 出现即 P1)。",
     ),
     ShadowItem(
         id="post_ca4487",
