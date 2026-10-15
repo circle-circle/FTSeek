@@ -144,6 +144,22 @@ def baseline_stats(samples):
 
 
 def _push(msg):
+    # 2026-10-15 (审计 P2-4): 直连 notifier 是军规旁路 ⇒ hub-first (sync=True 立即送达,
+    # cron 进程短命; hub.stop() 收线程池防 cron 挂住); hub 异常 → 回退直连 (不使告警链断在这)。
+    try:
+        from app.push import get_push_hub
+        from app.push.message import Category, Level, PushMessage
+        hub = get_push_hub()
+        try:
+            ok = bool(hub.push(PushMessage(
+                title="穿透影子", body=msg, level=Level.NORMAL,
+                category=Category.SHADOW_COMPARE), sync=True))
+        finally:
+            hub.stop()
+        if ok:
+            return True
+    except Exception as e:  # noqa: BLE001 — 兜底路径接管, 不让推送链在此断掉
+        print(f"[warn] hub 推送受理失败, 回退直连: {e}")
     try:
         from app.notifier.feishu import send_text
         send_text(msg)

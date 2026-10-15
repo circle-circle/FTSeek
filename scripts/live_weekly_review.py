@@ -766,12 +766,30 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(report)
 
     if args.push:
+        # 2026-10-15 (审计 P2-4): hub-first (sync=True; cron 短命进程 stop() 收线程池),
+        # hub 未送达/异常 → 回退直连 (周报可达性优先于路由纯洁)。
+        pushed = False
         try:
-            from app.notifier.feishu import send_text
-            ok = send_text(report)
-            print(f"\n[live_weekly_review] 飞书推送: {'成功' if ok else '失败'}", file=sys.stderr)
-        except Exception as exc:  # noqa: BLE001
-            print(f"\n[live_weekly_review] 飞书推送异常: {exc}", file=sys.stderr)
+            from app.push import get_push_hub
+            from app.push.message import Category, Level, PushMessage
+            hub = get_push_hub()
+            try:
+                pushed = bool(hub.push(PushMessage(
+                    title="实盘周报", body=report, level=Level.NORMAL,
+                    category=Category.REVIEW_WEEKLY), sync=True))
+            finally:
+                hub.stop()
+            print(f"\n[live_weekly_review] hub 推送: {'成功' if pushed else '失败'}",
+                  file=sys.stderr)
+        except Exception as exc:  # noqa: BLE001 — 回退路径接管
+            print(f"\n[live_weekly_review] hub 受理异常, 回退直连: {exc}", file=sys.stderr)
+        if not pushed:
+            try:
+                from app.notifier.feishu import send_text
+                ok = send_text(report)
+                print(f"\n[live_weekly_review] 飞书推送: {'成功' if ok else '失败'}", file=sys.stderr)
+            except Exception as exc:  # noqa: BLE001
+                print(f"\n[live_weekly_review] 飞书推送异常: {exc}", file=sys.stderr)
 
     # 逐段 .get 而非直接下标: 任一段构建失败时**仍要出报告并如实报状态**,
     # 而不是让整份周报因一个 KeyError 消失 (那才是最彻底的"伪装空")。

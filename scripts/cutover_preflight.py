@@ -232,11 +232,27 @@ def push_alert(msg: str, *, push: bool) -> str:
         SKIPPED_SOURCES.append(f"cooldown_state_unreadable:{type(exc).__name__}")
     if not push:
         return "dry (未加 --push)"
+    # 2026-10-15 (审计 P2-4): hub-first (sync=True; stop() 收线程池), 失败回退直连 ——
+    # 冷却写状态只在「送达成功」后 (任一通道), 保持"宁多勿漏"语义不变。
+    pushed = False
     try:
-        from app.notifier.feishu import send_text
-        send_text(msg)
-    except Exception as exc:
-        return f"push_failed {type(exc).__name__}: {exc}"
+        from app.push import get_push_hub
+        from app.push.message import Category, Level, PushMessage
+        hub = get_push_hub()
+        try:
+            pushed = bool(hub.push(PushMessage(
+                title="切档预检告警", body=msg, level=Level.HIGH,
+                category=Category.SYSTEM), sync=True))
+        finally:
+            hub.stop()
+    except Exception as exc:  # noqa: BLE001 — 回退路径接管
+        SKIPPED_SOURCES.append(f"hub_unavailable:{type(exc).__name__}")
+    if not pushed:
+        try:
+            from app.notifier.feishu import send_text
+            send_text(msg)
+        except Exception as exc:
+            return f"push_failed {type(exc).__name__}: {exc}"
     try:
         OUT_DIR.mkdir(parents=True, exist_ok=True)
         COOLDOWN_STATE.write_text(json.dumps({"ts": now, "msg_hash": _hash_msg(msg)}),

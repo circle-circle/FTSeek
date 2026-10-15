@@ -336,12 +336,22 @@ def test_cli_defaults_to_shadow_no_push(env, capsys, monkeypatch):
 
 
 def test_cli_push_flag_is_the_only_path_to_feishu(env, capsys, monkeypatch):
-    """只有显式 --push 才发飞书; 默认路径必须零推送调用."""
+    """只有显式 --push 才发推送; 默认路径必须零推送调用。
+    (2026-10-15 起推送走 app/push hub — 审计 P2-4 军规旁路迁移; 契约不变: 默认零推送)"""
     sent = []
     monkeypatch.setattr(lwr, "build", lambda d, e: lwr_build_stub())
     monkeypatch.setattr(lwr, "render", lambda *a, **k: "REPORT")
-    import app.notifier.feishu as feishu
-    monkeypatch.setattr(feishu, "send_text", lambda t: sent.append(t) or True)
+
+    class _Hub:
+        def push(self, msg, sync=False):
+            sent.append(msg.body)
+            return True
+
+        def stop(self):
+            pass
+
+    import app.push as push_mod
+    monkeypatch.setattr(push_mod, "get_push_hub", lambda: _Hub())
     assert lwr.main(["--days", "7"]) == 0
     assert sent == [], "默认(影子)模式不得推送"
     capsys.readouterr()
