@@ -1,5 +1,15 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-15 P2 收尾波（熔断地图刷新 + 切 REAL 清单 + 真钱推送归 hub + chase_cap 洗清）
+
+**触发**: 用户令「继续」。**落地**（`a0d6bc994`）:
+- **熔断地图刷新**（`docs/circuit-breaker-map.md`）：L1 阈值勘误（green −5/yellow −10/orange −20/red −35，原文 −2/−3 系 L1.5 的档）；补收录 5 个实际拦截层（VIX fail-close / playbook 日亏闸（今日已双臂化）/ pre_trade_gate / symbol 级×2）；语义纸面标注（LIQUIDATE≡HALT 只拒新仓、`playbook/risk_circuit_breaker.py` 名如熔断实为 record-only）；六权威并存指向 `symbol_daily_loss_guard.py:22-38` 登记。
+- **切 REAL 前置清单**（`docs/ops/real-cutover-preflight-checklist.md`）：审计 P2 项成 SOP——preflight_fail_mode 须 closed（否则 LIVE 启动断言拒启动）、pl_val 探针（键名已修）、四锁、waiver、手动面恒 REAL 口径、先 SIM 冒烟再切臂等 11 项。
+- **live_deal_push 迁 hub**：真钱成交提醒改走 app/push hub（sync=True 立即送达，ImportError 回退直连，同 feishu_push 先例）——8 个旁路中风险最高的一个闭合；deal_id 幂等仍在上游。测试 12 passed。
+- **chase_cap 洗清**（无代码改动）：US.CRM 4127 多轮 `skipped_chase_cap` 且查无成交 ⇒ enforce 真在拦；审计读数是「日志里的 reprice 尝试」非成交。
+**验证**: ratchet 家族绿；重启冒烟 7/7（16:30:31）。
+**下一步**: 剩余 7 个 scripts 层推送旁路（其中 3 个违反无料不推）留独立批；P3 待裁：event_stream 保留策略（须裁窗口）/棘轮双执法面合并/main FF 合并（ahead 60+）/策略面 DEB（信心倒挂、IC 侵蚀、闸门拦反）。
+
 ## 2026-10-15 P2 修复波（探针假绿 / 日亏熔断双臂化 / HTB 敏感性 / 盘后推送持久去重 + 两个快项）
 
 **触发**: 用户令「继续」清队列（P2 中零 SIM 行为变更项 + 两个遗留小项）。
