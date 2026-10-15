@@ -676,7 +676,8 @@ class DailyReviewGenerator:
                         sum(1 for s in _dir if s > 0) / len(_dir), 3)
         
         except Exception as e:
-            logger.debug(f"[attribution] metadata 源读取失败: {e}")
+            # W4 纪律 (2026-10-15 修): except 留痕一律 warning+exc_info, debug-in-except 是棘轮违规
+            logger.warning(f"[attribution] metadata 源读取失败: {e}", exc_info=True)
 
         try:
             # ── 补充源: 旧 trade_attribution 表 (历史日期 ≤2026-06-26 有数据) ──
