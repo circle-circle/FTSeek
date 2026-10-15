@@ -1,5 +1,13 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-15 P0-2 手动平仓单向门拆除（用户裁口径 + 用户裁方案，已重启生效）
+
+**触发**: 全链路审计 P0-2（手动实盘「能开不能平」：看板买入无闸、平仓被 `ALLOW_REAL_TRADING=false` 拦截）→ 用户裁口径「手动平仓除富途 App 外也可走 web dashboard」→ 方案二选一中用户裁「拆闸对齐设计」。
+**修复**: `app/web_dashboard/order/executor.py` 平仓路径删除 6/12 P0-2 的 ALLOW_REAL_TRADING 检查（原位留注释说明口径演变）；对齐 `validator.py:86` 既定设计（2026-06-24：该旗标只锁 AUTO pipeline，手动恒 REAL 不适用）；原闸防护场景（切回模拟盘后误下实盘）在「手动恒 REAL」设计下不成立。手动侧其余风控（LIVE_CONSERVATIVE 等）不动；`mode_switch_service.py` 的模式展示/切换语义不动。
+**验证**: 平仓契约测试 `tests/web_dashboard/test_close_position_p1_contracts.py` 14 passed（无测试钉死被拦行为）；py_compile 过；重启前核：仅 US.CAT 一笔 SIM 未平仓（durable exit ledger 接管）+ 部署面仅本文件改动；`systemctl restart ftseek-us` 后 `startup_smoke_check.py --wait 90` **7/7 全绿 exit=0**（启动段 13:11:53）。
+**边界**: 仅此一处行为变更（一次一变量）；`.env.us`/配置零改动；AUTO pipeline 的 ALLOW_REAL_TRADING 锁与四锁全部不受影响；`executor.py` 其余逻辑零改动。
+**下一步**: 用户下次在看板平真实持仓时即验证通畅（此前必被拒）；P1 修复批范围仍待用户裁决。
+
 ## 2026-10-15 KR3 SHORT 腿终裁：FALSIFIED ⇒ KR3 达成 + 停采回流链一次闭合
 
 **触发**: 全链路审计 P0-1（KR3 SHORT n≥30 今日到期）→ 用户令「同意，先处理P0-1」→ 裁决批执行 → 用户裁「FALSIFIED 落档+停采」。

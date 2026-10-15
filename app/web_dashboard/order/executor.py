@@ -404,13 +404,10 @@ def close_position(service: "ManualOrderService", symbol: str, reason: str,
         if not service.connect():
             return {"success": False, "error": "broker_connection_failed"}
 
-        # P0-2 修复 (2026-06-12): 实盘平仓也需要 ALLOW_REAL_TRADING=true 兜底
-        # 防止切回模拟盘后 broker_ctx 仍活跃造成误下实盘单
-        if service._is_live():
-            allow = service._read_env("ALLOW_REAL_TRADING", "false").lower()
-            if allow != "true":
-                logger.error(f"[手动平仓] {symbol} 拦截: ALLOW_REAL_TRADING != true (实盘平仓被拒绝)")
-                return {"success": False, "error": "ALLOW_REAL_TRADING 未设为 true，实盘平仓被拦截"}
+        # 2026-10-15 用户裁口径: 手动平仓可走 web dashboard — 拆除此处 ALLOW_REAL_TRADING 闸,
+        # 对齐 validator.py:86 的既定设计 (2026-06-24: 该旗标只锁 AUTO pipeline, 手动恒 REAL 不适用)。
+        # 原 6/12 P0-2 闸的防护场景 (切回模拟盘后误下实盘) 在「手动恒 REAL」设计下不成立;
+        # 旧闸造成「能开不能平」单向门 (买入侧无闸), 平真实持仓被拒属事故态。
 
         try:
             from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, RET_OK
