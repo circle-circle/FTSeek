@@ -16,6 +16,7 @@ capital_flow 日级聚合 (2026-08-22)
 """
 
 import json
+import sys
 from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
@@ -116,7 +117,10 @@ def aggregate_daily():
     # 攒样到点 → 触发回放验证
     if n_days >= TARGET_DAYS:
         print(f"[capital_flow] ✅ 攒样完成 ({n_days}天 ≥ {TARGET_DAYS}天), 触发回放验证")
-        trigger_replay()
+        replay_rc = trigger_replay()
+        if replay_rc:
+            # 回放验证失败 = 本作业失败 (四关门证据不刷新是决策面事件, 不得静默)
+            sys.exit(1)
     else:
         print(f"[capital_flow] ⏳ 攒样中 ({n_days}/{TARGET_DAYS}天), 暂不回放")
 
@@ -132,13 +136,20 @@ def trigger_replay():
     现改为调用真实落盘的 scripts/capital_flow_replay.py (可单独运行/测试)。
     """
     import subprocess
+    # 2026-10-15 修复: 子进程原用裸 "python3" — cron 父进程是 venv 但子进程落到系统
+    # python3 (无 numpy) ⇒ 自 2026-09-24 起每跑必崩且父进程 rc=0 静默 (静默失败形态)。
+    # sys.executable 继承本进程解释器 (venv), 同 10-08 pre_market_check 修复同缺陷类。
     result = subprocess.run(
-        ["python3", str(BASE / "scripts" / "capital_flow_replay.py")],
+        [sys.executable, str(BASE / "scripts" / "capital_flow_replay.py")],
         capture_output=True, text=True, cwd=str(BASE)
     )
     print(result.stdout)
     if result.returncode != 0:
-        print(f"[capital_flow] 回放脚本错误: {result.stderr}")
+        # 子进程失败必须让本作业**失败可见** (stderr + exit 1), 不再 print 后照常 rc=0。
+        print(f"[capital_flow] 回放脚本错误 (rc={result.returncode}): {result.stderr}",
+              file=sys.stderr)
+        return result.returncode or 1
+    return 0
 
 
 

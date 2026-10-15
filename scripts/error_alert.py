@@ -29,6 +29,10 @@
   · 覆盖面 = logs/ 下**全部**活跃 `.log` + 当日轮转档 (含 logs/invariant_check.log) ——
     修掉告警链断裂, 且新增日志文件自动纳管, 不需要登记 (登记表 = 下一次断裂)。
     唯一排除: 本脚本自己的 logs/error_alert.log (自扫会形成反馈环)。
+  · **裸 Traceback 崩溃尾检测** (2026-10-15): cron 脚本被未捕获异常杀死时落盘的是无
+    时间戳、无 `] ERROR:` 前缀的裸 traceback, LEVEL_MARKERS 按构造看不见 (审计实证两条
+    cron 静默崩 21-25 天零告警)。`orphan_traceback_events` 以「文件尾部=裸 traceback 块
+    ∧ mtime 在窗口内 ∧ 前一行非 ERROR/CRITICAL」三条件并入计数, 不双计 logger 带栈错误。
   · 冷却键 = `error_spike_<YYYYMMDD>_<HH>_<指纹>` (指纹 = 去数字后消息前 60 字), 兑现
     「同一类错误 1 小时内只告警一次」且**不同类互不压制**; 一次运行只推**一条**聚合消息,
     正文列出本轮所有尚未冷却的类 (避免 N 类 = N 条推送刷屏)。
@@ -77,6 +81,7 @@ BASELINE_DAYS = 7          # 近 7 日同时段中位数
 MIN_THRESHOLD = 1          # ERROR/CRITICAL 是 P0, 1 条即触发
 THRESHOLD_MULT = 0         # 基线只做诊断, 不抬高 P0 触发线
 LEVEL_MARKERS = ("] ERROR:", "] CRITICAL:")
+TB_HEADER = "Traceback (most recent call last):"
 _TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}")
 _TAIL_BYTES = 2_000_000    # 当前档只读尾部 2MB (15min 窗实测 ~12KB; 轮转档全读)
 
@@ -245,6 +250,51 @@ def fingerprint(msg: str) -> str:
     return re.sub(r"\d+", "#", msg).strip()[:60] or "(空消息)"
 
 
+def orphan_traceback_events(srcs, since_dt: datetime) -> list:
+    """裸 Traceback 崩溃尾检测 — 补齐 LEVEL_MARKERS 的构造性盲区 (2026-10-15 审计实证:
+    short_supply_funnel_report 自 9/20 崩 25 天、capital_flow_replay 自 9/24 崩 21 天,
+    error_alert 逐轮报"0 条 ERROR" — cron 脚本被未捕获异常杀死时, 解释器打到 stderr 的是
+    **无时间戳、无 `] ERROR:` 前缀**的裸 traceback, scan() 按构造看不见)。
+
+    一条日志文件算一个孤儿崩溃事件, 需**同时**满足 (防误报/防双计):
+      · 文件 mtime ≥ 窗口起点 (旧崩溃不在后续轮次重复计; 它在自己那轮已告过);
+      · 文件**尾部**是一个含 TB_HEADER 的裸行块 (崩溃后又有新输出追加 ⇒ 不再是尾, 不计);
+      · 尾块前一行不含 LEVEL_MARKERS (logger.error(exc_info=True) 的 traceback 续行
+        已随那条 ERROR 计入, 不双计)。
+    指纹 = 尾块最后一行 (通常即 `XxxError: msg`), 冷却/聚合复用既有指纹管道。
+    """
+    events = []
+    for path in srcs:
+        try:
+            if path.suffix == ".gz":
+                continue
+            st = path.stat()
+            if datetime.fromtimestamp(st.st_mtime) < since_dt:
+                continue
+            with open(path, "rb") as f:
+                f.seek(max(0, st.st_size - 8192))
+                blob = f.read().decode("utf-8", errors="ignore")
+            lines = [ln for ln in blob.split("\n") if ln.strip()]
+            i = len(lines)
+            while i > 0 and not _TS_RE.match(lines[i - 1]):
+                i -= 1
+            tail = lines[i:]
+            if not tail or not any(ln.startswith(TB_HEADER) for ln in tail):
+                continue
+            if i > 0 and any(m in lines[i - 1] for m in LEVEL_MARKERS):
+                continue  # logger 带栈错误的续行, 已随 ERROR 行计入
+            events.append({
+                "fingerprint": fingerprint(tail[-1].strip()),
+                "sample": f"[裸Traceback崩溃尾] {path.name}: {tail[-1].strip()[:160]}",
+                "source": path.name,
+            })
+        except Exception as e:
+            # 单文件失败不得让整轮失明 (与 _iter_lines 同纪律), 但必须留痕带栈 (W6)
+            logger.warning("[error_alert] 裸崩溃尾检测读取 %s 失败 (跳过): %s", path.name, e,
+                           exc_info=True)
+    return events
+
+
 def _sanitize(text: str) -> str:
     """控制字符 → 空格: 保证推送正文每条错误占一行、可读 (DEB §4.3 判据 3)。"""
     return re.sub(r"[\r\n\t\x0b\x0c]+", " ", text).strip()
@@ -399,6 +449,19 @@ def run(now: datetime = None, window_min: int = WINDOW_MIN, state_path: Path = S
     try:
         srcs = window_sources(now, logs_dir)
         got = scan(srcs, since=since, until=until, tail_bytes=_TAIL_BYTES)
+        # 裸 Traceback 崩溃尾并入计数 (scan 的级别判据按构造看不见它们, 见函数 docstring)
+        orphans = orphan_traceback_events(srcs, now - timedelta(minutes=window_min))
+        for ev in orphans:
+            fp = "裸TB:" + ev["fingerprint"]
+            g = got["groups"].setdefault(
+                fp, {"count": 0, "levels": set(), "sample": "", "sources": set()})
+            g["count"] += 1
+            g["levels"].add("TRACEBACK")
+            g["sources"].add(ev["source"])
+            if not g["sample"]:
+                g["sample"] = ev["sample"]
+            got["count"] += 1
+            got["per_source"][ev["source"]] = got["per_source"].get(ev["source"], 0) + 1
     except Exception as e:
         logger.error("[error_alert] 扫描异常 → 本轮 ERROR 覆盖失明 (不得读成'零错误'): %s",
                      e, exc_info=True)

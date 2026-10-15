@@ -126,6 +126,7 @@ def main():
     # ---- $ 维度 ----
     pnl = {ch: {d: {"n": 0, "gross": 0.0, "net": 0.0} for d in DIRECTIONS}
            for ch in CHANNELS}
+    both_pnl_null = 0
     for t in trs:
         ch = _channel(t["decision_id"])
         d = TR_DIRECTION_MAP.get((t["direction"] or "").upper())
@@ -134,7 +135,12 @@ def main():
         cell = pnl[ch][d]
         cell["n"] += 1
         cell["gross"] += float(t["realized_pnl"] or 0.0)
-        cell["net"] += float(t["pnl_net"] if t["pnl_net"] is not None else t["realized_pnl"])
+        # 2026-10-15 修复: pnl_net 与 realized_pnl 双 NULL 时原写法 float(None) 必崩
+        # (自 2026-09-20 起每跑必崩、静默 25 天 — error_alert 只认 "] ERROR:" 前缀)。
+        net_val = t["pnl_net"] if t["pnl_net"] is not None else t["realized_pnl"]
+        if net_val is None:
+            both_pnl_null += 1  # 双 NULL 行按 0 计但必须透出 (数据质量问题不静默)
+        cell["net"] += float(net_val or 0.0)
 
     # ---- 汇总 + SHORT 占比 (漏斗每一层) ----
     layer_totals = {}
@@ -156,6 +162,7 @@ def main():
             "total": n_tr,
             "short": n_tr_short,
             "short_share_pct": round(100.0 * n_tr_short / n_tr, 1) if n_tr else None,
+            "both_pnl_null": both_pnl_null,
         },
         "by_channel": {},
         "interpretation": (

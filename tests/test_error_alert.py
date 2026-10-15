@@ -13,7 +13,9 @@
         轮转档纳入窗口 / 相对基线阈值 (非硬编码 20)。
 """
 import json
+import os
 import subprocess
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -436,3 +438,58 @@ def test_legacy_shell_script_no_longer_mounted():
     repo = Path(__file__).resolve().parents[1]
     assert not (repo / "scripts" / "error_alert.sh").exists(), \
         "scripts/error_alert.sh 仍在原位 — 应移入 scripts/archive/ 并在 DEB 落档"
+
+
+# ─────────── 裸 Traceback 崩溃尾 (2026-10-15 审计盲区修复: 两条 cron 静默崩 21-25 天) ───────────
+
+def test_orphan_traceback_tail_triggers(env):
+    """cron 崩溃的裸 traceback (无时间戳无前缀) 必须触发告警 — 审计实证的原盲区形态。"""
+    p = _write(env, "some_cron.log", [
+        "Traceback (most recent call last):",
+        '  File "scripts/x.py", line 137, in main',
+        "TypeError: float() argument must be a string or a real number, not 'NoneType'",
+    ])
+    fresh = (env["now"] - timedelta(minutes=5)).timestamp()  # mtime 对齐 fake now
+    os.utime(p, (fresh, fresh))
+    assert _run(env) == 0
+    assert len(env["pushed"]) == 1
+    assert "裸Traceback崩溃尾" in env["pushed"][0]["body"]
+    assert "some_cron.log" in env["pushed"][0]["body"]
+
+
+def test_orphan_traceback_stale_mtime_not_counted(env):
+    """mtime 早于窗口起点的旧崩溃尾不在本轮重复计 (它在自己那轮已告过)。"""
+    p = _write(env, "old_cron.log", [
+        "Traceback (most recent call last):",
+        "ValueError: old crash",
+    ])
+    old = (env["now"] - timedelta(hours=1)).timestamp()  # 对齐 fake now, 早于窗口
+    os.utime(p, (old, old))
+    assert _run(env) == 0
+    assert env["pushed"] == []
+
+
+def test_traceback_after_error_line_not_double_counted(env):
+    """logger.error(exc_info=True) 的 traceback 续行已随那条 ERROR 计入 ⇒ 不再出裸TB类。"""
+    ts = env["now"] - timedelta(minutes=5)
+    _write(env, "ftseek_us.log", [
+        _line(ts, "app.x", "ERROR", "炸了"),
+        "Traceback (most recent call last):",
+        '  File "x.py", line 1, in <module>',
+        "ValueError: boom",
+    ])
+    assert _run(env) == 0
+    assert len(env["pushed"]) == 1
+    assert "裸TB" not in env["pushed"][0]["body"]
+
+
+def test_traceback_followed_by_new_output_not_counted(env):
+    """崩溃后又有新的带时间戳输出追加 ⇒ 崩溃不再是文件尾 (已被覆盖), 不计。"""
+    ts = env["now"] - timedelta(minutes=5)
+    _write(env, "cron.log", [
+        "Traceback (most recent call last):",
+        "ValueError: boom",
+        _line(ts, "app.x", "INFO", "后续正常运行"),
+    ])
+    assert _run(env) == 0
+    assert env["pushed"] == []
