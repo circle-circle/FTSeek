@@ -245,7 +245,9 @@ class TestRulerUnchanged:
         assert ue.PROMPT_VERSION == "v2.14"
         assert ue.PROMPT_HASH_V2 == hashlib.sha1(
             ue.SYSTEM_PROMPT_V2.encode("utf-8")).hexdigest()[:12]
-        assert ue.BRIEF_TEMPLATE_VERSION == "ue_brief_v5"
+        # 2026-10-15 重钉: v5→v6 系 RFC-136 (c162df515, 用户裁决 10-14) 借券快照注入
+        # 修空头断供的有意升级, 测试当时未跟 (10-12~14 SSOT 断档期)。
+        assert ue.BRIEF_TEMPLATE_VERSION == "ue_brief_v6"
 
     def test_planned_preview_version_is_its_own_ruler(self):
         """输入版本与落库审计版本分尺: 改 planned 口径不该逼着升 prompt 版。"""

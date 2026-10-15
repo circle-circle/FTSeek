@@ -3780,6 +3780,12 @@ _CONSUMER_ACK: dict[str, str] = {
     "da_prompt_distill_shadow": (
         "同上 daily_llm_token_report.py 终点报表 (读 v2_tokens_in/out 统计蒸馏增量成本)。"
         "⇒ 停采只让成本表少一行, 不断生产料。"),
+    # 2026-10-15 (审计 P1-3 结案附带): 冻结归档的展示型消费认领
+    "ue_short_boost_shadow": (
+        "2026-10-15 终裁 KILLED 后实测: 消费者 = scripts/shadow_board.py (段13③ 只读展示) "
+        "+ scripts/ue_short_boost_final_settlement.py (一次性结算器, 留档可读); 写方链 "
+        "(UE 直写 inject) 已于 10-06 退役 ⇒ 产物为冻结归档, 读它不改任何生产行为 "
+        "⇒ 归档展示型消费, 认领不占周检噪音预算。"),
     # ── 2026-10-03 清理批新增认领 (终态但产物仍喂生产链, 逐条写理由) ──────────────
     "premarket_peer_shadow": (
         "2026-10-03 清理批判 KILLED 时实测确认: **采集必须保留** — "

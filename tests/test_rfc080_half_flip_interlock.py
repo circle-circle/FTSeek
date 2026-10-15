@@ -60,9 +60,12 @@ class TestHalfFlipInterlock:
 
 class TestSharedGateWiredInSource:
     def test_shared_gate_is_the_live_authority(self):
+        # 2026-10-15 重钉: RFC-132 (10-13) 把共享门从 _execute_via_dual_broker_inner
+        # 抽为 _evaluate_live_execution_gate 并前移到熔断之前 (新调用点更靠前);
+        # 钉点随结构迁移, 意图不变 (共享门仍是 LIVE 唯一权威)。
         import app.playbook.playbook_service as playbook_service
         source = inspect.getsource(
-            playbook_service.PlaybookService._execute_via_dual_broker_inner
+            playbook_service.PlaybookService._evaluate_live_execution_gate
         )
         assert "evaluate_live_arm_gate(" in source
         assert "count_open_live_positions(" in source
