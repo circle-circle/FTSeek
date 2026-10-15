@@ -3,12 +3,12 @@ type: "symbol"
 symbol: "US.MRNA"
 name: "Moderna"
 industry: "Biotechnology"
-latest_date: "2026-10-12"
+latest_date: "2026-10-13"
 latest_direction: "SELL_SHORT"
 latest_score: 6.0
 latest_rating: "看空"
-total_trades: 0
-win_rate: 0
+total_trades: 1
+win_rate: 1.0
 tags: [symbol, US]
 ---
 
@@ -324,6 +324,56 @@ Intismeran黑色素瘤疫苗III期成功→验证mRNA平台肿瘤商业化潜力
 
 ### 论据IC验证
 - 基于2275条历史信号alpha IC验证 (overall_t1=-0.0007)
+
+## 同行业 (Biotechnology)
+- [[US_ABBV]]
+- [[US_CLDX]]
+- [[US_DYN]]
+- [[US_KOD]]
+- [[US_NTRA]]
+- [[US_PGEN]]
+- [[US_RARE]]
+- [[US_RNA]]
+- [[US_ROIV]]
+- [[US_SYRE]]
+---
+
+## 2026-10-13 | 看空 | 信心中高 | SELL_SHORT
+<!-- id:2026-10-13-8d0a -->
+
+> BioNTech临床失败引发mRNA情绪退潮，MRNA盘前-3.64%且现价$205.95远超最高目标价$200，空头拥挤(卖空+322%)，等反弹至$210.50分2批做空
+
+- **标的**: Moderna (US.MRNA) | 现价: 205.95 | 评分: 6.0/10
+- **IC ID**: `DA-20261013202116-US.MRNA-8d0a`
+- **数据质量**: 数据源 19/19 (100%)
+
+### 看多论据
+  1. [MEDIUM][IC=-0.02n=1393] 癌症疫苗里程碑与纳指100被动资金支撑短期流动性 (news)
+  2. [LOW][IC=-0.02n=1393] 竞品临床失败凸显技术路线相对优势 (news)
+
+### 看空论据
+  1. [HIGH][IC=+0.01n=1091] 估值严重透支且基本面持续亏损，无法支撑当前市值 (fundamental)
+  2. [HIGH][IC=+0.01n=959] 内部人持续净卖出与机构共识偏向谨慎 (fundamental)
+  3. [HIGH][IC=+0.04n=841] 板块情绪退潮与短期获利盘兑现压力巨大 (technical)
+
+### 交易计划
+- 入场: 分2批做空：第1批盘前/开盘若反弹至$210.50(昨收与盘前现价中轴)遇阻做空；第2批若反弹至$213.50(昨收附近)遇阻加仓。禁止在$202.00以下追空。
+- 止损: 218.50
+- 止盈: 195.00
+- 支撑: 199.79, 186.4, 127.31 | 阻力: 213.74, 225.0, 227.46
+
+### 风险
+  - 空头拥挤风险：卖空数量日环比激增322%，若盘中出现利好极易引发逼空行情
+  - 大盘拖累风险：盘前QQQ下跌-0.69%，若科技股整体走弱可能加速MRNA下跌，但也可能引发资金抱团避险
+  - 数据降级风险：earnings_calendar缺失，无法规避财报日突发波动
+  - [挑战者] 逆板块风未定价：板块上下文当日Healthcare +0.69%（强度第2，仅次于Communication +0.97%），MRNA盘前-3.64%属个股独立弱势，做空方向与板块方向相反
+  - [挑战者] 同源数据被选择性引用：异动信号7条中含MACD金叉、MA5上穿MA10金叉、收盘价上穿MA5/MA10等看多项，bear_case只引用RSI/WMSR/CCI超买项。
+
+### 因果链
+BioNTech临床失败引发mRNA板块情绪退潮 → MRNA前期纳指100被动买盘消化完毕且估值远超目标价 → 获利盘与机构资金涌出导致盘前下跌-3.64% → 短期价格向均线均值回归
+
+### 论据IC验证
+- 基于2287条历史信号alpha IC验证 (overall_t1=-0.0007)
 
 ## 同行业 (Biotechnology)
 - [[US_ABBV]]
