@@ -144,7 +144,6 @@ class LiveDealPushSubscriber:
     def _notify_async(self, raw: Dict[str, Any], deal_id: str) -> None:
         def _send():
             try:
-                from app.notifier.feishu import send_text
                 from app.web_dashboard.live_ledger import market_of, _s
                 symbol = _s(raw, "code") or "?"
                 market = market_of(_s(raw, "deal_market") or _s(raw, "trd_market"), symbol)
@@ -156,7 +155,22 @@ class LiveDealPushSubscriber:
                 side_cn = {"BUY": "买入", "SELL": "卖出", "SELL_SHORT": "卖空",
                            "BUY_BACK": "买回"}.get(side, side)
                 t = str(raw.get("create_time") or "")[5:16]
-                send_text(f"💰 实盘成交 {symbol} {side_cn} {qty}@{price} ({amount}) {t} [{market}·真钱]")
+                text = f"💰 实盘成交 {symbol} {side_cn} {qty}@{price} ({amount}) {t} [{market}·真钱]"
+                # 2026-10-15 (审计 P2-4): 直连 notifier 是军规旁路 ⇒ 改走 app/push hub
+                # (hub-first, ImportError 回退直连 — 同 feishu_push/critical_alerts 先例);
+                # sync=True 立即送达 (真钱成交不吃 60s 去重窗); deal_id 幂等在上游
+                # (sync_deals 两腿重叠已去重), 此处 dedup_key 只作留痕。
+                try:
+                    from app.push import get_push_hub
+                    from app.push.message import Category, Level, PushMessage
+                    cat = Category.TRADE_ENTRY if side == "BUY" else Category.TRADE_EXIT
+                    get_push_hub().push(PushMessage(
+                        title=f"实盘成交 {symbol} {side_cn}", body=text,
+                        level=Level.HIGH, category=cat,
+                        dedup_key=f"live_deal_{deal_id}"), sync=True)
+                except ImportError:
+                    from app.notifier.feishu import send_text
+                    send_text(text)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(f"[实盘推送] 飞书通知失败 (落账不受影响): {exc}")
         threading.Thread(target=_send, name="LiveDealNotify", daemon=True).start()
