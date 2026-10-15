@@ -142,6 +142,74 @@ scheduler 字符串面；命中即停、外部状态不可读不算零、证据�
 `SKILL.md`（跑 1-2 周看执行率是否真提升）；`handoff.md` 分层瘦身（1.29MB → 滚动队列 +
 归档）单独开批，保持宪章 §六 SSOT 地位不变。
 
+## 2026-10-14 口径与判据三线落档：A10 现役时代口径 SSOT / RFC-079 深水闸终裁 / 几何轴终审关轴（追补·无 handoff 记录，从 commit 重建）
+
+**触发**: 无 handoff 记录，从 commit 重建。三条独立触发：①用户 2026-10-14 裁「同意 后续统计和数据筛选过滤旧数据」→ RFC-143；②RFC-079 EOD 深水闸 B19 预注册判据到期到达，用户裁「登记」（方案 A=维持 record-only）→ DEB-20261009 §42；③用户裁「重启」几何变更轴（推翻 DEB-20260823 §8.3 C 无限期搁置）→ DEB-20261014 预注册回放 → 用户终审关轴。
+
+**修复或落地**（4 提交，按时间）:
+- `2cad742bd` 08:21 DEB-20261009 §42 RFC-079 EOD 深水闸 B19 正式裁决 **GATE_NOT_WORTH（终态）**：settler 10-14 06:30 CST n=9(≥8)/ΣΔ−293.98(≤0)/miskill=5(>1)；miskill 行 settled=true 永久冻结只增不减 ⇒ 误杀≤1 数学不可达 ⇒ verdict 在任何未来样本下不变、转硬闸路径正式关闭。全量枚举 avoid 4 笔 +574.28（RIVN/QCOM/SNDK/AMD）vs miskill 5 笔 −868.26，最近两 trigger 全拦截正确 ⇒「门非失灵，是 −2.5% 深度区分度不足」。E 表漂移缺陷修复：E144 改钉终态不变量（原钉滚动 latest 必漂移）、E149 加 `date≤2026-10-12` 冻窗过滤（原读增长型 jsonl）；类级教训「E 表只钉冻窗/冻结行/终态不变量」。仅 DEB 一文件（+50/−2），处置=影子维持 record-only 续采。
+- `8a995dad6` 16:49 RFC-143 A10 现役时代口径 SSOT：`app/core/db_utils.py:104` `CURRENT_ERA_START="2026-07-01"` + `ERA_CLEAN_PERFORMANCE_WHERE`(:105) + `era_clean_where(conn)`(:112，缺列 fail-open，与 `a9_clean_where` 同取舍)；接线 `scripts/entry_window_cohort.py:20/34`、`scripts/shadow_board.py:29/328`、`scripts/rth_fade_graduation_check.py:69/73/85`（`UPPER(exit_reason)` 修 DB 混存 `EXTERNAL_CLOSE`/`external_close` 两态的大小写漏剔）；判据落档 `docs/ADJUDICATED-CRITERIA.md:22` A10（账户级资金对账/费用标定豁免须注释留痕）；RFC `docs/decisions/RFC-143-era-scoped-clean-caliber.md`；钉子 `tests/test_era_caliber.py`。实测全库 +$12,526 vs 现役时代 −$1,455 符号翻转，连带撤回「SHORT 腿已证伪」（系旧时代人工 SHORT 单伪影）。刻意豁免：`daily_alert_summary.py` 等账户级对账、`long_expectancy_ledger.py` ERA_START 字面量不动。
+- `1a893e46f` 17:51 DEB-20261014 几何轴重启预注册回放：两代仪器均撞保真门 —— v1 全路径 `reason_match=0.588`(<0.80)、arm0 净偏差 34.2%(>20%)；v2 状态锚定再现 0.729(<0.90)、再现价中位差 0.2048%(>0.20) ⇒ **三臂变体读数零产生**（未挪阈值重跑），按预注册转 record-only 影子出路待用户立项。引擎加向后兼容可选参数：`scripts/exit_replay_backtest.py:301/303` `anchor=None`、`:340` 锚定分支，默认路径与唯一外部消费者不变；新增 `scripts/deb20261014_geometry_restart_replay.py`、`..._v2.py` + DEB 文档（4 文件 / +702 行）。
+- `1e426d06c` 18:08 DEB-20261014 §10.4 用户终审：**影子不立项**（现役 A10 口径 MFE≥1.5% 仅 105 笔 16.5%，近月窗 9/17–10/13 仅 18/142=12.7%；BE 出场族 232 笔中 98% MFE<1.5%）⇒ 1.5% 武装门受益面结构性不存在，几何轴 **CLOSED**，复活须新论据 + 新数据源。
+
+**验证**（均为 commit message 自述，本批只读未复跑）：`8a995dad6`「62 tests green；三脚本真跑带口径标注；`--days 200` 旧时代零倒灌」；`2cad742bd`「E150-E153 实跑 4/4 绿（连同修正的 E144′/E149′ 共 6/6）」；`1a893e46f`「消费者烟测 8 过 / 1 存量失败与本改动无关」；`1e426d06c` **未记录**。
+
+**边界**: `8a995dad6` 零交易行为变更（纯报表层，三脚本为 cron/手动独立进程，下次运行自动加载）；`1a893e46f` 引擎改动为默认行为不变的可选参数；`2cad742bd`/`1e426d06c` 纯文档零代码。**四提交均未记录重启**。同日另有 `c162df515`（10-14 23:55，RFC-136/ADR-046 UE fresh-event 转正），已由 10-15 handoff 条目覆盖，不在本次追补范围。
+
+**下一步**: ①A10 谓词随后续改动接线到滚动窗口类报表（RFC-143 §3 明示本批不扩散）；②深水闸维持 record-only 续采，停采/registry 状态变更须另裁；③几何轴复活门槛=新论据+新数据源，且不得用本 DEB 已否的仪器重算；④DEB §42.4 剩余方向：入场质量（candidate C，5/10 on track）+ 上游 carry 决策（须独立预注册）。
+
+---
+
+## 2026-10-13 RFC-142 多模型审计修复批 + RFC-132 LIVE 镜像终态 + 当日只读复盘与观察轨快照（追补·无 handoff 记录，从 commit 重建）
+
+**触发**: 无 handoff 记录，从 commit 重建。主线是 RFC-142 多模型代码审计（v2 缺陷审计 / v4 策略复查两轮 5 模型评测）经 Hermes 逐条人工取证后由 Codex 实施；同日用户三问（今日全链复盘 / entry-confirm 多探测有无改善 / 不应按收盘价定盈亏）触发 §40 只读复盘，用户「要」触发 §41 观察轨快照存档，用户裁「修」触发 RFC-099 推送呈现层。
+
+**修复或落地**（7 提交，按时间）:
+- `86dc77787` 05:13 DEB-20261009 §40 + RFC-141 §5 item 9：10-12 全链复盘净 −$233.52 = 日内 +$59.51 + SNDK 隔夜 gap −$293.03（全亏在隔夜）；entry-confirm 变体预注册回放 n=580 判定**无一胜出**（真 2min 端点 netVal +$1798 最优，V1/V2/V3/V4/V0_true3 全部 meanΔ<0、CI 含 0、IS/OOS 翻转、不可分辨；「多探测」V2 avoid 50.9%→65.5% 但 miskill 50.0%→55.3%，净无 gain ⇒ 冻结腿维持）；语义漂移发现（旧「已结算腿」实测 ~30s 有效延迟非名义 2min，已登记 RFC-141 §5 item 9）；方法论自纠撤回盘中「锚→收盘 hold」反事实；隔夜 gap P0 诚实结论（RFC-079 会接住 SNDK Δ+$169.79 但 live n=7 ΣΔ−$629.01/miskill 5 ⇒ B19 不 met，不实装硬闸、不调阈值、继续攒样）。
+- `cbdad2a54` 08:43 DEB-20261009 §41 RFC-123 第2层观察轨滚动证据快照 #1（冻结窗 `--until 2026-10-12`，双锚影子 792 行 / 4 交易日 / 26 笔）：病灶依旧（LLM 计划价 73% 够不到）；or_low 成交 50% vs llm 38% 优势在可达不在更便宜（+2.90 vs +3.23 $/股）；ttl5 下 81% 退化市价 ⇒ 补漏赢家与占折扣不可兼得；阶段0 判据①缺失 0.00% PASS、②分歧 42.80% PASS，③④+≥10 交易日未达（4/10，~10-20）。
+- `5c978bff8` 10:24 RFC-132 LIVE mirror failure terminal state and gate precedence（commit message 仅一行标题，内容从 diff 重建）：①`app/playbook/playbook_service.py:244` 抽出 `_evaluate_live_execution_gate()`，并在 `execute_instruction` 内**先于账户熔断**评估（新调用点 :1029，原 :1447 处内联实现删除）⇒ LIVE 授权/豁免失败不再被熔断掩盖根因；②`app/playbook/pipeline_parts/auto_execute_flow.py:1163-1203` LIVE 镜像执行失败改为 `mark_instruction_guardrail_skip` + `LIVE_EXECUTION_REJECTED` + `live_execution_failure` metadata，标记失败再追加错误行；③新增契约 `tests/playbook/test_live_arm_p0_contracts.py` 两例（gate 索引先于 `check_circuit_breaker`；镜像失败必须落 SKIP/原因），+21 行。
+- `170bd80d8` 13:56 RFC-142 v2/v4 修复批（38 文件 / +2182−234，Co-authored-by: Codex）：**CapitalAllocator** `app/coordinator/capital_allocator.py` observe 影子敞口对称记账、`_coerce_position_pct` 非有限/非正拒绝、`Lock→RLock` 且 reconcile 收进锁、`auto_capacity_report` degraded+unknown 计数(:62)、新增 `BLOCKED_UNKNOWN_BUCKET`(:196)；**Broker/执行层** `app/execution/broker_adapter.py` `trd_side` 强制显式四值映射、缺失即拒单、`allow_offline_simulated_fill`(:41) 与断连判定(:491) 防实盘断连虚假成交、新增 `BrokerUnavailableError`(:22)；`app/pipeline/order_executor.py:466` `_reserve_capital_for_order` + `:520` `_release_reserved_capital` 接入下单路径（幂等键：同策略同 pct 视为已预留，不一致即拒；`allocator.is_observe_only()` 时直接放行 :476）、`_close_pre_check` broker 状态未知由「视为已平」改为「跳过本轮平仓」；`app/pipeline/position_monitor.py` scale-out 预检异常改中止；**exit_reason 归一化层** 新增 `app/risk/exit_reasons.py`（tighten→EARLY_TIGHT_SL / breakeven_lock→SL_BREAKEVEN / lock_in→SL_TRAIL_LOCK）双写入边界接线 `app/storage/trade_store.py:586/787` + `app/playbook/pipeline_parts/close_flow.py:54`；trade_records 补 `fees_est/pnl_net/fees_source/net_pnl_pct` 列（`trade_store.py:165`，ALTER 兼容 :212）+ `close_flow.py:406-415` 写 `net_pnl_pct`；**ETH 边界** `scripts/extended_hours_exit_executor.py:44` `SESSION_BOUNDARY_MINUTES` + `:180` `_last_submit_second`（边界前限价等待 20s + 撤单余量 10s，env 可覆写），`scripts/extended_hours_exit_cron.py` `next_open` 分支收进 `EXT_AFTERHOURS_HOLD_TO_OPEN`（旧语义回滚开关）。
+- `a2895a914` 13:58 文档批（36 文件）：RFC-123 §F 复查修复记录 + §G 观察轨预注册；10-12 盘前/盘后/复盘日报入库；27 个符号档例行更新；新增 `docs/ops/DST-CRON-AUDIT-20261101.md`（15 条显式 ET 锚定任务 10-11 已整体右移 1h，含备份与回滚命令）；`docs/CONTROL-LOOP-LEDGER.md` 与 `docs/CURRENT-STRATEGY-MAP-20260923.md` 各一行勘误；`docs/references/crontab-loop-baseline.txt` 登记 `rfc123_planned_entry_anchor_backtest.py`；handoff.md 补 2026-10-11 两条（+42 行）。
+- `66f63af73` 16:24 RFC-142 原始证据归档（36 文件 / +17,577 行）：`code_analysis_results/` v2–v5 四轮 4–5 模型（deepseek-v4.1-flash / qwen3.8 系列 / glm-5.3 系列 / kimi-k3）评测原始结果 + 对比报告 + project_context 快照，供后续复查溯源。
+- `2354152e2` 21:32 RFC-099 推送呈现层（用户裁「修」）：`scripts/extended_hours_entry_executor.py:625-640` 严格臂成交卡新增「📐 方向依据」行（SHORT=盘前跳空≥闸→回落做空 / LONG=未及闸→动量做多；研究臂判据非财报动量，不加该行）；`app/push/message.py:499` 财报超预期标签与符号跟值走（负值→「财报不及预期: −x.x%」，正值渲染与旧文案逐字相同；当前上游对非正值返 None ⇒ 属潜伏/防御性修复而非现役缺陷）。
+
+**验证**（均为 commit message 自述，本批只读未复跑）：`170bd80d8`「相关套件 326 全绿；棘轮同步 skill v0.95」；`2354152e2`「契约测试 +4（63 passed）」；`86dc77787`「E144-E147 实跑 4/4 绿」；`cbdad2a54`「E148-E149 实跑 2/2 绿」；`5c978bff8`、`a2895a914`、`66f63af73` **未记录**测试/验证。外部旁证：`2cad742bd`（10-14）DEB §42.5 记录「周二盘前重启（RFC-142/132 app 批，ET 02:30 安全窗）首日实盘验证通过」⇒ RFC-132/142 已随 10-13 重启进入生产；`2354152e2` 自述无需重启（executor 为 cron 每 tick 新进程，`earnings_surprise_pct` 唯一生产者即 executor）。`2354152e2` 另记录：`170bd80d8` 的 exit_reason 归一（lock_in→SL_TRAIL_LOCK）引入既有失败 `tests/extended_hours_order_execution.py::test_exit_full_fill_updates_records_and_removes_position`（干净 HEAD worktree 复现），当时判定非本批触碰、未代修 —— **本次追补未核其现状**。
+
+**边界**: `2354152e2` 纯呈现层零交易行为变更；`170bd80d8` 触及下单/资金预留/退出边界（资金预留的强制模式须 `observe_only=False` 才生效，Phase B 切档仍待定）；`86dc77787`/`cbdad2a54` 只读且按归属纪律**不提交**他人 WIP（`scripts/entry_confirm_variant_replay.py`、`rfc123_planned_entry_anchor_backtest.py` 当时为未提交 WIP，前者由 `170bd80d8` 入库）；`a2895a914`/`66f63af73` 为文档/归档批零行为变更。DST 右移的实际执行发生在 10-11（见 `docs/ops/DST-CRON-AUDIT-20261101.md` §结论/§变更），本提交只是把它落档。
+
+**下一步**: ①RFC-142 §未覆盖三项下批立项（SL_INITIAL 桶上限接入 playbook 链 / OVERNIGHT_GAP_STOP 券商侧挂单 / SL_BREAKEVEN 0.4%→0.8% retune 需 replay 验证）；②历史小写 exit_reason 脏行清洗（CTNT 类，writer 已消亡）；③RFC-123 第2层裁决窗 = 阶段0 满 10 交易日（~10-20），届时裁判据③再独立预注册；④`test_exit_full_fill_updates_records_and_removes_position` 归因已定位、是否已清待核（本批未跑测试）。
+
+---
+
+## 2026-10-12 门景观三连审计（§36/§37/§38）+ 门治理决策（§39）+ RFC-123 第2层补充回测（§35）+ ic-weekly 守卫清剿（追补·无 handoff 记录，从 commit 重建）
+
+**触发**: 无 handoff 记录，从 commit 重建。①`e0306fb56` 是前一晚 `376fba434`（10-11 23:59，不在本次追补的 17 提交内）信噪比修复批交付后，全量回归 7133 例暴露两条自引入守卫红 ⇒ 清剿；②其余五提交回答用户「拦截门的设定和统一」「提升合理有质量标的供应」及 RFC-123 第2层「需要」的补充回测，全部只读。
+
+**修复或落地**（6 提交，按时间）:
+- `e0306fb56` 00:22 `scripts/ic_weekly_report.py` 守卫清剿：DB 路径提为模块级 `_SNAP_DB`（:23-27）使 3 处 `sqlite3.connect` 不再命中 `test_db_connection_chokepoint` 的字面路径正则（归因实测 HEAD^ 0 处 → HEAD 3 处，原 line 62/120/465），保留 `mode=ro` 只读语义；补报段 `except Exception: pass` 改 fail-loud，把异常类型+消息写进报告正文（:486-499），使「近窗零样本但全史显著」通道失败不再与「没内容」输出同形。归因纪律：修后本人文件 except:pass 回到 HEAD^ 基线 2 处、本批净贡献 +0；脏树仍报 922(+1) 的来源定位为 `scripts/extended_hours_exit_cron.py`（并行 agent WIP，未代改）。
+- `84a91a53f` 07:21 新增 `scripts/rfc123_l2_archetype_ttl_sweep.py`（235 行，自包含独立，不碰他人未提交 WIP backtest，内化其 P0 跨日窗口修复）+ DEB-20261009 §35：archetype 分条件锚原理成立但 BREAKOUT n=1 不可回测（更正 §27「最大盲区」措辞，20/21 均值回归型现方案已对）；TTL 扫参稳健轴 = 改善 $/股（−0.03→+0.63）vs 错过笔（0→9）权衡，无清晰最优 TTL。
+- `8580aaeef` 08:00 新增 `scripts/gate_ledger.py`（227 行）+ DEB §36：~20+ 道门 / 25 个独立门审计 jsonl 横跨 2 仓、无统一视图（stale_quote 事故根因=无台账）；口径纪律 —— exec_gate_audit 被轮询放大 8.3×，原始「10.5% 执行率 / 38.8% chase_cap」是假象，按 decision_id 去重后 600 唯一指令 85.7% 执行、被拦 86% 是预算帽 ⇒ 真供应约束在上游 DA signal_gate（BLOCK 61%）而非执行层；策展注册表 `scripts/gate_ledger.py:43` `GATE_PREREG` + 2 道无预注册门（archetype_conflict/bad_direction）标红常设守门；修复 `_prereg` 自指循环 bug（grep 排除台账 DEB 自身）。
+- `6bb28e816` 08:20 新增 `scripts/da_gate_block_audit.py`（135 行）+ DEB §37 三层递进：「61% BLOCK」误导（80.5%/986 是 direction=SKIP，真方向被门拦仅 239 笔）；量纲更正（真驱动 = tier_score(0-10)+decision_conf，非 quality_score(0-100)，前轮误算已更正）；预测效度 n≈440：Spearman(tier_score,pnl)≈−0.000 零预测力（7-8 桶最差 WR44%）、Spearman(decision_conf,pnl)≈+0.159 弱但真 ⇒ 门拦在 score 上无效度依据、拦在 conf 上合理。
+- `279e51506` 08:20 扩 `scripts/da_gate_block_audit.py` §④（+71 行）+ DEB §38：SKIP 质量分桶 644(65%) 是正确跳过；naive 前向反事实是假象（best_mfe 上界 vs 已成交实际方向 mfe_pct + replay_bars 选择偏差）；同口径公平比较 SKIP 中位 2.24% < 已成交 2.47% ⇒ **无证据过度保守**，naive「漏好票」结论 debunk；副产物：已成交实际 MFE 0.44%(43% 墓地) vs best_mfe 2.47% ⇒ 真供应杠杆在入场价质量。
+- `83bcc97f9` 09:29 纯文档决策登记：RFC-091 §15（门台账归宿 = meta_audit_loop 结构化源，加 `_extract_gate_ledger` + `STRUCTURED_SOURCES`，不物理合并 25 个 jsonl；权威范围 = 影响供应 + 需预注册的门）+ RFC-092 §11（tier live 影子 = 重复造，`da_gate_decisions.jsonl` 已录 score+conf+decision、92%/1855 行/59 天 ⇒ conf-only A/B 纯回溯、零新 emitter/jsonl；预注册不设阈值防购物；推送复用 PushHub+钉钉但接前必须活体探针）+ DEB-20261009 §39。
+
+**验证**（均为 commit message 自述，本批只读未复跑）：`84a91a53f`「E120-E124 实跑 5/5 绿」；`8580aaeef`「E125-E129 实跑 5/5 绿」；`6bb28e816`「E130-E135 实跑 6/6 绿」；`279e51506`「E130-E140 实跑 9/9 绿」；`83bcc97f9`「E141-E143 实跑 3/3 绿」；`e0306fb56`「test_db_connection_chokepoint 2 passed；本人文件字面路径命中 0；except:pass 回基线 2 处；钉子测试+既有契约 54 passed；真数据端到端 `--no-push` RC=0 且读数与修复前逐字一致」。
+
+**边界**: 五个审计/回测提交全部只读（DB `mode=ro`），不改任何门逻辑/阈值/开关、不改 `signal_gate`/SKIP 逻辑、不改 `planned_entry` 生成、不触阶段0 影子；`83bcc97f9` 纯文档零代码，meta_audit_loop 接入实现前置须核归属 + 配契约测试。经 grep 核实：`scripts/gate_ledger.py`、`scripts/da_gate_block_audit.py`、`scripts/rfc123_l2_archetype_ttl_sweep.py` 均**未接 crontab、未入 `docs/references/crontab-loop-baseline.txt`、未入 `docs/CONTROL-LOOP-LEDGER.md`**（仅 `rfc123_planned_entry_anchor_backtest.py` 由 10-13 `a2895a914` 登记，crontab 实为 `53 5 * * 2-6`）。全部提交无重启记录（只读脚本无需重启）。
+
+**下一步**: ①meta_audit_loop 接入 gate_ledger 源（RFC-091 §15）——本次追补核实 `scripts/meta_audit_loop.py:45` `STRUCTURED_SOURCES` 仍为 `("invariant","watchdog","gate_liveness")`、全文零处 `gate_ledger` ⇒ **截至 10-15 仍未实施**；②两道无预注册门 archetype_conflict/bad_direction 待补 RFC/DEB 出处或下线；③tier conf-only A/B 回溯分析器待立项（阈值裁决日定，产物不新建影子 jsonl）；④台账/分析器接推送前必须先活体探针（纸面告警断裂三形态：不变量自检告警链只读 `ftseek_us.log`、PushHub dedup 不跨进程、冷却键全局小时级）；⑤RFC-123 第2层裁决窗 = 阶段0 满 10 交易日（~10-20）。
+
+---
+
+### 附：10-12~14 追补批的验证状态清单（起草 agent 只读核实，2026-10-15）
+
+**完全无验证记录（commit message 未给任何测试/实跑结果）**：`5c978bff8`（RFC-132，仅一行标题）、`a2895a914`（文档批，部分内容执行时点早于提交日）、`66f63af73`（证据归档）、`1e426d06c`（纯文档 13 行）。
+**仅 message 自述、无独立复跑**：`86dc77787`/`cbdad2a54`（E144-E149 绿，部分读数依赖当时未提交的他人 WIP 产物）；`8580aaeef`/`6bb28e816`/`279e51506`/`84a91a53f`/`83bcc97f9`（E120-E143 绿）；`8a995dad6`（「62 tests green」未列清单）；`170bd80d8`（「326 全绿」未列清单、未记录重启）；`2cad742bd`（E150-E153 4/4）；`2354152e2`（63 passed，并标注 1 个 `170bd80d8` 引入的既有失败未代修）；`e0306fb56`（自述较详但同为自述）；`1a893e46f`（烟测 8 过/1 存量失败未点名）。
+**部署/重启**：仅 RFC-132/142 有外部旁证（DEB §42.5 记 10-14 盘前重启首日验证通过）；其余 15 提交无重启记录（只读脚本/文档，无需重启）。
+**未核实项（只读限制）**：`test_exit_full_fill_updates_records_and_removes_position` 现状；`data/reports/entry_confirm_variants_20261012.json` 与 `data/deb20261014_geometry_replay*.json` 产物是否存在/可复现。
+
+---
+
 ## 2026-10-11 RFC-123 第2层附节 · 独立复查修复批 (用户令「请修复」)
 
 **触发**: 用户令复查 Hermes 的 planned_entry 可行性分析 → 独立复算发现 1 个 P0 + 多处
