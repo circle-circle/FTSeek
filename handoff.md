@@ -1,5 +1,14 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-15 ue_short_boost 冻结结算归档 + RFC-104 阶段0 FAIL 关停（用户双裁决落地）
+
+**触发**: P1-3 注册表对账带出的两个待裁 → 用户裁「冻结样本结算后归档」+「判阶段0 FAIL 关停」。
+**ue_short_boost**: 新建一次性结算器 `scripts/ue_short_boost_final_settlement.py`（数据源纪律：本地 `data/replay_bars_daily/` 日K缓存，50/50 符号覆盖实测；不走 futu 抢 OpenD 槽位；yfinance 本机无网络可达性实测全失败已移除兜底）→ 52/54 可结算（CRNX/NCSM 9 月行缺日K如实 missing）：**T+1 方向调整 mean +0.0523% / median +0.3394% / 胜率 51.9% / 26 日簇 t=0.667 / MDE80=2.94pp**（声称效应≪MDE，即使主门可达也无可测 edge），尾部 15 笔均值 −0.4618%。注册表 KILLED + 闹钟结案；读数标「样本未达门」观测值（不构成确认/证伪）。
+**rfc104**: 全 8 行 cron 注释退役（生成×2/刷新×3/对账×2/毕业检查×1，备份 `/tmp/crontab_backup_20261015_rfc104.txt`）；台账行加退役标；注册表 KILLED + verdict_history 双条目（NOT_READY 读数 + PHASE0_FAIL 终裁）；ADJUDICATED 结案。阶段1 永不立项，复活须重新预注册。
+**验证**: 注册表/台账契约 23 passed；py_compile 过；结算器幂等可重跑。
+**边界**: 零交易行为变更（rfc104 为只读计划层、ue_short_boost 为 record-only 影子）；cron 改动即时生效无需重启；`data/loops/ext_entry_plan/` 与两份 jsonl 留档不删。
+**下一步**: 无遗留动作；待裁队列剩 `long_momentum_gate_enabled` 死键立项 + P2/P3 队列。
+
 ## 2026-10-15 RFC-127 阶段1 未授权上线 → 用户裁「追认」（知情破例留痕）
 
 **触发**: P1-3 注册表对账发现 `80d8817ba`（10-09 拆分批，自述零行为变更）实际携带 RFC-127 阶段1 变体语义上线（`pipeline.py:3324` ETH HELD 零成交 intent 在 RTH 开盘自动归档释放移交盘中），无开关、无授权记录、§4 判据从未满足 → 用户裁「追认（补授权+修文档）」。

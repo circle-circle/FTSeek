@@ -199,13 +199,11 @@ ADJUDICATED: dict[str, dict] = {
                 "(docs/debates/DEB-20260928-ext-exec-price50-shadow.md)。",
     },
     "ue_short_boost_shadow": {
-        "read_at": "2026-10-15", "recheck_after": "", "needs_user": True,
-        "note": "2026-10-15 审计复核: 产物冻结 n=54/60 (decision_id 去重, 末行 2026-09-28) — "
-                "写方 (UE 直写 inject 链, llm_universe_scan L4243-4258) 已随 2026-10-06 cron 摘除 "
-                "(UE fresh-event 批改走 da_fresh_event_batch) 而停止 ⇒ 主门 n=60 在现路径下"
-                "不可达。处置待用户裁: (a) 按已冻结 54 笔 T+1 结算 + 标「样本未达门」 "
-                "(b) 判「供给路径消亡」按停止规则冻结归档。10/10 的「建结算器」承诺从未履行, "
-                "NO_EVAL_SCRIPT 挂账恰好掩盖了逾期机制 (审计回流断裂形态⑤)。",
+        "read_at": "2026-10-15", "recheck_after": "", "needs_user": False,
+        "note": "2026-10-15 结案: 用户裁「冻结样本结算后归档」。一次性结算 52/54 可结算: "
+                "T+1 方向调整 mean +0.0523% / t=0.667 / MDE80=2.94pp (无可测 edge), "
+                "尾部 15 笔 −0.4618%; 主门 n=60 永不可达 (写方链 10-06 退役) ⇒ KILLED, "
+                "产物与结算器留档。",
     },
     "gap_chase_gate": {
         "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
@@ -617,14 +615,14 @@ ADJUDICATED: dict[str, dict] = {
                 "verdict=KEEP_SAMPLING — 负向读数但 n 未满 40, 按预注册攒满再机械判, 不提前裁。",
     },
     "rfc104_eth_event_plan": {
-        "read_at": "2026-10-15", "recheck_after": "2026-10-31", "needs_user": True,
-        "note": "graduation_check (10-15 10:08 自动跑, cron 8 10 * * 2-6 — 9/26「计数锚读陈旧快照」"
+        "read_at": "2026-10-15", "recheck_after": "", "needs_user": False,
+        "note": "2026-10-15 终裁结案: 用户裁「判阶段0 FAIL 关停」— 覆盖率 15 日从未达标 + "
+                "条数带上界持续被破 ⇒ PHASE0_FAIL (终态); 全 8 行 cron 已注释, 注册表 KILLED, "
+                "复活须重新预注册。│graduation_check (10-15 10:08 自动跑, cron 8 10 * * 2-6 — 9/26「计数锚读陈旧快照」"
                 "缺陷已由该 cron 修复): ledger 33 行/15 交易日 (PASS 14/FAIL 11/NO_DATA 8) ⇒ "
                 "①交易日数 15≥7 ✅ ②覆盖率 100% 仅 6/15 日 ❌ (9 日漏票: 09-24/28/30, 10-01/06/07/08/09/13) "
                 "③计划条数带 [0,44] ❌ (09-28 两窗 45/49, 均值 47.0 ⇒ 附注「计划层可能正在退化成盲扫」) "
-                "⇒ verdict=NOT_READY, 阶段1 不立项。⚠️ 待用户裁: (a) 判据②从未在 15 日达成 "
-                "(最好 6/15) — 阶段0 是否已实质 FAIL 而非继续攒样; (b) 判据③上界 44 持续被破 "
-                "(均值 47.0) — 「计划层真退化」还是「上界估错」属改判据=重裁。另: 注册表 "
+                "⇒ verdict=NOT_READY, 阶段1 不立项。另: 注册表 "
                 "eval_script 原挂错 (eth_event_plan.py=攒计划器), 已改指 "
                 "eth_event_plan_graduation_check.py (2026-10-15 审计 P1-3)。",
     },
@@ -2499,8 +2497,8 @@ REGISTRY: list[ShadowItem] = [
     # ── RFC-104 阶段 0: ETH 事件执行计划 (只读工件, 2026-09-24 用户裁立项) ──
     ShadowItem(
         id="rfc104_eth_event_plan",
-        name="RFC-104 ETH 事件执行计划 (阶段 0 只读影子)",
-        status=ShadowStatus.OBSERVING,
+        name="RFC-104 ETH 事件执行计划 (阶段 0 只读影子) (⛔已退役 2026-10-15)",
+        status=ShadowStatus.KILLED,
         description="RFC-104 阶段 0: 从 futu+Finnhub 日历源生成 T 日事件计划 "
                     "(data/loops/ext_entry_plan/<et_date>_<session>.json), 每票一行含状态机字段/"
                     "源标注/ambiguous 处理。零交易行为变更; 计划**不含**方向/SL/TP/费用/"
@@ -2521,12 +2519,21 @@ REGISTRY: list[ShadowItem] = [
         eval_script="scripts/eth_event_plan_graduation_check.py",
         created="2026-09-24",
         last_evaluated="2026-10-15",
+        collection_retired=True,
         verdict_history=[{"date": "2026-10-15", "verdict": "NOT_READY (阶段0 判据未过, 阶段1 不立项)",
                           "evidence": "graduation_check 10-15 10:08 自动跑 (cron 8 10 * * 2-6): "
                                      "ledger 33 行/15 交易日 ⇒ ①交易日数 15≥7 ✅ ②覆盖率100% 仅 "
                                      "6/15 日 ❌ (9 日漏票) ③条数带 [0,44] ❌ (09-28 两窗 45/49, "
                                      "均值 47.0)。两个待裁 (ADJUDICATED 同载): 阶段0 是否实质 FAIL; "
-                                     "上界 44 持续被破属判据问题还是计划层退化 (改判据=重裁)。"}],
+                                     "上界 44 持续被破属判据问题还是计划层退化 (改判据=重裁)。"},
+                         {"date": "2026-10-15", "verdict": "PHASE0_FAIL (终态, 用户裁「判阶段0 FAIL 关停」)",
+                          "evidence": "覆盖率判据 15 交易日从未全 PASS (最好 6/15, 漏票 9 日: "
+                                     "09-24/28/30, 10-01/06/07/08/09/13) + 条数带上界 44 持续被破 "
+                                     "(均值 47.0) ⇒ 阶段0 未过, 阶段1 永不立项。处置: 全 8 行 cron "
+                                     "注释退役 (生成×2/刷新×3/对账×2/毕业检查×1, 备份 "
+                                     "/tmp/crontab_backup_20261015_rfc104.txt), 台账行加退役标, "
+                                     "计划目录与 reconcile_ledger 留档不删; 复活须重新预注册 "
+                                     "(改判据=重裁)。"}],
         notes="调度: 盘前 T-1 20:30 ET (CST 08:30 Tue-Sat) + 盘后 T-0 15:45 ET (CST 03:45 Tue-Sat); "
               "幂等键=(et_date, symbol, session, phase); 原子写 app/utils/atomic_write.py; "
               "三处收紧 (REVIEW-20260924 §3): ①不预筛 ②不择优 ③不是策略卡; "
@@ -3042,8 +3049,8 @@ REGISTRY: list[ShadowItem] = [
     ),
     ShadowItem(
         id="ue_short_boost_shadow",
-        name="UE×SHORT 加码影子 (S0, ×1.25 假设队列)",
-        status=ShadowStatus.OBSERVING,
+        name="UE×SHORT 加码影子 (S0, ×1.25 假设队列) (⛔已退役 2026-10-15)",
+        status=ShadowStatus.KILLED,
         description="UE 注入的 SELL_SHORT 指令登记「若 ×1.25 加码」假设队列成员, T+1 与未加码"
                     "同池对照。看板段13③ 数据面。DEB-20260805-supply 终裁② (2026-08-06 用户裁同意)。",
         data_path="data/ue_short_boost_shadow.jsonl",
@@ -3056,13 +3063,22 @@ REGISTRY: list[ShadowItem] = [
         created="2026-08-06",
         notes="补登 (2026-09-26 RFC-109②): 写方=llm_universe_scan 指令写入环 (开关只读一次)。"
               "count_mode=distinct:decision_id (每指令一样本, 防重跑灌水)。"
-              "2026-10-03 临时读数 54/60, 重看闹钟 10/10。",
-        no_adjudication_reason="NO_EVAL_SCRIPT: 判据已预注册 (主门 n=60 单侧 α=0.025 δ=2pp) "
-                               "但无结算执行体; ⚠️ 2026-10-15 审计: 写方 (UE 直写 inject 链) 已随 "
-                               "2026-10-06 cron 摘除 (UE fresh-event 批改走 da_fresh_event_batch) "
-                               "而停止 ⇒ n=60 主门在现路径下不可达, 产物冻结 54/60 于 2026-09-28, "
-                               "处置 (冻结结算 or 归档) 须用户裁",
+              "2026-10-15 终裁: 写方链 2026-10-06 随 UE fresh-event 改造退役 (真停采机制=cron 摘除), "
+              "产物冻结 54/60 ⇒ 主门永不可达; 用户裁「冻结样本结算后归档」⇒ KILLED, "
+              "结算读数见 verdict_history 与 data/ue_short_boost_final_settlement.json。",
+        no_adjudication_reason="",
         count_mode="distinct:decision_id",
+        collection_retired=True,
+        verdict_history=[{"date": "2026-10-15", "verdict": "KILLED (冻结样本结算后归档, "
+                          "用户裁「冻结样本结算后归档」)",
+                          "evidence": "一次性结算器 scripts/ue_short_boost_final_settlement.py "
+                                     "(产物 data/ue_short_boost_final_settlement.json): 54 行冻结 "
+                                     "→ 可结算 52 (CRNX/NCSM 9月行缺日K, 如实 missing)。"
+                                     "T+1 方向调整: mean=+0.0523% / median=+0.3394% / 胜率 51.9% / "
+                                     "26 日簇 t=0.667 / MDE80=2.94pp — 声称效应 ≪ MDE ⇒ 即使主门 "
+                                     "可达也无可测 edge; 尾部 15 笔均值 −0.4618% (近段漂移为负)。"
+                                     "主门 n=60 永不可达 (写方链 2026-10-06 退役) + 读数无 edge "
+                                     "⇒ 归档。注意: 读数是「样本未达门」观测值, 不构成确认/证伪。"}],
     ),
     ShadowItem(
         id="overnight_earnings_carry",
