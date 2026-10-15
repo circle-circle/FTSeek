@@ -1270,6 +1270,16 @@ playbook:
     #   代价=无同期对照臂, 市况变化混淆 (披露见 RFC §5.4)。机制保留 inert, 需要对照时改本值。
     entry_confirm_holdout_pct: 0      # 对照臂%: 0=全量走门 (实测 pct=0 命中 0/200, 边界安全)
     entry_confirm_ttl_sec: 600        # pending 超期即 EXPIRED (不计样本, 防跨时段卡死)
+    # ── v2 判尺+持续性 (2026-10-15 用户裁「直接优化落地」, RFC-141 §5.10) ──
+    #   缘起 v1 前瞻 54 行: 弃单率 61% 且含 INTC +1.6bp 纯价差噪声杀; 病灶=混尺
+    #   (锚=ask/bid×复核=last) + 单点采样一次性终态。v2 = mid-mid 同尺 + grace 2-of-3
+    #   (首见逆向不即弃, 3 次 sweep 内 ≥2 次逆向才弃, 任一同侧即确认, 取价失败不消耗次数)。
+    #   ⚠️ 与 §5.9「多探测无净 edge」回放的张力已在 §5.10 并陈 (回放测的是旧混尺,
+    #   mid尺×持续性交互未覆盖, v2 前瞻样本=首次实测)。裁决窗自 v2 开门日重计, 判据不变。
+    #   回滚 v1 逐字行为: ruler: legacy + grace_sweeps: 0 + restart; 全门关=enabled: false。
+    entry_confirm_ruler: mid          # mid=mid-vs-mid 同尺 (bid/ask 无效自动落 legacy 并留痕)
+    entry_confirm_grace_sweeps: 3     # grace 复核次数 (10s 间隔, 最差附加延迟 ≤30s)
+    entry_confirm_grace_votes: 2      # grace 内 ≥N 次逆向才 ABANDONED
 
     # ── RFC-065 入场带 vol_widen (DEB-20260819 §三十四, 条件版A, 2026-08-19) ──
     entry_band_vol_widen_enabled: false      # 生产开关: 默认false零行为变更; 翻开关判据预注册见RFC-065

@@ -35,13 +35,20 @@ _DATE = "2026-10-12"
 
 
 class _Router:
-    """按 symbol 发价的假行情源 (真 Futu push 不可在测试里驱动)。"""
+    """按 symbol 发价的假行情源 (真 Futu push 不可在测试里驱动)。
+
+    值为标量 → 仅 last (无 bid/ask ⇒ mid=None, v2 回落 legacy 混尺留痕);
+    值为 (last, bid, ask) 元组 → 带双边报价 (v2 mid 尺生效)。
+    """
 
     def __init__(self, prices):
         self._p = prices
 
     def get_full_market_context(self, symbol):
-        return {"price": self._p.get(symbol)}
+        q = self._p.get(symbol)
+        if isinstance(q, tuple):
+            return {"price": q[0], "bid": q[1], "ask": q[2]}
+        return {"price": q}
 
 
 class _Sched:
@@ -63,8 +70,10 @@ def env(tmp_path, monkeypatch):
     db.ensure_tables()
     monkeypatch.setattr(ecg, "_FORWARD_PATH", tmp_path / "entry_confirm_forward.jsonl")
     ecg._PENDING.clear()
+    ecg._POST_WATCH.clear()
     yield db, tmp_path
     ecg._PENDING.clear()
+    ecg._POST_WATCH.clear()
     conn.close()
 
 
@@ -221,13 +230,20 @@ def test_abandoned_marks_skip_and_keeps_forward_row(env):
     ecg.gate_at_execute(dict(r_kill), db, {"entry_price": 306.46, "position_size": 19}, _T0, cfg)
     ecg.gate_at_execute(dict(r_live), db, {"entry_price": 105.9, "position_size": 55}, _T0, cfg)
 
-    sw = ecg.sweep_entry_confirmations(
-        _Sched({"US.KILL": 318.43, "US.LIVE": 107.2}), db, _T0 + timedelta(seconds=122))
-    assert sw["abandoned"] == 1 and sw["confirmed"] == 1, f"sweep: {sw}"
+    # v2 (RFC-141 §5.10): 首见逆向进 grace, 持续 ≥2 票才弃 — 连扫 3 轮走完 grace 流
+    n_ab, n_cf = 0, 0
+    for i in range(3):
+        sw = ecg.sweep_entry_confirmations(
+            _Sched({"US.KILL": 318.43, "US.LIVE": 107.2}), db,
+            _T0 + timedelta(seconds=122 + i * 10))
+        n_ab += sw["abandoned"]
+        n_cf += sw["confirmed"]
+    assert n_ab == 1 and n_cf == 1, f"grace 流合计: abandoned={n_ab} confirmed={n_cf}"
 
     rk = [x for x in db.get_instructions_by_date(_DATE) if x["symbol"] == "US.KILL"][0]
     ec = json.loads(rk["metadata_json"])["entry_confirm"]
     assert ec["status"] == ecg.ST_ABANDONED
+    assert ec["grace"]["outcome"] == "persisted" and ec["grace"]["adverse_votes"] >= 2
     assert rk["direction"] == "SKIP", "放弃单未落 guardrail SKIP ⇒ 不可追溯"
     assert rk["skip_reason"] == ecg.SKIP_REASON_ABANDONED == "entry_confirm_reversed"
     assert ec["skip_marked"] is True, "落 SKIP 成败未留痕"
@@ -240,7 +256,7 @@ def test_abandoned_marks_skip_and_keeps_forward_row(env):
     by_sym = {r["symbol"]: r for r in rows}
     assert by_sym["US.KILL"]["still_triggers"] is False
     assert by_sym["US.LIVE"]["still_triggers"] is True
-    assert all(r["schema"] == "entry_confirm_forward_v1" for r in rows)
+    assert all(r["schema"] == "entry_confirm_forward_v2" for r in rows)
     assert all(r["arm"] == "treatment" for r in rows), "holdout_pct=0 却出现 holdout 臂行"
 
 
@@ -282,10 +298,12 @@ def test_settler_consumes_gate_artifact_without_change(env, monkeypatch):
 # D. 配置 / 孤儿自愈 / holdout 分流
 # ══════════════════════════════════════════════════════════════════
 def test_production_config_end_to_end():
-    """生产 YAML 真值 (不经替身) — 2026-10-10 用户裁 holdout 归零。"""
+    """生产 YAML 真值 (不经替身) — 2026-10-10 用户裁 holdout 归零;
+    2026-10-15 用户裁 v2 判尺 (RFC-141 §5.10)。"""
     from app.playbook.config import PlaybookConfig
     cfg = ecg.confirm_gate_config(PlaybookConfig())
-    assert cfg == {"enabled": True, "delay_sec": 120, "holdout_pct": 0, "ttl_sec": 600}, cfg
+    assert cfg == {"enabled": True, "delay_sec": 120, "holdout_pct": 0, "ttl_sec": 600,
+                   "ruler": "mid", "grace_sweeps": 3, "grace_votes": 2}, cfg
 
 
 def test_orphan_self_heals_after_restart_with_trace(env):
@@ -350,3 +368,56 @@ def test_gate_off_is_true_noop(env):
     assert ecg.pending_count() == 0
     assert not (tmp / "entry_confirm_forward.jsonl").exists()
     assert ecg.defer_pending(dict(r), _T0) is False
+
+
+# ══════════════════════════════════════════════════════════════════
+# E. v2 (RFC-141 §5.10): mid-mid 同尺端到端 + 弃单后观测补记
+# ══════════════════════════════════════════════════════════════════
+def test_v2_mid_ruler_spread_bounce_survives_end_to_end(env):
+    """INTC 误杀形态端到端: 锚=bid, 复核 last 微高于锚但 mid 未反向 ⇒ CONFIRMED。
+
+    v1 混尺下这笔必死 (last 92.33 > 锚 92.32 即反转); v2 mid-mid 下同尺对比,
+    价差跳动不再误判 — 2026-10-15 生产日志实证病灶的接线级回归。
+    """
+    db, tmp = env
+    r = _save(db, "US.INTCLKE", "SELL_SHORT", 92.30, size=30)
+    cfg = _cfg_t()
+    assert cfg["ruler"] == "mid", "生产配置应为 mid 尺 (否则本端到端测的是空气)"
+    # arm: 带双边报价的 scheduler ⇒ mid_arm=(92.32+92.34)/2=92.33, 锚=92.32 (reprice bid)
+    assert ecg.gate_at_execute(
+        dict(r), db, {"entry_price": 92.32, "position_size": 30}, _T0, cfg,
+        scheduler=_Sched({"US.INTCLKE": (92.32, 92.32, 92.34)})) == "defer"
+    iid = int(r["id"])
+    assert ecg._PENDING[iid]["mid_arm"] == pytest.approx(92.33), "arm 未快照 mid"
+    # 复核: last=92.33 微高于锚 (v1 杀) 但 mid=92.32 ≤ mid_arm=92.33 (v2 放)
+    sw = ecg.sweep_entry_confirmations(
+        _Sched({"US.INTCLKE": (92.33, 92.31, 92.33)}), db, _T0 + timedelta(seconds=122))
+    assert sw["confirmed"] == 1 and sw["abandoned"] == 0
+    r2 = [x for x in db.get_instructions_by_date(_DATE) if x["symbol"] == "US.INTCLKE"][0]
+    ec = json.loads(r2["metadata_json"])["entry_confirm"]
+    assert ec["status"] == ecg.ST_CONFIRMED and ec["ruler_used"] == "mid"
+    assert ec["mid_move_pct"] is not None
+    assert not r2["skip_reason"], "mid 尺放行单不得落 SKIP"
+
+
+def test_v2_abandoned_post_observation_rows_land(env):
+    """弃单后 +5m/+10m 补记落到同一 jsonl (type=entry_confirm_post), 供裁决日分解
+    「真避免 vs 误杀」— 观测行不撞 _agg (结算器按 type 过滤, 另有专测)。"""
+    db, tmp = env
+    _save(db, "US.POST", "BUY", 100.0, size=40)
+    r = [x for x in db.get_instructions_by_date(_DATE) if x["symbol"] == "US.POST"][0]
+    cfg = {**_cfg_t(), "grace_sweeps": 0}   # 单点即弃, 缩短测试路径
+    ecg.gate_at_execute(dict(r), db, {"entry_price": 100.0}, _T0, cfg)
+    ecg.sweep_entry_confirmations(_Sched({"US.POST": 99.0}), db, _T0 + timedelta(seconds=122))
+    assert ecg.pending_count() == 1, "watch 未计入 pending_count ⇒ scheduler 不再调 sweep"
+    t_ab = _T0 + timedelta(seconds=122)
+    ecg.sweep_entry_confirmations(_Sched({"US.POST": 99.3}), db, t_ab + timedelta(seconds=301))
+    ecg.sweep_entry_confirmations(_Sched({"US.POST": 99.4}), db, t_ab + timedelta(seconds=601))
+    rows = [json.loads(x) for x in
+            (tmp / "entry_confirm_forward.jsonl").read_text(encoding="utf-8").splitlines()]
+    posts = [x for x in rows if x.get("type") == "entry_confirm_post"]
+    assert [p["horizon"] for p in posts] == ["+5m", "+10m"]
+    assert all(p["symbol"] == "US.POST" and p["direction"] == "LONG" for p in posts)
+    # 逆向幅度方向归一: LONG 100→99.3 = −0.7%
+    assert posts[0]["last_move_pct"] == pytest.approx(-0.7, abs=1e-3)
+    assert ecg.pending_count() == 0

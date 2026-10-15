@@ -1007,6 +1007,11 @@ class DailyReviewGenerator:
                         continue
                     if row.get('date') != date or not row.get('decision_id'):
                         continue
+                    # RFC-141 §5.10: 跳过 v2 弃单后观测行 (无 outcome 字段,
+                    # 否则会把主判定行的 outcome='ABANDONED' 覆盖成 '')。
+                    # 只排这个类型, 不用白名单 — 历史行可能无 type 键 (兼容)。
+                    if row.get('type') == 'entry_confirm_post':
+                        continue
                     raw_direction = str(row.get('direction') or '').upper()
                     rows[str(row['decision_id'])] = {
                         'direction': direction_mapping.get(raw_direction, raw_direction),

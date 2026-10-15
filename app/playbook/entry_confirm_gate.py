@@ -60,6 +60,22 @@ scripts/entry_delay_confirm_shadow.py) 实测「触发后延迟 2min 复核, 价
   R1 分层 (SHORT×09:35-09:45) / LONG×开盘窗 只印不判。
   ⚠️ 基线数字由 scripts/settle_entry_confirm_forward.BASELINE 冻结, t 用
   statistics.stdev (ddof=1) 与 _day_clustered_t 同尺; 改动须先改 RFC 预注册文本。
+
+════════════════════════════════════════════════════════════════════════
+v2 判尺与持续性修订 (2026-10-15 用户裁「直接优化落地」, RFC-141 §5.10)
+════════════════════════════════════════════════════════════════════════
+v1 前瞻 54 行实证两个病灶: ①混尺 — 锚=ask/bid(成交侧) 复核=last trade, 价差跳动
+被当反转 (INTC +1.6bp 即弃单); ②一次性 — 单点采样定生死, 指令当日无再生通道。
+v2:
+  · 判尺 mid-vs-mid (两端 bid/ask 有效才用; 否则该笔回落 legacy 混尺 + ruler_used 留痕);
+    opp_cost_pct 定义不变 (执行锚×last), 判据③尺子连续。
+  · grace 2-of-3: 到点首见逆向进 grace (≤3 次 sweep, ≥2 次逆向才弃; 任一同侧即确认;
+    取价失败不消耗次数; 耗尽仍不足票 ⇒ 确认放行, fail toward trade 与 fail-open 同向)。
+  · 弃单后 +5m/+10m 补记 type=entry_confirm_post (纯观测, 不进 _agg), 裁决日分解
+    真避免 vs 误杀。
+回滚 = entry_confirm_ruler: legacy + entry_confirm_grace_sweeps: 0 + restart (v1 逐字行为)。
+⚠️ §5.9 回放曾判「多探测无净 edge」但测的是旧混尺; mid 尺×持续性的交互未覆盖,
+   v2 前瞻样本即首次实测 (§5.10 留有该张力的强制披露)。
 """
 from __future__ import annotations
 
@@ -77,15 +93,27 @@ DEFAULT_DELAY_SEC = 120          # 影子裁过的腿: DELAYS_MIN=(2,5) 中的 2
 DEFAULT_HOLDOUT_PCT = 20         # 对照臂比例 — ⚠️ 仅「缺键回落」默认, 生产已置 0
                                  # (2026-10-10 用户裁全量走门, 见 config 注释与 RFC §2)
 DEFAULT_TTL_SEC = 600            # pending 超期即弃 (防跨日/卡死)
+# ── v2 (2026-10-15 用户裁, RFC-141 §5.10): 判尺 + 持续性 ──
+DEFAULT_RULER = "mid"            # mid-vs-mid 同尺; "legacy" = v1 混尺 (锚 ask/bid × last)
+DEFAULT_GRACE_SWEEPS = 3         # 到点首见逆向后的 grace 复核次数 (10s 间隔)
+DEFAULT_GRACE_VOTES = 2          # grace 内 ≥N 次逆向才 ABANDONED; 0 次 sweep = v1 单点
 _STATE_KEY = "entry_confirm"     # metadata_json 下的旗标键
 
 # 内存 pending 表: inst_id -> arm 快照。有界 (TTL 清理 + 上限防泄漏)。
 _PENDING: Dict[int, Dict[str, Any]] = {}
 _PENDING_MAX = 200
+# v2 弃单后观测表 (纯观测, 不进 _agg): inst_id -> {symbol/direction/anchor/mid_arm/
+# abandoned_at/m5/m10}。重启丢失可接受 (观测非交易路径), 有界同上。
+_POST_WATCH: Dict[int, Dict[str, Any]] = {}
+_POST_WATCH_MAX = 200
+_POST_MARKS = (("m5", 300, "+5m"), ("m10", 600, "+10m"))
+_POST_GIVEUP_SEC = 900           # 补记放弃线 (防泄漏; 超线价不可得即弃记)
 
 # 产物 (锚定模块路径 — 相对路径影子污染教训, 2026-09-21)
 _ROOT = Path(__file__).resolve().parents[2]
 _FORWARD_PATH = _ROOT / "data" / "shadow" / "entry_confirm_forward.jsonl"
+SCHEMA_V2 = "entry_confirm_forward_v2"   # v2 起: +ruler_used/mid_arm/mid_move_pct/grace/双边报价
+                                         # (v1 旧行识别常量在结算器侧, 门只写 v2)
 
 # 状态枚举 (写进 metadata + jsonl, 供 app/结算器读)
 ST_PENDING = "PENDING_CONFIRM"
@@ -102,6 +130,19 @@ SKIP_REASON_ABANDONED = "entry_confirm_reversed"
 # ══════════════════════════════════════════════════════════════════
 # 配置
 # ══════════════════════════════════════════════════════════════════
+# 缺键回落默认 (单一真源; confirm_gate_config 与 _gate_inner 的 cfg 归一并用它,
+# 使测试注入的裸 dict 缺新键时也得到 v2 默认 — 与生产同尺, 防两套默认漂移)。
+_CFG_DEFAULTS: Dict[str, Any] = {
+    "enabled": False,
+    "delay_sec": DEFAULT_DELAY_SEC,
+    "holdout_pct": DEFAULT_HOLDOUT_PCT,
+    "ttl_sec": DEFAULT_TTL_SEC,
+    "ruler": DEFAULT_RULER,
+    "grace_sweeps": DEFAULT_GRACE_SWEEPS,
+    "grace_votes": DEFAULT_GRACE_VOTES,
+}
+
+
 def confirm_gate_config(pb_cfg=None) -> Dict[str, Any]:
     """读 playbook.execution_parameters.entry_confirm_* (扁平键, PlaybookConfig 拍平面)。
 
@@ -113,12 +154,7 @@ def confirm_gate_config(pb_cfg=None) -> Dict[str, Any]:
     entry_open_blackout_enabled 同源; 不可用 get_dotted("playbook.entry_confirm.*")
     (那是嵌套路径, 拍平面读不到 = 装饰性配置)。
     """
-    cfg = {
-        "enabled": False,
-        "delay_sec": DEFAULT_DELAY_SEC,
-        "holdout_pct": DEFAULT_HOLDOUT_PCT,
-        "ttl_sec": DEFAULT_TTL_SEC,
-    }
+    cfg = dict(_CFG_DEFAULTS)
 
     def _int_or(key, default):
         """⛔ 禁 `pb_cfg.get(k, default) or default` — 会把合法的 0 吃掉。
@@ -141,6 +177,14 @@ def confirm_gate_config(pb_cfg=None) -> Dict[str, Any]:
         cfg["delay_sec"] = _int_or("entry_confirm_delay_sec", DEFAULT_DELAY_SEC)
         cfg["holdout_pct"] = _int_or("entry_confirm_holdout_pct", DEFAULT_HOLDOUT_PCT)
         cfg["ttl_sec"] = _int_or("entry_confirm_ttl_sec", DEFAULT_TTL_SEC)
+        # v2 (RFC-141 §5.10): 判尺 + grace 持续性。ruler 同样只认 None 为缺键。
+        _r = pb_cfg.get("entry_confirm_ruler", None)
+        cfg["ruler"] = DEFAULT_RULER if _r is None else str(_r).strip().lower()
+        if cfg["ruler"] not in ("mid", "legacy"):
+            logger.warning(f"[EntryConfirm] 非法 ruler={_r!r} → 回落 {DEFAULT_RULER}")
+            cfg["ruler"] = DEFAULT_RULER
+        cfg["grace_sweeps"] = _int_or("entry_confirm_grace_sweeps", DEFAULT_GRACE_SWEEPS)
+        cfg["grace_votes"] = _int_or("entry_confirm_grace_votes", DEFAULT_GRACE_VOTES)
     except Exception as _e:
         # fail-safe: 配置不可读 ⇒ 门关闭 (维持现状基线, 不静默改交易行为)
         logger.warning(f"[EntryConfirm] 配置读取失败 → 门关闭 (维持现状): {_e}",
@@ -234,6 +278,7 @@ def gate_at_execute(
     reprice_params: Optional[Dict[str, Any]],
     now_et: datetime,
     cfg: Optional[Dict[str, Any]] = None,
+    scheduler=None,
 ) -> str:
     """在 auto_execute 即将下单前调用。返回动作:
 
@@ -243,9 +288,13 @@ def gate_at_execute(
     调用方约定: 'defer' 时 skipped_count += 1; continue —— 且本函数必须在
     reprice 之后、execute 之前调用 (需要 reprice 后的执行锚), 而 pending 复检
     (defer_pending) 必须在 reprice **之前** 调用 (防锚漂)。
+
+    scheduler (v2 新增, 可选): 非空且 ruler=mid 时, arm 瞬间快照 bid/ask ⇒ mid_arm
+    (mid-mid 同尺判定的另一端, RFC-141 §5.10); 为空/取价失败 ⇒ 该笔回落 legacy 混尺
+    并留痕 ruler_used, 不阻断 arm。
     """
     try:
-        return _gate_inner(inst, db, reprice_params, now_et, cfg)
+        return _gate_inner(inst, db, reprice_params, now_et, cfg, scheduler)
     except Exception as _e:
         # fail-open 双层防御: 本函数自身任何异常 (分流/取锚/类型) 都不得阻断交易。
         # 拦普通单不是安全方向, 且静默减样 = 改变基线 (与 chase_cap fail-close 相反)。
@@ -254,8 +303,9 @@ def gate_at_execute(
         return "execute"
 
 
-def _gate_inner(inst, db, reprice_params, now_et, cfg):
-    cfg = cfg or confirm_gate_config()
+def _gate_inner(inst, db, reprice_params, now_et, cfg, scheduler):
+    # cfg 归一: 裸 dict (测试注入) 缺 v2 新键时回落 _CFG_DEFAULTS ⇒ 与生产同尺
+    cfg = {**_CFG_DEFAULTS, **(cfg if cfg is not None else confirm_gate_config())}
     inst_id = int(inst.get("id") or 0)
     state = read_state(inst)
     st = str(state.get("status") or "")
@@ -279,12 +329,16 @@ def _gate_inner(inst, db, reprice_params, now_et, cfg):
 
     # ── 首次到达执行点: 分流 arm / holdout ──
     if not st:
+        # v2: ruler=mid 时 arm 瞬间快照双边报价 ⇒ mid_arm (mid-mid 同尺的另一端)。
+        #   只在 ruler=mid 时取价 (legacy 回滚臂保持 v1 逐字行为, 不多发一次取价)。
+        _q_arm = (_current_quotes(scheduler, inst.get("symbol"))
+                  if (scheduler is not None and cfg.get("ruler") == "mid") else None)
         if _holdout_bucket(inst_id, int(cfg.get("holdout_pct") or 0)):
             # 对照臂: 照常执行, 只落一行供配对读数
             _write_state(db, inst_id, {"status": ST_HOLDOUT,
                                        "armed_at": now_et.isoformat()})
             _write_forward_row({
-                "type": "entry_confirm", "schema": "entry_confirm_forward_v1",
+                "type": "entry_confirm", "schema": SCHEMA_V2,
                 "ts": now_et.isoformat(), "date": now_et.strftime("%Y-%m-%d"),
                 "inst_id": inst_id, "decision_id": inst.get("decision_id"),
                 "symbol": inst.get("symbol"),
@@ -295,6 +349,9 @@ def _gate_inner(inst, db, reprice_params, now_et, cfg):
                                 or inst.get("entry_price") or 0.0),
                 "px_at_confirm": None, "notional": _notional(inst, reprice_params),
                 "session_min": _session_min(now_et),
+                # v2 字段 (holdout 无判定 ⇒ 判定类字段 None, 锚侧报价照常留痕)
+                "ruler_used": None, "mid_arm": (_q_arm or {}).get("mid"),
+                "mid_at_confirm": None, "mid_move_pct": None, "grace": None,
             })
             return "execute"
 
@@ -316,6 +373,11 @@ def _gate_inner(inst, db, reprice_params, now_et, cfg):
             "notional": _notional(inst, reprice_params),
             "session_min": _session_min(now_et),
             "delay_sec": int(cfg.get("delay_sec") or DEFAULT_DELAY_SEC),
+            # v2: 判尺/grace 参数 arm 时冻结 (与 delay_sec 同纪律 — 配置改动不改在途语义)
+            "ruler": str(cfg.get("ruler") or DEFAULT_RULER),
+            "grace_sweeps": int(cfg.get("grace_sweeps") or 0),
+            "grace_votes": int(cfg.get("grace_votes") or DEFAULT_GRACE_VOTES),
+            "mid_arm": (_q_arm or {}).get("mid"),
         }
         if len(_PENDING) >= _PENDING_MAX:
             _evict_expired(now_et)
@@ -324,10 +386,12 @@ def _gate_inner(inst, db, reprice_params, now_et, cfg):
             "status": ST_PENDING, "armed_at": now_et.isoformat(),
             "anchor": anchor, "direction": _arm["direction"],
             "delay_sec": _arm["delay_sec"],
+            "ruler": _arm["ruler"], "mid_arm": _arm["mid_arm"],
         })
         logger.info(
             f"[EntryConfirm] ⏳ {inst.get('symbol')} {_arm['direction']} arm "
-            f"锚=${anchor:.2f} → {int(cfg['delay_sec'])}s 后复核 (RFC-141 前瞻)")
+            f"锚=${anchor:.2f} mid_arm={_arm['mid_arm']} → {int(cfg['delay_sec'])}s 后复核 "
+            f"(RFC-141 §5.10 ruler={_arm['ruler']} grace={_arm['grace_votes']}/{_arm['grace_sweeps']})")
         return "defer"
 
     # 其他状态 (ABANDONED/EXPIRED/HOLDOUT/HEALED 重入) ⇒ 照常执行, 不重复 arm
@@ -381,8 +445,15 @@ def sweep_entry_confirmations(scheduler, db, now_et: datetime) -> Dict[str, int]
 
     返回计数 {'confirmed': n, 'abandoned': n, 'expired': n, 'pending': n}。
     任何单笔异常只影响该笔 (逐笔隔离), 不冒泡到快循环。
+    v2: 先处理弃单后观测补记 (即使无 pending 也要跑 — scheduler 只在
+    pending_count()>0 时调本函数, 而 pending_count 已含 watch, 见该函数注释)。
     """
     out = {"confirmed": 0, "abandoned": 0, "expired": 0, "pending": 0}
+    try:
+        _sweep_post_watch(scheduler, now_et)
+    except Exception as _e:
+        # 观测面异常绝不影响判定面 (纯留痕, 失败只 warn)
+        logger.warning(f"[EntryConfirm] 弃单后补记异常 (不影响判定): {_e}", exc_info=True)
     if not _PENDING:
         return out
 
@@ -401,6 +472,22 @@ def sweep_entry_confirmations(scheduler, db, now_et: datetime) -> Dict[str, int]
     return out
 
 
+def _evaluate(direction: str, anchor: float, mid_arm, ruler: str, q: Dict[str, Any]):
+    """v2 判定核心: 返回 (still_triggers, opp_cost_pct, mid_move_pct, ruler_used)。
+
+    - opp_cost_pct 恒 = 执行锚×last (eval_confirm 原公式) — v1 连续口径, 判据③同尺;
+    - ruler=mid 且两端 mid 有效 ⇒ mid-mid 判定 (still/mid_move 来自 eval_confirm 同式,
+      方向归一: 正 = 顺交易方向); 任一端缺 ⇒ 回落 legacy 混尺 (锚×last) + ruler_used 留痕,
+      裁决时可分桶剔除。
+    """
+    last = float(q["last"])
+    still_legacy, opp = eval_confirm(direction, float(anchor), last)
+    if ruler == "mid" and mid_arm and q.get("mid"):
+        still_mid, mid_move = eval_confirm(direction, float(mid_arm), float(q["mid"]))
+        return still_mid, round(opp, 4), round(mid_move, 4), "mid"
+    return still_legacy, round(opp, 4), None, "legacy"
+
+
 def _judge_one(scheduler, db, inst_id: int, arm: Dict[str, Any],
                now_et: datetime, out: Dict[str, int]) -> None:
     symbol = arm.get("symbol")
@@ -415,26 +502,64 @@ def _judge_one(scheduler, db, inst_id: int, arm: Dict[str, Any],
         logger.warning(f"[EntryConfirm] {symbol} pending 超期 → EXPIRED (不计样本)")
         return
 
-    px = _current_price(scheduler, symbol)
-    if px is None or px <= 0:
-        # 取不到价 ⇒ 留在 pending 下轮再试 (到 TTL 才 EXPIRED)
+    q = _current_quotes(scheduler, symbol)
+    if q is None:
+        # 取不到价 ⇒ 留在 pending 下轮再试 (到 TTL 才 EXPIRED)。
+        # grace 计数同样不消耗: 无价格 ≠ 逆向证据 (否则断价 30s 会白送 2 票逆向)。
         return
 
-    still, opp = eval_confirm(arm["direction"], float(arm["anchor"]), float(px))
+    still, opp, mid_move, ruler_used = _evaluate(
+        arm["direction"], arm["anchor"], arm.get("mid_arm"),
+        str(arm.get("ruler") or DEFAULT_RULER), q)
+
+    # ── v2 grace 持续性 (RFC-141 §5.10): 首见逆向不即弃, ≤grace_sweeps 次内
+    #    ≥grace_votes 次逆向才弃; 任一同侧即确认; 耗尽仍不足票 ⇒ 确认 (fail toward trade) ──
+    grace = arm.get("grace")
+    grace_outcome = None
+    if not still and int(arm.get("grace_sweeps") or 0) > 0:
+        if grace is None:
+            arm["grace"] = {"left": int(arm["grace_sweeps"]), "adv": 0}
+            logger.info(
+                f"[EntryConfirm] ⚠️ {symbol} {arm['direction']} 到点首见逆向 "
+                f"(ruler={ruler_used} mid_move={mid_move} opp={opp:+.3f}%) → grace 复核: "
+                f"{arm['grace_sweeps']} 次内 ≥{arm['grace_votes']} 次逆向才弃 (v2)")
+            return
+        grace["adv"] += 1
+        grace["left"] -= 1
+        if grace["adv"] >= int(arm.get("grace_votes") or DEFAULT_GRACE_VOTES):
+            grace_outcome = "persisted"        # 反转持续 ⇒ 弃 (走下方 ABANDONED)
+        elif grace["left"] <= 0:
+            grace_outcome = "unpersisted"      # 反转未持续 ⇒ 确认放行
+            still = True
+        else:
+            return                             # 票数不足且次数未尽 ⇒ 等下一 sweep
+    elif still and grace is not None:
+        grace_outcome = "recovered"            # grace 期内回正 ⇒ 确认 (v2 救回噪声杀的路径)
+
     _PENDING.pop(inst_id, None)
+    _grace_trace = (None if grace is None else {
+        "sweeps_used": int(arm.get("grace_sweeps") or 0) - int(grace["left"]),
+        "adverse_votes": grace["adv"], "outcome": grace_outcome})
+    _delay_actual = int((now_et - arm["armed_at"]).total_seconds())
+    _quote_fields = {"mid_arm": arm.get("mid_arm"),
+                     "mid_at_confirm": q.get("mid"),
+                     "mid_move_pct": mid_move, "ruler_used": ruler_used,
+                     "bid_at_confirm": q.get("bid"), "ask_at_confirm": q.get("ask"),
+                     "quote_ts": q.get("ts")}
 
     if still:
         # 确认通过: 清 pending 旗标 → 下轮 auto_execute 正常 reprice + 下单
         _write_state(db, inst_id, {
             "status": ST_CONFIRMED, "armed_at": arm["armed_at"].isoformat(),
             "confirmed_at": now_et.isoformat(), "anchor": arm["anchor"],
-            "px_at_confirm": round(float(px), 4), "opp_cost_pct": round(opp, 4),
-            "delay_actual_sec": int((now_et - arm["armed_at"]).total_seconds()),
+            "px_at_confirm": round(float(q["last"]), 4), "opp_cost_pct": opp,
+            "delay_actual_sec": _delay_actual, **_quote_fields, "grace": _grace_trace,
         })
         out["confirmed"] += 1
         logger.info(
             f"[EntryConfirm] ✅ {symbol} 确认通过 (锚${arm['anchor']:.2f} "
-            f"现价${px:.2f} opp={opp:+.3f}%) → 下轮执行")
+            f"现价${q['last']:.2f} opp={opp:+.3f}% ruler={ruler_used}"
+            f"{' grace=' + str(_grace_trace) if _grace_trace else ''}) → 下轮执行")
     else:
         # 放弃: 终态旗标 + 复用既有 guardrail SKIP 语义落库。
         #   为什么不只写 metadata 旗标: defer_pending 已能拦住 (双保险), 但库里该指令
@@ -462,35 +587,92 @@ def _judge_one(scheduler, db, inst_id: int, arm: Dict[str, Any],
         _write_state(db, inst_id, {
             "status": ST_ABANDONED, "armed_at": arm["armed_at"].isoformat(),
             "abandoned_at": now_et.isoformat(), "anchor": arm["anchor"],
-            "px_at_confirm": round(float(px), 4), "opp_cost_pct": round(opp, 4),
-            "delay_actual_sec": int((now_et - arm["armed_at"]).total_seconds()),
+            "px_at_confirm": round(float(q["last"]), 4), "opp_cost_pct": opp,
+            "delay_actual_sec": _delay_actual, **_quote_fields, "grace": _grace_trace,
             "skip_marked": _ab_ok,
         })
         out["abandoned"] += 1
         logger.info(
-            f"[EntryConfirm] ⛔ {symbol} {arm['direction']} 2min 内反转 "
-            f"(锚${arm['anchor']:.2f} 现价${px:.2f}) → 放弃入场 (D2' 前瞻)")
+            f"[EntryConfirm] ⛔ {symbol} {arm['direction']} 反转持续确认 "
+            f"(锚${arm['anchor']:.2f} 现价${q['last']:.2f} ruler={ruler_used} "
+            f"mid_move={mid_move} grace={_grace_trace}) → 放弃入场 (RFC-141 v2)")
+        # v2: 弃单后观测 (+5m/+10m 补记, 纯留痕供「真避免 vs 误杀」分解)
+        if len(_POST_WATCH) >= _POST_WATCH_MAX:
+            _oldest = min(_POST_WATCH, key=lambda k: _POST_WATCH[k]["abandoned_at"])
+            _POST_WATCH.pop(_oldest, None)
+        _POST_WATCH[inst_id] = {
+            "symbol": symbol, "direction": arm["direction"],
+            "anchor": float(arm["anchor"]), "mid_arm": arm.get("mid_arm"),
+            "decision_id": arm.get("decision_id"),
+            "abandoned_at": now_et, "m5": False, "m10": False}
 
-    # 前瞻样本行 (两臂都落, 供结算器聚合)
+    # 前瞻样本行 (两臂都落, 供结算器聚合); schema v2 = v1 全字段 + 判尺/grace/双边报价
     _write_forward_row({
-        "type": "entry_confirm", "schema": "entry_confirm_forward_v1",
+        "type": "entry_confirm", "schema": SCHEMA_V2,
         "ts": now_et.isoformat(), "date": now_et.strftime("%Y-%m-%d"),
         "inst_id": inst_id, "decision_id": arm.get("decision_id"),
         "symbol": symbol, "direction": arm["direction"], "arm": "treatment",
         "status": "ok",
         "still_triggers": bool(still),
-        "opp_cost_pct": round(float(opp), 4),
+        "opp_cost_pct": opp,
         "anchor": float(arm["anchor"]),
-        "px_at_confirm": round(float(px), 4),
-        "delay_actual_sec": int((now_et - arm["armed_at"]).total_seconds()),
+        "px_at_confirm": round(float(q["last"]), 4),
+        "delay_actual_sec": _delay_actual,
         "notional": arm.get("notional") or 0.0,
         "session_min": arm.get("session_min"),
         "outcome": ST_CONFIRMED if still else ST_ABANDONED,
+        **_quote_fields, "grace": _grace_trace,
     })
 
 
-def _current_price(scheduler, symbol: str) -> Optional[float]:
-    """取现价 (Futu push 缓存优先, 与退出快循环同源, 近零成本)。失败 None。"""
+def _sweep_post_watch(scheduler, now_et: datetime) -> None:
+    """v2 弃单后观测: ABANDONED 后 +5m/+10m 各补记一行 (type=entry_confirm_post)。
+
+    纯观测 — 不进 _agg、不参与任何判定。读法 (裁决日分解用):
+      mid_move_pct 方向归一 (正=顺原交易方向) ⇒ 弃单后仍深负 = 真避免;
+      回正/转正 = 误杀赢家。取价失败不记标记, 下轮再试; 超 _POST_GIVEUP_SEC 弃记。
+    """
+    for _iid, _w in list(_POST_WATCH.items()):
+        _age = (now_et - _w["abandoned_at"]).total_seconds()
+        if _age > _POST_GIVEUP_SEC:
+            logger.info(f"[EntryConfirm] {_w.get('symbol')} 弃单后补记超 {_POST_GIVEUP_SEC}s "
+                        f"未齐 (m5={_w['m5']} m10={_w['m10']}) → 弃记")
+            _POST_WATCH.pop(_iid, None)
+            continue
+        for _key, _sec, _label in _POST_MARKS:
+            if _w.get(_key) or _age < _sec:
+                continue
+            _q = _current_quotes(scheduler, _w["symbol"])
+            if _q is None:
+                break                # 取价失败: 不消耗标记, 下轮再试
+            _, _last_move = eval_confirm(_w["direction"], float(_w["anchor"]), float(_q["last"]))
+            _mid_move = None
+            if _w.get("mid_arm") and _q.get("mid"):
+                _, _mm = eval_confirm(_w["direction"], float(_w["mid_arm"]), float(_q["mid"]))
+                _mid_move = round(_mm, 4)
+            _write_forward_row({
+                "type": "entry_confirm_post", "schema": SCHEMA_V2,
+                "ts": now_et.isoformat(), "date": now_et.strftime("%Y-%m-%d"),
+                "inst_id": _iid, "decision_id": _w.get("decision_id"),
+                "symbol": _w["symbol"], "direction": _w["direction"],
+                "horizon": _label, "anchor": float(_w["anchor"]),
+                "mid_arm": _w.get("mid_arm"),
+                "px_last": round(float(_q["last"]), 4),
+                "bid": _q.get("bid"), "ask": _q.get("ask"), "mid": _q.get("mid"),
+                "last_move_pct": round(_last_move, 4), "mid_move_pct": _mid_move,
+                "quote_ts": _q.get("ts"),
+            })
+            _w[_key] = True
+        if _w.get("m5") and _w.get("m10"):
+            _POST_WATCH.pop(_iid, None)
+
+
+def _current_quotes(scheduler, symbol: str) -> Optional[Dict[str, Any]]:
+    """取现价快照 {last, bid, ask, mid, ts} (Futu push 缓存优先, 与退出快循环同源, 近零成本)。
+
+    last 缺失/非正 ⇒ None (与 v1 _current_price 同语义, 调用方留 pending 下轮再试)。
+    bid/ask 缺失/交叉 ⇒ mid=None (v2 判定该笔回落 legacy 混尺, ruler_used 留痕)。
+    """
     try:
         _dr = getattr(scheduler, "data_router", None) or getattr(scheduler, "market_data", None)
         if not _dr:
@@ -499,11 +681,26 @@ def _current_price(scheduler, symbol: str) -> Optional[float]:
         if not _ctx:
             return None
         _p = _ctx.get("price")
-        return float(_p) if _p is not None and float(_p) > 0 else None
+        if _p is None or float(_p) <= 0:
+            return None
+        bid = ask = mid = None
+        try:
+            _b = float(_ctx.get("lv3_bid") or _ctx.get("bid") or 0)
+            _a = float(_ctx.get("lv3_ask") or _ctx.get("ask") or 0)
+            if _b > 0 and _a > 0 and _b <= _a:
+                bid, ask, mid = _b, _a, round((_b + _a) / 2, 6)
+        except (TypeError, ValueError):
+            bid = ask = mid = None
+        return {"last": float(_p), "bid": bid, "ask": ask, "mid": mid,
+                "ts": _ctx.get("timestamp")}
     except Exception:
         return None
 
 
 def pending_count() -> int:
-    """供 dashboard/健康检查读当前 pending 数。"""
-    return len(_PENDING)
+    """供 dashboard/健康检查读当前工作项数 = pending + 弃单后观测 watch。
+
+    ⚠️ watch 必须计入: scheduler 快循环只在 pending_count()>0 时才调 sweep
+    (scheduler_core.py), 若不含 watch ⇒ 全部 pending 判完后 +5m/+10m 补记永远不落。
+    """
+    return len(_PENDING) + len(_POST_WATCH)

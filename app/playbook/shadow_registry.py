@@ -1941,7 +1941,12 @@ REGISTRY: list[ShadowItem] = [
               "⑤键名与既有 entry_confirm_max_wait_s (下单后确认成交 30s 窗, playbook_service.py:1851) "
               "无关, grep entry_confirm 同时命中两者, 改动须看清语义。"
               "cron 37 6 * * 2-6 (ET 18:37 盘后结算, 台账 crontab-entry-confirm-forward)。"
-              "回滚=entry_confirm_enabled:false+restart (孤儿自愈零卡单)+删本条目+删 cron 行; 产物留档。",
+              "回滚=entry_confirm_enabled:false+restart (孤儿自愈零卡单)+删本条目+删 cron 行; 产物留档。"
+              "⑥v2 判尺修订 (2026-10-15 用户裁, RFC-141 §5.10): mid-mid 同尺+grace 2-of-3 "
+              "(v1 混尺单点 54 行实证: 弃单率 61% 含 INTC+1.6bp 噪声杀, CONFIRMED opp 中位"
+              "+0.36% 超判据③轨迹); schema 升 v2, 裁决窗自 v2 首行 date 重计 (两源不混算), "
+              "判据阈值不变; 与 §5.9「多探测无 edge」的张力已并陈 (回放测旧混尺, 交互未覆盖)。"
+              "回滚 v1=ruler:legacy+grace_sweeps:0+restart。",
         count_mode="where:arm=treatment",
         cross_ref=("entry_delay_confirm",),
     ),

@@ -1078,7 +1078,10 @@ def run_playbook_auto_execute(
                     gate_at_execute as _ec_gate, confirm_gate_config as _ec_cfg)
                 from app.utils.timezone import now_et as _ec_now_fn
                 # pb_cfg 注入: 与同函数其它门 (blackout/cooldown/chase_cap) 同一配置接缝
-                _ec_act = _ec_gate(inst, db, _reprice_params, _ec_now_fn(), _ec_cfg(pb_cfg))
+                # v2 (RFC-141 §5.10): 传 scheduler ⇒ arm 瞬间快照 bid/ask 得 mid_arm
+                # (mid-mid 同尺判定的另一端); 取价失败自动回落 legacy 混尺 + ruler_used 留痕。
+                _ec_act = _ec_gate(inst, db, _reprice_params, _ec_now_fn(), _ec_cfg(pb_cfg),
+                                   scheduler=scheduler)
                 if _ec_act == "defer":
                     _emit_exec_gate_audit(
                         inst, action="deferred_entry_confirm",

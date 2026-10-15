@@ -13,6 +13,8 @@
  10. 写盘锚定模块路径 (相对路径影子污染教训 2026-09-21)
  11. 注册表 config_key 真门控写方 (RFC-109⑤-C 陷阱: 照假开关停采)
  12. 结算器判据常量 = RFC-141 预注册值 (防挪门柱)
+ 13. v2 判尺/持续性 (§5.10): mid-mid 同尺救价差噪声 + grace 2-of-3 + 弃单后观测 +
+     legacy 回滚臂逐字保真 + 结算器双代分窗 (两源不混算)
 """
 import json
 import os
@@ -65,18 +67,29 @@ class _FakeDB:
 
 
 class _FakeRouter:
-    def __init__(self, price):
-        self._p = price
+    """价格源替身: 标量 → 仅 last (无 bid/ask ⇒ mid=None, v2 回落 legacy 混尺);
+    (last, bid, ask) 元组 → 带双边报价 (mid 尺生效); 列表 → 按调用次序推进
+    (grace 多轮/弃单后补记用)。"""
+
+    def __init__(self, quote):
+        self._q = quote
+        self._i = 0
 
     def get_full_market_context(self, symbol):
-        if self._p is None:
+        q = self._q
+        if isinstance(q, list):                     # 列表 = 逐调用推进的序列
+            q = q[min(self._i, len(q) - 1)]
+            self._i += 1
+        if q is None:
             return None
-        return {"price": self._p}
+        if isinstance(q, tuple):                    # 元组 = 单帧 (last, bid, ask)
+            return {"price": q[0], "bid": q[1], "ask": q[2]}
+        return {"price": q}                         # 标量 = 仅 last
 
 
 class _FakeSched:
-    def __init__(self, price):
-        self.data_router = _FakeRouter(price)
+    def __init__(self, quote):
+        self.data_router = _FakeRouter(quote)
 
 
 def _inst(i=1, sym="US.TEST", direction="BUY", meta=None):
@@ -87,11 +100,13 @@ def _inst(i=1, sym="US.TEST", direction="BUY", meta=None):
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
-    """每例隔离: 清内存 pending + 产物重定向到 tmp (绝不写生产影子)。"""
+    """每例隔离: 清内存 pending + 弃单后观测表 + 产物重定向到 tmp (绝不写生产影子)。"""
     ecg._PENDING.clear()
+    ecg._POST_WATCH.clear()
     monkeypatch.setattr(ecg, "_FORWARD_PATH", tmp_path / "entry_confirm_forward.jsonl")
     yield
     ecg._PENDING.clear()
+    ecg._POST_WATCH.clear()
 
 
 CFG_ON = {"enabled": True, "delay_sec": 120, "holdout_pct": 0, "ttl_sec": 600}
@@ -159,6 +174,10 @@ def test_production_yaml_keys_are_readable_end_to_end():
     # ⇒ holdout 归零 (留对照臂会稀释 SIM 结果), 全量走门
     assert pb.get("entry_confirm_holdout_pct") == 0
     assert pb.get("entry_confirm_ttl_sec") == 600
+    # v2 (2026-10-15 用户裁, RFC-141 §5.10): mid-mid 同尺 + grace 2-of-3
+    assert pb.get("entry_confirm_ruler") == "mid"
+    assert pb.get("entry_confirm_grace_sweeps") == 3
+    assert pb.get("entry_confirm_grace_votes") == 2
     # 嵌套路径必须读不到 (钉住「不可用 get_dotted 嵌套路径」这条约束)
     from app.core.config_container import get_config
     assert get_config().get_dotted("playbook.entry_confirm.enabled", None) is None
@@ -166,7 +185,8 @@ def test_production_yaml_keys_are_readable_end_to_end():
         "playbook.execution_parameters.entry_confirm_enabled", None) is True
     # 门自身读到的 = YAML 真值 (不是保守默认)
     assert ecg.confirm_gate_config() == {
-        "enabled": True, "delay_sec": 120, "holdout_pct": 0, "ttl_sec": 600}
+        "enabled": True, "delay_sec": 120, "holdout_pct": 0, "ttl_sec": 600,
+        "ruler": "mid", "grace_sweeps": 3, "grace_votes": 2}
 
 
 def test_production_holdout_zero_means_gate_covers_every_order():
@@ -341,26 +361,38 @@ def test_sweep_confirms_when_price_still_on_side():
     assert ecg.defer_pending(_inst(meta={"entry_confirm": st}), t0) is False
 
 
+def _sweep_series(sched, db, t0, start_sec=125, steps=4, step_sec=10):
+    """按 10s 节奏连扫若干轮, 返回逐轮 out 列表 (v2 grace 流驱动用)。"""
+    return [ecg.sweep_entry_confirmations(
+        sched, db, t0 + timedelta(seconds=start_sec + i * step_sec)) for i in range(steps)]
+
+
 def test_sweep_abandons_when_price_reversed():
-    """SHORT 价格反抽上穿锚 ⇒ ABANDONED (MDB 9/28 秒杀族靶形态: SHORT @306.46 → 318.43),
-    终态跨轮拦住。"""
+    """SHORT 价格反抽上穿锚且**持续** ⇒ ABANDONED (MDB 9/28 秒杀族靶形态:
+    SHORT @306.46 → 318.43), 终态跨轮拦住。
+
+    v2 (§5.10): 首见逆向不即弃 ⇒ 进 grace; 连续逆向 ≥2 票才弃 (防单点噪声一枪毙命)。
+    """
     db = _FakeDB()
     t0 = _now()
     ecg.gate_at_execute(_inst(direction="SELL_SHORT"), db, {"entry_price": 306.46}, t0, CFG_ON)
-    r = ecg.sweep_entry_confirmations(_FakeSched(318.43), db, t0 + timedelta(seconds=122))
-    assert r["abandoned"] == 1 and ecg.pending_count() == 0
+    r1 = ecg.sweep_entry_confirmations(_FakeSched(318.43), db, t0 + timedelta(seconds=122))
+    assert r1["abandoned"] == 0 and r1["pending"] == 1, "v2: 首见逆向应进 grace 而非即弃"
+    rs = _sweep_series(_FakeSched(318.43), db, t0, start_sec=132, steps=2)
+    assert rs[-1]["abandoned"] == 1 and ecg.pending_count() - len(ecg._POST_WATCH) == 0
     st = db.merged[-1][1]["entry_confirm"]
     assert st["status"] == ecg.ST_ABANDONED
+    assert st["grace"]["adverse_votes"] >= 2 and st["grace"]["outcome"] == "persisted"
     assert ecg.defer_pending(_inst(meta={"entry_confirm": st}), t0) is True
 
 
 def test_sweep_abandons_long_side_too():
-    """LONG 跌破锚同样 ABANDONED (方向对称, 防只测一侧)。"""
+    """LONG 跌破锚且持续同样 ABANDONED (方向对称, 防只测一侧)。"""
     db = _FakeDB()
     t0 = _now()
     ecg.gate_at_execute(_inst(), db, {"entry_price": 100.0}, t0, CFG_ON)
-    r = ecg.sweep_entry_confirmations(_FakeSched(98.0), db, t0 + timedelta(seconds=125))
-    assert r["abandoned"] == 1
+    rs = _sweep_series(_FakeSched(98.0), db, t0, start_sec=125, steps=3)
+    assert rs[0]["abandoned"] == 0 and rs[-1]["abandoned"] == 1
 
 
 def test_sweep_short_side_symmetry():
@@ -384,8 +416,8 @@ def test_abandoned_marks_guardrail_skip_for_traceability():
     t0 = _now()
     ecg.gate_at_execute(_inst(i=21, direction="SELL_SHORT"), db,
                         {"entry_price": 306.46}, t0, CFG_ON)
-    r = ecg.sweep_entry_confirmations(_FakeSched(318.43), db, t0 + timedelta(seconds=122))
-    assert r["abandoned"] == 1
+    rs = _sweep_series(_FakeSched(318.43), db, t0, start_sec=122, steps=3)
+    assert rs[-1]["abandoned"] == 1
     assert db.skips == [(21, ecg.SKIP_REASON_ABANDONED)], f"未落 guardrail SKIP: {db.skips}"
     assert ecg.SKIP_REASON_ABANDONED == "entry_confirm_reversed"   # reason 是稳定契约
     assert db.merged[-1][1]["entry_confirm"]["skip_marked"] is True  # 落库成败留痕
@@ -529,12 +561,12 @@ def test_sweep_isolates_per_instruction(monkeypatch):
     ecg.gate_at_execute(_inst(i=2, sym="US.OTHER"), db, {"entry_price": 50.0}, t0, CFG_ON)
     assert ecg.pending_count() == 2
 
-    orig = ecg._current_price
+    orig = ecg._current_quotes
     def _flaky(sched, sym):
         if sym == "US.TEST":
             raise RuntimeError("quote blew up")
         return orig(sched, sym)
-    monkeypatch.setattr(ecg, "_current_price", _flaky)
+    monkeypatch.setattr(ecg, "_current_quotes", _flaky)
     r = ecg.sweep_entry_confirmations(_FakeSched(51.0), db, t0 + timedelta(seconds=130))
     assert r["confirmed"] == 1              # 健康那笔照常判定
     assert ecg.pending_count() == 0         # 异常笔已弹出 → 下轮 auto_execute 自愈放行
@@ -558,7 +590,10 @@ def test_forward_path_is_module_anchored_absolute():
 
 def test_forward_row_schema_is_stable_and_agg_compatible():
     """字段必须满足结算器/影子 _agg_block 契约 (status/still_triggers/opp_cost_pct/
-    notional/date), 否则攒了样也裁不了 (断头传感器教训)。"""
+    notional/date), 否则攒了样也裁不了 (断头传感器教训)。
+
+    v2 (§5.10): schema 升 v2 = v1 全字段 + 判尺/grace/双边报价新字段 (结算器双代通吃)。
+    """
     db = _FakeDB()
     t0 = _now()
     ecg.gate_at_execute(_inst(), db, {"entry_price": 100.0, "position_size": 55}, t0, CFG_ON)
@@ -566,9 +601,12 @@ def test_forward_row_schema_is_stable_and_agg_compatible():
     row = json.loads(ecg._FORWARD_PATH.read_text().splitlines()[0])
     for k in ("schema", "ts", "date", "inst_id", "decision_id", "symbol", "direction",
               "arm", "status", "still_triggers", "opp_cost_pct", "anchor",
-              "px_at_confirm", "notional", "session_min", "outcome"):
+              "px_at_confirm", "notional", "session_min", "outcome",
+              # v2 新增 (缺 bid/ask 的 price-only 源 ⇒ mid 系 None + ruler_used=legacy)
+              "ruler_used", "mid_arm", "mid_at_confirm", "mid_move_pct", "grace"):
         assert k in row, f"前瞻行缺字段 {k}"
-    assert row["schema"] == "entry_confirm_forward_v1"
+    assert row["schema"] == "entry_confirm_forward_v2"
+    assert row["ruler_used"] == "legacy"      # price-only 源 ⇒ mid 两端不全 ⇒ 回落留痕
     assert row["notional"] == 5500.0
     assert row["session_min"] == 10          # 09:40 − 09:30 = 10min (R1 分层用)
     # 影子 _agg_block 能直接吃这行 (同尺子零改动契约)
@@ -913,3 +951,168 @@ def test_venv_interpreter_matches_documented_constraint():
     (且 shadow_registry.py:618 已用 PEP585 `list[ShadowItem]` ⇒ 3.8 约束早已失效)。
     钉真实下界, 防再按过期约束写代码或反过来引入更高版本语法。"""
     assert sys.version_info >= (3, 11), f"venv 解释器低于实测基线: {sys.version}"
+
+
+# ══════════════════════════════════════════════════════════════
+# 13. v2 (RFC-141 §5.10, 2026-10-15 用户裁): mid-mid 同尺 + grace 持续性
+#     + 弃单后观测 — 缘起 v1 实证: INTC +1.6bp 纯价差噪声杀 / 弃单率 61%
+# ══════════════════════════════════════════════════════════════
+def test_mid_ruler_ignores_spread_bounce_intc_case():
+    """⛔ v2 主病灶回归钉: 锚=bid 92.32, 复核 last=92.33 (+1.6bp 价差跳动)。
+
+    v1 混尺 (锚 bid × last) ⇒ 判反转弃单; v2 mid-mid: last 打在 ask 侧 (92.33) 但
+    mid 92.33→92.32 实际持平微降 (SHORT 顺向) ⇒ CONFIRMED。
+    这正是 2026-10-15 日志里 INTC 被误杀的形态。
+    """
+    db = _FakeDB()
+    t0 = _now()
+    cfg = {**CFG_ON}   # 缺省即 v2: ruler=mid, grace 3/2
+    # arm 时刻: bid 92.32 ask 92.34 ⇒ mid_arm=92.33 (锚=bid=92.32 来自 reprice)
+    ecg.gate_at_execute(_inst(direction="SELL_SHORT"), db, {"entry_price": 92.32}, t0, cfg,
+                        scheduler=_FakeSched((92.32, 92.32, 92.34)))
+    assert ecg._PENDING[1]["mid_arm"] == pytest.approx(92.33)
+    # 复核: last=92.33 (>锚 ⇒ legacy 会判反转) 但 bid/ask=92.31/92.33 ⇒ mid=92.32 ≤ 92.33
+    r = ecg.sweep_entry_confirmations(
+        _FakeSched((92.33, 92.31, 92.33)), db, t0 + timedelta(seconds=122))
+    assert r["confirmed"] == 1 and r["abandoned"] == 0, \
+        "mid 尺下价差跳动不得判反转 (INTC 1.6bp 误杀回归)"
+    row = json.loads(ecg._FORWARD_PATH.read_text().splitlines()[0])
+    assert row["ruler_used"] == "mid" and row["mid_move_pct"] is not None
+
+
+def test_mid_ruler_real_reversal_still_abandons():
+    """mid 尺不是放宽: mid 真反向持续 ⇒ 照样 ABANDONED (防「换尺=门变松」误读)。"""
+    db = _FakeDB()
+    t0 = _now()
+    ecg.gate_at_execute(_inst(direction="SELL_SHORT"), db, {"entry_price": 92.32}, t0,
+                        dict(CFG_ON), scheduler=_FakeSched((92.32, 92.32, 92.34)))
+    # mid 92.33 → 92.60 (真反抽 29bp) 且持续
+    rs = _sweep_series(_FakeSched((92.62, 92.58, 92.62)), db, t0, start_sec=122, steps=3)
+    assert rs[0]["abandoned"] == 0 and rs[-1]["abandoned"] == 1
+    st = db.merged[-1][1]["entry_confirm"]
+    assert st["status"] == ecg.ST_ABANDONED and st["ruler_used"] == "mid"
+
+
+def test_mid_ruler_falls_back_to_legacy_when_quotes_incomplete():
+    """bid/ask 缺失/交叉 ⇒ 该笔回落 legacy 混尺 + ruler_used 留痕 (不阻断, 不误用)。"""
+    db = _FakeDB()
+    t0 = _now()
+    ecg.gate_at_execute(_inst(), db, {"entry_price": 100.0}, t0, dict(CFG_ON),
+                        scheduler=_FakeSched(100.0))     # price-only ⇒ mid_arm=None
+    assert ecg._PENDING[1]["mid_arm"] is None
+    r = ecg.sweep_entry_confirmations(_FakeSched(101.0), db, t0 + timedelta(seconds=125))
+    assert r["confirmed"] == 1
+    assert db.merged[-1][1]["entry_confirm"]["ruler_used"] == "legacy"
+    # 交叉报价同样回落 (bid>ask 是坏数据, 不得拿来算 mid)
+    db2 = _FakeDB()
+    ecg.gate_at_execute(_inst(i=9), db2, {"entry_price": 100.0}, t0, dict(CFG_ON),
+                        scheduler=_FakeSched((100.0, 100.05, 99.95)))
+    assert ecg._PENDING[9]["mid_arm"] is None, "交叉报价不得算 mid"
+
+
+def test_grace_recovers_to_confirmed():
+    """grace 内任一扫回同侧 ⇒ CONFIRMED (一次性噪声不再杀死信号 — v2 用户核心诉求)。"""
+    db = _FakeDB()
+    t0 = _now()
+    ecg.gate_at_execute(_inst(), db, {"entry_price": 100.0}, t0, dict(CFG_ON))
+    r1 = ecg.sweep_entry_confirmations(_FakeSched(99.5), db, t0 + timedelta(seconds=125))
+    assert r1["confirmed"] == 0 and r1["abandoned"] == 0 and r1["pending"] == 1, \
+        "首见逆向应进 grace"
+    r2 = ecg.sweep_entry_confirmations(_FakeSched(100.5), db, t0 + timedelta(seconds=135))
+    assert r2["confirmed"] == 1, "grace 内回正必须确认放行"
+    st = db.merged[-1][1]["entry_confirm"]
+    assert st["status"] == ecg.ST_CONFIRMED and st["delay_actual_sec"] == 135
+    assert st["grace"]["adverse_votes"] == 0 and st["grace"]["outcome"] == "recovered"
+
+
+def test_grace_unavailable_price_does_not_consume_votes():
+    """取价失败 ≠ 逆向证据: grace 次数/票数都不消耗 (断价 30s 不得白送 2 票)。"""
+    db = _FakeDB()
+    t0 = _now()
+    ecg.gate_at_execute(_inst(), db, {"entry_price": 100.0}, t0, dict(CFG_ON))
+    ecg.sweep_entry_confirmations(_FakeSched(99.5), db, t0 + timedelta(seconds=125))  # grace 起
+    r_none = ecg.sweep_entry_confirmations(_FakeSched(None), db, t0 + timedelta(seconds=135))
+    assert r_none["pending"] == 1
+    assert ecg._PENDING[1]["grace"] == {"left": 3, "adv": 0}, "断价消耗了 grace 计数"
+    rs = _sweep_series(_FakeSched(99.4), db, t0, start_sec=145, steps=2)
+    assert rs[-1]["abandoned"] == 1
+
+
+def test_grace_exhausted_without_enough_votes_confirms():
+    """grace 耗尽仍不足票 ⇒ CONFIRMED (fail toward trade, 与 fail-open 同向)。
+
+    正常参数 (2/3) 下此分支不可达 (任一非同侧即票、同侧即确认); 用 votes=3/sweeps=2
+    的错配参数钉住这条防御路径的语义, 防有人改成「耗尽即弃」(那是 fail-close 方向)。
+    """
+    db = _FakeDB()
+    t0 = _now()
+    cfg = {**CFG_ON, "grace_sweeps": 2, "grace_votes": 3}
+    ecg.gate_at_execute(_inst(), db, {"entry_price": 100.0}, t0, cfg)
+    rs = _sweep_series(_FakeSched(99.5), db, t0, start_sec=125, steps=3)
+    assert rs[-1]["confirmed"] == 1 and rs[-1]["abandoned"] == 0
+    assert db.merged[-1][1]["entry_confirm"]["grace"]["outcome"] == "unpersisted"
+
+
+def test_legacy_escape_hatch_is_v1_verbatim():
+    """回滚契约: ruler=legacy + grace_sweeps=0 ⇒ v1 逐字行为 (单点混尺即弃)。"""
+    db = _FakeDB()
+    t0 = _now()
+    cfg = {**CFG_ON, "ruler": "legacy", "grace_sweeps": 0}
+    ecg.gate_at_execute(_inst(), db, {"entry_price": 100.0}, t0, cfg)
+    r = ecg.sweep_entry_confirmations(_FakeSched(99.0), db, t0 + timedelta(seconds=125))
+    assert r["abandoned"] == 1, "回滚臂首见逆向必须即弃 (v1 逐字)"
+    row = json.loads(ecg._FORWARD_PATH.read_text().splitlines()[0])
+    assert row["ruler_used"] == "legacy" and row["grace"] is None
+
+
+def test_post_abandon_watch_writes_m5_m10_rows():
+    """v2 弃单后观测: +5m/+10m 各补记一行 post (纯观测), 补齐后出表。
+
+    硬接线理由: scheduler 只在 pending_count()>0 时调 sweep ⇒ pending_count 必须含
+    watch, 否则全量判完后补记永不落 (钉住这个回归)。
+    """
+    db = _FakeDB()
+    t0 = _now()
+    ecg.gate_at_execute(_inst(), db, {"entry_price": 100.0}, t0,
+                        {**CFG_ON, "grace_sweeps": 0})   # 单点即弃, 缩短测试
+    ecg.sweep_entry_confirmations(_FakeSched(99.0), db, t0 + timedelta(seconds=125))
+    assert len(ecg._POST_WATCH) == 1
+    assert ecg.pending_count() == 1, "pending_count 不含 watch ⇒ scheduler 不再调 sweep ⇒ 补记丢失"
+    t_ab = t0 + timedelta(seconds=125)
+    # +4min 未到点 ⇒ 无补记; +5m ⇒ m5; +10m ⇒ m10 且出表
+    ecg.sweep_entry_confirmations(_FakeSched(99.2), db, t_ab + timedelta(seconds=240))
+    assert not ecg._FORWARD_PATH.read_text().count("entry_confirm_post")
+    ecg.sweep_entry_confirmations(_FakeSched(99.2), db, t_ab + timedelta(seconds=301))
+    rows = [json.loads(x) for x in ecg._FORWARD_PATH.read_text().splitlines()]
+    posts = [r for r in rows if r.get("type") == "entry_confirm_post"]
+    assert len(posts) == 1 and posts[0]["horizon"] == "+5m"
+    assert posts[0]["last_move_pct"] == pytest.approx(-0.8, abs=1e-3)  # LONG 100→99.2 逆向
+    ecg.sweep_entry_confirmations(_FakeSched(99.1), db, t_ab + timedelta(seconds=601))
+    rows = [json.loads(x) for x in ecg._FORWARD_PATH.read_text().splitlines()]
+    posts = [r for r in rows if r.get("type") == "entry_confirm_post"]
+    assert len(posts) == 2 and posts[-1]["horizon"] == "+10m"
+    assert len(ecg._POST_WATCH) == 0 and ecg.pending_count() == 0
+
+
+def test_settler_load_rows_accepts_both_gens_and_skips_post(tmp_path, monkeypatch):
+    """结算器双代通吃: v1/v2 判据行都收并打 _gen 标签; post 观测行计数但不进人群。"""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from scripts import settle_entry_confirm_forward as st
+    p = tmp_path / "fwd.jsonl"
+    lines = [
+        {"type": "entry_confirm", "schema": "entry_confirm_forward_v1", "date": "2026-10-12",
+         "arm": "treatment", "status": "ok"},
+        {"type": "entry_confirm", "schema": "entry_confirm_forward_v2", "date": "2026-10-15",
+         "arm": "treatment", "status": "ok"},
+        {"type": "entry_confirm_post", "schema": "entry_confirm_forward_v2",
+         "date": "2026-10-15", "horizon": "+5m"},
+        {"type": "entry_confirm", "schema": "bogus_schema", "date": "2026-10-15"},
+    ]
+    p.write_text("\n".join(json.dumps(x) for x in lines), encoding="utf-8")
+    monkeypatch.setattr(st, "FWD", p)
+    rows = st.load_rows()
+    assert [r["_gen"] for r in rows] == ["v1", "v2"]
+    assert st.load_rows.post_rows == 1
+    # 双窗推导: 有 v2 ⇒ 裁决窗 = v2 首行 date; 无 v2 ⇒ 退回 v1 开门日
+    assert st.verdict_window(rows) == ("2026-10-12", "2026-10-15", "v2")
+    assert st.verdict_window(rows[:1]) == ("2026-10-12", "2026-10-12", "v1")

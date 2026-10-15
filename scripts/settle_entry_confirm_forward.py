@@ -22,6 +22,12 @@
 
 开门日不硬编码: 取 forward 产物首行 date (门真 arm 过的那天) ⇒ 重启延后不会让
 基线窗口错位, 也不会把开门前的成交混进「开门后」人群。
+
+═══ 2026-10-15 v2 判尺修订 (RFC-141 §5.10, 用户裁「直接优化落地」) ═══
+判尺改 mid-mid + grace 2-of-3 持续性 ⇒ 两代判据不同尺, 两源不混算 (§5.9 同纪律):
+  · 裁决窗 = v2 首行 date 起 (判据①②③④ 阈值逐字不变, 样本门自 v2 窗重计);
+  · v1 窗 [v1 开门日, v2 开门日) 单出 legacy_v1_window 块, 留痕不裁决;
+  · 判据③ 机制量只用现行代行; type=entry_confirm_post (弃单后观测) 不进 _agg。
 """
 from __future__ import annotations
 import datetime
@@ -95,6 +101,10 @@ MAX_OPP = 0.3                  # 判据3
 # W8_fee_bps_anomaly 同一 100bps 口径, 不另造阈值 = 防阈值购物)。
 FEE_BPS_ANOMALY = 100.0
 OPEN_WIN_START, OPEN_WIN_END = "09:35", "09:45"
+# schema 双代 (RFC-141 §5.10): v1=混尺单点 (10-10~10-15), v2=mid-mid+grace (10-15 起)。
+# 裁决窗 = 现行代开门日 (v2 存在 ⇒ v2 首行 date); v1 窗单出 legacy_v1_window 留痕不裁决。
+SCHEMA_V1 = "entry_confirm_forward_v1"
+SCHEMA_V2 = "entry_confirm_forward_v2"
 
 
 def winner_floor(clean: bool = False) -> float:
@@ -131,9 +141,16 @@ def _day_clustered_t(daily_values):
 
 
 def load_rows():
+    """载入判据人群行: schema ∈ {v1, v2} 且 type=entry_confirm。
+
+    v2 (RFC-141 §5.10, 2026-10-15): 判尺改 mid-mid + grace 持续性 ⇒ 行尾打 _gen 标签
+    (v1=混尺单点代 / v2=mid同尺+grace代) 供分代聚合, 两源不混算 (与 §5.9 同纪律)。
+    type=entry_confirm_post (弃单后 +5m/+10m 补记) 是纯观测行, 不进 _agg ——
+    单独计数披露 (它不是坏行, 打了也不进判据人群)。
+    """
     if not FWD.exists():
         return []
-    rows, bad = [], 0
+    rows, bad, post = [], 0, 0
     for line in open(FWD, encoding="utf-8"):
         line = line.strip()
         if not line:
@@ -146,7 +163,11 @@ def load_rows():
             bad += 1
             print(f"  ⚠️ 坏行跳过 ({_e}): {line[:120]}", file=sys.stderr)
             continue
-        if r.get("schema") == "entry_confirm_forward_v1":
+        if r.get("type") == "entry_confirm_post":
+            post += 1                      # 观测行: 计数披露, 不进判据人群
+            continue
+        if r.get("schema") in (SCHEMA_V1, SCHEMA_V2) and r.get("type") == "entry_confirm":
+            r["_gen"] = "v2" if r.get("schema") == SCHEMA_V2 else "v1"
             rows.append(r)
         else:
             bad += 1
@@ -155,7 +176,20 @@ def load_rows():
         print(f"  ⚠️ 共跳过 {bad} 行 (坏行/schema 不符) — 判据人群已缩小, 见 stderr",
               file=sys.stderr)
     load_rows.bad_lines = bad
+    load_rows.post_rows = post
     return rows
+
+
+def verdict_window(rows):
+    """(gate_live_date, verdict_since, gen) — 开窗/裁决窗推导 (RFC-141 §5.10)。
+
+    gate_live_date = 任意代首行 date (v1 开门日, 留痕锚); verdict_since = 现行代
+    (v2 存在 ⇒ v2 首行 date, 否则 v1 开门日)。纯函数, 供契约测试直钉。
+    """
+    gate = min((str(r.get("date")) for r in rows if r.get("date")), default=None)
+    v2 = min((str(r.get("date")) for r in rows
+              if r.get("_gen") == "v2" and r.get("date")), default=None)
+    return gate, (v2 or gate), ("v2" if v2 else "v1")
 
 
 def load_sim_pnl(since_date: str):
@@ -295,8 +329,33 @@ def main():
         os.replace(tmp, OUT)
         return 0
 
-    sim = load_sim_pnl(gate_live_date)
-    fills = load_fills(gate_live_date)
+    # v2 双窗 (RFC-141 §5.10): 裁决窗 = 现行代开门日 (v2 首行 date; 无 v2 行 = 仍是 v1 代)。
+    # v1 窗 [gate_live_date, v2_live_date) 的 SIM 盈亏+机制量单出 legacy_v1_window 块,
+    # 留痕不裁决 — 两代判据不同尺, 混算 = §5.9 明令禁止的「两源混算」。
+    gate_live_date, verdict_since, verdict_gen = verdict_window(rows)
+    v2_live_date = verdict_since if verdict_gen == "v2" else None
+
+    sim = load_sim_pnl(verdict_since)
+    fills = load_fills(verdict_since)
+
+    legacy_v1_window = None
+    if v2_live_date and v2_live_date > gate_live_date:
+        _sim_v1 = [r for r in load_sim_pnl(gate_live_date) if r["trade_date"] < v2_live_date]
+        _fills_v1 = defaultdict(list)
+        for _k, _v in load_fills(gate_live_date).items():
+            if _k[1] < v2_live_date:
+                _fills_v1[_k] = _v
+        _v1_rows = [r for r in rows if r.get("_gen") == "v1"]
+        legacy_v1_window = {
+            "window": [gate_live_date, v2_live_date],
+            "note": ("v1 混尺单点代 (2026-10-10~10-15) — 留痕不裁决 (RFC-141 §5.10: "
+                     "两源不混算); v1 实测弃单率 61%、CONFIRMED opp_cost 中位 +0.36% "
+                     "已超判据③ 轨迹 ⇒ 触发了 v2 判尺修订"),
+            "sim_pnl": {"all": _pnl_block(_sim_v1),
+                        "sl_initial": _pnl_block(
+                            _sim_v1, lambda r: (r.get("exit_reason") or "") == "SL_INITIAL")},
+            "mechanism_v1": _agg(_v1_rows, _fills_v1),
+        }
 
     # ── 裁决源: 开门后 SIM 真实盈亏, 分四个人群 ──
     p_all = _pnl_block(sim)
@@ -304,11 +363,13 @@ def main():
     p_rest = _pnl_block(sim, lambda r: (r.get("exit_reason") or "") != "SL_INITIAL")
     p_win = _pnl_block(sim, lambda r: _in_open_win(r.get("entry_time")))
 
-    # ── 机制留痕 (不裁决) ──
+    # ── 机制留痕 (不裁决) — v2 起分代: 判据③ 只用现行代行 (两代判据不同尺, 不混算) ──
     a_all = _agg(rows, fills)
-    treat = [r for r in rows if r.get("arm") == "treatment"]
+    treat_v1 = [r for r in rows if r.get("arm") == "treatment" and r.get("_gen") == "v1"]
+    treat_v2 = [r for r in rows if r.get("arm") == "treatment" and r.get("_gen") == "v2"]
+    treat_cur = treat_v2 if verdict_gen == "v2" else treat_v1
+    a_t = _agg(treat_cur, fills)
     hold = [r for r in rows if r.get("arm") == "holdout"]
-    a_t = _agg(treat, fills)
 
     # ── 判据 1–4 (RFC-141 §4) ──
     sl_mean = p_sl["net_mean"]
@@ -358,16 +419,19 @@ def main():
         verdict_why = (f"判据1 明确不过 (SL_INITIAL 族强度未收敛: n={p_sl['n']} "
                        f"净均={sl_mean}) → 轴 KILLED, enabled=false, 产物留档")
 
-    # R1 分层只印不判
-    r1 = [r for r in treat if r.get("direction") == "SHORT"
+    # R1 分层只印不判 (现行代行, 与判据③ 同人群)
+    r1 = [r for r in treat_cur if r.get("direction") == "SHORT"
           and r.get("session_min") is not None and 0 <= r["session_min"] < 15]
-    r1_long = [r for r in treat if r.get("direction") == "LONG"
+    r1_long = [r for r in treat_cur if r.get("direction") == "LONG"
                and r.get("session_min") is not None and 0 <= r["session_min"] < 15]
 
     out = {
         "generated_at": datetime.datetime.now().astimezone().isoformat(),
         "rfc": "RFC-141",
         "gate_live_date": gate_live_date,
+        # v2 双窗 (§5.10): 裁决窗自现行代开门日起算; gate_live_date 恒为 v1 开门日 (留痕锚)
+        "verdict_window_since": verdict_since,
+        "verdict_generation": verdict_gen,
         "verdict": verdict,
         "verdict_why": verdict_why,
         "adjudication_source": {
@@ -375,7 +439,7 @@ def main():
             "table": "trade_records",
             "where": ("source_type='PLAYBOOK_SIM' AND COALESCE(exit_price,0)>0 AND "
                       "COALESCE(pnl_net, realized_pnl) IS NOT NULL AND trade_date>='"
-                      + gate_live_date + "'"),
+                      + verdict_since + "'"),
             "all": p_all, "sl_initial": p_sl, "non_sl_initial": p_rest,
             "open_window_0935_0945": p_win,
         },
@@ -404,24 +468,32 @@ def main():
         },
         "mechanism_trace": {
             "n_rows": len(rows), "all": a_all, "treatment": a_t,
+            "treatment_v1_legacy": _agg(treat_v1, fills),
+            "treatment_v2": _agg(treat_v2, fills),
+            "post_observation_rows": getattr(load_rows, "post_rows", 0),
             "holdout": _agg(hold, fills),
             "note": ("jsonl 降级为机制留痕 (2026-10-10 用户裁): 只证明门真在拦 + 拦的是"
-                     "反转单 + 机会成本; 不独立裁决"),
+                     "反转单 + 机会成本; 不独立裁决。v2 (§5.10): treatment=现行代 "
+                     f"({verdict_gen}), 判据③只用它; 分代块并列, 两源不混算; "
+                     "post_observation_rows=弃单后 +5m/+10m 补记行数 (纯观测不进聚合)"),
         },
+        "legacy_v1_window": legacy_v1_window,
         "strata_print_only": {
             "R1_short_open_window": _agg(r1, fills),
             "long_open_window": _agg(r1_long, fills),
         },
         "caliber": ("裁决源=开门后 SIM 真实盈亏 vs 开门前预注册基线; holdout_pct=0 ⇒ "
                     "无同期对照臂, 受市况变化混淆 (披露 RFC §5.4); 判据1/3 为门自身机制量"
-                    "不随市况漂, 故列为最强判据。开门日取 forward 首行 date (不硬编码, "
-                    "重启延后不错位)。"),
+                    "不随市况漂, 故列为最强判据。开门日取现行代 forward 首行 date (不硬编码, "
+                    "重启延后不错位)。v2 (§5.10): 判尺 mid-mid+grace 2-of-3, 裁决窗自 v2 "
+                    "首行 date 重计, v1 窗单出 legacy_v1_window 留痕不裁决。"),
     }
     tmp = OUT.with_suffix(".tmp")
     tmp.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
     os.replace(tmp, OUT)
 
-    print(f"RFC-141 结算: 开门日={gate_live_date} rows={len(rows)} verdict={verdict}")
+    print(f"RFC-141 结算: 现行代={verdict_gen} 裁决窗自={verdict_since} "
+          f"(v1 开门={gate_live_date}) rows={len(rows)} verdict={verdict}")
     print(f"  {verdict_why}")
     print(f"  SIM 真实盈亏 (裁决源):")
     print(f"    ALL        n={p_all['n']} 净均={p_all['net_mean']} t={p_all['t']} "

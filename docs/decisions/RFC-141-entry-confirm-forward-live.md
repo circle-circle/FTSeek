@@ -123,6 +123,10 @@ LONG×开盘窗 —— 只印读数, 不作独立裁决依据。
 (≈0.4 笔/日) ⇒ **判读 1 需要更长窗口才能看出族收敛**, 这是本设计的真实限速环节, 不得
 用「样本不够」当通过理由, 也不得提前改用其它判据替代。
 
+> **⚠️ v2 判尺修订 (2026-10-15 用户裁「直接优化落地」)**: 判定尺与持续性已修订,
+> 裁决窗自 v2 开门日重计, 判据①②③④ 阈值逐字不变。全文留痕见 **§5.10**;
+> 回滚 = `entry_confirm_ruler: legacy` + `entry_confirm_grace_sweeps: 0` + restart。
+
 ## 5. 强制披露 (沿 D2' 影子注册条目原文)
 
 1. **反向先验**: confirm_gate (UE 域盘前注入趋势) 历史成本 +0.50%/笔 t=5.67 —— 域不同 (盘前注入 vs 开盘窗微结构), 方向相反, 裁决时必须并陈;
@@ -260,6 +264,45 @@ LONG×开盘窗 —— 只印读数, 不作独立裁决依据。
    - ⚠️ **T14 回放≠前向**: 本回放(历史 n=580 净正) **不推翻** forward-B(live n=33) FAIL; 两源不混算, forward 仍是门 go/no-go 权威。本回放只答"有无更好 v2 判据"(答: 无), **不改 §4 预注册判据、不动现役门**。
    - **裁决日不得把"多探测/路径判定"当改进项** — 预注册回放已判无一可分辨, 冻结腿维持, forward 照跑。全链复盘 + 隔夜 gap P0 详见 DEB-20261009 §40。
 
+10. **v2 判尺与持续性修订 (2026-10-15 用户裁「直接优化落地」, 本条的优先级高于 §5.9 末段禁令)**:
+
+   **触发实证 (v1 前瞻 54 行, 2026-10-10~10-15)**: confirmed 21 / abandoned 33 (弃单率 61%);
+   ABANDONED 反向幅度中位 26bp, 其中 **<5bp 纯价差噪声 3 笔** (最典型 INTC SHORT 锚 $92.32
+   现价 $92.33 = +1.6bp 即弃单); CONFIRMED opp_cost 中位 **+0.36% 已超判据③ 的 0.3% 门**。
+   用户看 live 日志判「一次性被波动噪声放弃, 明显不合理」并当裁落地。
+
+   **病灶归因 (两轴正交)**:
+   - **轴1 混尺**: 锚 = arm 时刻 reprice 的 ask(BUY)/bid(SHORT) (成交侧), 复核价 = last trade
+     ⇒ 横盘时 last 在买卖价间跳动, 单边报价跳动即被当「反转」(INTC 1bp 弃单的机制)。
+     注意影子证据本身也是这把混尺 (锚=成交价≈ask) ⇒ 换尺 = 偏离影子证据链, 如实披露。
+   - **轴3 一次性终态**: arm+120s 单点采样定生死, 且指令盘前一次生成、当日无再生通道
+     ⇒ 一个噪声 print 永久杀死过了 DA→筛选→触发→reprice 四关的信号。
+
+   **修订内容 (v2, 代码 entry_confirm_gate.py, schema 升 entry_confirm_forward_v2)**:
+   - **判尺 mid-vs-mid**: arm 与复核两端取 (bid+ask)/2 (futu_lv3 上下文本有 bid/ask, 零新基建);
+     任一端 bid/ask 缺失/交叉 ⇒ 该笔回落 legacy 混尺并记 `ruler_used` 字段 (裁决可分桶剔除)。
+     `opp_cost_pct` 定义**不变** (执行锚×last), 判据③尺子连续。
+   - **grace 持续性 (2-of-3)**: 到点首见逆向不再即弃 ⇒ 进 grace, 随后 ≤3 次 sweep (10s 间隔)
+     内 **≥2 次逆向才 ABANDONED**; 任一扫到同侧即 CONFIRMED; 取价失败不消耗 grace 次数;
+     3 次耗尽仍不足 2 票 ⇒ CONFIRMED (反转未持续, fail toward trade, 与 fail-open 同向)。
+     最差附加延迟 ≤30s, 远小于 TTL 600s。
+   - **弃单后观测** (纯观测, 不进 _agg 不裁决): ABANDONED 后 +5m/+10m 各补记一行
+     `type=entry_confirm_post` (last/bid/ask/mid + 方向归一 mid_move_pct) ⇒ 裁决日可分解
+     「真避免 vs 误杀赢家」, 不再靠信仰定阈值。
+   - **结算器双窗**: 裁决窗 = v2 首行 date 起 (同 §4 判据与样本门 n≥60 ∨ ≥10 交易日,
+     自 v2 窗重计); v1 窗 [开门日, v2 开门日) 单出 `legacy_v1_window` 块, **留痕不裁决**
+     (两源不混算, 与 §5.9 同纪律)。判据③ 机制量只用现行代 (v2) 行。
+
+   **与 §5.9 的张力 (必须并陈, 不得装没看见)**: §5.9 预注册回放已判「多探测无净 edge
+   (miskill 50.0→55.3%)」并登记「裁决日不得当改进项」。**该回放在旧混尺上测** —— 噪声尺下
+   持续性只能反复确认噪声; v2 的假设是「换 mid 尺后, 持续性看到的不再是价差跳动」, 此交互
+   **回放未覆盖**。故本条是用户 2026-10-15 明确推翻 §5.9 末段禁令的裁决: 理由 (实测噪声杀
+   +混尺病灶) 与风险 (可能重蹈 miskill 上升) 留此, v2 前瞻样本即该交互的首次实测;
+   若 v2 裁决 FAIL, 归因应优先怀疑「持续性在真 2min 端点上本无 edge」(§5.9) 而非尺子。
+
+   **回滚**: `entry_confirm_ruler: legacy` + `entry_confirm_grace_sweeps: 0` + restart
+   = v1 逐字行为; 全门回滚仍 = `entry_confirm_enabled: false` + restart。
+
 ## 6. 回滚
 
 `playbook.execution_parameters.entry_confirm_enabled: false` + `systemctl restart ftseek-us` (前置: 核未平仓+改动归属)。已 arm 未判定的 pending 随重启清空, 旗标残留由孤儿自愈放行 ⇒ 回滚零卡单。产物 jsonl 留档不删。
@@ -267,3 +310,8 @@ LONG×开盘窗 —— 只印读数, 不作独立裁决依据。
 ## 7. 提交边界
 
 本 RFC 批次只含: `entry_confirm_gate.py` (新) / `auto_execute_flow.py` 两点 / `scheduler_core.py` sweep / `unified_config.yaml` 键 / 注册表条目 / 结算脚本 / 契约测试 / 本文档。DEB-20261009 §31/§32 工作区改动属主线程批次, 不代提交。
+
+**v2 批次 (2026-10-15, §5.10)**: `entry_confirm_gate.py` (判尺/grace/弃单后观测) /
+`auto_execute_flow.py` 一处 (gate 调用传 scheduler) / `unified_config.yaml` 三键
+(ruler/grace_sweeps/grace_votes) / `settle_entry_confirm_forward.py` (双代双窗) /
+注册表条目 notes 追加 / 两个契约测试文件 / 本文档 §4 指针 + §5.10。
