@@ -7,16 +7,16 @@
 **回流链**（反审计「裁决不回写」五形态，一次闭合）: ①采集 cron `10 6 * * 2-6` 注释退役留痕（备份 `/tmp/crontab_backup_20261015_kr3.txt`；动 cron 前已核消费方：registry/runup_report/top_movers_join 均只读 jsonl）②`crontab-loop-baseline.txt` 同步退役（fee_unit 先例格式）③注册表 REGISTRY→KILLED + verdict_history 追加 10/15 条目 + ADJUDICATED 闹钟结案（recheck_after 清空）④OKR-2026-10 KR3 段+变更记录回写 ⑤采集器 docstring 退役标 ⑥本条。
 **验证**: py_compile 双文件过；`pytest -q tests/test_control_loop_ledger.py tests/test_criteria_registry_visibility.py tests/test_shadow_registry_criteria_provenance.py` = **22 passed / 1 failed**，唯一红 `test_enabled_job_is_in_ledger` 系**存量红非本批**：Hermes 一次性 job `64a9a5085416`（RFC-123 阶段0 毕业核验提醒，10-13 创建、2026-10-21 09:00 触发）未入台账——正是 10-12~14 SSOT 断档期产物，归 RFC-123 owner 补登，本批不代收。`git diff --check` 过。
 **边界**: 零交易行为变更（kr3 门 record-only 从不拦截）；注册表 .py 改动不影响在跑服务（消费方全是 cron 新进程，主服务不 import 注册表做行为判定）；未重启；jsonl 冻结留档不删；审计报告文件是同会话确认 agent 在途 WIP，本批未触碰未提交。
-**下一步**: ①确认 agent 复核轮进行中——已抓到经济性路口径错（10 月 75 行全 PLAYBOOK_SIM，「extended_hours_entry 5」系误标；主会话 SQL 复核：EXT 臂 ACN/GS 实际 source_type=PLAYBOOK_SIM，全库无 extended_hours_entry 源）②RFC-123 owner 补台账行（或 10-21 一次性触发后按 spent 先例处置）③P1 修复批范围待用户裁决。
+**下一步**: ①确认 agent 复核轮已完成：报告已修正经济性口径（10 月 75 行全 PLAYBOOK_SIM，「extended_hours_entry 5」系误标；70 regular + 5 premarket/EXT）并补齐证据锚②RFC-123 owner 补台账行（或 10-21 一次性触发后按 spent 先例处置）③P1 修复批范围待用户裁决。
 
-## 2026-10-15 全链路审计报告落档（5 路只读并行审计 + 主会话复核）
+## 2026-10-15 全链路审计报告落档（5 路只读并行审计 + 确认轮复核更新）
 
 **触发**: 用户问系统全链路是否合理完美 → 授权多 agent 审计 → 用户令「先将本报告落档」，确认轮由另一 agent 执行。
-**落地**: 新增 `docs/analysis/2026-10-15-full-chain-audit.md`：仓库分支/Playbook 链路/棘轮防线/治理待裁/策略经济性五路综合，含 P0–P3 分级清单、交叉验证矩阵、10 项待用户裁决汇总。
-**头条发现**: ①两个 cron 静默崩 21–25 天（funnel_report float(None) 笔误 9/20 起、capital_flow_replay 裸 python3 缺 numpy 9/24 起）且 error_alert 按构造看不见（只认 `] ERROR:` 前缀）；②handoff 缺 10-12~14 三段（17 提交零记录）；③影子注册表实测 79 项含 4 项在采未注册（军规禁止态）且无反向校验；④KR3 SHORT n=30 今日到期；⑤手动实盘"能开不能平"单向门（executor.py:409-413）；⑥10 月费用比改善（吞毛 99.9%→44%）但 IC 恶化（月度 T+1 -0.1228）+0.7 信心档由最佳反转最差+KR1 判决面 BROKEN ⇒ sim→live 毕业证据变弱。
-**边界**: 纯 .md 落档，零代码/零配置/零行为变更，不触发重启；审计全程只读（禁 pytest/禁写库/SQLite mode=ro），未修复任何发现。
-**验证**: 两条单源最高风险发现（手动平仓单向门、error_alert LEVEL_MARKERS 盲区）已由主会话亲核属实；多源交叉确认项见报告 §九矩阵。
-**下一步**: 用户安排的确认 agent 复核本报告 → P0-1（KR3 今日终裁）与 P0-2（手动平仓口径）待用户裁决 → P1 修复批（cron×2+error_alert+裸 python3 横扫 / handoff 追补 / 注册表对账 / OKR 回写 / 指针批 / W4 一行修）待授权。
+**落地**: 新增并复核更新 `docs/analysis/2026-10-15-full-chain-audit.md`：仓库分支/Playbook 链路/棘轮防线/治理待裁/策略经济性五路综合，含 P0–P3 分级清单、证据锚/SQL、交叉验证矩阵、10 项待用户裁决汇总。
+**头条发现**: ①两条生产证据链静默失败 21–25 天（funnel_report cron 非零退出；capital_flow 父 cron rc=0 但子 replay 因裸 python3 缺 numpy 每次失败）且 error_alert 按构造看不见（只认 `] ERROR:` 前缀）；②handoff 缺 10-12~14 三段（17 提交零记录）；③影子注册表实测 79 项含 4 项在采未注册（军规禁止态）且无反向校验；④KR3 SHORT n=30 当日达门（终裁已由顶条闭合：FALSIFIED/KR3 达成）；⑤手动实盘"能开不能平"单向门（executor.py:409-413）；⑥10 月费用比改善（复核口径 `fee/(gross+fee)` 99.9%→44.0%；常规 `fee/gross` 为 78.5%）但 IC 恶化（月度 T+1 -0.1228）+0.7 信心档由最佳反转最差+KR1 判决面 BROKEN ⇒ sim→live 毕业证据变弱。
+**边界**: 确认轮仅改 `docs/analysis/2026-10-15-full-chain-audit.md` 与本 handoff 条目，零代码/零配置/零行为变更，不触发重启；审计与复核全程只读（禁 pytest/禁写库/SQLite `-readonly`），未修复任何发现。当前工作树另有顶条 KR3 裁批在途，本条未触碰其代码/注册表/OKR改动。
+**验证**: 确认轮亲核 P0-2 与 P1-1，并以只读 SQL 复核 §六经济面；修正 10 月 75 行=74 已平+1 在持、全部 PLAYBOOK_SIM（70 regular + 5 premarket/EXT）、费用比公式、post-10/09 n=28、0.7 档 +15.31；`+20.24`、`technical_breakdown 0.191`、`long_expectancy +469` 三个不可复现单源读数已降级为待证。多源交叉确认项见报告 §九矩阵。
+**下一步**: P0-2（手动平仓口径）待用户裁决 → P1 修复批（cron×2+error_alert+裸 python3 横扫 / handoff 追补 / 注册表对账 / OKR 回写 / 指针批 / W4 一行修）待授权；当前分支 ahead 2（报告提交 + KR3 终裁提交），审计数据基线仍为 `4e2e072e6`。
 
 ## 2026-10-15 WIP 复核代提交 + 统一重启闭环
 
