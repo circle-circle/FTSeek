@@ -43,7 +43,9 @@ gap_chase_gate_eval.py  # 存量测量/回填环, 台账回填待专项
 gen_event_symbols.py  # 存量测量/回填环, 台账回填待专项
 ic_health_check.py  # 存量测量/回填环, 台账回填待专项
 ic_weekly_report.py  # 存量测量/回填环, 台账回填待专项
-kr3_runup_shadow.py  # 存量测量/回填环, 台账回填待专项
+# kr3_runup_shadow.py — 2026-10-15 退役 (KR3 SHORT 腿终裁 FALSIFIED, 两腿全证伪=KR3 达成,
+#   用户裁「FALSIFIED 落档+停采」; cron 行已注释留痕, 注册表 KILLED; 回滚=恢复 cron 行+注册表 revert,
+#   重新开采=新假设须重新预注册)
 live_reconcile_check.py  # 存量测量/回填环, 台账回填待专项
 liveness_probe.py  # 存量测量/回填环, 台账回填待专项
 llm_universe_scan.py  # 存量测量/回填环, 台账回填待专项

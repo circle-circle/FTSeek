@@ -238,8 +238,16 @@ ADJUDICATED: dict[str, dict] = {
         # 10/17 (实测速率 9/4 以来 0.57 笔/日, 已结算 24, 还需 6 笔 ≈ 11 天 → ~10/15 达门,
         # 闹钟留 2 天余量; 到点重跑 scripts/kr3_final_adjudication.py)。
         # needs_user=False: SHORT 腿 verdict 出来后按预注册自动落档, 处置 (停采/立案) 才需用户。
-        "read_at": "2026-10-04", "recheck_after": "2026-10-17", "needs_user": False,
-        "note": "期末裁决批 2026-10-04 (scripts/kr3_final_adjudication.py, 现写现验): "
+        # 2026-10-15 结案: n=30 恰好于预测日达门, 当日重跑裁决批 → SHORT FALSIFIED (三要素 1/3),
+        # 用户裁「FALSIFIED 落档+停采」 ⇒ 本闹钟结案 (recheck_after 清空)。
+        "read_at": "2026-10-15", "recheck_after": "", "needs_user": False,
+        "note": "2026-10-15 终裁 (闹钟 10/17, 样本门 10/15 恰好达成当日结算): SHORT|blocked n=30 "
+                "三要素 1/3 (日聚类t=-0.2994 / 声称-21.83<MDE80=56.45 / OOS同向✓) ⇒ FALSIFIED; "
+                "LONG 腿 10/4 已 FALSIFIED ⇒ KR3 两腿全证伪, 按 OKR-2026-10「确认或干净证伪都算达成」"
+                "KR3 达成; 用户裁「FALSIFIED 落档+停采」 ⇒ 采集 cron 注释退役 + 注册表 KILLED + "
+                "OKR 变更记录回写 (证据: registry verdict_history 10/15 条目 + "
+                "data/shadow/kr3_final_adjudication.json + docs/OKR-2026-10.md 变更记录 10/15 行)。"
+                "│期末裁决批 2026-10-04 (scripts/kr3_final_adjudication.py, 现写现验): "
                 "LONG|blocked n=43 三要素 0/3 (日聚类t=-0.02/声称+2.10<MDE32.88/OOS 翻转-4.00→+10.36) "
                 "= **FALSIFIED 干净证伪**; SHORT|blocked n=23<30 = §三.5 不裁决延长观察 "
                 "(观测: OOS 同向-45→-43, 尾部占比 86.4%, 只记录不结论)。证伪不立即换假设 (KR3 明令); "
@@ -1679,8 +1687,8 @@ REGISTRY: list[ShadowItem] = [
     # ── KR3 预注册假设影子 (采集 9/2 上线 cron, **2026-09-06 补登记** — 未登记=无人跟踪) ──
     ShadowItem(
         id="kr3_direction_runup_gate",
-        name="KR3 方向×涨幅证伪门 (RFC-072, 9 月唯一预注册假设)",
-        status=ShadowStatus.OBSERVING,
+        name="KR3 方向×涨幅证伪门 (RFC-072, 9 月唯一预注册假设) (⛔已退役 2026-10-15)",
+        status=ShadowStatus.KILLED,
         description="H-KR3-1: 入场前同向已动 ≥1.0% (阈值冻结) 的指令, 净期望是否显著低于其余人群 "
                     "(=MFE≈0/SL_INITIAL 亏损族的事前可识别子集)。record-only **零拦截行为**; "
                     "采集器 scripts/kr3_runup_shadow.py 每日 06:10 (cron 2-6) 采上交易日入场, "
@@ -1699,7 +1707,8 @@ REGISTRY: list[ShadowItem] = [
                             "(防链式 fishing, OKR-2026-09 KR3 明令)。",
         eval_script="scripts/kr3_runup_report.py",
         created="2026-09-02",
-        last_evaluated="2026-10-04",
+        last_evaluated="2026-10-15",
+        collection_retired=True,
         intent="chase_high_ban",
         cross_ref=("futu_channel_top_movers",),
         verdict_history=[{"date": "2026-09-04", "verdict": "NO_ADJUDICATION",
@@ -1736,6 +1745,20 @@ REGISTRY: list[ShadowItem] = [
                                      "处置 (OKR KR3 明令): 证伪如实记录, **不立即换假设**; LONG 腿证伪 + "
                                      "SHORT 腿样本门未达的最终处置 (记录/延长/停采/10月新假设) 属项目级, "
                                      "10 月开跑会用户裁决 (用户裁「按建议执行」2026-10-04 授权本判分批)。"},
+                         {"date": "2026-10-15", "verdict": "SHORT=FALSIFIED ⇒ 两腿全证伪, KILLED "
+                          "(用户裁「FALSIFIED 落档+停采」)",
+                          "evidence": "SHORT 腿攒满样本门当日到期当日结算: would-block 已结算 n=30 "
+                                     "(恰好 30/30; 另 1 行未结算系采集器 trade_id 幂等设计写入即跳过, "
+                                     "非停采损失)。重跑同一裁决批 scripts/kr3_final_adjudication.py "
+                                     "--window-end 2026-10-15 (B1 延长授权, 产物 window.authority 如实标注; "
+                                     "判分 n=224/台账 261, 阈值守卫 runup=1.0 零漂移)。SHORT|blocked: "
+                                     "①日聚类t=-0.2994 (df=28.0, 19拦簇/16过簇) 不过门 "
+                                     "②声称效应-21.83 < MDE80=56.45 不可测 ③OOS 前段-44.98 vs 后2周-8.02 "
+                                     "同向✓ ⇒ 三要素 1/3 → FALSIFIED 干净证伪 (方向线索一致为负但量级"
+                                     "不显著且低于可测下限); LONG 腿延长窗复核仍 FALSIFIED (0/3), "
+                                     "与 10/4 冻结窗结论一致。处置: 采集 cron `10 6 * * 2-6` 已注释留痕 "
+                                     "(crontab-loop-baseline.txt 同步退役), jsonl 冻结留档不删; "
+                                     "证伪不立即换假设 (KR3 明令); 重新开采=新假设须重新预注册。"},
                         ],
         notes="计数口径 = jsonl 行数 (trade_id 去重); **min_n=30 数的是 would-block 子集已结算笔数, "
               "不是总行数** ⇒ 注册表 READY 不等于可裁决, 裁决批须按子集 n 判 (2026-09-06 面板实测 "
@@ -1743,7 +1766,8 @@ REGISTRY: list[ShadowItem] = [
               "「期末裁决为独立批次, 判分口径现写现验, 防先写判分再凑数据的选择压力」; 故 eval_script "
               "只出稳健性视角 (均值/中位/胜率/尾部), 不出预注册判据值, 这是设计不是缺口。"
               "eval_on_demand=True: 报告脚本无 cron (手动/裁决日触发), 只有采集器挂 cron "
-              "(crontab 10 6 * * 2-6, 台账 §2.3)。回滚=删本条目 + 删 cron 行 + 删 jsonl (纯观察件)。",
+              "(crontab 10 6 * * 2-6, 台账 §2.3)。回滚 (2026-10-15 停采后) = 恢复 crontab 注释块中的 "
+              "原 cron 行 + 本条目 revert KILLED; jsonl 冻结留档不删 (重新开采=新假设须重新预注册)。",
         eval_on_demand=True,
     ),
     # ── 2026-09-09 DEB-20260909 §5.2 (SL_INITIAL 根因 + 入场门重设计, 三模型辩论 5 轮,

@@ -1,5 +1,14 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-15 KR3 SHORT 腿终裁：FALSIFIED ⇒ KR3 达成 + 停采回流链一次闭合
+
+**触发**: 全链路审计 P0-1（KR3 SHORT n≥30 今日到期）→ 用户令「同意，先处理P0-1」→ 裁决批执行 → 用户裁「FALSIFIED 落档+停采」。
+**裁决**: SHORT would-block 已结算 n=30 恰好于预测日（10/15）达门（另 1 行未结算系采集器 trade_id 幂等写入即跳过，非停采损失）。重跑 `scripts/kr3_final_adjudication.py --window-end 2026-10-15`（B1 延长授权，产物 `data/shadow/kr3_final_adjudication.json` 的 window.authority 如实标注）：SHORT 三要素 **1/3**（①日聚类 t=-0.2994 不过门 ②声称 -21.83 < MDE80=56.45 不可测 ③OOS 同向✓）⇒ **FALSIFIED 干净证伪**；LONG 腿延长窗复核仍 FALSIFIED（0/3）与 10/4 冻结窗一致。两腿全证伪 ⇒ 按 OKR「确认或干净证伪都算达成」**KR3 达成**。阈值守卫 runup=1.0 零漂移；判分 n=224/台账 261。
+**回流链**（反审计「裁决不回写」五形态，一次闭合）: ①采集 cron `10 6 * * 2-6` 注释退役留痕（备份 `/tmp/crontab_backup_20261015_kr3.txt`；动 cron 前已核消费方：registry/runup_report/top_movers_join 均只读 jsonl）②`crontab-loop-baseline.txt` 同步退役（fee_unit 先例格式）③注册表 REGISTRY→KILLED + verdict_history 追加 10/15 条目 + ADJUDICATED 闹钟结案（recheck_after 清空）④OKR-2026-10 KR3 段+变更记录回写 ⑤采集器 docstring 退役标 ⑥本条。
+**验证**: py_compile 双文件过；`pytest -q tests/test_control_loop_ledger.py tests/test_criteria_registry_visibility.py tests/test_shadow_registry_criteria_provenance.py` = **22 passed / 1 failed**，唯一红 `test_enabled_job_is_in_ledger` 系**存量红非本批**：Hermes 一次性 job `64a9a5085416`（RFC-123 阶段0 毕业核验提醒，10-13 创建、2026-10-21 09:00 触发）未入台账——正是 10-12~14 SSOT 断档期产物，归 RFC-123 owner 补登，本批不代收。`git diff --check` 过。
+**边界**: 零交易行为变更（kr3 门 record-only 从不拦截）；注册表 .py 改动不影响在跑服务（消费方全是 cron 新进程，主服务不 import 注册表做行为判定）；未重启；jsonl 冻结留档不删；审计报告文件是同会话确认 agent 在途 WIP，本批未触碰未提交。
+**下一步**: ①确认 agent 复核轮进行中——已抓到经济性路口径错（10 月 75 行全 PLAYBOOK_SIM，「extended_hours_entry 5」系误标；主会话 SQL 复核：EXT 臂 ACN/GS 实际 source_type=PLAYBOOK_SIM，全库无 extended_hours_entry 源）②RFC-123 owner 补台账行（或 10-21 一次性触发后按 spent 先例处置）③P1 修复批范围待用户裁决。
+
 ## 2026-10-15 全链路审计报告落档（5 路只读并行审计 + 主会话复核）
 
 **触发**: 用户问系统全链路是否合理完美 → 授权多 agent 审计 → 用户令「先将本报告落档」，确认轮由另一 agent 执行。

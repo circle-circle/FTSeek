@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """[RFC-072 KR3 预注册 · 影子采集器] 方向×涨幅证伪门 — 只观察, 零行为变更 (C4 影子先行).
 
+⛔ 已退役 (2026-10-15): SHORT 腿 n=30 达门, 期末裁决批重跑三要素 1/3 ⇒ FALSIFIED;
+LONG 腿 10/4 已 FALSIFIED ⇒ KR3 两腿全证伪=KR3 达成 (OKR-2026-10 变更记录 10/15 行,
+用户裁「FALSIFIED 落档+停采」)。cron `10 6 * * 2-6` 已注释留痕, 注册表 KILLED;
+jsonl 冻结留档不删; 重新开采=新假设须重新预注册 (KR3 明令证伪不立即换假设)。
+
 每日收盘后 (cron 06:10 CST 工作日): 对上一 ET 交易日全部 PLAYBOOK_SIM 入场, 计算
   entry_runup_pct = 前日收盘 → 入场价 的方向同向已动幅度
     LONG : (entry/prev_close - 1) × 100   (正 = 入场前已上涨)
