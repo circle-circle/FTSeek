@@ -105,6 +105,42 @@ class PlaybookPusher:
 
     # ========== 格式化 ==========
 
+    @staticmethod
+    def _format_money(value: float) -> str:
+        if value >= 0:
+            return f"+${value:.0f}"
+        return f"-${abs(value):.0f}"
+
+    @staticmethod
+    def _gross_pnl(instruction: Dict) -> Optional[float]:
+        direction = str(instruction.get("direction", "")).upper()
+        exit_price = float(instruction.get("exit_price", 0) or 0)
+        execution_price = float(instruction.get("execution_price", 0) or 0)
+        position_size = float(instruction.get("position_size", 0) or 0)
+        if exit_price <= 0 or execution_price <= 0 or position_size <= 0:
+            return None
+        if direction == "BUY":
+            gross_pnl = (exit_price - execution_price) * position_size
+        else:
+            gross_pnl = (execution_price - exit_price) * position_size
+        return round(gross_pnl, 2)
+
+    @staticmethod
+    def _capture_rate(pnl: float, mfe: float) -> Optional[float]:
+        if pnl <= 0 or mfe <= 0:
+            return None
+        return pnl / mfe * 100
+
+    @staticmethod
+    def _median(values: List[float]) -> Optional[float]:
+        if not values:
+            return None
+        ordered = sorted(values)
+        count = len(ordered)
+        if count % 2:
+            return ordered[count // 2]
+        return (ordered[count // 2 - 1] + ordered[count // 2]) / 2
+
     def _format_morning_message(
         self, trade_date: str, instructions: List[Dict], regime_info: Dict
     ) -> str:
@@ -246,8 +282,14 @@ class PlaybookPusher:
             "",
         ]
 
-        total_pnl = 0
+        active_instructions = [
+            instruction for instruction in instructions
+            if instruction.get("direction") != "SKIP"
+        ]
+        skip_count = len(instructions) - len(active_instructions)
         executed_count = 0
+        closed_net_pnl = 0.0
+        holding_pnl = 0.0
 
         for idx, inst in enumerate(instructions, 1):
             if inst.get("direction") == "SKIP":
@@ -268,10 +310,24 @@ class PlaybookPusher:
 
             if executed:
                 executed_count += 1
-                total_pnl += pnl or 0
+                if outcome in ("win", "loss"):
+                    closed_net_pnl += pnl or 0
+                elif outcome == "holding":
+                    holding_pnl += pnl or 0
                 exec_price = inst.get("execution_price", 0) or 0  # 2026-07-14: or guard for NULL
                 status = "持仓中" if outcome == "holding" else outcome
-                pnl_text = f"{'+' if pnl >= 0 else ''}${pnl:.0f}" if pnl else "-"
+                gross_pnl = self._gross_pnl(inst)
+                if gross_pnl is not None:
+                    fees = gross_pnl - (pnl or 0)
+                    pnl_text = (
+                        f"净 {self._format_money(pnl or 0)} | "
+                        f"毛 {self._format_money(gross_pnl)} | "
+                        f"费 ${fees:.0f}"
+                    )
+                elif outcome == "holding":
+                    pnl_text = f"浮盈亏 {self._format_money(pnl or 0)}(未实现)"
+                else:
+                    pnl_text = f"净 {self._format_money(pnl or 0)}"
                 lines.append(f"   ✅ 执行 ${exec_price:.2f} | {status} | {pnl_text}")
                 if mfe or mae:
                     lines.append(f"   MFE +${mfe:.0f} | MAE ${mae:.0f}")
@@ -283,7 +339,13 @@ class PlaybookPusher:
                     lines.append(f"   ❌ 触发未执行 | 错失: {_sign}${shadow:.0f}")
                 else:
                     # 未触发: 价格从未达入场确认带, shadow_pnl 仅为"假设已入场"的参考值, 非真实错失
-                    lines.append(f"   ⏸ 未触发(未达入场价) | 理论(参考): {_sign}${shadow:.0f}")
+                    untriggered_reason = (
+                        inst.get("skip_reason") or "未满足盘中触发条件"
+                    )
+                    lines.append(
+                        f"   ⏸ 未触发(未满足触发条件) | {untriggered_reason} | "
+                        f"理论(参考): {_sign}${shadow:.0f}"
+                    )
             lines.append("")
 
         # ── 退出质量段 (2026-07-18): 捕获率 = 落袋pnl / MFE, 评估退出是否及时 ──
@@ -296,26 +358,46 @@ class PlaybookPusher:
         ]
         if _closed:
             lines.append("─" * 20)
-            lines.append("📈 退出质量 (捕获率 = 落袋 / 最大浮盈)")
-            _caps = []
+            lines.append("📈 退出质量 (毛/净捕获率 = 毛/净利 ÷ MFE; 亏损单不适用)")
+            gross_capture_rates = []
+            net_capture_rates = []
             for i in _closed:
                 _sym = i.get("symbol", "?")
                 _mfe = i.get("max_favorable_excursion") or 0
                 _mae = abs(i.get("max_adverse_excursion") or 0)
                 _pnl = i.get("pnl") or 0
-                _cap = (_pnl / _mfe * 100) if _mfe > 0 else 0
-                _caps.append(_cap)
+                _gross = self._gross_pnl(i)
+                _gross_cap = self._capture_rate(_gross or 0.0, _mfe)
+                _net_cap = self._capture_rate(_pnl, _mfe)
+                if _gross_cap is not None:
+                    gross_capture_rates.append(_gross_cap)
+                if _net_cap is not None:
+                    net_capture_rates.append(_net_cap)
+                if _gross_cap is None and _net_cap is None:
+                    _capture_text = "N/A(亏损单)"
+                else:
+                    _gross_text = f"{_gross_cap:.0f}%" if _gross_cap is not None else "N/A"
+                    _net_text = f"{_net_cap:.0f}%" if _net_cap is not None else "N/A"
+                    _capture_text = f"毛{_gross_text} / 净{_net_text}"
                 # 逆势重、从未落袋 → 退出偏晚/方向存疑 (MAE 取幅度, 兼容两种符号约定)
                 _flag = " ⚠️逆势重" if (_mae > _mfe and _pnl <= 0) else ""
                 lines.append(
-                    f"   {_sym}: {_cap:.0f}% (落袋${_pnl:.0f} / 峰值${_mfe:.0f}"
-                    f" | MAE ${_mae:.0f}){_flag}"
+                    f"   {_sym}: {_capture_text} (净{self._format_money(_pnl)}"
+                    f" / 峰值{self._format_money(_mfe)} | MAE ${_mae:.0f}){_flag}"
                 )
-            if _caps:
-                _s = sorted(_caps)
-                _n = len(_s)
-                _median = _s[_n // 2] if _n % 2 else (_s[_n // 2 - 1] + _s[_n // 2]) / 2
-                lines.append(f"   中位捕获率: {_median:.0f}% ({_n}笔, 中位数抗离群)")
+            gross_median = self._median(gross_capture_rates)
+            net_median = self._median(net_capture_rates)
+            if gross_median is not None or net_median is not None:
+                _gross_median_text = (
+                    f"{gross_median:.0f}%" if gross_median is not None else "N/A"
+                )
+                _net_median_text = (
+                    f"{net_median:.0f}%" if net_median is not None else "N/A"
+                )
+                lines.append(
+                    f"   中位捕获率: 毛{_gross_median_text} / 净{_net_median_text} "
+                    f"(毛正{len(gross_capture_rates)}笔, 净正{len(net_capture_rates)}笔)"
+                )
             lines.append("")
 
         # ── 入场质量预警段 (2026-07-18): "入场即套牢" 检测 ──
@@ -360,8 +442,25 @@ class PlaybookPusher:
             lines.append("   → 入场时机差(追高/做反), 观察: 低conf或VWAP逆侧是否应更严")
             lines.append("")
 
-        lines.append(f"今日总结: 执行 {executed_count}/{len(instructions)}, "
-                      f"盈亏 {'+' if total_pnl >= 0 else ''}${total_pnl:.0f}")
+        lines.append(
+            f"今日总结: 执行 {executed_count}/{len(active_instructions)} "
+            f"(SKIP {skip_count})"
+        )
+        pnl_parts = []
+        if any(instruction.get("outcome") in ("win", "loss") for instruction in instructions):
+            pnl_parts.append(f"已平净利 {self._format_money(closed_net_pnl)}")
+        if any(
+            instruction.get("direction") != "SKIP"
+            and instruction.get("executed")
+            and instruction.get("outcome") == "holding"
+            for instruction in instructions
+        ):
+            pnl_parts.append(f"持仓浮盈亏 {self._format_money(holding_pnl)}(未实现)")
+        if pnl_parts:
+            pnl_parts.append(
+                f"合计 {self._format_money(closed_net_pnl + holding_pnl)}"
+            )
+            lines.append("   " + " | ".join(pnl_parts))
 
         # 2026-07-21 语义修正: 未执行拆分为"真正错失(已触发)"与"未触发(仅假设参考)",
         #   避免大额理论盈亏被误读为真实错失利润 (未触发单价格从未到入场带).

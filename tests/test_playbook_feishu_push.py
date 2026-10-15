@@ -90,6 +90,7 @@ class TestEveningPush:
         db.update_instruction_tracking(inst_id, {
             "executed": 1,
             "execution_price": 100.5,
+            "exit_price": 103.5,
             "pnl": 150.0,
             "outcome": "win",
             "max_favorable_excursion": 200.0,
@@ -103,6 +104,8 @@ class TestEveningPush:
         assert "US.NTES" in message
         assert "✅ 执行" in message
         assert "MFE" in message
+        assert "净 +$150 | 毛 +$150 | 费 $0" in message
+        assert "执行 1/1 (SKIP 0)" in message
 
     def test_evening_not_executed(self, pusher, db):
         """未触发的指令显示 '⏸ 未触发' (2026-07: 未执行拆分为 未触发/触发未执行 两态)"""
@@ -111,7 +114,21 @@ class TestEveningPush:
         instructions = db.get_instructions_by_date("2026-06-18")
         message = pusher._format_evening_message("2026-06-18", instructions)
 
-        assert "⏸ 未触发(未达入场价)" in message
+        assert "⏸ 未触发(未满足触发条件)" in message
+        assert "未满足盘中触发条件" in message
+
+    def test_evening_not_executed_shows_invalidation_reason(self, pusher, db):
+        """未触发且已作废时显示具体拒因, 不再误写成“价格未达”"""
+        inst_id = _save_inst(db)
+        db.update_instruction_tracking(inst_id, {
+            "skip_reason": "thesis_drift_invalidate",
+        })
+
+        instructions = db.get_instructions_by_date("2026-06-18")
+        message = pusher._format_evening_message("2026-06-18", instructions)
+
+        assert "thesis_drift_invalidate" in message
+        assert "未达入场价" not in message
 
     def test_evening_triggered_not_executed(self, pusher, db):
         """已触发但未执行的指令显示 '❌ 触发未执行' (真正错失)"""
@@ -122,6 +139,52 @@ class TestEveningPush:
         message = pusher._format_evening_message("2026-06-18", instructions)
 
         assert "❌ 触发未执行" in message
+
+    def test_evening_capture_separates_gross_net_and_loss(self, pusher):
+        """退出质量拆毛/净捕获; 亏损单不再输出负百分比"""
+        instructions = [
+            {
+                "symbol": "US.WIN", "direction": "BUY", "executed": 1,
+                "outcome": "win", "execution_price": 100.0, "exit_price": 110.0,
+                "position_size": 10, "pnl": 80.0,
+                "max_favorable_excursion": 100.0, "horizon": "short",
+            },
+            {
+                "symbol": "US.LOSS", "direction": "BUY", "executed": 1,
+                "outcome": "loss", "execution_price": 100.0, "exit_price": 90.0,
+                "position_size": 10, "pnl": -120.0,
+                "max_favorable_excursion": 20.0,
+                "max_adverse_excursion": 100.0, "horizon": "short",
+            },
+        ]
+        message = pusher._format_evening_message("2026-08-30", instructions)
+
+        assert "US.WIN: 毛100% / 净80%" in message
+        assert "US.LOSS: N/A(亏损单)" in message
+        assert "-600%" not in message
+        assert "中位捕获率: 毛100% / 净80%" in message
+
+    def test_evening_summary_separates_closed_and_holding_pnl(self, pusher):
+        """总结分母只算可执行指令, 已平/持仓 PnL 分开口径"""
+        instructions = [
+            {
+                "symbol": "US.CLOSED", "direction": "BUY", "executed": 1,
+                "outcome": "win", "execution_price": 100.0, "exit_price": 110.0,
+                "position_size": 10, "pnl": 25.0, "horizon": "short",
+            },
+            {
+                "symbol": "US.HOLDING", "direction": "BUY", "executed": 1,
+                "outcome": "holding", "execution_price": 100.0,
+                "position_size": 10, "pnl": -10.0, "horizon": "short",
+            },
+            {"symbol": "US.SKIP", "direction": "SKIP", "outcome": "skipped"},
+        ]
+        message = pusher._format_evening_message("2026-08-30", instructions)
+
+        assert "执行 2/2 (SKIP 1)" in message
+        assert "已平净利 +$25" in message
+        assert "持仓浮盈亏 -$10(未实现)" in message
+        assert "合计 +$15" in message
 
 
 class TestTrappedEntryCushionDefault:
