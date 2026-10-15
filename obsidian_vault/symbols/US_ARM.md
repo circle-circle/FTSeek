@@ -2,10 +2,10 @@
 type: "symbol"
 symbol: "US.ARM"
 name: ""
-latest_date: "2026-10-14"
-latest_direction: "SELL_SHORT"
-latest_score: 8.0
-latest_rating: "看空"
+latest_date: "2026-10-15"
+latest_direction: "SKIP"
+latest_score: 6.0
+latest_rating: "观望"
 total_trades: 3
 win_rate: 1.0
 tags: [symbol, backfill]
@@ -3362,6 +3362,55 @@ NVIDIA合作与AGI CPU需求爆发 → Arm架构服务器份额超越x86带动�
 
 ### 论据IC验证
 - 基于2311条历史信号alpha IC验证 (overall_t1=-0.0011)
+
+## 同行业 (Semiconductors)
+- [[US_ALAB]]
+- [[US_AMAT]]
+- [[US_AMD]]
+- [[US_ASML]]
+- [[US_ASX]]
+- [[US_AVGO]]
+- [[US_AXTI]]
+- [[US_CRDO]]
+- [[US_INTC]]
+- [[US_LRCX]]
+---
+
+## 2026-10-15 | 观望 | 信心中高 | SKIP
+<!-- id:2026-10-15-32dd -->
+
+> 高通诉讼仅判赔2美元利空出尽，但PE高达301.54远超行业中枢43.41且MSPR为-48.23，因实时现价缺失无法锚定价位，强制SKIP观望
+
+- **标的**:  (US.ARM) | 现价: 0 | 评分: 6.0/10
+- **IC ID**: `DA-20261015203316-US.ARM-32dd`
+- **数据质量**: 数据源 18/19 (95%)
+
+### 看多论据
+  1. [MEDIUM][IC=-0.02n=1410] 诉讼利空落地，最坏情况未发生。陪审团仅判赔2美元，Arm宣布收获有利判决，存在利空出尽反弹可能 (news)
+  2. [HIGH][IC=+0.01n=986] 基本面强劲与分析师托底。营收YoY增长25.12%，毛利率高达97.54%，45位覆盖分析师中60.0%给出买入评级 (fundamental)
+
+### 看空论据
+  1. [HIGH][IC=+0.00n=1103] 估值极度昂贵且内部人持续净卖出。PE(标准化)高达301.54，远超行业中位数43.41；6个月平均MSPR为-48.23 (fundamental)
+  2. [HIGH][IC=+0.03n=852] 技术面破位与主力资金流出。MA5跌破MA60形成死叉，5日跌幅达-19.1%，且超大单与大单合计净流出约1375万美元 (technical)
+
+### 交易计划
+- 入场: SKIP: 实时快照/现价缺失，无法锚定具体入场与止损价位，禁止盲目下单
+- 止损: 0
+- 止盈: 0
+- 支撑: 237.52, 210 | 阻力: 258.04, 278.99
+
+### 风险
+  - 高通诉讼后续数十亿美元官司尚未结束，存在长期授权费模式被重塑的尾部风险
+  - 5日跌幅-19.1%，若继续下杀可能引发融资盘平仓或期权Gamma挤压
+  - 财报日期数据降级缺失，需防范突发财报风险，默认财报前3日不开仓
+  - [挑战者] 无实质反证: 当前方向的数据支撑成立
+  - [挑战者] 来源不明数字: 230出现于execution_plan.invalidation_triggers; -25出现于execution_plan.invalidation_triggers
+
+### 因果链
+高通诉讼违约认定(事件) → 威胁97.54%高毛利模式的长期授权费预期(估值) → 叠加CPI通胀数据打击高估值科技股(宏观) → 导致股价连续5日大跌-19.1%并跌破多条均线(价格)
+
+### 论据IC验证
+- 基于2331条历史信号alpha IC验证 (overall_t1=-0.0084)
 
 ## 同行业 (Semiconductors)
 - [[US_ALAB]]
