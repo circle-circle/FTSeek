@@ -1,5 +1,12 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-15 推送旁路批（3 个活跃迁移 hub + 4 个核实免迁）
+
+**触发**: 审计 P2-4（8-29 后新增 8 个直连旁路）→ 用户令「继续」。
+**落地**（`6ceda25c5`）: ①3 个活跃旁路迁 hub-first（penetration_llm_analysis 里程碑推 / live_weekly_review 周报 / cutover_preflight 每日预检告警；sync=True + stop() 收线程池 + 异常回退直连，告警链不因路由改动断裂）；②核实免迁 4 个：da_glm_shadow_eval / da_prompt_distill_shadow_eval / deb20260901_shadow_first_report = **已耗一次性件**（窗口已关+自摘 cron+不在现役 crontab，迁移死代码无意义）；kr3_runup_report 随今日 KR3 终裁 KILLED。③无料不推合规核实：penetration 仅里程碑状态变化推、cutover 有冷却+fail-loud、live_weekly 是 --push 门后的内容型周报——审计所点 3 个「无条件推」全是已耗件。
+**验证**: `test_rfc078_live_weekly_review.py` 契约测试更新到 hub 时代（默认零推送契约不变）后 42 passed；W456/except-pass 棘轮绿。纯 scripts/ 改动，cron 新进程加载，未重启。
+**下一步**: 推送面收口完成（hub 外剩存量豁免件）；剩 main FF 合并+push（待授权）、策略面 DEB（待立项）。
+
 ## 2026-10-15 event_stream.db 保留窗治理落地（用户裁「推荐方案自动清理」）
 
 **触发**: 审计 P3（event_stream.db 949MB / +170MB/天 / 无保留策略）→ 用户裁「不要将系统的空间占满了，需要及时清理」+「14天+仅清 artifact 自动化可接受」。
