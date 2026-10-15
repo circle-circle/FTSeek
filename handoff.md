@@ -1,5 +1,14 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-15 event_stream.db 保留窗治理落地（用户裁「推荐方案自动清理」）
+
+**触发**: 审计 P3（event_stream.db 949MB / +170MB/天 / 无保留策略）→ 用户裁「不要将系统的空间占满了，需要及时清理」+「14天+仅清 artifact 自动化可接受」。
+**核查结论**（落档备查）: `raw_events.raw_artifact`（整篇正文, 均值 261KB/行）**零代码消费方**——消费面全在 canonical_events/source_health，raw_events 仅 COUNT(*)；dedup = `INSERT OR IGNORE` on raw_id 主键 ⇒ 行在则幂等在。
+**落地**: ①新 `scripts/event_stream_retention.py`——>14 天行 `raw_artifact` 置 NULL（**行全保留**），canonical/health 不动，失败 exit 1 + stderr 裸 traceback（恰被同日 P1-1 的 error_alert 崩溃尾检测覆盖）；②cron 每日 02:40 清理 + 周日 02:50 `--vacuum` 还盘（auto_vacuum=0，平时进 freelist；刻意先于 03:00 db_backup），crontab-loop-baseline 登记；③删除 4 个陈旧手动大备份（8/04+9/18, 85MB，已被每日轮换取代，删除前验当日备份在位）；④测试 2 例（老行清/行保留/canonical 不动/dry-run 零写）。
+**验证**: `test_event_stream_retention.py` 2 passed + 台账守卫 10 passed；生产首跑 rc=0。
+**诚实边界**: 该库 10-09 才建（最老行 <14 天）⇒ 今日首跑 `rows_to_null=0` 是**预期**；10-23 起每天清出 ~170MB/天的增量，稳态 ≈ 2.4GB（14 天窗）+ 备份 7×≈17GB（55GB 余量可容）。当前 949MB 要到首轮清理后才靠周日 VACUUM 回收。
+**下一步**: 10-23 后核首轮真清（`logs/event_stream_retention.log`）；P3 余量：棘轮双执法面合并 / main FF 合并（待授权）/ 策略面 DEB（待立项）。
+
 ## 2026-10-15 P2 收尾波（熔断地图刷新 + 切 REAL 清单 + 真钱推送归 hub + chase_cap 洗清）
 
 **触发**: 用户令「继续」。**落地**（`a0d6bc994`）:
