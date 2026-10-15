@@ -838,8 +838,13 @@ def test_settler_baseline_reproducible_from_live_db():
     # v2 (2026-10-10 用户裁「从8月份开始统计, 早期的策略和逻辑不够成熟」): [2026-08-01, 2026-10-10)
     assert st.BASELINE_SINCE == "2026-08-01", (
         f"基线窗口起点应为 2026-08-01 (用户裁 8 月起统计), 实得 {st.BASELINE_SINCE}")
+    # 2026-10-15 修复右删失: 装载口径按 trade_date(入场日) 取行, 窗内入场但 10-10 后
+    # 才结算的行会晚熟进窗 (实测 n 441→443, 净额漂 −650) ⇒ 复现端补「结算日 < 冻结日」
+    # 过滤, 与 10-10 冻结时刻的语义逐字一致 (彼时 exit_price>0 即已结算)。
+    # (E 表教训: 只钉冻窗/冻结行; 生产装载器不动。)
     pre = [r for r in st.load_sim_pnl(st.BASELINE_SINCE)
-           if r["trade_date"] < st.BASELINE_UNTIL]
+           if r["trade_date"] < st.BASELINE_UNTIL
+           and (r.get("exit_time") or "")[:10] < st.BASELINE_UNTIL]
     assert pre, "基线窗口无样本 — DB 口径变了?"
 
     b_all = st._pnl_block(pre)

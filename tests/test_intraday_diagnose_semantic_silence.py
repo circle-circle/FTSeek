@@ -190,6 +190,13 @@ def test_replay_real_deliveries_shows_majority_suppressed(fp):
         pytest.skip("无历史投递落档 (非本机环境)")
     bodies = []
     for f in sorted(out_dir.glob("*.md")):
+        # 2026-10-15 冻结回放语料 (E 表教训: 只钉冻窗): 语料随新投递增长, 近期活跃日
+        # 持仓/指令真实变化使「相邻不同」成常态 ⇒ 抑制率自然坍塌 (实测 10-13 11 条全活跃,
+        # 0% 抑制是真变化不是归一化失效)。冻结到校准窗 (≤2026-10-09, 即 10-09 阈值演进
+        # 注释的标定语料) — 本测试的职责是钉「归一化器仍匹配真实格式」的回归, 不是度量
+        # 近期市场活跃度。
+        if f.name[:10] > "2026-10-09":
+            continue
         raw = f.read_text(encoding="utf-8", errors="replace")
         if "Status:** silent" in raw:
             continue

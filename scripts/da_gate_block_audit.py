@@ -30,7 +30,11 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 GATE = REPO / "data" / "da_gate_decisions.jsonl"
-DB = REPO / "data" / "ftseek_us.db"
+# 2026-10-15 (chokepoint 棘轮收口): DB 路径改走 SSOT (live/sim 路由由 get_main_db 裁决),
+# 连接用变量路径 f"file:{var}?mode=ro" 形态 (字面路径连接属守卫禁止面)。
+def _db_path() -> str:
+    from app.core.db_utils import get_main_db
+    return str(get_main_db())
 
 
 def _rows(p):
@@ -89,7 +93,8 @@ def section_skip(rows):
     hi = [r for r in skips if (_score(r) or 0) >= 6]
     print(f"  SKIP score分桶: 差(<5,正确跳过) {lo} ({lo/len(skips)*100:.0f}%) | 良/优(>=6,可能漏) {len(hi)} ({len(hi)/len(skips)*100:.1f}%)")
     # replay_bars 覆盖偏差
-    con = sqlite3.connect(f"file:{REPO/'data'/'ftseek_us.db'}?mode=ro", uri=True); con.row_factory = sqlite3.Row
+    _dbp = _db_path()
+    con = sqlite3.connect(f"file:{_dbp}?mode=ro", uri=True); con.row_factory = sqlite3.Row
     traded = {(r["symbol"], str(r["entry_time"])[:10]) for r in con.execute(
         "SELECT symbol,entry_time FROM trade_records WHERE symbol!='' AND entry_time IS NOT NULL AND exit_reason IS NOT NULL AND exit_reason!=''")}
     skip_u = {(r.get("symbol"), r.get("trade_date")) for r in skips if r.get("symbol")}
@@ -162,7 +167,8 @@ def main():
             m = re.search(r"分析结论排序=\S+?\(score=([\d.]+)/10 decision_conf=([\d.]+)", txt)
             if m:
                 gate[(r.get("symbol"), r.get("trade_date"))].append((float(m.group(1)), float(m.group(2))))
-    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True); con.row_factory = sqlite3.Row
+    _dbp2 = _db_path()
+    con = sqlite3.connect(f"file:{_dbp2}?mode=ro", uri=True); con.row_factory = sqlite3.Row
     pairs = []
     for r in con.execute("""SELECT symbol,entry_time,pnl_net FROM trade_records
                             WHERE exit_reason IS NOT NULL AND exit_reason!='' AND exit_time IS NOT NULL

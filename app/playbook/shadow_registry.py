@@ -200,10 +200,11 @@ ADJUDICATED: dict[str, dict] = {
     },
     "ue_short_boost_shadow": {
         "read_at": "2026-10-15", "recheck_after": "", "needs_user": False,
-        "note": "2026-10-15 结案: 用户裁「冻结样本结算后归档」。一次性结算 52/54 可结算: "
+        "note": "2026-10-15 结案: 用户裁「冻结样本结算后归档」。一次性结算 "
+                "scripts/ue_short_boost_final_settlement.py 52/54 可结算: "
                 "T+1 方向调整 mean +0.0523% / t=0.667 / MDE80=2.94pp (无可测 edge), "
-                "尾部 15 笔 −0.4618%; 主门 n=60 永不可达 (写方链 10-06 退役) ⇒ KILLED, "
-                "产物与结算器留档。",
+                "尾部 15 笔 −0.4618%; 主门 n=60 永不可达 (写方链 10-06 退役) ⇒ KILLED。 "
+                "判据出处 DEB-20260805-supply §四.3; 产物 data/ue_short_boost_final_settlement.json。",
     },
     "gap_chase_gate": {
         "read_at": "2026-09-21", "recheck_after": "2026-10-21", "needs_user": False,
@@ -266,13 +267,15 @@ ADJUDICATED: dict[str, dict] = {
         "read_at": "2026-10-15", "recheck_after": "", "needs_user": False,
         "note": "在采未注册(禁止态)补登。观测窗在跑: 10-14 收盘 n_closed=28/200, single_version, "
                 "hash 缺失 0。无可裁决事项 (判决面=oct_cohort BROKEN 终局已定); PERMANENT_MEASURE "
-                "挂账防机械迁 READY。窗口进度重看=OKR 结算日 (10-31)。",
+                "挂账防机械迁 READY。窗口进度重看=OKR 结算日 (10-31)。"
+                "出处: DEB-20261009-event-to-trade-pipeline §28.11 + docs/OKR-2026-10.md KR1 回写行。",
     },
     "ext_entry_earnings_criterion_shadow": {
         "read_at": "2026-10-15", "recheck_after": "2026-10-31", "needs_user": False,
         "note": "在采未注册(禁止态)补登。在采健康 (10-15 07:55 仍写, 5765 行/16 ET日, "
                 "legacy_blocked_new_pass=493)。判据②读数面=10 月财报季裁决「修口径放回多少票」, "
-                "故重看窗=10-31 (财报季末/OKR 结算窗)。",
+                "故重看窗=10-31 (财报季末/OKR 结算窗)。出处: RFC-097 §预注册判据 "
+                "(docs/decisions/RFC-097-earnings-criterion-anchor-and-entry-band.md)。",
     },
     "entry_anchor_dual": {
         "read_at": "2026-10-15", "recheck_after": "2026-10-21", "needs_user": False,

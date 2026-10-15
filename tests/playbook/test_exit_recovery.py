@@ -139,6 +139,7 @@ def recovery(entry_env, tmp_path, monkeypatch):
                 exit_reason TEXT, realized_pnl REAL, pnl_pct REAL, holding_hours REAL,
                 close_futu_order_id TEXT, mfe_pct REAL, mae_pct REAL, max_drawdown REAL,
                 fees_est REAL, pnl_net REAL, fees_source TEXT,
+                net_pnl_pct REAL,
                 trade_date TEXT, trade_mode TEXT DEFAULT 'simulate');
             CREATE TABLE playbook_instructions (
                 id INTEGER PRIMARY KEY, outcome TEXT, exit_price REAL, exit_time TEXT,

@@ -241,6 +241,13 @@ def env(tmp_path, monkeypatch):
     # P1a 2026-10-08 (DEB-20261008 拆分路线): pipeline 纯函数本体已迁
     # pipeline_parts — 本隔离环境按"只加载已复核纯模块"原则同批纳入,
     # 否则 pipeline 转发器的懒 import 在空包路径下找不到新包。
+    # 2026-10-15: exit_reasons (RFC-142 归一化层, 纯映射) — close_flow 顶import它,
+    #   不加载则隔离环境 ModuleNotFoundError (该批 10-13 落地时未同步本清单)。
+    load("app.risk.exit_reasons", "app/risk/exit_reasons.py")
+    # 同批遗漏: live_fee_reconciliation (RFC-142 LIVE 费用对账, 轻模块 json/datetime 级,
+    #   close_flow 的 PLAYBOOK_LIVE 分支 import 它; 不加载则 real 臂 fees_est 恒 None)。
+    load("app.execution.live_fee_reconciliation",
+         "app/execution/live_fee_reconciliation.py")
     load("app.playbook.pipeline_parts", "app/playbook/pipeline_parts/__init__.py")
     load("app.playbook.pipeline_parts.shadow_telemetry",
          "app/playbook/pipeline_parts/shadow_telemetry.py")

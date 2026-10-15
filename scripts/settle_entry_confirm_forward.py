@@ -169,7 +169,7 @@ def load_sim_pnl(since_date: str):
     con.row_factory = sqlite3.Row
     out = []
     for r in con.execute(
-            "SELECT symbol, trade_date, entry_time, exit_reason, fees_est, "
+            "SELECT symbol, trade_date, entry_time, exit_time, exit_reason, fees_est, "
             "       quantity AS qty, entry_price, "
             "       COALESCE(pnl_net, realized_pnl) AS net "
             "FROM trade_records "
