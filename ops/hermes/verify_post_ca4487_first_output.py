@@ -152,13 +152,16 @@ if not FUNNEL.exists():
     emit("  ⏭️  漏斗产物不存在, 跳过")
 else:
     recs = []
+    bad = 0
     for ln in FUNNEL.read_text(errors="replace").splitlines():
         if not ln.strip():
             continue
         try:
             recs.append(json.loads(ln))
         except Exception:
-            pass
+            bad += 1  # 2026-10-15 R5: except 不裸吞, 坏行计数透出
+    if bad:
+        emit(f"  ⚠️ 漏斗坏行跳过 {bad} 条")
     flat = []
     for r in recs:
         for c in (r.get("candidates") or []):

@@ -179,7 +179,9 @@ def test_capital_allocator_persists_asynchronously_outside_hot_path(tmp_path):
     )
 
     assert allocator.try_reserve("main", 0.30) is True
-    for _ in range(100):
+    # 2026-10-15: 排空等待 2s→10s — 全量套件高负载下异步 worker 排空会超 2s
+    # (实测 18min 全量跑假红一次, 单跑恒绿); 断言语义不变 (队列必须排空)。
+    for _ in range(500):
         if allocator._persistence_queue.empty():
             break
         time.sleep(0.02)
