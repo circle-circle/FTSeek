@@ -1,5 +1,17 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-16 推送面准确性深查修复批 + 融合方案待裁（用户令「检查准确性/合理性/可否融合」）
+
+**触发**: 用户要求推广 bridge 案例到全部推送面。
+**深查发现**（巡检 agent + 主会话复核）与修复（`98a00502f`）:
+- **我自己的雷被抓住**: bridge 等待逻辑曾把 skipped_* 当终态 ⇒ EST 季（11/01 起）错季行 08:10 写 skip 会让 09:12 推送误判批次完成（老 bug 原样复发）→ 终态只认真跑完四类 + 钉子测试。
+- **regime 标签连错 3 天**：裸 SQL `ORDER BY date DESC LIMIT 1` 读到未来日的 weekly_report 幂等标记行 → 三处（da_bridge/build_symbol_rule_cards/condition_expectancy_report）统一按 db.py 口径过滤；实证修复前读 weekly_report(10-16)、修复后读 cautious(10-15)。
+- **watchdog D1 假阳性**：`open_positions` 零行=账面全平=健康，被误报 never_fed 且经 meta_audit 二次放大成 P0 → 按 LATCH_TABLES 先例登记豁免+钉子测试。
+- **daily_llm_token 北京日标签**：卡片现标「北京自然日口径」（聚合窗不改，保历史连续）。
+**融合方案已呈用户待裁**（G1 健康面/G2 影子面/G4 盘后卡/G6 周六簇可合；G3/G5/G7 不合或部分）。
+**未动余项**（深查报告 §G）：cutover/watchdog 的 1800s 冷却 << 24h 周期 ⇒ 同一告警逐日重推（解药=推广 episode 指纹）；填充行污染指令计数 3 面；error_alert 双载体同 expr 双跑；watchdog 周末用北京星期判 ET 逻辑（明天周六就复发）；eth_weekly_gate EST 季截断周五盘后；weekly_scorecard 60 行截断。这些大多改 cadence/口径语义 ⇒ 留用户裁。
+**下一步**: 融合方案裁决后按组落地。
+
 ## 2026-10-16 盘前 Bridge 推送延后合并 UE 产出（用户裁「延后到 UE 产出后再推送」）
 
 **触发**: 用户发现 21:10 后 UE→DA 产出的新标的/指令不在 20:55 的 Bridge 推送里。
