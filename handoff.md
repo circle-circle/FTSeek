@@ -1,5 +1,15 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-16 推送面联动新鲜度修复（用户令「确保及时更新联动感知推送」）
+
+**触发**: 用户问两天修复波后推送面是否同步。
+**自查发现+修复**（`6e6c0e82e`）:
+- **OKR 面滞后**：okr_status.py 推送面把已结算的 OKR-2026-09 当现行（其 settlement 块其实已标 NOT_MET 终局，但无 10 月指针）→ 新增只读 `okr_2026_10` 状态块（KR1 BROKEN 终局带 DEB 锚/KR2 攒样/KR3 已达成/KR4 四锁指针；非判分引擎，落地债#2 仍挂账）+ 头条指针改指 10 月。
+- **write-only 缺口**：conf_tier_guard 的 CONSIDER_DOWNWEIGHT 标记原零消费方 ⇒ shadow_board 新增守卫段（注册表行+最新读数+标记透出）+「降权候选」入 `_board_actionable` 推送门标记集——标记置位当日看板即推（无料不推保持：无标记静默）。
+- **核对为健康**: `_board_actionable` 待裁面读注册表 ADJUDICATED（昨日结案的 ue_short_boost/rfc104/kr3 已清 needs_user ⇒ 不会再误推待裁）；`_guard_lines` 对 KILLED/停采项免停摆告警（注册表驱动红利）。
+**验证**: okr 测试 44 passed（产物已带新块）；board 守卫测试 10 passed；看板实渲染确认新段。
+**下一步**: 等巡检 agent 全量面报告（penetration/live_weekly/cutover/盘后追踪等面）回来后补齐余项。
+
 ## 2026-10-16 DEB-20261016 全批落地（L0 尺子三件 + 固化裁决 + L1/L3 影子 + L2 挂账）
 
 **触发**: 用户裁「全批」（DEB §五五问全批）。
