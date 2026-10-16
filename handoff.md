@@ -1,5 +1,16 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-16 推送面巡检发现修复批（P0×3 + P1/P2，含明早载体依赖）
+
+**触发**: 推送面巡检 agent 全量报告（§3 谎言清单/§4 感知缺口）→ 用户令「继续」。
+**P0**:
+- **词典谎言修复**（明早 09:15 周六待裁决载体依赖）：shadow_lexicon 的 ue_short_boost/kr3/eod_depth 三条陈旧结论改写实终局 + 新增 rfc104 词条；`--dry` 实证状态与正文一致。
+- **DA stderr 采集链断裂修复**：`da_main_carrier.py` 恢复 stderr 落盘 `logs/da_pipeline_stderr.log`（10-08 接管时丢的 `2>>` 重定向 ⇒ short_funnel 影子静默断供 8 天且看板误指写方）；线上副本已同步 sha256 一致；`short_funnel_shadow_tag.py` 的 <3 评级静默跳过改 WARNING + 计数透出。
+**P1**: 看板 ue_short_boost 融合行补退役标（照 carry 先例）；看板推送加 episode 级去重（`data/shadow_board_push_state.json` 指纹=告警行抹数字漂移，同一 episode 不逐日重推——治「连推 8 天同因」）；09 块「现行判据」双标清除（okr_2026_09_scoring:729/712 + okr_status 段注释）；loss_breaker 注册表加 ADJUDICATED_DO_NOT_ENABLE 挂账（status 与 verdict 一致化）。
+**P2**: conf_tier_guard cron 06:55→06:05（看板 06:15 前产出，消时序倒挂）；tracking_flow 指纹死分量 pnl_net→pnl + 状态文件改绝对路径。
+**验证**: 棘轮/契约/同步/看板/dedup 44+13+15 全绿；盘后载体 `--dry` 实证。Hermes jobs.json 两个 job 三处 prompt 修复（Step 8 退役 Step 11 固化 周日 OKR 指针），备份 `.bak-20261016-promptfix`。
+**下一步**（巡检余量，未动）: 4 个新注册项的看板分段（现仅出现在周六清单）；carrier_orphan_census 挂 cron；推送失败钉钉兜底面统一；watchdog 纳入输入日志档。
+
 ## 2026-10-16 推送面联动新鲜度修复（用户令「确保及时更新联动感知推送」）
 
 **触发**: 用户问两天修复波后推送面是否同步。
