@@ -1,5 +1,12 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-16 TP-RR 门禁浮点边界容差（用户令「修复」）
+
+**触发**: 用户贴 RIVN SHORT 门禁刷屏日志（`RR=1.500000<1.5`）令核查全链 + RFC-141 v2（2分钟版）。核查结论: v2 全链健康（今日 3 CONFIRMED 含 AVGO grace recovered / 4 ABANDONED grace persisted / 弃单观测 8 行齐 / delay 126-148s / proxy-mid 回落留痕正常）；RIVN 兜底链 SL_BREAKEVEN +$20.47 接管正常零实损；真病灶=浮点边界——指令几何十进制 RR 恰=1.5（风险0.72/回报1.08），二进制算得 1.4999999999999962 被误吞（49 笔吞单史上首例恰边界）。
+**落地**（`715d1b8e1`）: 三处同尺 ε=1e-9 容差（`exit_engine` / `exit_path_replay` / `extended_hours_profit_exit_rules`），高出浮点误差 ~6 个数量级、低于最近真实吞单（1.4968）~6 个数量级 ⇒ 只救恰边界。顺带清剿 except:pass 棘轮 921→922（`b5e265ad2` bridge 台账坏行静默 continue → stderr 留痕，9/30 先例，控制流不变）。
+**验证**: 棘轮家族 41 + replay/patient/EXT 108（含新钉子×2: 恰=1.5 放行 / 1.4999 仍吞）+ playbook 1053 + reentry/smoke 73 全绿；四文件 py_compile 过。
+**生效**: `exit_engine` 在主服务进程内 ⇒ **需 restart 生效**（盘中 AMD/AVGO 两仓在管，重启时机待用户裁）；replay/EXT 两脚本下次运行自动加载。
+
 ## 2026-10-16 源头驱动一致性守卫 + 健康面 episode 去重（用户令「从源头修复，推送随源头调整自动体现」+ 融合全选）
 
 **触发**: 用户裁融合 G1+G2+G4+G6 全选 + 追加要求「从源头修复，推送/展示随源头调整自动体现」。
