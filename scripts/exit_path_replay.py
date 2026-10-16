@@ -279,7 +279,8 @@ def replay_exit(*, direction: str, entry_price: float, entry_hm: str,
     tp = float(take_profit) if take_profit else 0.0
     tp_risk = abs(entry_price - sl) if sl > 0 else 0.0
     tp_rr = (abs(tp - entry_price) / tp_risk) if (tp > 0 and tp_risk > 0) else 999.0
-    tp_armed = bool(tp > 0 and tp_rr >= cfg["min_tp_rr"])
+    # 2026-10-16 浮点边界容差: 与 exit_engine 同尺 (恰等阈值几何的 ε=1e-9 救回)。
+    tp_armed = bool(tp > 0 and tp_rr >= cfg["min_tp_rr"] - 1e-9)
 
     # 步骤③ 三轨阈值 (循环外算一次; 全部来自 cfg / exit_cfg, 无平行常量)
     ds_minutes = float(cfg["dead_signal_exit_minutes"])

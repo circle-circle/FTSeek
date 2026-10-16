@@ -193,6 +193,24 @@ def test_tp_fires_when_rr_passes():
     assert rep["exit_price"] == pytest.approx(103.0)              # 取有利极值
 
 
+def test_tp_rr_float_boundary_exact_1p5_armed():
+    """2026-10-16 RIVN 实锤: 十进制恰=1.5 的几何 (风险0.72/回报1.08) 二进制算得
+    1.4999999999999962, ε=1e-9 容差后不得被门禁吞 (exit_engine/replay/EXT 三处同尺)。"""
+    bars = [_bar("09:47", 13.04, 13.04, 13.04, 13.04)]
+    rep = _replay(direction="SHORT", entry_price=13.04, entry_hm="09:47",
+                  initial_sl=13.76, take_profit=11.96, bars=bars)
+    assert rep["tp_rr"] == pytest.approx(1.5, abs=1e-9)
+    assert rep["tp_armed"] is True
+
+
+def test_tp_rr_genuine_below_boundary_still_swallowed():
+    """ε 只救恰边界: 真实低于阈值 (1.4999) 仍吞 — 防容差过宽回退门禁本意。"""
+    bars = [_bar("09:37", 100, 100, 100, 100)]
+    rep = _replay(direction="LONG", entry_price=100.0, entry_hm="09:37",
+                  initial_sl=99.0, take_profit=101.4999, bars=bars)  # RR=1.4999 < 1.5
+    assert rep["tp_armed"] is False
+
+
 def test_sl_beats_tp_within_same_bar():
     """bar 内 high/low 先后不可知 ⇒ 次序固定为 SL 先判 (保守, 两臂同尺)。"""
     bars = [_bar("09:37", 100, 100, 100, 100), _bar("09:38", 100, 110.0, 90.0, 100.0)]

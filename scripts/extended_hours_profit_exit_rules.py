@@ -183,7 +183,8 @@ def decide_original_profit_exit(
             current >= take_profit if long_position else current <= take_profit
         )
         if take_profit > 0 and take_profit_hit:
-            if tp_rr < min_tp_rr:
+            # 2026-10-16 浮点边界容差: 与 exit_engine 同尺 (恰等阈值几何的 ε=1e-9)。
+            if tp_rr < min_tp_rr - 1e-9:
                 action = "hold"
                 detail = "take_profit_rr_gate"
             elif profit_pct - fee_cushion_pct <= 0:

@@ -720,7 +720,12 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
         _tp_risk = abs(entry_price - initial_sl) if (initial_sl and initial_sl > 0) else 0
         _tp_reward = abs(_tp - entry_price)
         _tp_rr = (_tp_reward / _tp_risk) if _tp_risk > 0 else 999  # 无SL→不门禁
-        if _tp_rr < _MIN_TP_RR:
+        # 2026-10-16 浮点边界容差 (RIVN 实锤): 恰等阈值的几何 (风险0.72/回报1.08,
+        #   十进制 RR 恰=1.5) 二进制算得 1.4999999999999962 被误吞, 而 %.6f 显示
+        #   1.500000 与判定相反。ε=1e-9 高出浮点误差 ~6 个数量级、低于最近真实
+        #   吞单 (1.4968) ~6 个数量级 ⇒ 只救恰边界, 零误判面。三处同尺:
+        #   scripts/exit_path_replay.py / extended_hours_profit_exit_rules.py。
+        if _tp_rr < _MIN_TP_RR - 1e-9:
             # [DEB-20260910 §15.5 2026-09-12 用户裁"按建议执行"] DEBUG→INFO + meta 留痕:
             #   CTRN 9/11 实锤 RR=1.499261 显示取整成 1.50 — "固定TP是否启用及原因"
             #   常规日志不可见 (DEBUG 级), metadata 无记录 → 事后归因只能翻源码重算。

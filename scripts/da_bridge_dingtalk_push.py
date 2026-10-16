@@ -70,7 +70,10 @@ def _fresh_event_terminal_today(date: str) -> bool:
                 continue
             try:
                 row = json.loads(line)
-            except Exception:
+            except Exception as _e:
+                # 2026-10-16 棘轮清剿 (b5e265ad2 新增点顶爆基线 921→922):
+                #   坏行跳过改 stderr 留痕 (9/30 先例), 控制流不变仍跳过。
+                print(f"[bridge] fresh-event 台账坏行跳过: {_e}", file=sys.stderr)
                 continue
             if (row.get("date") == date and row.get("mode") == "execute"
                     and row.get("status") in _FRESH_EVENT_TERMINAL):
