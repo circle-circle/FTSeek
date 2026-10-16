@@ -807,6 +807,10 @@ def main(push=False, dry=False, update_baseline=False):
         # 2026-08-09 (告警风暴消除): 文件持久化冷却 — 30min 内同内容不重复推.
         #   看门狗是 cron 独立进程, 进程内状态无效; 持久化到 data/watchdog_last_push.json.
         #   若 OpenD/Futu 持续不可用, watchdog 每轮都检到停更 → 无冷却=每轮1条告警风暴.
+        # 2026-10-16 (巡检 A-4 + 用户令「源头修复」): 30min 时间窗改为**内容指纹**:
+        #   同内容告警 (hash 相同) 只推一次, 内容变化才再推 — 1800s 窗对日频作业
+        #   等于无冷却 (实证: 同一 D1 误报连推多日)。「宁多勿漏」由 fail-loud 兜住:
+        #   状态不可读 ⇒ _suppress=False 照推。
         _state_file = DATA / "watchdog_last_push.json"
         _now = time.time()
         _suppress = False
@@ -814,12 +818,12 @@ def main(push=False, dry=False, update_baseline=False):
             if _state_file.exists():
                 with open(_state_file) as _f:
                     _prev = json.load(_f)
-                if _prev.get("msg_hash") == _hash_msg(msg) and _now - _prev.get("ts", 0) < 1800:
+                if _prev.get("msg_hash") == _hash_msg(msg):
                     _suppress = True
         except Exception:
             _log.warning("cooldown state read failed", exc_info=True)
         if _suppress:
-            print("[cooldown] 30min 内同告警已推过, 跳过")
+            print("[cooldown] 告警内容与上次推送一致, 跳过 (内容变化即恢复推送)")
         else:
             try:
                 from app.notifier.feishu import send_text
@@ -840,8 +844,12 @@ def main(push=False, dry=False, update_baseline=False):
 
 
 def _hash_msg(msg: str) -> str:
+    """内容指纹: 抹掉数字漂移 (天数/小时数随时间变, 不应产生新 episode) — 2026-10-16
+    与 shadow_board 的 episode 指纹同规 (re.sub 数字→#)。"""
     import hashlib
-    return hashlib.md5(msg.encode("utf-8")).hexdigest()[:16]
+    import re as _re
+    norm = _re.sub(r"[\d.]+", "#", msg)
+    return hashlib.md5(norm.encode("utf-8")).hexdigest()[:16]
 
 
 if __name__ == "__main__":

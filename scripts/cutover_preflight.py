@@ -60,7 +60,8 @@ LIVE_DB = DATA / "ftseek_us_live.db"
 OUT_DIR = DATA / "cutover"
 BASELINE = OUT_DIR / "preflight_baseline.json"
 COOLDOWN_STATE = OUT_DIR / "preflight_push_state.json"
-COOLDOWN_SEC = 1800  # 30min 内同告警不重复推 (与 data_freshness_watchdog 同口径)
+# 2026-10-16: 30min 时间窗冷却已退役 (改内容指纹, 见 push_alert) — 实证同一句告警
+# 连推 9 天; 常量删除防误读回旧语义。
 
 # 状态优先级: block > warn > ok > na (汇总取最严重)
 _SEV = {"ok": 0, "na": 1, "warn": 2, "block": 3}
@@ -213,17 +214,21 @@ def diff_against_baseline(rep: Report, baseline: Dict[str, str]) -> Dict[str, Li
 
 
 def _hash_msg(msg: str) -> str:
+    """内容指纹: 抹掉数字漂移 (2026-10-16 与 shadow_board episode 指纹同规)。"""
     import hashlib
-    return hashlib.sha256(msg.encode("utf-8")).hexdigest()[:16]
+    import re as _re
+    norm = _re.sub(r"[\d.]+", "#", msg)
+    return hashlib.sha256(norm.encode("utf-8")).hexdigest()[:16]
 
 
 def push_alert(msg: str, *, push: bool) -> str:
-    """30min 同告警去重后推飞书 (照抄 data_freshness_watchdog 的 cooldown 范式)."""
+    """同内容告警只推一次, 内容变化才再推 (2026-10-16 改: 原 30min 时间窗对日频作业
+    等于无冷却 — 实证同一句「P6 warn→ok」连推 9 天; 改内容指纹判定)."""
     import time as _time
     now = _time.time()
     try:
         prev = json.loads(COOLDOWN_STATE.read_text(encoding="utf-8"))
-        if prev.get("msg_hash") == _hash_msg(msg) and now - prev.get("ts", 0) < COOLDOWN_SEC:
+        if prev.get("msg_hash") == _hash_msg(msg):
             return "cooldown_suppressed"
     except FileNotFoundError:
         SKIPPED_SOURCES.append("cooldown_state:absent(首次推送)")

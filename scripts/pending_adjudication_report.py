@@ -41,6 +41,8 @@ STATE = REPO / "data" / "shadow" / "pending_adjudication_state.json"
 # 白话词典已提为 SSOT: app/review/shadow_lexicon.py (判决书推送与影子验收清单共用一份)。
 # 本模块只做分类与排版, 不再自带白话 —— 两处各写一份会导致同一影子两种说法。
 from app.review.shadow_lexicon import SHADOW_LEXICON as CURATED  # noqa: E402
+from app.review.shadow_lexicon import (  # noqa: E402
+    check_lexicon_registry_consistency)
 # 推送截断 SSOT (RFC-109④收口): 原裸切片 conclusion[:96]/[:100] 无句读边界也无「…」标记
 # ⇒ 长结论被拦腰截成半句且读者看不出被截断 (实测 exit_param_shadow/premarket_invalidation 两条)。
 from app.review.bundle_render import clip_for_push  # noqa: E402
@@ -286,6 +288,18 @@ def build_report(*, force: bool = False, dry: bool = False) -> str:
              "+ DEB-20261008 三重证据否决（复算: `scripts/deb20261008_scaleout_binding.py` / "
              "`_cf.py` / `_arith.py`，验证器 `scripts/verify_deb20261008.py`）")
     L.append("")
+
+    # 2026-10-16 (源头驱动一致性): 词典(手写文案)↔注册表(SSOT)矛盾自动透出 —
+    # 注册表进终态而词典措辞仍活跃 ⇒ 本周报直接可见, 不再靠人记得改文案。
+    try:
+        mismatches = check_lexicon_registry_consistency()
+    except Exception:
+        mismatches = []
+    if mismatches:
+        L.append("**⚠️ 词典↔注册表一致性复核建议**（注册表已终态但词典措辞仍活跃 — 需人工复核文案）")
+        for m in mismatches:
+            L.append(f"- `{m['id']}`（注册表 {m['registry_status']} / 词典 cls={m['cls']}）")
+        L.append("")
 
     if not dry:
         STATE.parent.mkdir(parents=True, exist_ok=True)

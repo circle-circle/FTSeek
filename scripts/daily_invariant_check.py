@@ -576,6 +576,28 @@ def _check_fee_bps_anomaly(rec, db_path=None) -> dict:
     return out
 
 
+def _check_lexicon_consistency(rec) -> dict:
+    """W9: 词典↔注册表一致性 (2026-10-16, 用户令「推送/展示随源头调整自动体现」).
+
+    注册表进终态 (KILLED/SUPERSEDED/GRADUATED) 而词典 (手写文案层) 措辞仍活跃
+    ⇒ 次日告警 (实证形态: ue_short_boost 已 KILLED 而词典仍「攒样 52/60 还差 8 笔」,
+    周六载体差点原样推出)。只读; 回滚: 删 main() 注册行 + 本函数。
+    """
+    out = {"checked": 0, "mismatches": 0}
+    try:
+        from app.review.shadow_lexicon import check_lexicon_registry_consistency
+        mm = check_lexicon_registry_consistency()
+        out["checked"] = -1  # 词典条数在守卫函数内全量扫, 此处只带矛盾数
+        out["mismatches"] = len(mm)
+        for m in mm:
+            rec("W9_lexicon_registry_mismatch", "-", m["id"],
+                f"{m['reason']} (注册表 {m['registry_status']} / 词典 cls={m['cls']})")
+    except Exception as e:
+        if not _is_structural_error(e):
+            rec("W9_detector_error", "-", "-", f"{type(e).__name__}: {e}")
+    return out
+
+
 def _check_field_cardinality(rec, _collect=None) -> dict:
     """W2: 离散字段基数棘轮 — 新塌缩当天告警, 已知病灶静默计数。全程只读。
 
@@ -1272,6 +1294,10 @@ def main(push_enabled: bool = True) -> int:
     #    仙股/最低佣金异常 (>200bps) 次日告警; 只读监控, 不拦单 ──
     fee_bps_anomaly = _check_fee_bps_anomaly(rec)
 
+    # ── W9 词典↔注册表一致性 (2026-10-16, 用户令「推送随源头调整自动体现」):
+    #    注册表进终态而词典(手写文案)措辞仍活跃 ⇒ 次日可见, 不再靠人记得改文案 ──
+    lexicon_consistency = _check_lexicon_consistency(rec)
+
     # ── W1_* 关键违反直推: **必须在覆写 OUT 之前** (防刷屏判据读的是上一轮 OUT 里的
     #    w1_direct_push 状态; 先覆写就永远读到本轮自己 ⇒ 首次告警即被自我抑制)。──
     if push_enabled:
@@ -1292,6 +1318,7 @@ def main(push_enabled: bool = True) -> int:
         "log_hygiene": log_hygiene,           # W4 debug吞异常 / W5 裸名logger / W6 无栈告警
         "chg_denominator": chg_denominator,   # W7 两影子昨收分母口径分叉 (pmi 快照 vs ctx 缓存)
         "fee_bps_anomaly": fee_bps_anomaly,   # W8 仙股/最低佣金异常 (>200bps, DEB-20261009-event §30)
+        "lexicon_consistency": lexicon_consistency,  # W9 词典↔注册表终态一致性 (2026-10-16)
         "w1_direct_push": w1_push,            # W1 事件型直推回执 (DEB-20260909 §7.7⑤)
         "settled_all_sources": settled_all,   # I11~I14 覆盖面 (全部 source_type)
         "settled_exempt_marked": exempt,      # data_quality 已标记坏行 (豁免告警, 数量增长需人工看)

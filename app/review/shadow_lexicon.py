@@ -18,8 +18,8 @@ from __future__ import annotations
 SHADOW_LEXICON: dict[str, dict[str, str]] = {
     "futu_channel_top_movers": {
         "plain": "涨幅榜前 100（追高族）: 榜上标的之后到底是续涨还是回落",
-        "conclusion": "⚠️ 反直觉: 榜内横截面 IC=−0.44 / t=−13（榜首之后**续跌**）, 但实盘里买 top10 的 11 笔反而 +$15.20/笔 ⇒ 榜级与笔级**符号相反**、不可互相代入。用途未定 (排除信号? 反向候选池? 并入既有追高族?) 三条路都要另立预注册",
-        "cls": "NEEDS_USER",
+        "conclusion": "**已结案（SUPERSEDED, 2026-10-03 终裁）**：用途三岔路已裁「③并入 KR3 方向×涨幅轴, 本影子不转正/不加门」; 而 KR3 已于 2026-10-15 两腿全证伪 KILLED ⇒ 本轴整体关闭。榜内横截面 IC=−0.44/t=−13（榜首续跌）与笔级 +$15.20/笔符号相反的历史读数留档备查, 不构成新轴",
+        "cls": "AUTO_WATCH",
     },
     "futu_channel_iv_hv": {
         "plain": "财报前 IV/HV 高低能不能预告『这单摸不摸得到肉』",
@@ -89,8 +89,8 @@ SHADOW_LEXICON: dict[str, dict[str, str]] = {
     },
     "reentry_quick_tp_gate": {
         "plain": "再入场的『快止盈』被门挡住, 到底亏不亏",
-        "conclusion": "n=13（门 10）刚够; 门禁与快收参数在 9/1–9/30 窗口内**禁改**, 到期一次性结算",
-        "cls": "WINDOW",
+        "conclusion": "**已结案（KILLED, 窗满机械结算）**：9/1–9/30 冻结窗到期结算 n=13, TP 触达 **0/13** ⇒ 快止盈门在该窗从未真实触发, 门无实益 ⇒ 关停。归档留底",
+        "cls": "AUTO_WATCH",
     },
     "vwap_gate_ab": {
         "plain": "VWAP 相位门拦下的单, 是拦对了还是误杀",
@@ -218,3 +218,39 @@ SHADOW_LEXICON: dict[str, dict[str, str]] = {
         "cls": "NEEDS_USER",
     },
 }
+
+
+# ── 词典↔注册表一致性守卫 (2026-10-16, 用户令「从源头修复, 推送随源头调整自动体现」) ──
+# 病灶: 词典 conclusion 是手写文本, 注册表状态变了它不跟 (实证: ue_short_boost 已 KILLED
+# 而词典还说「攒样 52/60 还差 8 笔到门」, 周六载体差点原样推出)。本守卫 = 源头一致性
+# 检查器: 注册表进终态 (KILLED/SUPERSEDED/GRADUATED) 而词典措辞仍是活跃态 ⇒ 暴露,
+# 推送面/日检直接消费本函数 ⇒ 源头调整当天展示层自动体现矛盾, 不再靠人记得改文案。
+_ACTIVE_CLS = {"WINDOW", "NEEDS_USER"}     # 活跃态分类 (攒样中/待裁)
+_ACTIVE_MARKERS = ("攒样中", "还差", "待裁", "重看", "攒至", "继续攒")
+_TERMINAL_MARKERS = ("已退役", "已结案", "已终裁", "已关停", "KILLED", "CLOSED",
+                     "GATE_NOT_WORTH", "FAIL", "结论已出")
+
+
+def check_lexicon_registry_consistency() -> list[dict]:
+    """逐条对照词典与注册表, 返回矛盾清单 (空=一致)。
+
+    矛盾形态: 注册表终态 ∧ (词典 cls 活跃 ∨ conclusion 无终态标记且有活跃措辞)。
+    """
+    from app.playbook.shadow_registry import REGISTRY
+    reg = {s.id: (s.status.value if hasattr(s.status, "value") else str(s.status))
+           for s in REGISTRY}
+    out = []
+    for sid, entry in SHADOW_LEXICON.items():
+        status = reg.get(sid)
+        if status not in ("KILLED", "SUPERSEDED", "GRADUATED"):
+            continue
+        cls = (entry.get("cls") or "").strip()
+        conclusion = entry.get("conclusion") or ""
+        has_terminal_text = any(m in conclusion for m in _TERMINAL_MARKERS)
+        if has_terminal_text:
+            continue  # 文案诚实标了终态 ⇒ 终态+cls=NEEDS_USER 是合法的「问题仍开放」
+        active_text = any(m in conclusion for m in _ACTIVE_MARKERS)
+        if cls in _ACTIVE_CLS or active_text:
+            out.append({"id": sid, "registry_status": status, "cls": cls,
+                        "reason": "注册表终态但词典仍活跃措辞"})
+    return out
