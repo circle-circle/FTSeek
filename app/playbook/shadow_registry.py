@@ -1720,7 +1720,16 @@ REGISTRY: list[ShadowItem] = [
                                       "(同号)。两口径同号说明'熔断会挡掉赚钱笔'的指向稳定, 但 forward "
                                       "样本 14 < 30 ⇒ 按 2026-09-13 已记录的规则 (backfill 有前视偏差, "
                                       "期望符号不可作裁决依据) **本次不裁**, 只叠加读数。"
-                                      "结构建议留待 forward n≥30 重测时一并呈裁。"}],
+                                      "结构建议留待 forward n≥30 重测时一并呈裁。"},
+                         {"date": "2026-10-16", "verdict": "DO_NOT_ENABLE (固化, DEB-20261016)",
+                          "evidence": "策略面 DEB 立项批闸门面复算: 全期期望 +43.78 的 88% "
+                                     "(187/213 笔) 落在旧时代 (2026-04~06 backfill 段); A10 时代口径 "
+                                     "(≥2026-07-01) 下 n=26 / 期望 +23.84 / 日聚类 t=1.02<2 且 "
+                                     "效应<MDE80 ⇒ 「拦反」方向统计不可裁; 预注册主判据 (期望≤−10) "
+                                     "符号相反 ⇒ 机械不呈裁。固化: 本门**不启用**, 保留 record-only "
+                                     "测量面 (cb_shadow 已修 A10 口径, era_clean 与全期分列); "
+                                     "若要测「回撤后均值回归」须另立 H1 前向预注册实验, "
+                                     "不得拿本读数当实装依据。"}],
         notes="口径: trade_mode=simulate 且 pnl_net NOT NULL, ET 日, exit 事件流 "
               "(tie 时 exit 先结)。持久化=ftseek_us.db 派生表 cb_shadow_daily/"
               "cb_shadow_blocked (全量重建幂等) + JSON 汇总。首日回补即证伪预验证量级 "
@@ -3134,7 +3143,10 @@ REGISTRY: list[ShadowItem] = [
         eval_script=None,
         created="2026-07-11",
         notes="补登 (2026-09-26 RFC-109②): 看板段4 复用 edge_weekly_report.build_edge_weekly_summary "
-              "(import, 无独立 --push cron)。exec_gate_audit 的 edge_verdict 字段与本产物同源同门。",
+              "(import, 无独立 --push cron)。exec_gate_audit 的 edge_verdict 字段与本产物同源同门。"
+              "2026-10-16 (DEB-20261016) 固化复核: exec_gate_audit 的「BLOCK 组更赚」读数不稳健 "
+              "(滚动窗 3 正 4 负翻号, PASS 组对结算快照敏感不可复现; 底层 confidence IC≈0, "
+              "桶期望逐日翻号) ⇒ 「永不激活」裁决维持并强化; 任何实装提案仍须先过 INTC 测试。",
         no_adjudication_reason="PERMANENT_MEASURE: DEPRECATED-SHADOW (DEB-20260723 C-1 永不激活), 仅作 per-trade 重建对照基线",
     ),
     ShadowItem(

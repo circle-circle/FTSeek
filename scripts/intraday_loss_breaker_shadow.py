@@ -52,6 +52,10 @@ THRESHOLD = -400.0
 GRAD_MIN_N = 30          # n≥30 顺延毕业门槛 [判据 A1]
 GRAD_MAX_EXPECT = -10.0  # 主判据: 被挡笔期望 ≤ -10
 CALIBER = "trade_mode=simulate AND pnl_net IS NOT NULL; ET日; exit事件流"
+# 2026-10-16 (DEB-20261016 L0-2): A10 现役时代口径面 — 全期 headline 的 88% 落在
+# 旧时代 (2026-04~06 backfill 段) ⇒ 判决面 = era_clean (trade_date ≥ 2026-07-01,
+# 与 app/core/db_utils.py CURRENT_ERA_START 同源); 全期值保留作对照不删除。
+ERA_START = "2026-07-01"
 
 
 def _parse_ts(ts: str):
@@ -194,13 +198,22 @@ def summarize(daily_rows, blocked_rows):
     l30_total = round(sum(r["pnl_net"] for r in last30), 2)
     graduated_ready = (n >= GRAD_MIN_N and expect is not None
                        and expect <= GRAD_MAX_EXPECT)
+    # A10 时代口径面 (判决面): 只算现役时代 (≥2026-07-01) 的触发笔
+    era = [r for r in settled if r["trade_date"] >= ERA_START]
+    era_n = len(era)
+    era_total = round(sum(r["pnl_net"] for r in era), 2)
+    era_expect = round(era_total / era_n, 2) if era_n else None
+    era_days = len({r["trade_date"] for r in era})
     return {
-        "threshold": THRESHOLD, "caliber": CALIBER,
+        "threshold": THRESHOLD, "caliber": CALIBER + f"; era面起点={ERA_START}",
         "n": n,                      # registry 计数键: 全期 settled 被挡笔数
         "n_target": GRAD_MIN_N,
         "blocked_pnl_net_total": total,
-        "blocked_expectancy": expect,      # 主判据: ≤ -10
+        "blocked_expectancy": expect,      # 主判据: ≤ -10 (全期口径, 历史兼容)
         "expect_target": GRAD_MAX_EXPECT,
+        "era_clean": {"n": era_n, "n_trigger_days": era_days,
+                      "blocked_pnl_net_total": era_total,
+                      "blocked_expectancy": era_expect},
         "n_trigger_days": len(daily_rows),
         "last30d": {"n": len(last30), "blocked_pnl_net": l30_total},
         "graduation_ready": graduated_ready,

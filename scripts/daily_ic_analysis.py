@@ -23,6 +23,7 @@ Daily IC Analysis — 按 LLM 特征分组统计信号质量
 
 import json
 import logging
+import math
 import os
 import sqlite3
 import sys
@@ -82,15 +83,17 @@ def spearman_ic(strengths, returns):
 # Data Loading
 # ═══════════════════════════════════════════════════════════════
 
-def load_signals(days=90):
-    """Load signal snapshots with forward returns"""
+def load_signals(days=90, since_date=None):
+    """Load signal snapshots with forward returns.
+    since_date (如 '2026-07-01') 给定时用**固定起点** (冻结队列, 逐月只增不重基线,
+    2026-10-16 DEB-20261016 L0) — 滚动 days 窗的月度读数会随窗口漂移, 不可比。"""
     conn = sqlite3.connect(str(DB_SIGNALS))
     conn.row_factory = sqlite3.Row
     try:
         from app.utils.timezone import now_et as _now_et
-        cutoff = (_now_et() - timedelta(days=days)).strftime("%Y-%m-%d")
+        cutoff = since_date or (_now_et() - timedelta(days=days)).strftime("%Y-%m-%d")
     except Exception:
-        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        cutoff = since_date or (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
     rows = conn.execute("""
         SELECT * FROM signal_snapshots
         WHERE fwd_ret_t1 IS NOT NULL
@@ -358,6 +361,62 @@ def analyze_monthly_trend(signals, min_n=30):
     return trend
 
 
+def analyze_monthly_trend_frozen(signals, min_n=30):
+    """冻结队列月度 IC (2026-10-16 DEB-20261016 L0) — 与 analyze_monthly_trend 的区别:
+    输入是固定起点 (A10 现役时代 2026-07-01) 的冻结队列, 逐月只增不重基线 ⇒ 月度序列可比
+    (滚动 90d 窗的月读数会漂移, 审计曾因此误读趋势线)。每月附:
+      - ic_t1_day_mean / ci95_lo / ci95_hi / t / n_days: **日聚类**口径 (先逐日算 IC 再对
+        日序列取均值±CI, 宪章第 9 律; pooled IC 会夸大显著性 ~4×, 只作对照);
+      - by_chain: 活跃链路 (deep_analysis/universe_expansion) 各自月度 IC (已停产链不进表)。
+    """
+    from collections import defaultdict as _dd
+    ACTIVE_CHAINS = ("deep_analysis", "universe_expansion")
+    months = _dd(list)
+    for s in signals:
+        td = s.get("trade_date") or ""
+        if len(td) >= 7:
+            months[td[:7]].append(s)
+    trend = []
+    for m in sorted(months):
+        g = months[m]
+        row = {"month": m, "n": len(g), "ic_t1": None, "wr_t1": None}
+        if len(g) >= min_n:
+            ic, wr, _ = spearman_ic([x["strength"] for x in g],
+                                    [x["fwd_ret_t1"] for x in g])
+            row["ic_t1"], row["wr_t1"] = ic, wr
+            # 日聚类: 逐日 IC → 日序列均值/CI (日 n<5 不入簇)
+            by_day = _dd(list)
+            for x in g:
+                by_day[x["trade_date"]].append(x)
+            day_ics = []
+            for d in sorted(by_day):
+                dg = by_day[d]
+                if len(dg) >= 5:
+                    dic, _, _ = spearman_ic([x["strength"] for x in dg],
+                                            [x["fwd_ret_t1"] for x in dg])
+                    if dic is not None:
+                        day_ics.append(dic)
+            row["n_days"] = len(day_ics)
+            if len(day_ics) >= 2:
+                import statistics as _st
+                mu = sum(day_ics) / len(day_ics)
+                se = _st.stdev(day_ics) / math.sqrt(len(day_ics)) if len(day_ics) > 1 else None
+                row["ic_t1_day_mean"] = round(mu, 4)
+                row["ci95_lo"] = round(mu - 1.96 * se, 4) if se else None
+                row["ci95_hi"] = round(mu + 1.96 * se, 4) if se else None
+                row["t"] = round(mu / se, 3) if se and se > 0 else None
+            for chain in ACTIVE_CHAINS:
+                sub = [x for x in g if x.get("strategy_id") == chain]
+                if len(sub) >= min_n:
+                    cic, _, _ = spearman_ic([x["strength"] for x in sub],
+                                            [x["fwd_ret_t1"] for x in sub])
+                    row.setdefault("by_chain", {})[chain] = \
+                        {"n": len(sub), "ic_t1": cic}
+        trend.append(row)
+    return trend
+
+
+
 def analyze_regime(trades):
     """PnL by market regime"""
     by_regime = defaultdict(list)
@@ -466,6 +525,25 @@ def generate_report(days=90):
     # 5b. Monthly IC trend (历史早期链路混杂, 按月看改善趋势 — 2026-09-01 用户裁)
     monthly = analyze_monthly_trend(signals)
     report["monthly_ic_trend"] = monthly
+    # 5c. 冻结队列月度 IC (2026-10-16 DEB-20261016 L0): 固定起点 A10 现役时代,
+    #     逐月只增不重基线 + 日聚类 CI + 活跃链路分列 — 判决面用这个, 5b 滚动窗仅诊断。
+    frozen_signals = load_signals(since_date="2026-07-01")
+    monthly_frozen = analyze_monthly_trend_frozen(frozen_signals)
+    report["monthly_ic_trend_frozen"] = monthly_frozen
+    print(f"\n{'─'*60}")
+    print("5c. Monthly IC Trend · 冻结队列 (起点 2026-07-01, 日聚类 CI; 判决面)")
+    print(f"{'─'*60}")
+    for r in monthly_frozen:
+        if r["ic_t1"] is None:
+            print(f"  {r['month']}: n={r['n']} (样本不足30)")
+        else:
+            ci = (f"CI[{r['ci95_lo']:+.3f},{r['ci95_hi']:+.3f}] t={r['t']}"
+                  if r.get("ci95_lo") is not None else "CI=na(日簇<2)")
+            chains = " ".join(f"{k}={v['ic_t1']:+.3f}(n{v['n']})"
+                              for k, v in (r.get("by_chain") or {}).items())
+            print(f"  {r['month']}: pooled={r['ic_t1']:+.3f} 日聚类={r.get('ic_t1_day_mean')} "
+                  f"{ci} n={r['n']} {chains}")
+
     print(f"\n{'─'*60}")
     print("5b. Monthly IC Trend (n<30 只记样本数)")
     print(f"{'─'*60}")

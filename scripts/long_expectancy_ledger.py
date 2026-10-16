@@ -100,9 +100,11 @@ def _bucket_key(trade, dim):
     if dim == "exit_reason":
         return trade["exit_reason"] or "unknown"
     if dim == "conf_bucket":
-        return str(round(float(trade["signal_confidence"] or 0), 1))
+        # 2026-10-16 (DEB-20261016 L0-3): 精确值分桶, 不再 ROUND(.,1) 并桶 — 并桶会把
+        # 0.68 并入 0.7 档产生伪读数 (审计曾因此把 9 月 0.7 档读成 +15.31, 实为 +20.24)。
+        return str(float(trade["signal_confidence"] or 0))
     if dim == "conf_x_source":
-        return f"{round(float(trade['signal_confidence'] or 0), 1)}|{trade.get('source') or 'unknown'}"
+        return f"{float(trade['signal_confidence'] or 0)}|{trade.get('source') or 'unknown'}"
     if dim == "entry_hour_policy":
         # §十四14.4: 入场时点类指纹必须带政策期拆分 (8/12 禁触窗是强断点)
         return f"{_policy_period(trade['trade_date'])}|{(trade.get('entry_time') or '????')[11:13]}h"
