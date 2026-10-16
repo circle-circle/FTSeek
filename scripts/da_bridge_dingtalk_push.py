@@ -7,7 +7,7 @@
 
 设计:
   - 与 A 解耦: 不改 A 的 prompt; 单挂 cron 在 A 完成之后 (盘前) 触发。
-  - ET 窗口守卫: 08:50-09:25 ET 才允许推送, 双季 cron 双挂时每季恰一响。
+  - ET 窗口守卫: 08:50-09:29 ET 才允许推送 (2026-10-16 起, 合并 UE fresh-event 内容, 死线 09:28), 双季 cron 双挂时每季恰一响。
   - 当日幂等: 已有 pushed 记录则不再推送, push_failed 允许下一挂重试。
   - 新鲜度守卫: 只推"今日 ET"的 bridge 文件; 文件不存在/非今日 → 跳过不推 (绝不推陈旧)。
   - 跳过留痕: 窗外/缺文件/解析失败/已推送均写入 summary 台账, 不再静默。
@@ -30,7 +30,20 @@ from app.utils.timezone import ET
 DATA = Path(__file__).resolve().parents[1] / "data"
 DB_PATH = Path(__file__).resolve().parents[1] / "data" / "ftseek_us.db"
 PUSH_WINDOW_START_MIN = 8 * 60 + 50
-PUSH_WINDOW_END_EXCLUSIVE_MIN = 9 * 60 + 26
+# 2026-10-16: 窗尾 09:26→09:29 ET (合并推送版): 等 fresh-event 批次的死线 09:28,
+# 留 1min 开盘前边距; 仍严格盘前 (09:30 前), 语义不变。
+PUSH_WINDOW_END_EXCLUSIVE_MIN = 9 * 60 + 29
+# 2026-10-16 (用户裁「延后到 UE 产出后再推」): fresh-event 链 (UE scan 09:10 ET →
+# da_fresh_event_batch --execute, 实测 ~13min) 的指令写 playbook_instructions (DA- 前缀),
+# 桥接推送的 DB 计数面会覆盖它们 — 但推送若早于批次完成就漏掉这部分。改为:
+# 推送前等待当日 fresh-event 批次终态行, 到硬死线 (09:28 ET, 留 1min 给推送窗尾) 不等了
+# 照推 (桥接内容是主面, UE 补充是次面, 死线防批次故障拖死推送)。
+FRESH_EVENT_LEDGER = DATA / "shadow" / "ue_fresh_da_candidate_pool.jsonl"
+FRESH_EVENT_WAIT_DEADLINE_MIN = 9 * 60 + 28
+FRESH_EVENT_POLL_SEC = 30
+_FRESH_EVENT_TERMINAL = ("complete", "complete_no_scan", "pipeline_failed",
+                         "skipped_outside_window", "skipped_non_trading_day",
+                         "skipped_already_ran", "dedup_query_failed")
 
 # 自含 dotenv 加载: FINNHUB_API_KEY / 钉钉 webhook 均在 .env.us, 保证 cron 下也能拿到
 try:
@@ -40,6 +53,39 @@ try:
     load_dotenv(_ROOT / ".env.us")
 except Exception:
     pass
+
+
+def _fresh_event_terminal_today(date: str) -> bool:
+    """当日 fresh-event 批次是否已到终态 (complete/failed/skip 族)。读台账尾行。"""
+    try:
+        if not FRESH_EVENT_LEDGER.exists():
+            return False
+        for line in reversed(FRESH_EVENT_LEDGER.read_text(
+                encoding="utf-8").splitlines()[-50:]):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except Exception:
+                continue
+            if (row.get("date") == date and row.get("mode") == "execute"
+                    and row.get("status") in _FRESH_EVENT_TERMINAL):
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _wait_fresh_event_done(date: str) -> str:
+    """等当日 fresh-event 批次终态, 到硬死线不等 (返回等待结局供留痕)。"""
+    import time as _time
+    while True:
+        if _fresh_event_terminal_today(date):
+            return "batch_done"
+        now = _now_et()
+        if now.hour * 60 + now.minute >= FRESH_EVENT_WAIT_DEADLINE_MIN:
+            return "deadline_proceed_without_batch"
+        _time.sleep(FRESH_EVENT_POLL_SEC)
 
 
 def _today_et():
@@ -358,11 +404,11 @@ def _build_message(date, bridge):
     return "\n".join(lines)
 
 
-def main(date=None, dry=False, force_window=False):
+def main(date=None, dry=False, force_window=False, wait_fresh_event=False):
     date = date or _today_et()
     now = _now_et()
     if not force_window and not _in_push_window(now):
-        print(f"[skip] 当前 ET {now.strftime('%H:%M')} 在推送窗口 08:50-09:25 外")
+        print(f"[skip] 当前 ET {now.strftime('%H:%M')} 在推送窗口 08:50-09:29 外")
         _append_skip_record(date, "outside_window")
         return
 
@@ -388,6 +434,11 @@ def main(date=None, dry=False, force_window=False):
         _append_skip_record(date, "already_pushed")
         return
 
+    # 2026-10-16: 等 fresh-event 批次终态 (UE 产出指令入 DB 后, DB 计数面才完整)
+    if wait_fresh_event:
+        wait_outcome = _wait_fresh_event_done(date)
+        print(f"[fresh-event] 等待结局: {wait_outcome}")
+
     msg = _build_message(date, bridge)
     print(msg)
     if dry:
@@ -410,5 +461,8 @@ if __name__ == "__main__":
     ap.add_argument("--date", help="bridge 日期 YYYY-MM-DD (默认今日 ET)")
     ap.add_argument("--dry", action="store_true", help="只打印不推送")
     ap.add_argument("--force-window", action="store_true", help="跳过 ET 窗口守卫")
+    ap.add_argument("--wait-fresh-event", action="store_true",
+                    help="推送前等当日 UE fresh-event 批次终态 (死线 09:28 ET 照推)")
     a = ap.parse_args()
-    main(date=a.date, dry=a.dry, force_window=a.force_window)
+    main(date=a.date, dry=a.dry, force_window=a.force_window,
+         wait_fresh_event=a.wait_fresh_event)

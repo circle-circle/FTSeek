@@ -114,13 +114,14 @@ def test_summary_record_is_persisted(tmp_path):
 
 
 def test_push_window_boundaries():
+    # 2026-10-16: 窗尾 09:26→09:29 (合并 UE fresh-event 内容版, 死线 09:28)
     def at(hour, minute):
         return PUSH.ET.localize(datetime(2026, 10, 7, hour, minute))
 
     assert not PUSH._in_push_window(at(8, 49))
     assert PUSH._in_push_window(at(8, 50))
-    assert PUSH._in_push_window(at(9, 25))
-    assert not PUSH._in_push_window(at(9, 26))
+    assert PUSH._in_push_window(at(9, 28))
+    assert not PUSH._in_push_window(at(9, 29))
 
 
 def test_outside_window_records_skip_and_does_not_push(tmp_path, monkeypatch):
@@ -183,3 +184,23 @@ def test_successful_push_is_once_per_date(tmp_path, monkeypatch):
     ]
     assert [record["status"] for record in records] == ["pushed", "skipped"]
     assert records[1]["reason"] == "already_pushed"
+
+
+def test_wait_fresh_event_done_when_batch_complete(tmp_path, monkeypatch):
+    """批次终态行在册 ⇒ 立即返回不等待 (2026-10-16 用户裁延后推送)。"""
+    ledger = tmp_path / "ue_fresh_da_candidate_pool.jsonl"
+    ledger.write_text(json.dumps(
+        {"type": "fresh_event_batch", "date": "2026-10-16", "mode": "execute",
+         "status": "complete"}) + "\n", encoding="utf-8")
+    monkeypatch.setattr(PUSH, "FRESH_EVENT_LEDGER", ledger)
+    assert PUSH._fresh_event_terminal_today("2026-10-16") is True
+    assert PUSH._fresh_event_terminal_today("2026-10-17") is False
+    assert PUSH._wait_fresh_event_done("2026-10-16") == "batch_done"
+
+
+def test_wait_fresh_event_deadline_proceeds(tmp_path, monkeypatch):
+    """批次无终态行 + 过死线 ⇒ 照推 (桥接内容是主面, 不被批次故障拖死)。"""
+    monkeypatch.setattr(PUSH, "FRESH_EVENT_LEDGER", tmp_path / "absent.jsonl")
+    monkeypatch.setattr(PUSH, "_now_et",
+                        lambda: PUSH.ET.localize(datetime(2026, 10, 16, 9, 29)))
+    assert PUSH._wait_fresh_event_done("2026-10-16") == "deadline_proceed_without_batch"
