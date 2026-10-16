@@ -1738,6 +1738,55 @@ REGISTRY: list[ShadowItem] = [
               "DEB-20260904 §11.6(a)。注册表计 n=全期 settled 被挡笔, 首日即 >=min_n "
               "属预期 (判据主门是期望非 n, READY 不等于毕业)。",
     ),
+    # ── DEB-20261016 L3 (2026-10-16 用户裁「全批」): 高信心档倒挂守卫影子 ──
+    ShadowItem(
+        id="conf_tier_guard_shadow",
+        name="高信心档倒挂守卫影子 (DEB-20261016 L3, record-only)",
+        status=ShadowStatus.OBSERVING,
+        description="逐日各 confidence 档 (精确值, 禁 ROUND 并桶) 滚动 20 交易日方向调整 "
+                    "fwd_ret_t1 日聚类均值; 高档 (0.7) 持续负向+n≥30+|t|>2 连续≥5 观测日 ⇒ "
+                    "标 CONSIDER_DOWNWEIGHT (只标记不执行, 供人工裁决)。定位=防尾部哨兵, "
+                    "非择时器 (conf 近零 IC, RFC-124)。写方 scripts/conf_tier_guard_shadow.py, "
+                    "cron 55 6 * * 2-6, 幂等按日覆盖。",
+        data_path="data/shadow/conf_tier_guard.jsonl",
+        config_key=None,
+        min_n=30,
+        eval_script="scripts/conf_tier_guard_shadow.py",
+        eval_on_demand=True,
+        created="2026-10-16",
+        graduation_criteria="预注册 (DEB-20261016 §三.L3, 期间禁改): 标记门 = 高档滚动均值<0 "
+                            "∧ |t|>2 (日聚类) ∧ 持续≥5 观测日 ∧ 窗内高档已决笔 n≥30 ⇒ "
+                            "产「降权候选建议」供人工裁决 (任何权重调整=行为变更, 须另立 DEB+影子); "
+                            "死线 2026-11-30 复核。n<30 只记录不标旗。",
+        notes="2026-10-16 首跑: 近 20 交易日 0.7 档仅 n=1 (10 月信号 conf 分布移向 0.6, "
+              "0.7 稀缺 — 与信心面归因「10 月 conf 值域变粗」互证) ⇒ 无旗, 静默正常。",
+    ),
+    # ── DEB-20261016 L1 (2026-10-16 用户裁「全批」): 隔夜 gap × SL 宽度假设影子 ──
+    ShadowItem(
+        id="overnight_gap_slcap_shadow",
+        name="隔夜跳空×SL宽度上限影子 (slcap_4/slcap_5 变体, DEB-20261016 L1)",
+        status=ShadowStatus.OBSERVING,
+        description="假设: 隔夜 gap 亏损 (10 月 LONG 4 笔 −$1296, 跳空 −5.6~−6.4%, SL 距离 "
+                    "4.5-5% 被直接击穿) 与入场 SL 宽度相关 ⇒ 收窄上限存在可拦子集。"
+                    "载体=退出回放引擎变体 slcap_4/slcap_5 (scripts/exit_replay_backtest.py, "
+                    "初始 SL 宽度收窄至 4%/5%, 含赢家误杀面), record-only 零生产耦合。"
+                    "前置保真门: validation.reason_match_pct ≥0.80, 未达则变体读数一律冻结 "
+                    "(引擎自定门, DEB-20261014 已两次撞门)。",
+        data_path="data/exit_replay_latest.json (variants.slcap_*)",
+        config_key=None,
+        min_n=30,
+        eval_script="scripts/exit_replay_backtest.py",
+        eval_on_demand=True,
+        created="2026-10-16",
+        graduation_criteria="预注册 (DEB-20261016 §三.L1, 期间禁改): 样本门 = era 内隔夜仓 "
+                            "n≥30 ∧ ≥10 交易日; 裁决轴 = slcap vs live_baseline 的净 bps 差 "
+                            "(含赢家误杀面, 日聚类, t>2 且效应≥MDE80); 死线 ≈2026-11-30 或 n 达门。"
+                            "前置: reason_match_pct≥0.80, 未达=读数冻结不呈裁。"
+                            "判据4项全过 → 提请用户裁转生产 (改 SL 宽度=行为变更, 须另立 DEB)。",
+        notes="2026-10-16 首跑 (post-ca4487 窗 n=29): **撞保真门 reason_match=0.586<0.80 "
+              "⇒ 变体读数按引擎自定门冻结**, 不呈裁; 待锚定续放 (anchor 参数, DEB-20261014 "
+              "v2 先例) 或攒样后重跑。引擎/载体无 bug, 是触发面时序重建保真不足。",
+    ),
     # ── KR3 预注册假设影子 (采集 9/2 上线 cron, **2026-09-06 补登记** — 未登记=无人跟踪) ──
     ShadowItem(
         id="kr3_direction_runup_gate",

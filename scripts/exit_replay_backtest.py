@@ -121,6 +121,11 @@ def _variants() -> list[dict]:
     #       隔夜 gap_stop 3%, 周末/长假不过夜 (下一交易日 >2 日历日 → 当周最后收盘平)
     v.append({"name": "e_step1_winners_overnight", "e_mode": "step1", "max_hold_days": 2})
     v.append({"name": "e_full_price_exits", "e_mode": "full", "max_hold_days": 2})
+    # ── DEB-20261016 L1 (隔夜 gap × SL 宽度假设, RFC-124 §2.3 同源, 用户裁「全批」):
+    #   初始 SL 宽度上限 — 若入场 SL 距离 >cap%, 收窄到 cap% (隔夜跳空 −5.6~−6.4% 族
+    #   的 SL 距离实测 4.5-5%, 被击穿后亏损超宽); 含赢家误杀面 (被提前扫出的恢复单)。
+    v.append({"name": "slcap_4", "cap_sl_pct": 4.0})
+    v.append({"name": "slcap_5", "cap_sl_pct": 5.0})
     return v
 
 
@@ -313,6 +318,13 @@ def replay_trade(tr: dict, bars: list[dict], exit_cfg: dict, var: dict,
     """
     direction, entry, qty = tr["direction"], tr["entry"], tr["qty"]
     initial_sl = tr["initial_sl"] or (entry * 0.975 if direction == "LONG" else entry * 1.025)
+    # 变体 (DEB-20261016 L1): 初始 SL 宽度上限 cap_sl_pct — 收窄过宽的初始止损
+    _cap_sl = var.get("cap_sl_pct")
+    if _cap_sl:
+        if direction == "LONG":
+            initial_sl = max(initial_sl, entry * (1 - _cap_sl / 100))
+        else:
+            initial_sl = min(initial_sl, entry * (1 + _cap_sl / 100))
     tp = tr["take_profit"]
     be_pct = float(exit_cfg.get("breakeven_at_pct", 0.5))
     fee = params["fee_cushion_pct"]
