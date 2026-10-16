@@ -26,6 +26,7 @@
 **触发**: 独立复核发现 v2 只按 `bid/ask > 0 ∧ bid<=ask` 判 mid 有效，但 Futu push / `get_stock_quote` 在真实盘口缺失时会用 `last_price` 回填双边价并带 `book_is_proxy` / `lv3_book_is_proxy` 哨兵；不消费哨兵会把 proxy quote 标成 `ruler_used=mid`，污染 v2 裁决分桶。
 **落地**: `entry_confirm_gate._current_quotes` 消费 `book_is_proxy` / `lv3_book_is_proxy`；任一为真 ⇒ `mid=None`，该笔回落 legacy 并留痕（不改阈值、不新增行情通道）。RFC §5.10 判尺文字同步补“盘口代理不算 mid”；契约测试新增 arm 侧 / 复核侧 proxy 两个形态。
 **验证**: 门契约 + 接线 69 passed；`py_compile` 通过；部署前 `app/scripts` 改动仅本批且无在途出场；`systemctl restart ftseek-us` 后启动冒烟 7/7（2026-10-16 11:54）。当前 forward 产物仍为 54 行 v1 / 0 行 v2，热修发生在首个 v2 样本前。
+**入库**: 该批当时未及提交（Codex 会话结束）；2026-10-16 13:2x 主会话复核（54 例自跑全绿、文档与代码一致）后经用户授权代提交 `ae0348374`（[RFC-141] 批）+ `ff8ecc672`（[vault] 批）。
 
 ## 2026-10-15 RFC-141 v2 判尺修订落地（用户看日志裁「明显不合理，直接优化落地」）
 
