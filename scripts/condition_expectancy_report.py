@@ -87,7 +87,8 @@ def main():
     cur_regime = "UNKNOWN"
     try:
         _row = con.execute(
-            "SELECT regime FROM playbook_regime_log ORDER BY date DESC LIMIT 1"
+            "SELECT regime FROM playbook_regime_log "
+            "WHERE regime NOT LIKE '%weekly%' ORDER BY date DESC LIMIT 1"
         ).fetchone()
         if _row:
             cur_regime = (_row["regime"] or "UNKNOWN").upper()

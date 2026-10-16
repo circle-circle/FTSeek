@@ -204,3 +204,19 @@ def test_wait_fresh_event_deadline_proceeds(tmp_path, monkeypatch):
     monkeypatch.setattr(PUSH, "_now_et",
                         lambda: PUSH.ET.localize(datetime(2026, 10, 16, 9, 29)))
     assert PUSH._wait_fresh_event_done("2026-10-16") == "deadline_proceed_without_batch"
+
+
+def test_wait_fresh_event_skip_is_not_terminal(tmp_path, monkeypatch):
+    """skipped_* 行不算终态 (2026-10-16 巡检: EST 季错季行 08:10 写 skip,
+    误认终态会让 09:12 推送读到它而漏掉 09:10 才发车的真批次)。"""
+    ledger = tmp_path / "ue_fresh_da_candidate_pool.jsonl"
+    ledger.write_text(json.dumps(
+        {"type": "fresh_event_batch", "date": "2026-10-16", "mode": "execute",
+         "status": "skipped_outside_window"}) + "\n", encoding="utf-8")
+    monkeypatch.setattr(PUSH, "FRESH_EVENT_LEDGER", ledger)
+    assert PUSH._fresh_event_terminal_today("2026-10-16") is False
+    # 追加真终态行 ⇒ 才认
+    with ledger.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"type": "fresh_event_batch", "date": "2026-10-16",
+                            "mode": "execute", "status": "complete"}) + "\n")
+    assert PUSH._fresh_event_terminal_today("2026-10-16") is True

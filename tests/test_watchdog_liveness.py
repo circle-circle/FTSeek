@@ -118,6 +118,18 @@ def test_declared_latch_table_zero_rows_is_healthy(tmp_path, monkeypatch):
     assert any(o["table"] == "playbook_risk_state" for o in observed), "仍须落观测 JSON"
 
 
+def test_open_positions_zero_rows_is_flat_book_healthy(tmp_path, monkeypatch):
+    """open_positions 零行 = 账面全平 = 健康 (2026-10-16 A-1: 清仓后曾被 D1 误报
+    never_fed 并经 meta_audit 二次放大成 P0)。"""
+    db = _mk_db(tmp_path, {"open_positions": []})
+    monkeypatch.setattr(wf, "_main_db", lambda: db)
+    monkeypatch.setattr(wf, "_repo_write_targets",
+                        lambda: {"open_positions": {"db.py"}})
+    findings, known, observed = wf._check_table_liveness({})
+    assert findings == [] and known == 0
+    assert any(o["table"] == "open_positions" for o in observed), "仍须落观测 JSON"
+
+
 def test_latch_exemption_does_not_leak_to_other_tables(tmp_path, monkeypatch):
     """防过修: 豁免只覆盖声明过的表名, 未声明的零行表必须照告 (否则 D1 整体失效)。"""
     db = _mk_db(tmp_path, {"playbook_risk_state": [], "earnings_calendar": []})

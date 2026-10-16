@@ -41,9 +41,12 @@ PUSH_WINDOW_END_EXCLUSIVE_MIN = 9 * 60 + 29
 FRESH_EVENT_LEDGER = DATA / "shadow" / "ue_fresh_da_candidate_pool.jsonl"
 FRESH_EVENT_WAIT_DEADLINE_MIN = 9 * 60 + 28
 FRESH_EVENT_POLL_SEC = 30
+# 终态口径 (2026-10-16 巡检实证排雷): skipped_* 族=「本行未生产」不能当「批次已完成」
+# — EST 季错季行会在 08:10 ET 写 skipped_outside_window, 若算终态 ⇒ 09:12 的推送读到它
+# 误判批次完成 (老 bug 原样复发)。terminal 只认「真跑完」四类 (complete/complete_no_scan/
+# pipeline_failed/dedup_query_failed); 行的 date 键即 ET 日, 天然不读昨日。
 _FRESH_EVENT_TERMINAL = ("complete", "complete_no_scan", "pipeline_failed",
-                         "skipped_outside_window", "skipped_non_trading_day",
-                         "skipped_already_ran", "dedup_query_failed")
+                         "dedup_query_failed")
 
 # 自含 dotenv 加载: FINNHUB_API_KEY / 钉钉 webhook 均在 .env.us, 保证 cron 下也能拿到
 try:
@@ -56,7 +59,8 @@ except Exception:
 
 
 def _fresh_event_terminal_today(date: str) -> bool:
-    """当日 fresh-event 批次是否已到终态 (complete/failed/skip 族)。读台账尾行。"""
+    """当日 fresh-event 批次是否已到终态 (complete/complete_no_scan/failed/dedup_failed)。
+    skipped_* 族不算终态 (淡季错季行会写 skip ⇒ 误认会复发「早推漏 UE」bug)。"""
     try:
         if not FRESH_EVENT_LEDGER.exists():
             return False
@@ -296,7 +300,11 @@ def _health_section(date):
     try:
         import sqlite3 as _sq
         con = _sq.connect(str(DATA / "ftseek_us.db"))
+        # 2026-10-16 修 (巡检): ORDER BY date DESC 会命中周报幂等标记行
+        # (regime='weekly_report' 且 date=未来周五) ⇒ regime 标签曾连错 3 天。
+        # 过滤标记行, 与 app/playbook/db.py get_regime_log 同口径。
         r = con.execute("SELECT date, regime FROM playbook_regime_log "
+                        "WHERE regime NOT LIKE '%weekly%' "
                         "ORDER BY date DESC LIMIT 1").fetchone()
         if r:
             parts.append(f"regime={r[1]}({r[0]})")

@@ -348,7 +348,7 @@ def _build_message(today: dict, prev: dict, trunc_7d: list | None = None,
     shadow_cost = sum(float(s.get("cost", 0) or 0) for s in (shadow or {}).values())
     full_cost = t["cost"] + da_total + shadow_cost
     if calls == 0 and not da.get("calls") and not shadow:
-        return f"🪙 LLM 消耗日报 {today['date']}\n(当日无 LLM 调用记录)"
+        return f"🪙 LLM 消耗日报 {today['date']} (北京自然日口径)\n(当日无 LLM 调用记录)"
 
     tok_total = t["tok_in"] + t["tok_out"]
     ok_rate = (t["ok"] / calls * 100) if calls else 0
@@ -388,7 +388,7 @@ def _build_message(today: dict, prev: dict, trunc_7d: list | None = None,
     if _extras:
         _total_line += " (含 " + "; ".join(_extras) + ")"
     lines += [
-        f"🪙 LLM 消耗日报 {today['date']}",
+        f"🪙 LLM 消耗日报 {today['date']} (北京自然日口径)",
         _total_line,
         f"成功率 {ok_rate:.0f}% | 均延迟 {avg_lat:.1f}s (网关口径)",
         "",

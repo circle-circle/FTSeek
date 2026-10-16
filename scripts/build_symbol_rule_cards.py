@@ -29,7 +29,8 @@ TOP_N_PER_CARD = 3  # Q3: 单卡条数上限 (注入侧再用, 此处也截断�
 cur_regime = "UNKNOWN"
 try:
     con = sqlite3.connect(DATA / "ftseek_us.db")
-    row = con.execute("SELECT regime FROM playbook_regime_log ORDER BY date DESC LIMIT 1").fetchone()
+    row = con.execute("SELECT regime FROM playbook_regime_log "
+            "WHERE regime NOT LIKE '%weekly%' ORDER BY date DESC LIMIT 1").fetchone()
     if row:
         cur_regime = (row[0] or "UNKNOWN").upper()
     con.close()
