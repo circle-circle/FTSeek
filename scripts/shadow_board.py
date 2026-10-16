@@ -83,6 +83,30 @@ def _read_jsonl(path):
 
 
 # ── 段3: SL/TP 影子 (= LLM×代码 SL/TP 分歧校准; pnl 只是关联结果) ──
+def _sec_conf_tier_guard():
+    """2026-10-16 (DEB-20261016 L3): 高信心档倒挂守卫读数 + CONSIDER_DOWNWEIGHT 感知.
+
+    该影子的标记若没有任何消费面 = write-only (审计「有入口无出口」同族病灶);
+    本段即消费面: 标记置位时行内含「降权候选」 ⇒ _board_actionable 推送门命中。
+    """
+    lines = ["【高信心档倒挂守卫 (DEB-20261016 L3, record-only)】"]
+    try:
+        p = ROOT / "data" / "shadow" / "conf_tier_guard.jsonl"
+        if not p.exists():
+            lines.append("  暂无样本 (cron 06:55 二至六) — 产出后自动显示")
+            return lines
+        last = json.loads(p.read_text(encoding="utf-8").splitlines()[-1])
+        hi = (last.get("tiers") or {}).get("0.7") or {}
+        lines.append(
+            f"  最新 {last.get('date')}: 0.7档 n={hi.get('n')} 日均={hi.get('day_mean_pct')}"
+            f" t={hi.get('t')} | 连续负向 {last.get('high_tier_negative_streak_days')} 天")
+        if last.get("suggestion"):
+            lines.append(f"  ⚠️ 降权候选: {last['suggestion']} (须人工裁决, 不自动执行)")
+    except Exception as e:
+        lines.append(f"  ⚠️ 段异常: {e}")
+    return lines
+
+
 def _sec_sltp():
     """2026-09-23 (用户裁「按建议执行」): 补印判据行 sl_agree/tp_agree/|分歧|。
 
@@ -697,6 +721,8 @@ _SECTION_TABLE = None  # 在 build_board 前由 _init_table() 填充 (函数需�
 def _init_table():
     global _SECTION_TABLE
     _SECTION_TABLE = (
+        (_sec_conf_tier_guard,
+         (("conf_tier_guard_shadow", "data/shadow/conf_tier_guard.jsonl", 4),)),
         (_sec_sltp, (("sltp_verify_shadow", "data/shadow/sltp_verify_shadow.jsonl", 4),)),
         (_sec_edge, (("edge_gate_shadow", "data/shadow/edge_gate_shadow.jsonl", 4),)),
         (_sec_premarket_peer, (("premarket_peer_shadow", "data/shadow/premarket_peer_shadow.jsonl", 4),)),
@@ -821,7 +847,8 @@ def _board_actionable(board_text: str) -> tuple[bool, str]:
       ② 守卫告警: 看板正文含 生产者停摆/缺产物/注册面缺失/守卫行异常/整段异常。
     fail-open 纪律: 待裁面查询失败 ⇒ 视为 actionable (尺子坏了必须可见, 不许静默)。
     """
-    guard_markers = ("生产者停摆", "生产者缺产物", "注册面缺失", "守卫行异常", "整段异常")
+    guard_markers = ("生产者停摆", "生产者缺产物", "注册面缺失", "守卫行异常", "整段异常",
+                     "降权候选")
     hit = [m for m in guard_markers if m in board_text]
     if hit:
         return True, "看板守卫告警: " + "+".join(hit)

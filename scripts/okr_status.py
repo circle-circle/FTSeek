@@ -369,13 +369,48 @@ except Exception as _okr09_err:  # 显性留痕 (except:pass 棘轮 955 只降�
     okr_2026_09 = {"error": f"{type(_okr09_err).__name__}: {_okr09_err}"}
     okr_2026_09_lines = [_OKR09_UNAVAILABLE + okr_2026_09["error"]]
 
+# ─── 6c. OKR-2026-10 现行状态块 (2026-10-16 推送联动修复, 用户令「确保联动感知推送」) ───
+# 只读组装, **非判分引擎** — `okr_2026_10_scoring` 判分模块仍是 OKR-2026-10 落地债,
+# 本块不替代它, 只把权威读数带进推送面 (判据一字不立, 读数全部回源到既有权威产物)。
+_okr10 = {"okr": "OKR-2026-10", "window": "2026-09-17→2026-10-31",
+          "as_of": datetime.now().date().isoformat()}
+try:
+    _inv = json.loads((Path('/opt/ftseek/FTSeek-US/data/invariant_check_latest.json'))
+                      .read_text(encoding="utf-8"))
+    _cf = (_inv.get("config_freeze") or {})
+    _oct = _cf.get("oct_cohort") or {}
+    _post = _cf.get("post_ca4487") or {}
+    _okr10["KR1"] = {
+        "status": "BROKEN_终局 (10-08 退出哈希换版, n_unique=%s; DEB-20261009 §30 方案A "
+                  "10-10 用户裁: 不豁免不移窗, 开 post_ca4487 观测窗)" % _oct.get("n_unique"),
+        "post_ca4487_n": _post.get("n_closed"), "post_ca4487_target": _post.get("n_target"),
+        "authority": "data/invariant_check_latest.json::config_freeze"}
+except Exception as _e10:  # 显性留痕: 读不到权威产物必须可见
+    _okr10["KR1"] = {"error": f"{type(_e10).__name__}: {_e10}"}
+try:
+    _kr3 = json.loads((Path('/opt/ftseek/FTSeek-US/data/shadow/kr3_final_adjudication.json'))
+                      .read_text(encoding="utf-8"))
+    _legs = {l.get("direction"): l.get("verdict") for l in _kr3.get("legs", [])}
+    _okr10["KR3"] = {"status": "达成 2026-10-15 (两腿 FALSIFIED=证据产出, 用户裁停采)",
+                     "legs": _legs, "authority": "data/shadow/kr3_final_adjudication.json"}
+except Exception as _e10b:
+    _okr10["KR3"] = {"error": f"{type(_e10b).__name__}: {_e10b}"}
+_okr10["KR2"] = {"status": "攒样中 (净 bps/笔三态结论须 n=200 已结算)",
+                 "progress_note": "见 trade_records 节 (PLAYBOOK_SIM 已结算计数)",
+                 "authority": "scripts/okr_status.py 既有聚合 (不新增尺子)"}
+_okr10["KR4"] = {"status": "四锁状态见 okr_2026_09.locks (同一组锁)",
+                 "locks": (okr_2026_09 or {}).get("locks") if isinstance(okr_2026_09, dict) else None}
+_okr10["note"] = ("判分模块 okr_2026_10_scoring 未建 (OKR-2026-10 落地债#2); "
+                  "本块=权威读数指针, 结算判据以 docs/OKR-2026-10.md 为准")
+
+
 # ─── OUTPUT ───
 print("=" * 65)
 print("  OKR STATUS REPORT — " + datetime.now().strftime('%Y-%m-%d %H:%M'))
 print("=" * 65)
 
 print(f"\n🎯 OVERALL PROGRESS: {overall_score:.0f}%  "
-      f"← OKR-**2026-08** KR 集 (2026-08-23 已 SUPERSEDED, 仅续算; 现行判据见下方 2026-09 块)")
+      f"← OKR-**2026-08** KR 集 (2026-08-23 已 SUPERSEDED, 仅续算; 现行判据=OKR-2026-10 见最下方 10 块)")
 for kr, score in kr_scores.items():
     bar = "█" * int(score/5) + "░" * (20 - int(score/5))
     print(f"  {kr:<20} {bar} {score:.0f}%")
@@ -383,6 +418,13 @@ for kr, score in kr_scores.items():
 print()
 for _line09 in okr_2026_09_lines:
     print(_line09)
+
+# OKR-2026-10 现行状态块 (只读指针, 见 6c 注释)
+print(f"\n🎯 OKR-2026-10 (现行, 窗 {_okr10['window']}, as_of {_okr10['as_of']})")
+for _k in ("KR1", "KR2", "KR3", "KR4"):
+    _v = _okr10.get(_k) or {}
+    print(f"  {_k}: {_v.get('status') or _v.get('error')}")
+print(f"  注: {_okr10['note']}")
 
 print(f"\n📊 PIPELINE METRICS")
 print(f"  Instructions:    {total} (SKIP: {skip_count}, active: {non_skip})")
@@ -510,6 +552,7 @@ output = {
                           "该 OKR 2026-08-23 提前结算为 SUPERSEDED ⇒ 本块仅续算以保 "
                           "okr_query.py 消费面与 okr_history.jsonl 时序连续; **现行判据见 okr_2026_09**"),
     "okr_2026_09": okr_2026_09,
+    "okr_2026_10": _okr10,
     "pipeline": {
         "total": total, "skip": skip_count, "active": non_skip,
         "with_entry": with_entry, "triggered": triggered, "executed": executed,
