@@ -69,7 +69,7 @@ class _FakeDB:
 class _FakeRouter:
     """价格源替身: 标量 → 仅 last (无 bid/ask ⇒ mid=None, v2 回落 legacy 混尺);
     (last, bid, ask) 元组 → 带双边报价 (mid 尺生效); 列表 → 按调用次序推进
-    (grace 多轮/弃单后补记用)。"""
+    (grace 多轮/弃单后补记用); dict → 原样返回 router context (含哨兵键)。"""
 
     def __init__(self, quote):
         self._q = quote
@@ -84,6 +84,8 @@ class _FakeRouter:
             return None
         if isinstance(q, tuple):                    # 元组 = 单帧 (last, bid, ask)
             return {"price": q[0], "bid": q[1], "ask": q[2]}
+        if isinstance(q, dict):                     # dict = 完整 context
+            return dict(q)
         return {"price": q}                         # 标量 = 仅 last
 
 
@@ -1008,6 +1010,33 @@ def test_mid_ruler_falls_back_to_legacy_when_quotes_incomplete():
     ecg.gate_at_execute(_inst(i=9), db2, {"entry_price": 100.0}, t0, dict(CFG_ON),
                         scheduler=_FakeSched((100.0, 100.05, 99.95)))
     assert ecg._PENDING[9]["mid_arm"] is None, "交叉报价不得算 mid"
+
+
+def test_mid_ruler_falls_back_when_book_is_proxy():
+    """Futu 无真实盘口时 bid/ask=last 兜底 ⇒ 不得伪装成 mid 尺。
+
+    生产路径: push/get_stock_quote 会用 last 回填双边价并带 proxy 哨兵;
+    若直接按 b/a>0 判有效, 会把 legacy 行标成 ruler_used=mid, 污染 v2 分代。
+    """
+    db = _FakeDB()
+    t0 = _now()
+    proxy_ctx = {"price": 101.0, "bid": 101.0, "ask": 101.0,
+                 "lv3_book_is_proxy": True}
+    ecg.gate_at_execute(_inst(i=11), db, {"entry_price": 100.0}, t0, dict(CFG_ON),
+                        scheduler=_FakeSched(proxy_ctx))
+    assert ecg._PENDING[11]["mid_arm"] is None
+
+    ecg.gate_at_execute(_inst(i=12), db, {"entry_price": 100.0}, t0, dict(CFG_ON),
+                        scheduler=_FakeSched((100.0, 99.95, 100.05)))
+    assert ecg._PENDING[12]["mid_arm"] == pytest.approx(100.0)
+
+    r = ecg.sweep_entry_confirmations(_FakeSched(proxy_ctx), db,
+                                      t0 + timedelta(seconds=125))
+    assert r["confirmed"] == 2 and r["abandoned"] == 0
+    states = {inst_id: patch["entry_confirm"]
+              for inst_id, patch in db.merged if inst_id in (11, 12)}
+    assert all(st["ruler_used"] == "legacy" for st in states.values())
+    assert all(st["mid_move_pct"] is None for st in states.values())
 
 
 def test_grace_recovers_to_confirmed():

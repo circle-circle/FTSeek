@@ -280,7 +280,8 @@ LONG×开盘窗 —— 只印读数, 不作独立裁决依据。
 
    **修订内容 (v2, 代码 entry_confirm_gate.py, schema 升 entry_confirm_forward_v2)**:
    - **判尺 mid-vs-mid**: arm 与复核两端取 (bid+ask)/2 (futu_lv3 上下文本有 bid/ask, 零新基建);
-     任一端 bid/ask 缺失/交叉 ⇒ 该笔回落 legacy 混尺并记 `ruler_used` 字段 (裁决可分桶剔除)。
+     任一端 bid/ask 缺失/交叉/`book_is_proxy`/`lv3_book_is_proxy` ⇒ 该笔回落 legacy 混尺
+     并记 `ruler_used` 字段 (裁决可分桶剔除)。
      `opp_cost_pct` 定义**不变** (执行锚×last), 判据③尺子连续。
    - **grace 持续性 (2-of-3)**: 到点首见逆向不再即弃 ⇒ 进 grace, 随后 ≤3 次 sweep (10s 间隔)
      内 **≥2 次逆向才 ABANDONED**; 任一扫到同侧即 CONFIRMED; 取价失败不消耗 grace 次数;

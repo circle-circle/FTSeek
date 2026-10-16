@@ -671,7 +671,8 @@ def _current_quotes(scheduler, symbol: str) -> Optional[Dict[str, Any]]:
     """取现价快照 {last, bid, ask, mid, ts} (Futu push 缓存优先, 与退出快循环同源, 近零成本)。
 
     last 缺失/非正 ⇒ None (与 v1 _current_price 同语义, 调用方留 pending 下轮再试)。
-    bid/ask 缺失/交叉 ⇒ mid=None (v2 判定该笔回落 legacy 混尺, ruler_used 留痕)。
+    bid/ask 缺失/交叉/盘口为 last 兜底代理 ⇒ mid=None (v2 判定该笔回落
+    legacy 混尺, ruler_used 留痕)。
     """
     try:
         _dr = getattr(scheduler, "data_router", None) or getattr(scheduler, "market_data", None)
@@ -684,10 +685,14 @@ def _current_quotes(scheduler, symbol: str) -> Optional[Dict[str, Any]]:
         if _p is None or float(_p) <= 0:
             return None
         bid = ask = mid = None
+        _book_is_proxy = (
+            _ctx.get("book_is_proxy") is True
+            or _ctx.get("lv3_book_is_proxy") is True
+        )
         try:
             _b = float(_ctx.get("lv3_bid") or _ctx.get("bid") or 0)
             _a = float(_ctx.get("lv3_ask") or _ctx.get("ask") or 0)
-            if _b > 0 and _a > 0 and _b <= _a:
+            if not _book_is_proxy and _b > 0 and _a > 0 and _b <= _a:
                 bid, ask, mid = _b, _a, round((_b + _a) / 2, 6)
         except (TypeError, ValueError):
             bid = ask = mid = None
