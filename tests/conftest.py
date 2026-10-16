@@ -107,6 +107,9 @@ _PRODUCTION_DATA_SEAMS = (
     #   登记为缝防测试写生产去重状态 (否则重推判据在测试与生产间互染)。
     ("app.playbook.pipeline_parts.tracking_flow", "_TRACK_PUSH_STATE", "path",
      "playbook_evening_tracking_push_state.json"),
+    # 2026-10-16 (巡检 P1-5): 看板推送 episode 去重状态 — shadow_board 推送侧读写。
+    ("scripts.shadow_board", "_PUSH_STATE", "path",
+     "shadow_board_push_state.json"),
 )
 
 

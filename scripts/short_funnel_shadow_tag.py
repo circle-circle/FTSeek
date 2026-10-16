@@ -83,6 +83,7 @@ def main():
                     pass
 
     added = 0
+    insufficient = []  # 2026-10-16: 输入链异常日 (有日志但 <3 评级) 计数透出
     # 找最近7个日志文件 (含rotation)
     log_files = sorted(LOG_DIR.glob("da_pipeline_stderr.log*"))
     for lf in log_files:
@@ -100,7 +101,14 @@ def main():
 
         ratings, consistency_flagged = _parse_da_log(lf)
         if len(ratings) < 3:
-            continue  # 日志不完整/非DA轮
+            # 2026-10-16 (推送面巡检 P0-2): 原静默 continue ⇒ carrier 接管后 stderr 不落盘
+            # (10-08 起) 整整 8 天零采集无任何告警, 看板还把停摆归因错指写方。
+            # 有日志文件但解析 <3 条 = 输入链异常, 必须留痕可见。
+            insufficient.append((trade_date, lf.name, len(ratings)))
+            logger.warning("[short_funnel_shadow] %s 日志 %s 仅解析出 %d 条评级 (<3) "
+                           "⇒ 当日跳过 — 查 DA stderr 采集链 (da_main_carrier 落盘)",
+                           trade_date, lf.name, len(ratings))
+            continue
 
         # 评级分布
         from collections import Counter
@@ -172,7 +180,9 @@ def main():
         existing_dates.add(trade_date)
         added += 1
 
-    logger.info("[short_funnel_shadow] 新增 %d 日 → %s", added, OUT)
+    logger.info("[short_funnel_shadow] 新增 %d 日 → %s (输入链异常 %d 日: %s)",
+                added, OUT, len(insufficient),
+                ",".join(d for d, _, _ in insufficient[-5:]) or "无")
     conn.close()
 
 

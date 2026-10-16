@@ -108,6 +108,15 @@ def main() -> int:
         return 1
 
     output_path.write_text(completed.stdout, encoding="utf-8")
+    # 2026-10-16 修复 (推送面巡检 P0): carrier 接管后 stderr 从不落盘 ⇒
+    # logs/da_pipeline_stderr.log 自 10-08 起 0 字节, 消费方 short_funnel_shadow_tag
+    # 解析不到 ⇒ 空头漏斗影子静默断供 8 天。恢复旧 `2>>` 语义: 每次运行把 stderr
+    # 追加落盘 (对齐 LLM 驱动旧跑法的重定向)。
+    try:
+        with open(REPO / "logs" / "da_pipeline_stderr.log", "a", encoding="utf-8") as _f:
+            _f.write(completed.stderr or "")
+    except Exception as _stderr_err:
+        print(f"[DA-main] stderr 落盘失败 (不阻断主流程): {_stderr_err}")
     finished_at = now_et().isoformat()
     if completed.returncode != 0:
         append_event({**base_event, "status": "pipeline_failed",

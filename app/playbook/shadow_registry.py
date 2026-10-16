@@ -1704,7 +1704,12 @@ REGISTRY: list[ShadowItem] = [
                             "(另立 DEB+用户裁); n>=30 顺延为毕业门槛。",
         eval_script="scripts/intraday_loss_breaker_shadow.py",
         created="2026-09-05",
-        last_evaluated="2026-09-21",
+        last_evaluated="2026-10-16",
+        # 2026-10-16 (DEB-20261016 固化): status 维持 OBSERVING (采集继续), 但裁决已终态 ⇒
+        # 挂账防 READY 误提升, 让所有按 status 取数的面读到「不启用」而非「攒样待裁」。
+        no_adjudication_reason="ADJUDICATED_DO_NOT_ENABLE (2026-10-16, DEB-20261016): "
+                               "预注册主判据符号相反 (现役期望 +23.84 vs 门 ≤−10) 且日聚类 "
+                               "t=1.02<2 效应<MDE ⇒ 固化不启用; 保留 record-only 测量面",
         verdict_history=[{"date": "2026-09-13", "verdict": "KEEP_SAMPLING_FORWARD_ONLY",
                          "evidence": "判据实测(B18: 被挡笔期望≤-10 ∧ n≥30): n=194 ✓ 但期望 "
                                      "**+46.83** ✗ (被挡单净 +$9,084, 132亏/62盈)。"

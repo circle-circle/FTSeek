@@ -27,7 +27,7 @@ da_blocked_signal_cf_eval.py  # 存量测量/回填环, 台账回填待专项
 data_retention.py  # 2026-10-08 运维体检批: replay_cache 按龄保留治理 (可再生缓存清理), crontab 04:20, dry-run/--apply
 event_stream_retention.py  # 2026-10-15 审计P3: event_stream.db 保留窗 (>14天 raw_artifact 置 NULL, 行保留=dedup基座; 用户裁「推荐方案自动化」), 每日 02:40 + 周日 --vacuum
 nightly_ratchet_guard.py  # 2026-10-15 审计P3: CI面5个棘轮测试文件夜间复跑 (naive-now/except-pass/utc4/pipeline-size/W456), 红则 hub 告警+exit 1, 修双执法面盲区, 周二至周六 04:50
-conf_tier_guard_shadow.py  # 2026-10-16 DEB-20261016 L3: 高信心档倒挂守卫影子 (record-only, 滚动20交易日日聚类, CONSIDER_DOWNWEIGHT 只标记不执行), 周二至周六 06:55
+conf_tier_guard_shadow.py  # 2026-10-16 DEB-20261016 L3: 高信心档倒挂守卫影子 (record-only, 滚动20交易日日聚类, CONSIDER_DOWNWEIGHT 只标记不执行), 周二至周六 06:05 (06:16 起须在影子看板 06:15 之前 — 巡检 P2-9 时序倒挂修复)
 da_bridge_dingtalk_push.py  # 存量测量/回填环, 台账回填待专项
 da_chain_health_report.py  # 存量测量/回填环, 台账回填待专项
 da_supply_reconcile_check.py  # 存量测量/回填环, 台账回填待专项

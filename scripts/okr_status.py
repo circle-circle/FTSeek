@@ -336,7 +336,7 @@ def calc_okr_score():
 
 overall_score, kr_scores = calc_okr_score()
 
-# ─── 6b. OKR-2026-09 KR 集 (现行判据, 与上方 8 月旧块**并列不替代**) ───
+# ─── 6b. OKR-2026-09 KR 集 (已结算历史块, 与上方 8 月旧块**并列不替代**; 现行=OKR-2026-10 见 6c) ───
 # 病灶 (修尺子批③, 2026-09-06 用户裁「需要」): 上方 calc_okr_score 判的是 **OKR-2026-08 的
 # KR 集** (win_rate 55% / weekly_pnl $1000 / sample 30 / IC(T+3) 0.05 / trigger 50%), 而
 # docs/OKR-2026-08.md 已于 2026-08-23 **提前结算为 SUPERSEDED**; 现行判据是

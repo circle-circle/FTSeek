@@ -31,6 +31,8 @@ from app.core.db_utils import a9_clean_where, era_clean_where
 ROOT = Path(__file__).resolve().parents[1]
 SHADOW_DIR = ROOT / "data" / "shadow"
 _SCRIPTS = Path(__file__).resolve().parent
+# 2026-10-16 (巡检 P1-5): 看板推送 episode 级去重状态 (指纹=告警行集合抹数字漂移)
+_PUSH_STATE = ROOT / "data" / "shadow_board_push_state.json"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 sys.path.insert(0, str(ROOT))
@@ -794,10 +796,11 @@ def _sec_eth_short_family():
     r = _read_jsonl(ROOT / "data" / "ue_short_boost_shadow.jsonl")
     if r:
         days = sorted({x.get("date") for x in r})
-        a = _age_days(days[-1])
         syms = ", ".join(x.get("symbol") for x in r if x.get("date") == days[-1])
-        out.append(f"  ③ UE空头增强 累计 {len(r)} 只/{len(days)} 日 | 最近 {days[-1]}: {syms}"
-                   + (f" ⚠️{a}天前" if a is not None and a > 3 else ""))
+        # 2026-10-16 (巡检 P1-4): 补退役标 (照 ①carry 先例) — 10-15 已 KILLED,
+        # 末行系停采前归档; 不带标 = 把冻结档案读成在采。
+        out.append(f"  ③ UE空头增强 [⛔已退役 2026-10-15, 末行系停采前归档] "
+                   f"累计 {len(r)} 只/{len(days)} 日 | 末行 {days[-1]}: {syms}")
     else:
         out.append("  ③ UE空头增强: (无样本)")
     r = _read_jsonl(ROOT / "data" / "earnings_direction_path_shadow.jsonl")
@@ -875,13 +878,49 @@ def main(push=False):
         if not actionable:
             print(f"\n[push-gate] {reason} → 本次不推送 (全文已落日志; 2026-10-03 SNR 收口)")
             return
+        # 2026-10-16 (巡检 P1-5): episode 级去重 — 同一告警 episode (相同标记行集合)
+        # 不逐日重推 (实证: 同一停摆曾连推 8 个交易日); 告警面变化 ⇒ 新指纹照推。
+        ep = _episode_fingerprint(msg, reason)
+        if _episode_already_pushed(ep):
+            print(f"\n[push-gate] {reason} — 但告警 episode 与上次推送一致 "
+                  f"(指纹 {ep[:8]}) ⇒ 不重复推送 (状态变即恢复推送)")
+            return
         print(f"\n[push-gate] {reason}")
         try:
             from app.notifier.feishu import send_text
             send_text(msg)
+            _episode_mark_pushed(ep)
             print("\n[ok] 飞书已推送")
         except Exception as e:
             print(f"\n[warn] 推送失败(不影响看板): {e}")
+
+
+def _episode_fingerprint(board_text: str, reason: str) -> str:
+    """告警 episode 指纹: 含 ⚠️/待裁 的行抹掉数字漂移后哈希 (日计数漂移不产生新 episode)。"""
+    import hashlib
+    import re as _re
+    lines = [ln.strip() for ln in board_text.splitlines()
+             if ("⚠️" in ln) or ("待裁" in ln)]
+    norm = [_re.sub(r"[\d.]+", "#", ln) for ln in lines]
+    return hashlib.md5("|".join(norm + [reason]).encode("utf-8")).hexdigest()
+
+
+def _episode_already_pushed(fp: str) -> bool:
+    try:
+        st = json.loads(_PUSH_STATE.read_text(encoding="utf-8"))
+        return st.get("fingerprint") == fp
+    except Exception:
+        return False  # 状态缺失/损坏 ⇒ 当作未推 (宁可多推一次)
+
+
+def _episode_mark_pushed(fp: str) -> None:
+    try:
+        _PUSH_STATE.write_text(json.dumps(
+            {"fingerprint": fp,
+             "pushed_at": datetime.now().isoformat(timespec="seconds")},
+            ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        print(f"[warn] 推送状态写失败 (下轮可能重推一次): {e}")
 
 
 if __name__ == "__main__":

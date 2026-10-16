@@ -709,7 +709,7 @@ def collect_and_score(repo_root, ic_playbook=None, graduation=None,
         "okr_doc": OKR_DOC,
         "window": f"{OKR_WINDOW_START}→{OKR_SETTLEMENT_DATE}",
         "generated_at": _now(now).isoformat(timespec="seconds"),
-        "caliber": ("现行判据 (OKR-2026-09)。同文件 `kr_scores`/`overall_score` 是 "
+        "caliber": ("已结算历史块 (OKR-2026-09, 窗已关)。同文件 `kr_scores`/`overall_score` 是 "
                     "**OKR-2026-08 KR 集**的续算值 — 该 OKR 已于 2026-08-23 提前结算为 "
                     "SUPERSEDED, 旧块仅为 kr_scores 消费方 (scripts/okr_query.py) 与 "
                     "okr_history.jsonl 时序连续性保留, **不代表现行判据**。"),
@@ -726,7 +726,7 @@ def render_lines(block):
     if not block or block.get("error"):
         return [f"⚠️ OKR-2026-09 判分不可用: {(block or {}).get('error')}"]
     st = block.get("settlement") or {}
-    lines = [f"🎯 OKR-2026-09 (现行判据 · 窗口 {block.get('window')}) — 与上方 8 月旧块**并列不替代**",
+    lines = [f"🎯 OKR-2026-09 (已结算历史块 · 窗口 {block.get('window')}; 现行=OKR-2026-10 见 okr_status 10 块) — 与上方 8 月旧块**并列不替代**",
              f"  结算状态: {st.get('status')} — {st.get('why')}"]
     for kr in ("KR1", "KR2", "KR3", "KR4", "KR5"):
         b = (block.get("krs") or {}).get(kr) or {}

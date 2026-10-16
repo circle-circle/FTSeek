@@ -12,15 +12,19 @@ _logger = logging.getLogger(__name__)
 
 # 2026-10-15 (审计 P2-6): 盘后推送持久去重状态 — 内存标志 _playbook_tracked_date
 # 跨重启即丢 + hub 去重仅 60s 内存 ⇒ 持夜仓日每次重启都重推 (10-14 实证推了 3 次)。
-_TRACK_PUSH_STATE = Path("data/playbook_evening_tracking_push_state.json")
+_TRACK_PUSH_STATE = (
+    Path(__file__).resolve().parents[3] / "data"
+    / "playbook_evening_tracking_push_state.json"
+)  # 绝对路径锚定 (2026-10-16 巡检 P2-10): 相对路径依赖进程 cwd, 漂移即静默失去去重
 
 
 def _evening_push_fingerprint(db, today: str) -> str:
-    """当日指令终态指纹: 任一指令 outcome/退出价/净额变化 ⇒ 指纹变 ⇒ 允许重推。"""
+    """当日指令终态指纹: 任一指令 outcome/退出价/净额变化 ⇒ 指纹变 ⇒ 允许重推。
+    2026-10-16 修: pnl_net → pnl (playbook_instructions 无 pnl_net 列, 原分量恒 "None")。"""
     rows = sorted(
         (
             str(i.get("id")), str(i.get("outcome")),
-            str(i.get("exit_price")), str(i.get("pnl_net")),
+            str(i.get("exit_price")), str(i.get("pnl")),
         )
         for i in (db.get_instructions_by_date(today) or [])
     )

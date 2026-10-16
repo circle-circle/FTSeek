@@ -13,8 +13,8 @@ class _DB:
         return self._rows
 
 
-_R1 = [{"id": 1, "outcome": "win", "exit_price": 10, "pnl_net": 5}]
-_R2 = [{"id": 1, "outcome": "loss", "exit_price": 9, "pnl_net": -5}]
+_R1 = [{"id": 1, "outcome": "win", "exit_price": 10, "pnl": 5}]
+_R2 = [{"id": 1, "outcome": "loss", "exit_price": 9, "pnl": -5}]
 
 
 def test_same_fingerprint_not_repushed(tmp_path, monkeypatch):
