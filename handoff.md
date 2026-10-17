@@ -3,14 +3,14 @@
 ## 2026-10-18 全链路复查确定性缺陷修复批（用户令「修复」→「下一步继续」）
 
 **触发**: 逐段复查 EventStream 采集 → 相关性/去重 → UE 材料 → 盘前/盘中/盘后执行，确认 4 组确定性缺陷并修复；结构性方向/费用问题保持不动（需影子）。
-**落地**（代码已改，**未提交**；主服务已重启）:
+**落地**（代码已提交 `2a03fd8bb` 并推送；主服务已重启）:
 - **P0 去重**: `app/event_stream/dedupe.py` 对裸表单号（8-K/10-Q/10-K/6-K/Form 4 等）禁用 title 去重，只保留 URL 去重。实库 24h 相关 SEC 8-K 由 1 个 cluster 恢复为 5 个独立事件。
 - **事件窗/相关性**: `store.py` 新增 `get_canonical_events_since()` + `first_seen_at` 索引；UE clue 改用时间窗（`scan_limit` 500→5000 仅安全上限）；`relevance.py` 排除 facts.query、清洗 Google RSS HTML/发布方尾注、英文触发词按词边界。实库 24h 587 条 canonical 可完整读取；`Spectrum News 13` 假阳性归零，真实 telecom 新闻保留。
 - **采集健康**: `ingest_service.py` 按注册顺序执行（T0 先于 T2），部分 query 失败标 `PARTIAL` 并保留 `last_error`，不再 OK+空错误。
 - **出场安全**: `pipeline.py` patient_exit 有效截止 = min(配置, 收盘前 10 分钟)，2026-11-27/12-24 半日市 12:50 触发 EOD；`tracking_flow.py` 孤儿 SIM 平仓提前到无指令/全终态早退之前。
 **验证**: 定向回归 112 passed；聚焦 80 passed；全量 **7308 passed / 72 skipped / 3 failed**（3 条均为存量 HEAD 红：factor_stats_denominator / pending_adjudication_report / shadow_artifact_consumers；`capital_allocator` 首次满载假红单跑即绿）。`git diff --check` 干净；实库只读复验通过。
 **上线**: 重启前在途 1 条 SIM LONG `US.ADSK`、非 BOOKED 出场意图 0；`systemctl restart ftseek-us` 后启动冒烟 **7/7**，PID 2082222，仓位保留，零 Traceback/CRITICAL。EventStream/UE 为 cron 新进程，下轮自动加载；Playbook 两处已随重启生效。
-**回滚**: 还原上述代码文件并重启（未提交，`git checkout -- <files>` 即回到 HEAD）；EventStream 数据修复无 schema 破坏（新增索引可保留）。
+**回滚**: `git revert 2a03fd8bb` 后重启；EventStream 数据修复无 schema 破坏（新增索引可保留）。
 **下一步**: P1-1 方向/费用结构、P1-2 借券 UNKNOWN 策略均需 4–6 周影子 + 预注册判据；P2-5 prompt 注入硬化随下次 prompt 版本影子；P2-6 PENDING/空 decision_id 对账与 UE 新鲜度告警待排期。
 
 ## 2026-10-17 全链路审计修复批（用户令「深度复查」→「确认无误按建议优化修复」）
