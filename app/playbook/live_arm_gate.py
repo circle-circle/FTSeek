@@ -171,6 +171,25 @@ def evaluate_live_arm_gate(
     if halted:
         reasons.append(_reason("LIVE_NEW_POSITIONS_HALTED", "LIVE new positions are halted by a prior safety event"))
 
+    # 2026-10-17: DI 的 LIVE fail-mode 断言只在 AUTO_TRADE_ACCOUNT=real 时执行;
+    #   显式 target_env=real 的 live_manual_arm 在 AUTO=sim 下会绕过启动分支。
+    #   此处对**所有** LIVE 执行补上 ACB fail-mode 执行期断言。preflight_fail_mode
+    #   不在此重复: 本门的 open_live_positions=None 已是同语义 fail-close。
+    #   毕业门 (RFC-080) 是工程探针的有意例外, 不在本门内, 不能顺手"修复"。
+    try:
+        from app.core.live_readiness import live_fail_mode_issues
+        _acb_fail_issues = [
+            issue for issue in live_fail_mode_issues()
+            if issue.startswith("risk.acb_fail_mode") or issue.startswith("config_unreadable")
+        ]
+    except Exception as _fail_mode_error:
+        _acb_fail_issues = [f"config_unreadable: {_fail_mode_error}"]
+    if _acb_fail_issues:
+        reasons.append(_reason(
+            "LIVE_ACB_FAIL_MODE_NOT_CLOSED",
+            f"LIVE execution requires risk.acb_fail_mode=closed; got {_acb_fail_issues}",
+        ))
+
     mode = str(arm.get("mode") or "engineering_probe")
     if mode != "engineering_probe":
         reasons.append(_reason("LIVE_MODE_UNSUPPORTED", f"Unsupported LIVE mode: {mode!r}"))

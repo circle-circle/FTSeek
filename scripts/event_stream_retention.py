@@ -8,7 +8,11 @@ canonical_events + source_health; raw_events 只有 COUNT(*))。叠加 db_backup
 
 策略 (用户裁「14 天 + 仅清 artifact + 自动化」):
 - **行全保留** (raw_id 幂等 dedup 的基座, INSERT OR IGNORE 依赖行在), 仅把
-  fetched_at < 今天−14天 的行的 raw_artifact 置 NULL (列级清理)。
+  fetched_at < 今天−14天 的行的 raw_artifact 置**空串** (列级清理)。
+  ⚠️ 2026-10-17 修复: 原实现置 NULL, 而生产 schema 该列是 `TEXT NOT NULL`
+  (app/event_stream/store.py) ⇒ 每轮整条 UPDATE 抛 IntegrityError, 清理从未
+  生效 (cron 失败日志 0 字节, 静默失败)。置空串与置 NULL 的磁盘收益相同
+  (正文已释放), 且无需重建 1.3G 表来放开约束。
 - canonical_events / source_health 不动。
 - `--vacuum`: VACUUM 收缩文件 (auto_vacuum=0 ⇒ 平时清出的页进 freelist 供复用,
   周频 VACUUM 才真正还盘; WAL 下需短暂无写者, busy_timeout 重试, 失败留痕下轮再来)。
@@ -43,18 +47,19 @@ def _connect(rw: bool = True) -> sqlite3.Connection:
 
 def clean(days: int = RETENTION_DAYS, dry_run: bool = False) -> dict:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    # 生产 schema raw_artifact TEXT NOT NULL ⇒ 只能置空串; LENGTH>0 同时跳过空串/None
+    has_body = "fetched_at < ? AND LENGTH(raw_artifact) > 0"
     with _connect() as conn:
         stats = conn.execute(
-            "SELECT COUNT(*), COALESCE(SUM(LENGTH(raw_artifact)),0) FROM raw_events "
-            "WHERE fetched_at < ? AND raw_artifact IS NOT NULL", (cutoff,)).fetchone()
+            f"SELECT COUNT(*), COALESCE(SUM(LENGTH(raw_artifact)),0) FROM raw_events "
+            f"WHERE {has_body}", (cutoff,)).fetchone()
         n_hit, bytes_hit = int(stats[0]), int(stats[1])
         out = {"cutoff": cutoff, "days": days, "rows_to_null": n_hit,
                "bytes_to_free": bytes_hit, "dry_run": dry_run}
         if dry_run or n_hit == 0:
             return out
         conn.execute(
-            "UPDATE raw_events SET raw_artifact=NULL "
-            "WHERE fetched_at < ? AND raw_artifact IS NOT NULL", (cutoff,))
+            f"UPDATE raw_events SET raw_artifact='' WHERE {has_body}", (cutoff,))
         conn.commit()
         out["nulled"] = n_hit
         return out

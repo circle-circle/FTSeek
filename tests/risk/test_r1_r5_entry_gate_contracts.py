@@ -22,6 +22,13 @@ import pytest
 
 from app.playbook.db import PlaybookDB
 from app.playbook.playbook_service import PlaybookService
+import app.playbook.playbook_service as playbook_service
+
+
+@pytest.fixture(autouse=True)
+def _isolate_symbol_lock_dir(monkeypatch, tmp_path):
+    """跨进程锁目录隔离到 tmp — 测试不得在仓内 data/locks 留锁文件。"""
+    monkeypatch.setattr(playbook_service, "_SYMBOL_LOCK_DIR", tmp_path / "symbol_locks")
 
 
 @pytest.fixture
@@ -171,6 +178,48 @@ class TestR1SymbolLock:
                 svc._execute_via_dual_broker(*args)
         assert svc._get_symbol_order_lock("US.TSLA").acquire(blocking=False)
         svc._get_symbol_order_lock("US.TSLA").release()
+        _fh, _reason = playbook_service._try_acquire_cross_process_symbol_lock("US.TSLA")
+        assert _fh is not None, "inner 异常后跨进程锁也必须释放 (fd 泄漏 = 该标的永久拒单)"
+        playbook_service._release_cross_process_symbol_lock(_fh)
+
+    # ── 跨进程锁 (2026-10-17 审计): 调度进程 vs socket 激活的看板进程 ──
+    def test_cross_process_holder_blocks_execution(self, svc):
+        """另一进程持锁期间, 本进程同标的必须被拒且不进入下单逻辑."""
+        args = ({}, 1, "US.NVDA", "BUY", 100.0, 97.5, 105.0, 10, "BUY", "", "sim")
+        _fh, _reason = playbook_service._try_acquire_cross_process_symbol_lock("US.NVDA")
+        assert _fh is not None
+        try:
+            with patch.object(PlaybookService, "_execute_via_dual_broker_inner",
+                              return_value={"success": True}) as inner:
+                res = svc._execute_via_dual_broker(*args)
+        finally:
+            playbook_service._release_cross_process_symbol_lock(_fh)
+        assert res["success"] is False
+        assert "跨进程" in res["message"]
+        assert not inner.called, "抢不到跨进程锁必须止步于包装层"
+
+    def test_cross_process_lock_released_after_execution(self, svc):
+        """正常执行结束后锁必须可被再次取得 (不跨单泄漏)."""
+        args = ({}, 1, "US.NVDA", "BUY", 100.0, 97.5, 105.0, 10, "BUY", "", "sim")
+        with patch.object(PlaybookService, "_execute_via_dual_broker_inner",
+                          return_value={"success": True}):
+            assert svc._execute_via_dual_broker(*args)["success"] is True
+        _fh, _reason = playbook_service._try_acquire_cross_process_symbol_lock("US.NVDA")
+        assert _fh is not None
+        playbook_service._release_cross_process_symbol_lock(_fh)
+
+    def test_lock_file_unavailable_fails_closed(self, svc, monkeypatch, tmp_path):
+        """锁目录不可建 = 跨进程互斥失效 → fail-close, 不得静默放行下单."""
+        blocker = tmp_path / "not_a_dir"
+        blocker.write_text("x")
+        monkeypatch.setattr(playbook_service, "_SYMBOL_LOCK_DIR", blocker / "sub")
+        args = ({}, 1, "US.NVDA", "BUY", 100.0, 97.5, 105.0, 10, "BUY", "", "sim")
+        with patch.object(PlaybookService, "_execute_via_dual_broker_inner",
+                          return_value={"success": True}) as inner:
+            res = svc._execute_via_dual_broker(*args)
+        assert res["success"] is False
+        assert "跨进程锁不可用" in res["message"]
+        assert not inner.called
 
 
 class TestR5CapitalSafetyGate:

@@ -110,6 +110,11 @@ _PRODUCTION_DATA_SEAMS = (
     # 2026-10-16 (巡检 P1-5): 看板推送 episode 去重状态 — shadow_board 推送侧读写。
     ("scripts.shadow_board", "_PUSH_STATE", "path",
      "shadow_board_push_state.json"),
+    # 2026-10-17 (审计 P0-1 批): 调度器/看板跨进程标的锁 — _execute_via_dual_broker
+    #   下单前必开锁文件, 未登记时硬闸拦写 ⇒ 锁不可用 ⇒ fail-closed 拒绝下单,
+    #   tests/playbook/test_exit_compensation.py 等 21 例全红 (假失败, 非逻辑回归)。
+    ("app.playbook.playbook_service", "_SYMBOL_LOCK_DIR", "path",
+     "locks/symbol_orders"),
 )
 
 

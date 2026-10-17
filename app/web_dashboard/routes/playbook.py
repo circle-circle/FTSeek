@@ -123,10 +123,14 @@ def register(app, templates):
 
         from app.playbook.playbook_service import get_playbook_service
         svc = get_playbook_service()
+        # 2026-10-17 审计: 手动通道留痕 — 无操作者身份体系时, 至少记录入口与来源 IP,
+        #   与服务侧 requested_by → metadata.execution_origin 串成一条审计链。
+        _client_ip = request.client.host if request.client else "unknown"
         result = svc.execute_instruction(
             instruction_id=instruction_id,
             acknowledge_risk=body.get("acknowledge_risk", False),
             custom_params=body.get("custom_params"),
+            requested_by=f"dashboard:{_client_ip}",
         )
         return result
 

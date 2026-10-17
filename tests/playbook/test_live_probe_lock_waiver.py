@@ -314,3 +314,31 @@ def test_waiver_file_is_same_path_in_both_auditors(tmp_path):
         encoding="utf-8")
     assert sc.WAIVER_FILE == "data/live_probe_lock_waiver.json"
     assert f'WAIVER_FILE = "{sc.WAIVER_FILE}"' in src
+
+
+# ══════════════ ⑦ LIVE 执行期 fail-mode 断言 (2026-10-17) ══════════════
+def test_gate_rejects_when_acb_fail_mode_not_closed(tmp_path, monkeypatch):
+    """显式 target_env=real 在 AUTO=sim 下绕过 DI 启动断言 ⇒ 执行门必须补上."""
+    p = tmp_path / "w.json"
+    _write_waiver(p)
+    monkeypatch.setattr(G, "_WAIVER_FILE", p)
+    monkeypatch.setattr(
+        "app.core.live_readiness.live_fail_mode_issues",
+        lambda: ["risk.acb_fail_mode=open"],
+    )
+    d = G.evaluate_live_arm_gate(_ARM, halted=False, **_GATE_KW)
+    assert d["allowed"] is False
+    assert "LIVE_ACB_FAIL_MODE_NOT_CLOSED" in [r["code"] for r in d["reasons"]]
+
+
+def test_gate_does_not_duplicate_preflight_check(tmp_path, monkeypatch):
+    """preflight 在本路径已由 open_live_positions=None fail-close 覆盖, 不重复判."""
+    p = tmp_path / "w.json"
+    _write_waiver(p)
+    monkeypatch.setattr(G, "_WAIVER_FILE", p)
+    monkeypatch.setattr(
+        "app.core.live_readiness.live_fail_mode_issues",
+        lambda: ["risk.preflight_fail_mode=open"],
+    )
+    d = G.evaluate_live_arm_gate(_ARM, halted=False, **_GATE_KW)
+    assert d["allowed"] is True, [r["code"] for r in d["reasons"]]

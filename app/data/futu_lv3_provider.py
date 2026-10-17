@@ -1375,18 +1375,20 @@ class FutuLV3Provider:
             return None
 
         futu_symbol = self._to_futu_symbol(symbol)
-        # 非缺省复权口径用独立缓存 key (防 QFQ/NONE 串缓存); push 缓存为实时原始推送,
-        # 仅缺省口径复用。
-        _cache_sym = symbol if autype == "QFQ" else f"{symbol}#{autype}"
+        # 缓存 key 必须含 ktype (2026-10-17 审计修复): 原 key 只有 symbol/autype ⇒
+        # 60s 内 K_DAY 请求会命中 K_1M 缓存 (反之亦然), 技术指标静默拿到错周期序列。
+        # 非缺省复权口径同样分 key (防 QFQ/NONE 串缓存)。
+        _cache_sym = f"{symbol}|{autype}|{ktype}"
 
-        # ① 优先读持久化缓存 (60s TTL) — 按口径 key
+        # ① 优先读持久化缓存 (60s TTL) — 按口径+周期 key
         cached = self._get_cached_kline(_cache_sym)
         if cached and len(cached) >= min(count, 10):
             return cached[-count:]
 
-        # ② 读 Push 缓存 (由 Handler 实时更新) — 仅缺省 QFQ 口径复用 (push 为实时推送,
-        # 当日无复权差异, 但 T-1 段口径不明, NONE 消费方不用)
-        if autype == "QFQ":
+        # ② 读 Push 缓存 (由 Handler 实时更新) — **仅 K_1M 可用**: Handler 按订阅
+        # 累积 1 分钟 bar 且行内不带周期字段, 其它 ktype 复用会把 1M 序列当
+        # 日线/15M 返回 (2026-10-17 审计修复)。
+        if autype == "QFQ" and ktype == "K_1M":
             with self._push_kline_cache_lock:
                 if futu_symbol in self._push_kline_cache:
                     push_data = self._push_kline_cache[futu_symbol]
@@ -1470,9 +1472,11 @@ class FutuLV3Provider:
                 # 日期过滤:
                 # 日内 K 线: start=T-1 会包含前一交易日尾盘, 保留全部用于技术指标计算
                 #   (ORB 引擎有独立的 today 校验; 技术指标需要 ≥30 条连续 K 线)
-                # 日 K 线: 不设 start, 可能含过旧数据, 做基本过滤
+                # 日 K 线: end=today 已由请求参数约束, 不再按当日过滤 (2026-10-17
+                #   修复: 原实现把 400 天日线砍到 0-1 根, pre_market_ranker 等
+                #   get_kline(K_DAY) 消费方恒拿 None); 按升序取最近 count 根。
                 if ktype == "K_DAY":
-                    klines = [k for k in klines if k["time"].startswith(today_et)]
+                    klines = [k for k in klines if k["time"]][-count:]
                 elif klines:
                     # 日内 K 线: 仅排除非当日和非前一交易日的异常旧数据
                     _valid_prefixes = (today_et, prev_trading_day)
@@ -1481,9 +1485,11 @@ class FutuLV3Provider:
                 if not klines:
                     logger.warning(f"[FutuLV3] {symbol} history kline 无当日数据 (today={today_et}, ktype={ktype}), 返回 None")
                     return None
-                # 更新所有缓存
-                with self._push_kline_cache_lock:
-                    self._push_kline_cache[futu_symbol] = klines
+                # 更新缓存: push ring buffer 只收 K_1M (其它周期写入会污染 1M 序列),
+                # 持久化缓存按 symbol|autype|ktype 分 key。
+                if ktype == "K_1M":
+                    with self._push_kline_cache_lock:
+                        self._push_kline_cache[futu_symbol] = klines
                 self._set_cached_kline(_cache_sym, klines)
                 return klines
             else:
@@ -1505,11 +1511,11 @@ class FutuLV3Provider:
                         self._kline_last_reconnect = _t.time()
                         self._kline_fail_count = 0
                         self.force_reconnect()
-                return self._get_cached_kline(symbol)  # 降级返回缓存
+                return self._get_cached_kline(_cache_sym)  # 降级返回缓存
 
         except Exception as e:
             logger.debug(f"[FutuLV3] {symbol} K 线异常: {e}")
-            return self._get_cached_kline(symbol)  # 降级返回缓存
+            return self._get_cached_kline(_cache_sym)  # 降级返回缓存
 
     def get_daily_kline(self, symbol: str, count: int = 60) -> Optional[List[Dict]]:
         """获取日K线历史数据 (不做当日过滤，返回完整历史日线)

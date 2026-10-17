@@ -307,9 +307,9 @@ def test_production_config_end_to_end():
 
 
 def test_orphan_self_heals_after_restart_with_trace(env):
-    """C6: pending 是内存态 (~120s), 重启后旗标残留 PENDING 而内存空 ⇒ 必须放行。
-
-    若不自愈, 指令永久卡死 (富途 app 上永远看不到它) —— 这是本门最坏的失效模式。
+    """C6: pending 是内存态 (~120s), 重启后旗标残留 PENDING 而内存空 ⇒
+    按旗标重建窗口续上门控 (不得跳过确认立即放行), 窗口走完照常执行 ——
+    同时不得永久卡死 (富途 app 上永远看不到它), 那是本门最坏的失效模式。
     """
     db, _ = env
     _save(db, "US.ORPH", "BUY", 50.0)
@@ -320,12 +320,16 @@ def test_orphan_self_heals_after_restart_with_trace(env):
     assert json.loads(r2["metadata_json"])["entry_confirm"]["status"] == ecg.ST_PENDING
     assert ecg.defer_pending(dict(r2), _T0) is False, (
         "auto_execute 的第一道 defer_pending 已把孤儿拦死, gate_at_execute 自愈不可达")
-    assert ecg.gate_at_execute(dict(r2), db, {"entry_price": 50.0}, _T0, _cfg_t()) == "execute", \
-        "PENDING 孤儿未自愈 ⇒ 指令永久卡死"
+    assert ecg.gate_at_execute(dict(r2), db, {"entry_price": 50.0}, _T0, _cfg_t()) == "defer", \
+        "重启后必须按旗标重建窗口, 不得把 120s 确认降级为立即执行"
+    assert ecg._PENDING[int(r2["id"])]["anchor"] == 50.0
+    ecg.sweep_entry_confirmations(_Sched({"US.ORPH": 50.5}), db, _T0 + timedelta(seconds=121))
     r3 = [x for x in db.get_instructions_by_date(_DATE) if x["symbol"] == "US.ORPH"][0]
-    healed = json.loads(r3["metadata_json"])["entry_confirm"]
-    assert healed["status"] == ecg.ST_HEALED and healed.get("healed_at"), \
-        f"自愈未留痕: {healed}"
+    confirmed = json.loads(r3["metadata_json"])["entry_confirm"]
+    assert confirmed["status"] == ecg.ST_CONFIRMED and confirmed.get("confirmed_at"), \
+        f"重建窗口未走完判定: {confirmed}"
+    assert ecg.gate_at_execute(dict(r3), db, {"entry_price": 50.0}, _T0 + timedelta(seconds=121),
+                               _cfg_t()) == "execute"
 
 
 def test_holdout_arm_split_is_deterministic_and_zero_in_production():

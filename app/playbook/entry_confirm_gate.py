@@ -42,8 +42,10 @@ scripts/entry_delay_confirm_shadow.py) 实测「触发后延迟 2min 复核, 价
    成交用延迟后市价, opp_cost = 两者差)。
 
 5. **重启孤儿自愈**: pending 表是进程内存态 (生命周期仅 ~120s), 重启即空。
-   metadata 旗标若残留 PENDING_CONFIRM 而内存无对应项 ⇒ 转 HEALED 留痕并
-   恢复正常执行。绝不因重启把指令永久卡死 (失败路径纪律)。
+   metadata 旗标残留 PENDING_CONFIRM 而内存无对应项时: 窗口未过 ⇒ 按旗标
+   (锚/方向/armed_at/delay/ruler 均为 arm 时冻结值) 重建 pending 续上门控;
+   无可信锚或窗口已整体超 TTL ⇒ 转 HEALED 留痕并恢复正常执行。既不让重启
+   把 120s 确认静默降级为立即执行, 也绝不永久卡死 (失败路径纪律)。
 
 6. **fail-open 到「照常执行」**: 本门任何异常 ⇒ 放行原路径, 不下单不是
    安全方向 (会静默减少样本 + 改变基线)。与 chase_cap 门的 fail-close 相反,
@@ -318,11 +320,21 @@ def _gate_inner(inst, db, reprice_params, now_et, cfg, scheduler):
     if not cfg.get("enabled") or inst_id <= 0:
         return "execute"
 
-    # ── 孤儿自愈: 旗标说 pending 但内存无 (重启/超期) ⇒ 转 HEALED 照常执行 ──
+    # ── 孤儿: 旗标说 pending 但内存无 (重启) — 先尝试重建窗口, 重建不了才放行 ──
     if st == ST_PENDING and inst_id not in _PENDING:
+        _restored = _restore_arm(inst, state, now_et, cfg, reprice_params)
+        if _restored is not None:
+            if len(_PENDING) >= _PENDING_MAX:
+                _evict_expired(now_et)
+            _PENDING[inst_id] = _restored
+            logger.warning(
+                f"[EntryConfirm] {inst.get('symbol')} 旗标 PENDING 但内存无记录 "
+                f"(重启) → 按旗标重建门控窗口: arm={_restored['armed_at'].isoformat()} "
+                f"delay={_restored['delay_sec']}s 锚=${_restored['anchor']:.2f} → defer")
+            return "defer"
         logger.warning(
-            f"[EntryConfirm] {inst.get('symbol')} 旗标 PENDING 但内存无记录 "
-            f"(重启/超期) → 转 HEALED 并照常执行 (孤儿自愈)")
+            f"[EntryConfirm] {inst.get('symbol')} 旗标 PENDING 但内存无记录且窗口不可重建 "
+            f"(重启/超期/无锚) → 转 HEALED 并照常执行 (孤儿自愈)")
         _write_state(db, inst_id, {**state, "status": ST_HEALED,
                                    "healed_at": now_et.isoformat()})
         return "execute"
@@ -385,7 +397,7 @@ def _gate_inner(inst, db, reprice_params, now_et, cfg, scheduler):
         _write_state(db, inst_id, {
             "status": ST_PENDING, "armed_at": now_et.isoformat(),
             "anchor": anchor, "direction": _arm["direction"],
-            "delay_sec": _arm["delay_sec"],
+            "delay_sec": _arm["delay_sec"], "ttl_sec": int(cfg.get("ttl_sec") or DEFAULT_TTL_SEC),
             "ruler": _arm["ruler"], "mid_arm": _arm["mid_arm"],
         })
         logger.info(
@@ -396,6 +408,54 @@ def _gate_inner(inst, db, reprice_params, now_et, cfg, scheduler):
 
     # 其他状态 (ABANDONED/EXPIRED/HOLDOUT/HEALED 重入) ⇒ 照常执行, 不重复 arm
     return "execute"
+
+
+def _restore_arm(inst: Dict[str, Any], state: Dict[str, Any], now_et: datetime,
+                 cfg: Dict[str, Any], reprice_params: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """重启后按持久化旗标重建 pending 快照; 窗口已整体过期/不可信 ⇒ None。
+
+    只续上 arm 时冻结的窗口 (armed_at/anchor/direction/delay/ruler), 不用当前
+    市价重造锚 — 重建失败才走 HEALED 放行, 重启不得把确认门降级为立即执行。
+    grace 参数未落旗标 (向后兼容旧行), 用 cfg 现值; 窗口内配置通常未变。
+    """
+    try:
+        inst_id = int(inst.get("id") or 0)
+        anchor = float(state.get("anchor") or 0)
+        direction = str(state.get("direction") or "")
+        armed_raw = state.get("armed_at")
+        if inst_id <= 0 or anchor <= 0 or direction not in ("LONG", "SHORT") or not armed_raw:
+            return None
+        armed_at = datetime.fromisoformat(str(armed_raw))
+        if armed_at.tzinfo is None:
+            # 旧行可能无时区 (naive) ⇒ 按调用方 now_et 时区解释, 避免 aware/naive 相减报错
+            armed_at = armed_at.replace(tzinfo=now_et.tzinfo)
+        _ttl = state.get("ttl_sec")
+        ttl = int(DEFAULT_TTL_SEC if _ttl is None else _ttl)
+        expire_at = armed_at + timedelta(seconds=ttl)
+        if now_et > expire_at:
+            return None
+        _delay = state.get("delay_sec")
+        delay_sec = int(DEFAULT_DELAY_SEC if _delay is None else _delay)
+        return {
+            "inst_id": inst_id,
+            "symbol": inst.get("symbol"),
+            "decision_id": inst.get("decision_id"),
+            "direction": direction,
+            "anchor": anchor,
+            "armed_at": armed_at,
+            "expire_at": expire_at,
+            "notional": _notional(inst, reprice_params),
+            "session_min": _session_min(armed_at),
+            "delay_sec": delay_sec,
+            "ruler": str(state.get("ruler") or cfg.get("ruler") or DEFAULT_RULER),
+            "grace_sweeps": int(cfg.get("grace_sweeps") or 0),
+            "grace_votes": int(cfg.get("grace_votes") or DEFAULT_GRACE_VOTES),
+            "mid_arm": state.get("mid_arm"),
+            "restored": True,
+        }
+    except Exception as _e:
+        logger.warning(f"[EntryConfirm] 孤儿重建失败 (转 HEALED 放行): {_e}", exc_info=True)
+        return None
 
 
 def defer_pending(inst: Dict[str, Any], now_et: datetime) -> bool:

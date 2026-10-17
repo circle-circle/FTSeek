@@ -3246,7 +3246,13 @@ REGISTRY: list[ShadowItem] = [
                     "0.8/1.0, 滑点 0.10% 方向感知 + 费 0.15% 往返, 判据只按帽内可执行 "
                     "add_ratio=min(40%,(cap−arm名义)/arm名义) 结算 (无帽 40% 仅诊断列)。"
                     "零干预: 不碰退出判定/不下单/不写交易表。",
-        data_path="data/shadow/trail_lock_pyramid.jsonl",
+        # 计数轴 = 结算器 latest.json 的 n_executable (帽内可执行武装事件), 不是原始
+        # JSONL 行数: 台账逐轮追加 (~12k 行) 而判据 n 轴是事件 (2026-10-17 审计实锤,
+        # 默认 lines 会在 10/03 之前就把 12k 行读成"已达 40" → 虚假 READY)。
+        # 同 tests/test_criteria_registry_visibility.py 的既定纪律: 行数≠判据轴时用
+        # json_key:<结算器键>; settle 由 cron `41 6 * * 2-6` 每夜刷新该产物。
+        data_path="data/shadow/trail_lock_pyramid_latest.json",
+        count_mode="json_key:n_executable",
         config_key=None,
         min_n=40,
         graduation_criteria="DEB① §七预注册 (读数前写死, 死线 2026-12-31): 仅 post-9/17 config 层; "
@@ -3580,6 +3586,38 @@ REGISTRY: list[ShadowItem] = [
               "verify_earnings_criterion.py)。计数轴注: min_n=20 数的是对照行 "
               "(where:legacy_blocked_new_pass=True), 与判据①的「延长时段成交笔数」不同轴, "
               "判据①须另行按成交口径读。回滚: EXT_EARNINGS_CRITERION_SHADOW=false (无需重启)。",
+    ),
+    # ── 2026-10-17 全链路审计 P0-1: blocked_exits 符号级冻结面的观测 ──
+    ShadowItem(
+        id="blocked_exit_opportunity",
+        name="未结算出场意图冻结期评估机会影子 (审计 P0-1 ④)",
+        status=ShadowStatus.OBSERVING,
+        description="`_resume_playbook_exits` 把每个未结算 intent 的 (target_env, symbol) 放进 "
+                    "blocked_exits, exit_monitor_flow 命中即整行跳过 ⇒ 该标的 SL/TP/时间/因子规则"
+                    "全部冻结 (10/1 US.ACN: SL 越线 2.0pp 无保护 6h)。审计 P0-1 处置顺序 = 先影子"
+                    "计数 (冻结时长/期间不利位移/SL 本应触发数), 用真实数据定 N(告警升级)/M(受控重评)"
+                    "再改行为 ⇒ 本项在 blocked 跳过点按 60s 进程内节流落快照 (写方 "
+                    "app/playbook/blocked_exit_opportunity.py, 由 exit_monitor_flow.py 调用), "
+                    "零行为变更: 不释放 intent/不改 blocked_exits/不下单/不推送。",
+        data_path="data/shadow/blocked_exit_opportunity.jsonl",
+        config_key=None,
+        min_n=30,
+        count_mode="distinct:intent_id",
+        graduation_criteria="A1 样本门按 **distinct 冻结 episode** 计 (同一 intent 的 60s 快照 "
+                            "合并为 1)。n≥30 后运行 scripts/blocked_exit_opportunity_shadow.py "
+                            "(eval_on_demand, 无 cron) 读三轴: ①冻结时长分布 ②期间最大不利位移 "
+                            "③按 stop_loss 兜底本应退出的 episode 占比; 读数只用于另立 DEB "
+                            "预注册 N/M 阈值与受控重评方案 (行为变更), 不自动改任何出场路径。"
+                            "判据未定 N/M 前本项不转正 (纯观测)。",
+        eval_script="scripts/blocked_exit_opportunity_shadow.py",
+        eval_on_demand=True,
+        created="2026-10-17",
+        notes="计数锚 = jsonl 的 distinct intent_id (与聚合器 episode 同轴)。聚合产物 "
+              "data/shadow/blocked_exit_opportunity_latest.json 由 eval 脚本按需生成, 不作计数锚 "
+              "(未跑 eval 时不存在, 挂 data_path 会恒 0)。当前积压 intent=0 (2026-10-17 查询 "
+              "playbook_exits.db), 基线从零开始。相关既有告警: pipeline._alert_blocked_exit_age "
+              "(30min HIGH / 4h CRITICAL, 每 intent+tier 一次) 与 _alert_close_failure 日去重 — "
+              "本影子是定阈证据面, 不是告警面。",
     ),
 ]
 

@@ -50,6 +50,72 @@ _PORTFOLIO_GUARDRAIL_AUDIT_PATH = (
     / "portfolio_execution_guardrail.jsonl"
 )
 
+# ── 跨进程 per-symbol 下单互斥 (2026-10-17 审计) ────────────────────────────
+# 病灶: R-1 的 threading.Lock 只在本进程内有效, 而调度 (ftseek-us) 与看板
+# (ftseek-dashboard, socket 激活的独立 uvicorn 进程) 会并发执行同一标的指令
+# ⇒ 两进程各自持"锁"通过 ⇒ duplicate_position_guard 读 open_positions 的
+# TOCTOU 跨进程复发。flock 锁随 fd 关闭/进程退出自动释放 (无陈旧锁), 两进程
+# 同机同文件系统 ⇒ 与 threading.Lock 组合成「进程内 + 跨进程」两级非阻塞互斥。
+# 作用域仅同主机: 本仓无多机部署; 若未来拆机, 需换 DB/redis 锁。
+_SYMBOL_LOCK_DIR: Optional[Path] = None
+
+
+def _get_symbol_lock_dir() -> Path:
+    global _SYMBOL_LOCK_DIR
+    if _SYMBOL_LOCK_DIR is None:
+        _SYMBOL_LOCK_DIR = core_paths.get_data_dir() / "locks" / "symbol_orders"
+    return _SYMBOL_LOCK_DIR
+
+
+def _try_acquire_cross_process_symbol_lock(symbol: str):
+    """返回 (handle, reason): handle 非 None=已持锁; reason ∈ {None, "busy:*", "unavailable"}."""
+    import fcntl
+    import os
+    import re
+
+    _safe = re.sub(r"[^A-Za-z0-9._-]+", "_", str(symbol))[:120] or "unknown"
+    path = _get_symbol_lock_dir() / f"{_safe}.lock"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(path, "a+", encoding="utf-8")
+    except Exception as exc:
+        logger.error(f"[SymbolLock] 跨进程锁文件不可用 {path}: {exc}", exc_info=True)
+        return None, "unavailable"
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        try:
+            fh.seek(0)
+            holder = fh.read(200).strip()
+        except Exception:
+            holder = ""
+        fh.close()
+        return None, f"busy:{holder}" if holder else "busy"
+    try:
+        # 持有者留痕 (仅诊断用; 抢锁失败方读到它就能指明是哪个进程在途)
+        fh.seek(0)
+        fh.truncate()
+        fh.write(f"pid={os.getpid()} at={now_et().isoformat(timespec='seconds')}\n")
+        fh.flush()
+    except Exception:
+        logger.warning("[SymbolLock] 跨进程锁持有者留痕失败 (不影响互斥)", exc_info=True)
+    return fh, None
+
+
+def _release_cross_process_symbol_lock(fh) -> None:
+    if fh is None:
+        return
+    try:
+        import fcntl
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    except Exception:
+        logger.warning("[SymbolLock] 跨进程锁释放失败 (fd 关闭仍会释放)", exc_info=True)
+    finally:
+        try:
+            fh.close()
+        except Exception:
+            logger.warning("symbol lock fd close failed", exc_info=True)
+
 # ── 本模块私有 MarketDataRouter 单例 (2026-09-03, DEB-20260903-intraday-chain-audit §五 D3(b)) ──
 # 病灶: 下单路径两处**每单** new MarketDataRouter() → 每单一条 OpenD 连接 + 一个 30s 健康守护
 #   线程; 守护线程 while True 无停止位且强引用 self → 实例与其 socket 永不回收 (实测 21:32 重启
@@ -971,6 +1037,7 @@ class PlaybookService:
         acknowledge_risk: bool = False,
         custom_params: Dict = None,
         target_env: Optional[str] = None,
+        requested_by: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         执行一条 Playbook 指令
@@ -1211,6 +1278,22 @@ class PlaybookService:
         stop_loss = _cp["stop_loss"] if _cp.get("stop_loss") is not None else inst.get("stop_loss", 0)
         take_profit = _cp["take_profit"] if _cp.get("take_profit") is not None else inst.get("take_profit", 0)
         position_size = _cp["position_size"] if _cp.get("position_size") is not None else inst.get("position_size", 0)
+
+        # 2026-10-17 审计: 手动(Dashboard)/自动通道原先在成交后不可区分, 且 custom_params
+        #   对 entry/SL/TP/size 的覆盖只存在于调用栈里 (成交后无从复核)。调用方传
+        #   requested_by; 成功成交后把来源与覆盖前后值写进 metadata_json (零 schema 迁移,
+        #   同 merge_instruction_metadata 的既有审计口径)。
+        _origin = (str(requested_by).strip() if requested_by else "") or "unspecified"
+        _requested_at = now_et().isoformat()
+        _override_audit = {
+            _field: {"from": inst.get(_field), "to": _cp.get(_field)}
+            for _field in ("entry_price", "stop_loss", "take_profit", "position_size")
+            if _cp.get(_field) is not None and _cp.get(_field) != inst.get(_field)
+        }
+        logger.info(
+            f"[playbook] 执行来源 origin={_origin} id={instruction_id} {symbol} "
+            f"custom_overrides={list(_override_audit) or 'none'}"
+        )
         if not position_size or position_size <= 0:
             position_size = 1
 
@@ -1349,17 +1432,39 @@ class PlaybookService:
         if not (isinstance(_route_exec, dict) and _route_exec.get("action") == "limit"):
             _route_exec = None
 
+        def _with_execution_audit(result, target_env_used: str):
+            """成交成功 → 来源/覆盖审计写 metadata_json (best-effort, 不阻断成交)。"""
+            if isinstance(result, dict) and result.get("success"):
+                patch = {"execution_origin": {
+                    "requested_by": _origin,
+                    "target_env": target_env_used,
+                    "requested_at": _requested_at,
+                }}
+                if _override_audit:
+                    patch["execution_overrides"] = _override_audit
+                try:
+                    if not self.db.merge_instruction_metadata(instruction_id, patch):
+                        logger.warning(
+                            f"[playbook] 执行来源审计未写入 metadata id={instruction_id} "
+                            f"origin={_origin} (成交不受影响)")
+                except Exception as audit_error:
+                    logger.warning(
+                        f"[playbook] 执行来源审计异常 id={instruction_id} "
+                        f"origin={_origin} (成交不受影响): {audit_error}",
+                        exc_info=True)
+            return result
+
         # ── broker 路径: 显式 target_env 是唯一交易臂入口 ──
         # Path A (AUTO_TRADE_ACCOUNT=real 全局翻转/降级) 已于 RFC-131 收口退役:
         # 未显式传 target_env 的调用只能执行 SIM；请求 real 一律 HALT，不再静默降级。
         import os as _os
         _explicit_target = str(target_env or "").strip().lower()
         if _explicit_target in {"sim", "real"}:
-            return self._execute_via_dual_broker(
+            return _with_execution_audit(self._execute_via_dual_broker(
                 inst, instruction_id, symbol, direction, entry_price, stop_loss,
                 take_profit, position_size, mos_direction, _matched_decision_id,
                 target_env=_explicit_target, archetype_route=_route_exec,
-            )
+            ), _explicit_target)
 
         _auto_account = _os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
 
@@ -1374,11 +1479,11 @@ class PlaybookService:
             }
 
         # AUTO_TRADE_ACCOUNT=sim → 模拟盘真实下单 (futu_simulate, OKR 验证)
-        return self._execute_via_dual_broker(
+        return _with_execution_audit(self._execute_via_dual_broker(
             inst, instruction_id, symbol, direction, entry_price, stop_loss,
             take_profit, position_size, mos_direction, _matched_decision_id,
             target_env="sim", archetype_route=_route_exec,
-        )
+        ), "sim")
 
     # ── R-1 (2026-08-23 DEB-20260823): per-symbol 下单互斥 ──
     # duplicate_position_guard 读 open_positions (:1056), 而该表在下单成功之后才写 (:1556)
@@ -1407,6 +1512,8 @@ class PlaybookService:
         非阻塞获取: 抢不到锁 = 同标的另有下单在途 → 直接拒绝, 指令保持 pending 下轮再试。
         刻意不阻塞等待, 因为持锁方可能正在等 broker 成交查询 (秒级), 阻塞会拖住整个
         auto_execute 循环。
+
+        两级锁: threading.Lock (本进程线程) + flock (跨进程: 调度进程 vs 看板进程)。
         """
         _lock = self._get_symbol_order_lock(symbol)
         if not _lock.acquire(blocking=False):
@@ -1414,13 +1521,32 @@ class PlaybookService:
                 f"🔒 [SymbolLock] {symbol} 同标的下单在途, 本次拒绝 (instruction_id={instruction_id})"
             )
             return {"success": False, "message": f"[SymbolLock] {symbol} 同标的下单在途, 稍后重试"}
+        _xproc = None
         try:
+            _xproc, _xreason = _try_acquire_cross_process_symbol_lock(symbol)
+            if _xproc is None:
+                if _xreason == "unavailable":
+                    # 锁文件不可用 = 跨进程互斥失效。重复下单风险高于单次错过,
+                    # fail-close 并 CRITICAL 留痕 (守卫崩了必须可区分, 不得静默降级)。
+                    logger.critical(
+                        f"🚨 [SymbolLock] {symbol} 跨进程锁不可用, 拒绝下单 "
+                        f"(instruction_id={instruction_id}) — 检查 data/locks 权限/磁盘"
+                    )
+                    return {"success": False,
+                            "message": f"[SymbolLock] {symbol} 跨进程锁不可用, 已拒绝下单"}
+                logger.warning(
+                    f"🔒 [SymbolLock] {symbol} 跨进程同标的下单在途 ({_xreason}), "
+                    f"本次拒绝 (instruction_id={instruction_id})"
+                )
+                return {"success": False,
+                        "message": f"[SymbolLock] {symbol} 同标的下单在途 (跨进程), 稍后重试"}
             return self._execute_via_dual_broker_inner(
                 inst, instruction_id, symbol, direction, entry_price, stop_loss,
                 take_profit, position_size, mos_direction, matched_decision_id, target_env,
                 archetype_route=archetype_route,
             )
         finally:
+            _release_cross_process_symbol_lock(_xproc)
             _lock.release()
 
     def _execute_via_dual_broker_inner(
@@ -1795,7 +1921,12 @@ class PlaybookService:
                 quantity=int(position_size) if position_size else 1,
                 price=0.0,  # 市价单
             )
-        _order.metadata = {"playbook_instruction_id": instruction_id, "source": f"playbook_{_mode_label}"}
+        _order.metadata = {
+            "playbook_instruction_id": instruction_id,
+            "source": f"playbook_{_mode_label}",
+            # MARKET 单 price=0 时 dual_broker 用该参考价计算名义上限 (2026-10-17)
+            "reference_price": float(entry_price or 0),
+        }
 
         # B1-lite: claim 原子进入 UNKNOWN 并返回 attempt；所有后续状态写均 CAS。
         _attempt = self.db.try_claim_execution(instruction_id)

@@ -103,5 +103,7 @@ def test_resume_removes_symbol_from_blocked_after_release(monkeypatch):
         raise AssertionError("released intent must not emit failure alert")
 
     monkeypatch.setattr(pipeline, "_alert_close_failure", fail_alert)
+    # 2026-10-17 审计 P0-1: blocked 从 set 改为 {key: detail} 字典 (成员语义不变),
+    # 空返回值同步为 {}; 明细供 blocked-exit 影子记录 state/error/intent_id。
     closed, blocked, recovery_ok = pipeline._resume_playbook_exits(allow_submit=False)
-    assert (closed, blocked, recovery_ok) == (0, set(), True)
+    assert (closed, blocked, recovery_ok) == (0, {}, True)

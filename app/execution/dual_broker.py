@@ -167,13 +167,30 @@ class DualBrokerAdapter:
     _NOTIONAL_HARD_CAP_PCT = 0.30
 
     def _notional_sanity_check(self, symbol: str, qty, price: float, is_close: bool = False,
-                               target_env: str = "sim") -> bool:
-        """兜底检查: 单笔名义 ≤ equity × 30%. 平仓单放行, equity 不可用时 fail-close."""
+                               target_env: str = "sim", reference_price: float = 0.0) -> bool:
+        """兜底检查: 单笔名义 ≤ equity × 30%. 平仓单放行, 参考价/equity 不可用时 fail-close.
+
+        2026-10-17: MARKET 单 order.price=0.0 曾在此直接 return True ⇒ 30% 硬上限与
+        equity fail-close 对市价单完全失效。市价单必须带 reference_price (下单前
+        reprice/盘口价) 才能计算名义; 两者都缺 ⇒ fail-close, 不再放行。
+        """
         if is_close:
             return True
-        if qty <= 0 or price <= 0:
-            return True
-        notional = float(qty) * float(price)
+        if qty <= 0:
+            logger.error(f"🛑 [DualBroker] {symbol} 拒绝: qty={qty} 非法 (名义无法计算)")
+            return False
+        _ref_price = float(price or 0)
+        if _ref_price <= 0:
+            _ref_price = float(reference_price or 0)
+        if _ref_price <= 0:
+            _ref_price = self._estimate_price_for_cap(symbol)
+        if _ref_price <= 0:
+            logger.error(
+                f"🛑 [DualBroker] {symbol} 拒绝: 市价单缺少参考价, 名义上限无法评估 "
+                f"(order.price=0, reference_price=0, 行情不可用) — fail-close"
+            )
+            return False
+        notional = float(qty) * _ref_price
         equity = 0.0
         try:
             from app.risk.capital_safety import get_capital_safety_system_for_arm
@@ -194,6 +211,30 @@ class DualBrokerAdapter:
             return False
         return True
 
+    def _estimate_price_for_cap(self, symbol: str) -> float:
+        """为市价单兜底门禁估价: 只 peek 已注册 router, 不在下单热路径新建连接."""
+        try:
+            from app.data import market_data_router as _mdr
+            router = getattr(_mdr, "_shared_router", None)
+            if router is None:
+                return 0.0
+            snap = router.get_quote(symbol)
+            if isinstance(snap, dict):
+                for key in ("price", "last_price", "close", "last"):
+                    try:
+                        value = float(snap.get(key) or 0)
+                    except (TypeError, ValueError) as error:
+                        logger.warning(
+                            f"[DualBroker] {symbol} 快照字段 {key} 无法转价格: {error}",
+                            exc_info=True)
+                        continue
+                    if value > 0:
+                        return value
+            return 0.0
+        except Exception as error:
+            logger.debug(f"[DualBroker] {symbol} 市价单估价失败: {error}")
+            return 0.0
+
     # ── 下单 ──────────────────────────────────────────────
 
     def submit_order(self, order, target_env: str = "sim") -> Dict[str, Any]:
@@ -211,9 +252,16 @@ class DualBrokerAdapter:
             ctx, acc_id, trd_env, lock = self._ctx_and_acc(target_env)
             _order_meta = getattr(order, 'metadata', None) or {}
             _is_close = bool(_order_meta.get('is_exit', False)) if isinstance(_order_meta, dict) else False
+            _ref_price = 0.0
+            if isinstance(_order_meta, dict):
+                try:
+                    _ref_price = float(_order_meta.get('reference_price') or 0)
+                except (TypeError, ValueError):
+                    _ref_price = 0.0
             if not self._notional_sanity_check(
                     order.symbol, order.quantity, order.price,
-                    is_close=_is_close, target_env=target_env):
+                    is_close=_is_close, target_env=target_env,
+                    reference_price=_ref_price):
                 return {"success": False, "submit_state": "DEFINITIVE_REJECT",
                         "error": "dual_broker_notional_cap", "futu_order_id": ""}
 

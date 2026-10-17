@@ -3301,11 +3301,62 @@ def _book_playbook_exit_result(dual, result, conn=None):
             conn.close()
 
 
+# ── P0-1 滞留出场意图: 年龄升级告警 (2026-10-17 审计) ──────────────────────
+# blocked_exits 是符号级冻结: 一个未结算 intent 会让该标的 SL/TP/时间/因子规则
+# 全部停摆。审计建议先影子计数再改行为 (受控重评/重提交须预注册), 本批只补
+# 「滞留年龄升级告警」— 不释放 intent、不改评估/下单行为, 每 (intent, tier) 一次:
+#   30min HIGH / 4h CRITICAL; 日常重复失败仍由 _alert_close_failure 按日去重兜底。
+_BLOCKED_EXIT_ALERT_TIERS = ((30 * 60.0, "HIGH"), (4 * 3600.0, "CRITICAL"))
+_blocked_exit_age_alerted: set = set()
+
+
+def _alert_blocked_exit_age(intent, result, *, now_ts=None) -> None:
+    """滞留意图年龄升级 (record/alert-only, 永不抛异常)."""
+    try:
+        created_at = float(intent.get("created_at") or 0.0)
+        if created_at <= 0:
+            return
+        now_ts = time.time() if now_ts is None else float(now_ts)
+        age = max(0.0, now_ts - created_at)
+        tier = level_name = None
+        for threshold, name in _BLOCKED_EXIT_ALERT_TIERS:
+            if age >= threshold:
+                tier, level_name = threshold, name
+        if tier is None:
+            return
+        intent_id = str(intent.get("intent_id") or "")
+        key = f"{intent_id}:{int(tier)}"
+        if key in _blocked_exit_age_alerted:
+            return
+        _blocked_exit_age_alerted.add(key)
+        if len(_blocked_exit_age_alerted) > 512:
+            _blocked_exit_age_alerted.clear()  # 集合只防刷屏, 清空最坏=下次多推一轮
+        symbol = intent.get("symbol") or "?"
+        target_env = intent.get("target_env") or "?"
+        state = result.get("exit_state") or intent.get("state") or "?"
+        error = result.get("error") or intent.get("last_error") or ""
+        from app.push import get_push_hub
+        from app.push.message import Category, Level
+        get_push_hub().push_text(
+            f"🚨 [出场意图滞留 {age / 60:.0f}min] {symbol} ({target_env}) "
+            f"state={state} error={error or '-'}\n"
+            f"该标的 SL/TP/时间/因子规则被 blocked_exits **整体冻结**, 仓位无规则保护。\n"
+            f"intent={intent_id}\n"
+            f"处置: 核对券商侧订单状态; 确认可释放后执行 "
+            f"scripts/release_stuck_exit_intent.py --intent-id {intent_id} --apply\n"
+            f"(审计 P0-1; 自动受控重评须先由影子定阈值, 本告警只升级可见性)",
+            level=getattr(Level, level_name),
+            category=Category.RISK_ALERT,
+        )
+    except Exception as error:
+        logger.warning("[playbook] 滞留出场意图年龄告警失败: %s", error, exc_info=True)
+
+
 def _resume_playbook_exits(*, allow_submit):
     from collections import Counter
     from app.execution.dual_broker import get_dual_broker
     closed = 0
-    blocked = set()
+    blocked = {}
     try:
         dual = get_dual_broker()
         pending = dual.pending_closes()
@@ -3317,12 +3368,28 @@ def _resume_playbook_exits(*, allow_submit):
         oldest = max(0.0, time.time() - min(item["created_at"] for item in pending))
         logger.info("[playbook] unsettled exits states=%s oldest_seconds=%.0f", counts, oldest)
     for intent in pending:
-        blocked.add((intent["target_env"], intent["symbol"]))
+        _bkey = (intent["target_env"], intent["symbol"])
+        _detail = {
+            "target_env": intent["target_env"],
+            "symbol": intent["symbol"],
+            "intent_id": intent["intent_id"],
+            "state": intent.get("state") or "",
+            "error": intent.get("last_error") or "",
+            "created_at": intent.get("created_at"),
+        }
+        _prev = blocked.get(_bkey)
+        if _prev is None or float(_detail.get("created_at") or 0.0) < float(
+                _prev.get("created_at") or 0.0):
+            blocked[_bkey] = _detail
         try:
             result = dual.resume_close(intent["intent_id"], allow_submit=allow_submit)
             closed += _book_playbook_exit_result(dual, result)
+            _cur = blocked.get(_bkey)
+            if _cur is not None:
+                _cur["state"] = result.get("exit_state") or _cur.get("state") or ""
+                _cur["error"] = result.get("error") or _cur.get("error") or ""
             if _release_eth_held_exit_for_rth_takeover(dual, intent, result):
-                blocked.discard((intent["target_env"], intent["symbol"]))
+                blocked.pop(_bkey, None)
                 continue
             # [RFC-127 阶段0] ETH出场HELD且RTH已开盘 → 只记录"本可会话升级补腿",
             # 不改恢复/告警行为 (10/1 ACN 首例: SL评估被blocked_exits整体跳过)。
@@ -3334,6 +3401,7 @@ def _resume_playbook_exits(*, allow_submit):
                     "[playbook] ETH HELD出场影子调用失败 (不影响恢复/告警): %s",
                     _eth_held_shadow_error, exc_info=True)
             if not result.get("success"):
+                _alert_blocked_exit_age(intent, result)
                 _alert_close_failure(intent["symbol"], intent["target_env"],
                                      "EXIT_" + result.get("exit_state", "HELD"),
                                      f"intent={intent['intent_id']} {result.get('error', '')}",

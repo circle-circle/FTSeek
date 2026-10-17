@@ -260,11 +260,10 @@ def run_playbook_auto_execute(
             except Exception as _bh_err:
                 # R1c (2026-07-19, DEB-round2 Ω.3-3): 预检 fail 模式由 risk.preflight_fail_mode 驱动.
                 #   closed → 跳过该仓 (broker 持仓未知时不重复下单). SIM 默认 open.
-                try:
-                    from app.core.config_container import get_config as _get_cfg_r1c
-                    _r1c_mode = _get_cfg_r1c().get_dotted("risk.preflight_fail_mode", "open")
-                except Exception:
-                    _r1c_mode = "open"
+                #   2026-10-17 审计: 配置不可读时按环境回落 — LIVE-capable 回落 closed
+                #   (否则启动断言锁上的 fail-close 会在运行期异常时被悄悄放开), SIM 仍 open.
+                from app.core.live_readiness import preflight_fail_mode as _preflight_fail_mode
+                _r1c_mode = _preflight_fail_mode()
                 if _r1c_mode == "closed":
                     logger.error(f"[playbook] broker持仓检查失败 (fail-close 跳过该仓): {_bh_err}")
                     skipped_count += 1
@@ -1119,6 +1118,7 @@ def run_playbook_auto_execute(
                     instruction_id=inst["id"],
                     acknowledge_risk=True,  # Paper Trade 自动确认风险
                     custom_params=_reprice_params,  # 2026-06-29: 重新定价后的 entry/stop
+                    requested_by="auto:playbook",
                 )
                 if result.get("success"):
                     executed_count += 1
@@ -1168,6 +1168,7 @@ def run_playbook_auto_execute(
                                     acknowledge_risk=True,
                                     custom_params=_reprice_params,
                                     target_env="real",
+                                    requested_by="auto:playbook-live-mirror",
                                 )
                                 if live_result.get("success"):
                                     live_executed_count += 1

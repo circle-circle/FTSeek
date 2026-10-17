@@ -699,6 +699,52 @@ class TestRFC066MultiRoundLedger:
         assert rows[0]["decision_id"] == "DA-20260825-US.ORCL-z"
         assert rows[0]["thesis"] == "deep"
 
+    def test_claimed_row_not_overwritten_before_outcome_settles(self, db):
+        """executed=1 (try_claim_execution 已认领) 但 outcome 未落终态 ⇒ 同样不得重写.
+
+        2026-10-17 审计: 原守卫只看 executed=1 + outcome∈终态; 在途/已成交未结算
+        的窗口里, 盘中再生成会用新方向/止损整行覆盖持仓管理与结算的输入。
+        """
+        r1 = db.save_instruction({
+            "date": "2026-08-25", "symbol": "US.NVDA", "direction": "BUY",
+            "decision_id": "DA-20260825-US.NVDA-x", "thesis": "orig",
+            "stop_loss": 90.0,
+        })
+        assert db.try_claim_execution(r1) is not None
+        again = db.save_instruction({
+            "date": "2026-08-25", "symbol": "US.NVDA", "direction": "SELL_SHORT",
+            "decision_id": "DA-20260825-US.NVDA-x", "thesis": "rerun",
+            "stop_loss": 120.0,
+        })
+        assert again == r1
+        row = next(r for r in db.get_instructions_by_date("2026-08-25") if r["id"] == r1)
+        assert row["thesis"] == "orig" and row["direction"] == "BUY"
+        assert row["stop_loss"] == 90.0 and row["executed"] == 1
+
+    def test_update_race_guard_when_claimed_between_arbitration_and_write(self, db, monkeypatch):
+        """仲裁读后、UPDATE 前被执行器认领 ⇒ CAS (executed=0) 拒绝覆盖, 不抹在途行."""
+        import app.playbook.db as db_mod
+        r1 = db.save_instruction({
+            "date": "2026-08-25", "symbol": "US.AMZN", "direction": "BUY",
+            "decision_id": "DA-20260825-US.AMZN-x", "thesis": "orig",
+        })
+        real = db_mod._preserve_same_decision_trace
+
+        def _claim_then_preserve(conn, inst, target_id, decision_id):
+            assert db.try_claim_execution(target_id) is not None
+            return real(conn, inst, target_id, decision_id)
+
+        monkeypatch.setattr(db_mod, "_preserve_same_decision_trace",
+                            _claim_then_preserve)
+        again = db.save_instruction({
+            "date": "2026-08-25", "symbol": "US.AMZN", "direction": "SELL_SHORT",
+            "decision_id": "DA-20260825-US.AMZN-x", "thesis": "raced",
+        })
+        assert again == r1
+        row = next(r for r in db.get_instructions_by_date("2026-08-25") if r["id"] == r1)
+        assert row["thesis"] == "orig" and row["direction"] == "BUY"
+        assert row["executed"] == 1
+
     def test_get_instruction_returns_first_round(self, db):
         """get_instruction 多行下返回第一轮 (最小 id, 保持旧语义)"""
         r1 = db.save_instruction({

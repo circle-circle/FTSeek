@@ -265,6 +265,37 @@ def _exit_policy_startup_gate(live_capable: bool) -> None:
             )
 
 
+def _config_drift_alert(diff: dict) -> None:
+    """ConfigDriftDetector 回调: 外部改动配置 (非热重载) 必须让值班端看见。
+
+    2026-10-17 审计修复: 检测器有 on_drift_detected 参数, 但 main.py 构造时没传 ⇒
+    漂移只写 ~/.hermes 本地日志 + WARNING, 推送侧零感知 (外部改动可能一直不生效
+    直到下次重启)。走 PushHub (HIGH/SYSTEM), dedup 用 hash 对, 与 detector 漂移后
+    自动重快照配合 ⇒ 同一漂移不反复推送。
+    """
+    old_hash = diff.get("old_hash", "?")
+    new_hash = diff.get("new_hash", "?")
+    try:
+        from app.push import get_push_hub
+        from app.push.message import PushMessage, Level, Category
+        ok = get_push_hub().push(PushMessage(
+            title="⚠️ 配置漂移: 检测到非热重载的外部修改",
+            body=(
+                f"config hash: {old_hash} → {new_hash}\n"
+                f"key 数: {diff.get('old_keys', '?')} → {diff.get('new_keys', '?')}\n"
+                f"改动未经热重载链 ⇒ 需人工确认是否重启生效"
+            ),
+            level=Level.HIGH,
+            category=Category.SYSTEM,
+            dedup_key=f"config_drift:{old_hash}->{new_hash}",
+        ))
+        if not ok:
+            logger.warning("[ConfigGov] 配置漂移告警 PushHub 未送达 (已落盘 push_failures.jsonl)")
+    except Exception as e:
+        # 回调异常不能影响 4h 巡检线程继续跑; 留 WARNING 便于判因
+        logger.warning("[ConfigGov] 配置漂移告警推送失败: %s", e, exc_info=True)
+
+
 def _run_new_scheduler(args):
     """启动 TradingScheduler: DI容器装配 + 多模型投票 + 自适应轮询 + Futu LV3"""
     import fcntl
@@ -504,7 +535,9 @@ def _run_new_scheduler(args):
         #   Layer 1.7 strict 审计之后 → 存量 BLOCKING (MIN_CONFIDENCE 漂移) raise 被外层
         #   "降级运行" 吞掉, 热重载/漂移检测根本没启动 (告警升级为功能损失)。
         #   调序: Layer 2/3 先启动, strict 审计后置 (告警/raise 语义不变)。回滚: 换回原顺序。
-        drift_detector = ConfigDriftDetector(loader, interval_hours=4.0)
+        drift_detector = ConfigDriftDetector(
+            loader, interval_hours=4.0, on_drift_detected=_config_drift_alert,
+        )
         drift_detector.start()
         logger.info("[ConfigGov] ✅ 漂移检测已启动 (interval=4h)")
 

@@ -6,8 +6,10 @@
 前缀隔离; SIM (全 US.*) 行为零变化。全部离线, 不触真实连接。
 """
 import threading
+from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 from futu import TrdEnv
 
 from app.execution.dual_broker import DualBrokerAdapter
@@ -181,3 +183,47 @@ def test_sim_stop_still_skipped_without_order():
         "US.TEST", 1, "LONG", 22.96, target_env="sim")
     assert result.get("skipped") is True
     assert ctx.calls == []                      # sim 不触券商
+
+
+# ── 2026-10-17: MARKET 单名义上限 (price=0 曾是 fail-open 缺口) ──
+def _fake_cap(equity: float = 100_000.0):
+    return SimpleNamespace(_state=SimpleNamespace(current_equity=equity))
+
+
+def test_market_order_uses_reference_price_for_cap(monkeypatch):
+    monkeypatch.setattr(
+        "app.risk.capital_safety.get_capital_safety_system_for_arm",
+        lambda target_env: _fake_cap(),
+    )
+    adapter = DualBrokerAdapter()
+    # 100 × $250 = $25K < $30K 上限
+    assert adapter._notional_sanity_check(
+        "US.TEST", 100, 0.0, reference_price=250.0) is True
+    # 100 × $350 = $35K > $30K 上限
+    assert adapter._notional_sanity_check(
+        "US.TEST", 100, 0.0, reference_price=350.0) is False
+
+
+def test_market_order_uses_shared_router_estimate(monkeypatch):
+    monkeypatch.setattr(
+        "app.risk.capital_safety.get_capital_safety_system_for_arm",
+        lambda target_env: _fake_cap(),
+    )
+    adapter = DualBrokerAdapter()
+    monkeypatch.setattr(adapter, "_estimate_price_for_cap", lambda symbol: 250.0)
+    assert adapter._notional_sanity_check("US.TEST", 100, 0.0) is True
+
+
+def test_market_order_without_any_price_fails_closed(monkeypatch):
+    monkeypatch.setattr(
+        "app.risk.capital_safety.get_capital_safety_system_for_arm",
+        lambda target_env: _fake_cap(),
+    )
+    adapter = DualBrokerAdapter()
+    monkeypatch.setattr(adapter, "_estimate_price_for_cap", lambda symbol: 0.0)
+    assert adapter._notional_sanity_check("US.TEST", 10, 0.0) is False
+
+
+def test_nonpositive_qty_fails_closed():
+    adapter = DualBrokerAdapter()
+    assert adapter._notional_sanity_check("US.TEST", 0, 100.0) is False

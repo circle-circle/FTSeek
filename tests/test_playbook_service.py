@@ -1,4 +1,5 @@
 """Tests for app.playbook.playbook_service — 业务编排层"""
+import json
 import pytest
 import sqlite3
 from unittest.mock import MagicMock, patch
@@ -258,6 +259,56 @@ class TestDirectionGateC:
                    return_value={"success": True}) as mock_broker:
             svc.execute_instruction(1)
         assert mock_broker.call_args[0][7] == 50
+
+    def test_execution_origin_and_overrides_audited(self, svc, db):
+        """手动/自动通道留痕 (2026-10-17 审计): origin + custom_params 覆盖前后值落 metadata。"""
+        self._patch_gates_ok()
+        _save_inst(db, symbol="US.AU", entry_price=100.0, stop_loss=95.0,
+                   take_profit=110.0, position_size=50)
+        with self._patch_dg(), self._find(db, "US.AU"), \
+             patch("app.playbook.playbook_service.PlaybookService._execute_via_dual_broker",
+                   return_value={"success": True}):
+            result = svc.execute_instruction(
+                1, requested_by="dashboard:127.0.0.1",
+                custom_params={"stop_loss": 92.0, "position_size": 40},
+            )
+        assert result["success"] is True
+        row = db.get_instruction("2026-06-18", "US.AU")
+        meta = json.loads(row["metadata_json"])
+        assert meta["execution_origin"]["requested_by"] == "dashboard:127.0.0.1"
+        assert meta["execution_origin"]["target_env"] == "sim"
+        assert meta["execution_overrides"]["stop_loss"] == {"from": 95.0, "to": 92.0}
+        assert meta["execution_overrides"]["position_size"] == {"from": 50, "to": 40}
+        assert "entry_price" not in meta["execution_overrides"], \
+            "未覆盖的字段不得伪造审计条目"
+
+    def test_execution_audit_failure_does_not_mask_success(self, svc, db, monkeypatch):
+        """审计写入异常不得把已成交结果改写成失败 (best-effort 承诺)。"""
+        self._patch_gates_ok()
+        _save_inst(db, symbol="US.AX")
+
+        def _boom(*args, **kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+        monkeypatch.setattr(db, "merge_instruction_metadata", _boom)
+        with self._patch_dg(), self._find(db, "US.AX"), \
+             patch("app.playbook.playbook_service.PlaybookService._execute_via_dual_broker",
+                   return_value={"success": True}):
+            result = svc.execute_instruction(1, requested_by="dashboard:127.0.0.1")
+        assert result["success"] is True
+
+    def test_execution_failure_does_not_write_origin_audit(self, svc, db):
+        """下单失败 → 不写 execution_origin (审计只记录真实成交)。"""
+        self._patch_gates_ok()
+        _save_inst(db, symbol="US.AF")
+        with self._patch_dg(), self._find(db, "US.AF"), \
+             patch("app.playbook.playbook_service.PlaybookService._execute_via_dual_broker",
+                   return_value={"success": False, "message": "broker reject"}):
+            result = svc.execute_instruction(1, requested_by="dashboard:127.0.0.1")
+        assert result["success"] is False
+        row = db.get_instruction("2026-06-18", "US.AF")
+        meta = json.loads(row["metadata_json"]) if row["metadata_json"] else {}
+        assert "execution_origin" not in meta
 
     def test_buy_quota_not_counting_short(self, svc, db):
         """当日 executed SHORT 不占用 BUY 配额."""

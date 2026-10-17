@@ -2,7 +2,8 @@
 
 > 本文档描述**实际在跑的代码链路**，不是 yaml 声称的链路。每条论断带 file:line，可复核。
 > 大量"已禁用"的规则/模块只是 `enabled: false`，代码仍存在；本文只讲 LIVE 部分，死代码/债务见 §8。
-> 最后更新: 2026-08-20（全文逐条 code-verified 重写；上一版 2026-06-20 描述的"双线实盘"已被 Playbook 单管线 + 主管线双锁冻结取代）
+> 最后更新: 2026-10-17（行号时效校正: §1 双锁/§2 唯一执行链/§3 退出宿主/§4 熔断锚点与 §8 D1
+> 按当日 HEAD 逐条复核回写; 2026-08-20 全文重写版的行号已因 pipeline 拆分与重构漂移）
 
 ---
 
@@ -26,21 +27,22 @@ Playbook 是**唯一**下单管线；旧主信号管线被**双锁**冻结（只
 ## 1. 主管线冻结：双锁 + 一层配置静默
 
 ```
-锁 1 (扫描侧): signal_pipeline.py:182-183
+锁 1 (扫描侧): app/pipeline/signal_pipeline.py:222-223
   scan_loop() 入口: _skip_execution_in_trading = True  (局部 + scheduler 双写, 硬编码非配置)
-  消费点: signal_pipeline.py:616 / 1267, stages/signal_stage.py:616
+  消费点: signal_pipeline.py:650 / 1305, stages/signal_stage.py:620
   → 信号照算(研究/IC 积累), 但候选不带下单资格
-  注意: scan_loop 线程本身不 gate 掉 — 还驱动日/周复盘、快照、watchdog 心跳 (:180 注释自述)
+  注意: scan_loop 线程本身不 gate 掉 — 还驱动日/周复盘、快照、watchdog 心跳 (:219-221 注释自述)
 
-锁 2 (执行侧): order_executor.py:3128-3139  [_submit_order 白名单, 硬编码]
-  if source_type not in (PLAYBOOK_SIM, PLAYBOOK_LIVE, ORB_ENGINE): 拦截
+锁 2 (执行侧): app/pipeline/order_executor.py:3559  [_submit_order 白名单, 硬编码]
+  if source_type not in (PLAYBOOK_SIM, PLAYBOOK_LIVE): 拦截
   → 即使锁1被绕过(如盘前信号路径), 新仓也出不了 order_executor
+  （2026-09-20 用户裁 Playbook 唯一自动交易管线 ⇒ 白名单已由 +ORB_ENGINE 收窄）
 
 配置层 (第三道): strategy.main_scan_enabled=false (unified_config.yaml:1825, 2026-07-24 减法R2)
   → 静默 _run_signal_scan_impl 扫描本体; scan_loop 线程仍跑非交易 housekeeping
 ```
 
-`signal_pipeline.py:179` 注释自述锁1+锁2 为有意冗余：**两锁同时失效才会漏单**；
+`signal_pipeline.py:219-221` 注释自述锁1+锁2 为有意冗余：**两锁同时失效才会漏单**；
 配置层再独立兜一层（三层各自足以冻结下单）。
 冻结范围 = 下单；扫描/信号/IC 遥测按配置保留运行（为终裁与因子研究攒数据）。
 
@@ -56,16 +58,21 @@ Playbook 是**唯一**下单管线；旧主信号管线被**双锁**冻结（只
 
 执行 (唯一执行口):
   app/playbook/playbook_service.py
-    execute_instruction() :678
-      → _execute_via_dual_broker() :923        ← 注释 :1034 自述:
+    execute_instruction() :1034
+      → _execute_via_dual_broker() :1505     ← 说明注释见 :1807
                                                   "DA直写/reentry/投票 全部 writer 的唯一执行路径"
-        → _dual.submit_order(_order, target_env=target_env) :1128
-          → order_executor._submit_order (过 §1 锁2 白名单: PLAYBOOK_SIM)
+        → _dual.submit_order(_order, target_env=target_env) :1940
+          → order_executor._submit_order (过 §1 锁2 白名单: PLAYBOOK_SIM/PLAYBOOK_LIVE)
             → ~25 道内联风控门 → Futu SIMULATE broker
 
 退出: 不走主线 ExitMonitor → monitor_playbook_sim_exits 自管 (§3)
 ```
 
+- **跨进程标的锁 (2026-10-17 审计)**: `_execute_via_dual_broker` 在下单前于
+  `data/locks/symbol_orders/<symbol>.lock` 取非阻塞 flock — scheduler 与看板是
+  **两个进程**，进程内 `threading.Lock` 不能跨进程互斥；取不到 ⇒ 拒绝下单
+  (fail-closed，现场见 `playbook_service._try_acquire_cross_process_symbol_lock`)。
+  回滚: 删跨进程锁块 + 还原调用点。
 - 配置：`playbook.auto_execute=true`（unified_config.yaml:1023）
 - 通道判别用 `decision_id` 前缀；分通道漏斗观测见 `scripts/short_supply_funnel_report.py`
 
@@ -74,21 +81,21 @@ Playbook 是**唯一**下单管线；旧主信号管线被**双锁**冻结（只
 ## 3. 退出监控：两套宿主，各管各的仓
 
 ```
-[主线仓] scheduler_core _monitor_loop (1652)
+[主线仓] scheduler_core _monitor_loop (2116)
   → app/pipeline/position_monitor.py::monitor_loop()
     → ExitMonitor + ExitRuleRegistry (app/risk/position_exit_monitor.py)
       registry 或 legacy 兜底 → order_executor._close_position()
-  playbook 仓被显式排除: position_monitor.py:348-355
+  playbook 仓被显式排除: position_monitor.py:352-360
     "由 monitor_playbook_sim_exits 自管, 不纳入主线 PositionStore"
 
-[Playbook 仓] scheduler_core _playbook_exit_fast_loop (1696, 2026-07-21 独立成环)
-  → app/playbook/pipeline.py::monitor_playbook_sim_exits
+[Playbook 仓] scheduler_core _playbook_exit_fast_loop (2903, 2026-07-21 独立成环)
+  → app/playbook/pipeline.py::monitor_playbook_sim_exits (别名: pipeline.py:3583)
     市场开放时每 10s 跑一次（yaml 现值 10s，代码默认 20s；端到端退出延迟 ~25s）
-    端到端退出延迟 ~25s; 旧宿主 llm_strategy_loop 调用点已让位 (scheduler_core.py:2681-2707)
-  order_executor 旧管线平仓路径对 playbook 仓关闭: order_executor.py:4304
+    旧宿主 llm_strategy_loop 调用点已让位 (scheduler_core.py:2905-2910 注释 + :1929)
+  order_executor 旧管线平仓路径对 playbook 仓关闭: app/pipeline/order_executor.py:4633
 ```
 
-### Playbook 退出规则族（`_check_playbook_exit_rules`，pipeline.py:5910）
+### Playbook 退出规则族（`_check_playbook_exit_rules`，pipeline.py:2678）
 
 配置在 `config/playbook_horizon.yaml::factor_exit_rules`（**≠ exit_policy.yaml**），按序：
 [0] 开盘冷却 15min SL 放宽 4% → [0.5] 30min 无盈利收紧 SL 1% → [1] SL_INITIAL/BREAKEVEN/TRAIL_LOCK →
@@ -110,7 +117,7 @@ Playbook 是**唯一**下单管线；旧主信号管线被**双锁**冻结（只
 
 | 模块 | 位置 |
 |------|------|
-| AbsoluteCircuitBreaker（_submit_order_inner 第一道，不受任何 flag 控制） | app/risk/absolute_circuit_breaker.py:37；order_executor.py:3163-3182 |
+| AbsoluteCircuitBreaker（_submit_order_inner 第一道，不受任何 flag 控制） | app/risk/absolute_circuit_breaker.py:37；app/pipeline/order_executor.py:3586-3600 |
 | StrategyCircuitBreaker（连亏3/日-3%/时-2% → 暂停30min） | app/risk/circuit_breaker.py:28；unified_config.yaml:1374-1378 |
 | SymbolCircuitBreaker / SystemCircuitBreaker | app/risk/circuit_breaker.py:88 / :179 |
 | AccountCircuitBreaker / MarketCircuitBreaker | app/risk/account_circuit_breaker.py:41 / market_circuit_breaker.py:25 |
@@ -128,7 +135,7 @@ Playbook 是**唯一**下单管线；旧主信号管线被**双锁**冻结（只
 恢复逻辑：水位回 GREEN/YELLOW 且回撤脱离熔断线自动解锁（capital_safety.py:231-233）。
 回撤熔断曾静默失效（双路径查不同账户），已修 + 突变检测后门已删除（fail-safe，见 memory capital-safety-drawdown-fix）。
 
-### 执行门（order_executor._submit_order 内联 ~25 道）
+### 执行门（app/pipeline/order_executor.py::_submit_order_inner 内联 ~25 道）
 
 AbsoluteCircuitBreaker(日/时/连亏) → VIX 新鲜度 → VIX>28 硬阻 → auto 总闸 →
 日交易数 → 预算 → IC 质量门 → KillSwitch → broker dedup → 时段门 → 退出屏障 →
@@ -201,7 +208,7 @@ live 额外硬门: ALLOW_REAL_TRADING=false (.env.us:116)
 
 | # | 债务 | 锚点 | 修复项 |
 |---|------|------|--------|
-| D1 | god module：pipeline.py 7,687 行 / order_executor.py 5,396 行（无专属测试文件）；pipeline.py 237 处 `except Exception` | app/pipeline/ | P1-3（排队） |
+| D1 | god module：pipeline.py 3,646 行 + pipeline_parts/ 8,366 行 (2026-10-17 实测) / order_executor.py 5,808 行（无专属测试文件）；`except Exception` = pipeline.py 68 + parts 238 处 | app/playbook/, app/pipeline/ | P1-3（部分缓解：pipeline 已拆 parts，余排队） |
 | D2 | 指令写入方（DA pipeline.py:1953/2194、reentry intraday_reentry.py:430、UE scripts/llm_universe_scan.py:1335）直写 playbook_instructions：收口点在 `PlaybookDB.save_instruction` 内的 admission（db.py:208-232），但**判分在下单前很远**，与 order_executor 门序列脱节 | app/playbook/ | P1-5（排队） |
 | D3 | trailing_stop 双路径不一致（§3 landmine） | position_exit_monitor.py:271-285 | P1-2（排队） |
 | D4 | 三态无状态机（§6） | position_sync.py env 读取 | P1-4（排队） |

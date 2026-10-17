@@ -264,6 +264,17 @@ def monitor_playbook_exits(
             conn = _arm_connections[db_path]
             try:
                 if (_row_target, r["symbol"]) in blocked_exits:
+                    # 2026-10-17 审计 P0-1: 该标的退出规则被未结算 intent 整体冻结。
+                    # record-only 采样 (节流 60s) 供 shadow 定 N/M; 行为不变。
+                    try:
+                        from app.playbook.blocked_exit_opportunity import observe as _obs_blocked
+                        _obs_blocked(
+                            r, blocked_exits[(_row_target, r["symbol"])],
+                            _batch_quotes.get(r["symbol"]), source="exit_monitor")
+                    except Exception as _blocked_shadow_err:
+                        logger.warning(
+                            "[playbook dual] blocked-exit 影子写入失败 (不影响监控): %s",
+                            _blocked_shadow_err, exc_info=True)
                     continue
                 symbol = r["symbol"]
                 direction = r["direction"]

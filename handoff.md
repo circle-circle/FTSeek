@@ -1,5 +1,18 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-17 全链路审计修复批（用户令「深度复查」→「确认无误按建议优化修复」）
+
+**触发**: 主会话逐段复核数据源→指令→执行门→出场→推送/台账，确认问题后按「一次一变量」分三组落地；全部落档 `docs/decisions/RFC-146-audit-20261017-fix-batch.md`（含逐项风险/回滚/延后清单）。
+**落地**（代码已改，**未提交、未重启**）:
+- **执行安全**: ①MARKET 单 `price=0` 曾绕过 30% 名义上限与 equity fail-close → 参考价/共享行情估价/fail-close（`dual_broker` + `playbook_service.metadata.reference_price`）；②已认领（executed=1）指令在 outcome 未终态窗口可被盘中重跑整行覆盖 → 守卫只看 executed + UPDATE CAS（`playbook_db`）；③入场确认门重启孤儿一律 HEALED 立即执行 → 按旗标冻结的锚/窗口续 pending，超 TTL 才放行（`entry_confirm_gate`，arm 时落 `ttl_sec`）；④调度器/看板两进程同标的下单 TOCTOU → `data/locks/symbol_orders/*.lock` 非阻塞 flock，锁不可用 CRITICAL+fail-close（`playbook_service`）；⑤显式 target_env=real 可绕过 LIVE fail-mode 启动断言 → 新增 `app/core/live_readiness.py` 统一 DI/执行门，运行期 preflight 异常按环境回落（LIVE→closed / SIM→open）。**RFC-080 毕业门为工程探针有意例外，审计初判系误报，未改**。
+- **数据口径**: ⑥Futu K 线缓存缺 ktype 串周期 + push buffer 混入非 1M + K_DAY 当日过滤砍到 0-1 根 → key 加 ktype/仅 1M 回写/日线取最近 count；⑦VIX 缺失静默写 20.0 + 50 根日 K 冒充 MA200 → 只写真实值/MA200 需 ≥200 根；⑧EventStream 保留策略置 NULL 撞 `TEXT NOT NULL` 每轮静默失败 → 置空串（首次真正生效）。
+- **可观测/影子**: ⑨ConfigDrift 回调未接 → PushHub HIGH/SYSTEM（main.py）；⑩异步兜底告警写前留痕（daemon 线程死掉不再静默丢 CRITICAL）；⑪手动通道 `requested_by=dashboard:<ip>` + 成交后 `execution_origin/execution_overrides` 入 metadata；⑫trail_lock_pyramid 计数轴改 `json_key:n_executable`（原 12k 行虚假 READY）；⑬未结算出场意图冻结面新增 `blocked_exit_opportunity` 影子（distinct episode，n≥30 才评估）+ 30min HIGH/4h CRITICAL 年龄告警（alert-only，**不释放/不收窄/不重评**）。
+- **文档**: ARCHITECTURE 行号按 HEAD 校正；charter 季度指针 OKR-2026-09→10。
+**自查抓到的错**: 首轮棘轮 2 红——`except:pass` 921→924（本批新增 3 处静默 continue）与 W6 无栈告警 +7（新文件/新分支）。全改带栈告警后回绿，基线 921 不动。
+**验证**: 行为/契约 + 棘轮/注册表守卫 **352 passed**；生产文件 `py_compile` 20/20；此前邻域 1378 + tests/playbook 203 + 补充 69 passed；blocked-exit 聚合器真实空台账实跑 rc=0（n=0，基线从零）。全量终轮 **7293 passed / 72 skipped / 3 failed**：本批自引入 1 红已修（`_override_audit` 的 `for _k in` 被 lv3 源码守卫正则抢先命中 → 改 `_field`），另 1 红为存量窗口校准（chase_cap 实测 11067>10500 → 调 12000），余 3 红经 detached HEAD worktree 复核为存量/数据漂移（待裁报告夹具陈旧 / p1_1 终态产物 cron 消费者未认领 / below_ma20 实时库读数翻正），逐条见 RFC-146 §5。
+**延后**（须先影子定阈 + DEB 预注册）: 出场意图自动释放 / 符号级→intent 级收窄 / 受控重评。
+**下一步**: 待用户授权提交；重启生效需按军规先核在途出场 SQL + `git status --porcelain -- app/ scripts/`，`systemctl restart ftseek-us` 后跑启动冒烟；首次重启观察 SymbolLock 无 unavailable、SIM 不被 LIVE 门误伤、K 线/VIX 口径字段。
+
 ## 2026-10-17 棘轮清剿批（复查另一 agent 批次发现 HEAD 双棘轮红，用户令「修」）
 
 **触发**: 主会话复查 2026-10-17 另一 agent 批次（`7f911981a` 测量面修复 + RFC-144/145 五个提交）时发现：**两个棘轮家族在 HEAD 红**（该批提交前未跑棘轮家族，台账记过的复发模式）——except:pass 921→922（`_terminal_block_reason_for` 遥测解析循环 `except Exception: continue` 静默）、W4 debug swallow 2→3（同函数尾部读取失败只 `logger.debug`）、W6 except stack 4→5（归因写入失败 warning 缺 `exc_info`）。

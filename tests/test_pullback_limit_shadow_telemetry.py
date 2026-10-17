@@ -63,7 +63,9 @@ def test_chase_cap_telemetry_uses_parse_raw_semantics():
     #   遥测写盘之后, 块体再次变长.
     # 窗口 6500→10500 (2026-09-30, RFC-120): 倒挂 cap 归一化块 (~3.5KB 含锚纪律
     #   注释) 插在 parse_raw_semantics 与判定之间 — 实测距离 10054, 留余量 10500.
-    block = s[max(0, idx - 10500):idx]
+    # 窗口 10500→12000 (2026-10-17): 9/30 后该块继续增长, HEAD 实测距离 11067
+    #   (与工作区一致, 非本批引入) — 留余量 12000.
+    block = s[max(0, idx - 12000):idx]
     assert "parse_raw_semantics" in block, (
         "chase_cap 遥测块必须用 parse_raw_semantics 解析 (dict 兼容)"
     )

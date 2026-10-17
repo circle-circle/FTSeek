@@ -484,7 +484,7 @@ def test_ttl_expiry_marks_expired_and_not_counted():
 # 7. 孤儿自愈 (重启不得永久卡死指令)
 # ══════════════════════════════════════════════════════════════
 def test_orphan_flag_self_heals_to_execute():
-    """旗标 PENDING 但内存无 (重启/超期) ⇒ 自愈留痕且照常执行, 绝不永久卡死。"""
+    """旗标 PENDING 但无可信锚/窗口 (旧旗标) ⇒ 自愈留痕且照常执行, 绝不永久卡死。"""
     db = _FakeDB()
     stale = {"status": ecg.ST_PENDING, "armed_at": "2026-10-12T09:40:00-04:00"}
     inst = _inst(meta={"entry_confirm": stale})
@@ -499,6 +499,41 @@ def test_orphan_flag_self_heals_to_execute():
     assert ecg.gate_at_execute(
         _inst(meta={"entry_confirm": healed}), db, {"entry_price": 100.0},
         _now(), CFG_ON) == "execute"
+
+
+def test_orphan_with_window_restores_pending_instead_of_executing():
+    """重启时窗口未过 ⇒ 按旗标重建 pending 续上门控, 不得把 120s 确认降级为立即执行。"""
+    db = _FakeDB()
+    t0 = _now()
+    stale = {"status": ecg.ST_PENDING,
+             "armed_at": (t0 - timedelta(seconds=60)).isoformat(),
+             "anchor": 100.0, "direction": "LONG", "delay_sec": 120,
+             "ttl_sec": 600, "ruler": "legacy", "mid_arm": None}
+    inst = _inst(meta={"entry_confirm": stale})
+    assert ecg.gate_at_execute(inst, db, {"entry_price": 101.0}, t0, CFG_ON) == "defer"
+    arm = ecg._PENDING[1]
+    assert arm["anchor"] == 100.0, "重建必须沿用 arm 时锚, 不得用重启后 reprice 值"
+    assert arm["delay_sec"] == 120 and arm.get("restored") is True
+    # 已进入 pending ⇒ defer_pending 在 reprice 前拦截
+    assert ecg.defer_pending(_inst(meta={"entry_confirm": stale}), t0) is True
+    # 窗口剩余 60s: 到点后由 sweep 正常判定 (同向 ⇒ CONFIRMED), 而非直接放行
+    r = ecg.sweep_entry_confirmations(_FakeSched(101.0), db, t0 + timedelta(seconds=61))
+    assert r["confirmed"] == 1
+    assert db.merged[-1][1]["entry_confirm"]["status"] == ecg.ST_CONFIRMED
+
+
+def test_orphan_with_expired_window_heals_to_execute():
+    """重启时窗口已整体超 TTL ⇒ 不在过期锚上补判定, 转 HEALED 照常执行。"""
+    db = _FakeDB()
+    t0 = _now()
+    stale = {"status": ecg.ST_PENDING,
+             "armed_at": (t0 - timedelta(seconds=700)).isoformat(),
+             "anchor": 100.0, "direction": "LONG", "delay_sec": 120,
+             "ttl_sec": 600, "ruler": "legacy", "mid_arm": None}
+    assert ecg.gate_at_execute(_inst(meta={"entry_confirm": stale}), db,
+                               {"entry_price": 100.0}, t0, CFG_ON) == "execute"
+    assert ecg.pending_count() == 0
+    assert db.merged[-1][1]["entry_confirm"]["status"] == ecg.ST_HEALED
 
 
 def test_orphan_heal_survives_db_failure():

@@ -822,15 +822,20 @@ class MarketDataRouter:
         # Step 4: 新闻情绪 — Finnhub 已跳过 (API Key 无效), 由 app.pipeline 注入 RSS+Qwen
         ts_ctx.setdefault("news_sentiment", 0.0)
 
-        # Step 5: VIX (Alpha Vantage 真实数据)
-        if self.av:
-            try:
-                ts_ctx["vix"] = self.av.get_vix()
-            except Exception as e:
-                logger.warning(f"[Router] AlphaVantage 获取 VIX 失败：{e}")
-                ts_ctx.setdefault("vix", 20.0)
+        # Step 5: VIX — 只写真实值 (2026-10-17 审计修复).
+        #   原实现异常/无 av 时静默写 20.0, 把兜底假值当实测值喂给 regime/LLM/风控;
+        #   20.0 又恰卡在 NORMAL/CAUTIOUS 边界, 无法从字段上区分"没数据"与"真 20"。
+        #   拿不到 ⇒ 省略 vix 键 + vix_available=False, 由消费方显式默认值处理。
+        try:
+            _vix_real = self.get_vix_or_none()
+        except Exception as e:
+            logger.warning(f"[Router] VIX 获取异常：{e}")
+            _vix_real = None
+        if _vix_real is not None:
+            ts_ctx["vix"] = _vix_real
         else:
-            ts_ctx.setdefault("vix", 20.0)
+            ts_ctx["vix_available"] = False
+            logger.warning("[Router] VIX 不可用 (无真实数据, 不以 20.0 兜底)")
 
         # Step 6: SPY 大盘 — 复用 get_spy_context() (含 MA200 缓存逻辑)
         # 2026-06-16 修复: 原来内联构建 spy_ctx 缺少 spy_ma200,
@@ -933,7 +938,7 @@ class MarketDataRouter:
         趋势向上/向下: 趋势市
         其他: 震荡市
         """
-        vix = ctx.get("vix", 20.0)
+        vix = ctx.get("vix")
         vol = ctx.get("volatility", 0)
         # 2026-07-16 修复: 默认值 0 (原 0.001)。0.001 使下方 `avg_vol > 0` 恒真且分母极小,
         #   任何真实个股波动率(~0.02) > 0.001*3=0.003 → regime 永远误判 HIGH_VOL, 无视真实 VIX。
@@ -943,7 +948,9 @@ class MarketDataRouter:
         trend = ctx.get("trend", "NEUTRAL")
 
         # 高波动: VIX > 25 (市场恐慌) 或 个股波动率显著高于均值 (3x, 提高阈值避免误判)
-        if vix > 25 or (avg_vol > 0 and vol > avg_vol * 3.0):
+        # 2026-10-17: vix 缺失 = 无真实数据 (Router 不再兜底 20.0) ⇒ 跳过 VIX 分支,
+        #   不用假值参与 HIGH_VOL/LOW_VOL 判定。
+        if (vix is not None and vix > 25) or (avg_vol > 0 and vol > avg_vol * 3.0):
             return "HIGH_VOL"
         # 趋势市场
         if trend == "UP":
@@ -951,7 +958,7 @@ class MarketDataRouter:
         if trend == "DOWN":
             return "TREND_DOWN"
         # 低波动: VIX < 15 (市场平静)
-        if vix < 15:
+        if vix is not None and vix < 15:
             return "LOW_VOL"
         # 默认: 震荡市
         return "RANGE"
@@ -1070,29 +1077,33 @@ class MarketDataRouter:
                         code="US.SPY", ktype=KLType.K_DAY, max_count=320,
                         start=_start, end=_end
                     )
-                    if ret == 0 and data is not None and len(data) >= 50:
+                    if ret == 0 and data is not None and len(data) > 0:
                         closes = [float(row["close"]) for _, row in data.iterrows() if float(row["close"]) > 0]
-                        if len(closes) >= 50:
-                            # 使用全部可用日 K 计算 MA (理想 200, 最少 50)
-                            ma200 = sum(closes[-200:]) / min(len(closes), 200)
+                        # 2026-10-17 审计修复: 原实现 ≥50 根即用短窗均值冒充 MA200
+                        #   (sum[-200:]/len 在 50-199 根时 = 短窗均值), 会让 SPY 趋势
+                        #   闸门以一把错误的尺子判定。MA200 必须 ≥200 根, 不足则不产出。
+                        if len(closes) >= 200:
+                            ma200 = sum(closes[-200:]) / 200
                             self._spy_ma200_cache = ma200
                             self._spy_ma200_cache_time = now
                             result["spy_ma200"] = ma200
-                            # P0 (2026-07-03): 顺带计算 MA20/MA50, 避免依赖 AlphaVantage (免费 API 25次/天限流)
-                            if len(closes) >= 20:
-                                ma20 = sum(closes[-20:]) / 20
-                                self._spy_ma20_cache = ma20
-                                result["spy_ma20"] = ma20
-                            if len(closes) >= 50:
-                                ma50 = sum(closes[-50:]) / 50
-                                self._spy_ma50_cache = ma50
-                                result["spy_ma50"] = ma50
                             logger.info(
                                 f"[Router] SPY MA200 已计算: {ma200:.2f} "
                                 f"(从 {len(closes)} 根日 K, 缓存 30min)"
                             )
                         else:
-                            logger.debug("[Router] SPY MA200 收盘价不足")
+                            logger.warning(
+                                f"[Router] SPY MA200 不可用: 仅 {len(closes)} 根有效日 K "
+                                f"(需 ≥200; 不以短窗均值冒充)")
+                        # P0 (2026-07-03): 顺带计算 MA20/MA50, 避免依赖 AlphaVantage (免费 API 25次/天限流)
+                        if len(closes) >= 20:
+                            ma20 = sum(closes[-20:]) / 20
+                            self._spy_ma20_cache = ma20
+                            result["spy_ma20"] = ma20
+                        if len(closes) >= 50:
+                            ma50 = sum(closes[-50:]) / 50
+                            self._spy_ma50_cache = ma50
+                            result["spy_ma50"] = ma50
                     else:
                         logger.debug(f"[Router] SPY MA200 history_kline 失败: ret={ret}")
             except Exception as e:

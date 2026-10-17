@@ -10,9 +10,12 @@
 - 每次尝试所有通道 (DingTalk → Feishu → Email)
 - 全失败 → 写 data/critical_alerts.flag (Ops 必看)
 - 不阻塞主流程 (异步)
+- 异步兜底写前留痕: 后台线程启动前先落 PENDING 记录, 进程在送达前退出/被杀也不会
+  静默丢告警 (记录仅在送达成功后清除)
 """
 from __future__ import annotations
 import logging
+import os
 import threading
 import time
 from typing import List, Optional
@@ -88,6 +91,60 @@ def send_critical_sync(content: str, retries: int = 5, backoff_base: float = 1.0
     return False
 
 
+_PENDING_HEADER = "CRITICAL ALERT PENDING DELIVERY"
+
+
+def _write_pending(content: str) -> Optional[str]:
+    """异步兜底写前留痕: 起后台线程之前先把告警落到 flag 文件。
+
+    修前病形: hub 未受理 → daemon 线程跑 send_critical_sync, 而 flag 只在**全部重试
+    失败后**才写。进程在重试窗口内退出/被杀时线程直接消失, 这条 CRITICAL 既没送达
+    也无任何落盘痕迹 = 静默丢失。
+    修后: 返回前先落 PENDING 记录, 线程/进程死掉记录仍在; 仅成功送达后清除。
+    返回写入的原文 (供清除时比对), 写失败返回 None。
+    """
+    text = (
+        f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {_PENDING_HEADER} "
+        f"(PushHub 不可用 → 后台重试; 长期停留 = 未确认送达)\n"
+        f"Content: {content}\n"
+    )
+    try:
+        atomic_write_text(_flag_path(), text)
+        return text
+    except Exception as e:
+        logger.error(
+            f"[CriticalNotifier] PENDING 留痕写入失败, 异步兜底失去持久化保证: {e}",
+            exc_info=True)
+        return None
+
+
+def _clear_pending(pending_text: Optional[str]) -> None:
+    """送达成功后清本条 PENDING; flag 已被新告警覆盖时不动 (别抹掉别人的留痕)。"""
+    if not pending_text:
+        return
+    path = _flag_path()
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            if f.read() != pending_text:
+                return
+        os.remove(path)
+    except FileNotFoundError:
+        return
+    except OSError as e:
+        # 清不掉只是留下一条可核对的 PENDING, 方向安全
+        logger.warning(f"[CriticalNotifier] PENDING 记录清除失败: {e}", exc_info=True)
+
+
+def _deliver_fallback(content: str, pending_text: Optional[str]) -> None:
+    """后台兜底送达: 成功才清 PENDING; 全失败由 send_critical_sync 写 NOT DELIVERED。"""
+    try:
+        if send_critical_sync(content):
+            _clear_pending(pending_text)
+    except Exception as e:
+        # 异常 ⇒ 无法确认送达 ⇒ 保留 PENDING, 不可清痕
+        logger.error(f"[CriticalNotifier] 后台兜底异常, PENDING 留痕保留: {e}", exc_info=True)
+
+
 def send_critical(content: str, async_mode: bool = True) -> Optional[bool]:
     """
     异步发送 (默认). async_mode=True 立即返回, 后台重试.
@@ -132,9 +189,12 @@ def send_critical(content: str, async_mode: bool = True) -> Optional[bool]:
 
     # PushHub 未受理 (异常 / 全通道失败) → 旧多通道重试路径兜底, "双重保险"仍成立
     if async_mode:
+        # 写前留痕必须在起线程之前: 线程保持 daemon (不拖住进程退出), 进程若在
+        # 送达前退出, 这条 PENDING 记录就是告警没被静默吞掉的唯一证据。
+        _pending = _write_pending(content)
         threading.Thread(
-            target=send_critical_sync,
-            args=(content,),
+            target=_deliver_fallback,
+            args=(content, _pending),
             daemon=True,
             name="CriticalNotifier",
         ).start()

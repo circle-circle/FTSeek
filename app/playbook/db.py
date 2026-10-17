@@ -504,7 +504,6 @@ class PlaybookDB:
                 return 3
             return 1 if d else 0
 
-        _TERMINAL = ("win", "loss", "void")
         _existing = conn.execute(
             "SELECT id, decision_id, executed, outcome, direction, skip_reason, "
             "entry_price, stop_loss, take_profit, confidence "
@@ -530,10 +529,14 @@ class PlaybookDB:
             _same = [r for r in _existing if (r[1] or "") == _did_new]
             if _same:
                 _t = _same[-1]
-                if _t[2] == 1 and (_t[3] or "") in _TERMINAL:
+                # 2026-10-17: executed=1 即已认领 (try_claim_execution), 不再只看
+                #   终态 outcome — 在途/已成交行的生成字段 (方向/止损/仓位) 是持仓
+                #   管理与结算的输入, 任何重跑都不得改写 (原先 outcome 未落终态的
+                #   窗口可被盘中再生成整行覆盖)。
+                if _t[2] == 1:
                     logger.info(
                         f"[save_instruction] RFC-066 拒绝重写: {_symbol} ({_date}) did={_did_new} "
-                        f"行#{_t[0]} 已结算 (outcome={_t[3]}), 生成字段不重写"
+                        f"行#{_t[0]} 已执行 (execution_state 已认领, outcome={_t[3]}), 生成字段不重写"
                     )
                     return _t[0]
                 _target_id = _t[0]
@@ -570,10 +573,10 @@ class PlaybookDB:
                         f"did={_best[1]} (决策日 {_old_did_date}) → 保留当日决策, 不写入"
                     )
                     return _best[0]
-                if _best[2] == 1 and (_best[3] or "") in _TERMINAL:
+                if _best[2] == 1:
                     logger.info(
                         f"[save_instruction] RFC-066 拒绝覆盖: {_symbol} ({_date}) 目标行#{_best[0]} "
-                        f"已结算 (outcome={_best[3]}), 新 did={_did_new} 不写入"
+                        f"已执行 (execution_state 已认领, outcome={_best[3]}), 新 did={_did_new} 不写入"
                     )
                     return _best[0]
                 _target_id = _best[0]
@@ -652,7 +655,7 @@ class PlaybookDB:
             return cur.lastrowid
 
         # 原地更新生成字段 (结算列不在列表内 — 与旧 ON CONFLICT SET 列表一致)
-        conn.execute("""
+        cur = conn.execute("""
             UPDATE playbook_instructions SET
                 direction=?, skip_reason=?, entry_price=?, stop_loss=?, take_profit=?,
                 entry_low=?, entry_high=?, position_size=?, risk_amount=?, risk_reward=?,
@@ -667,7 +670,7 @@ class PlaybookDB:
                 metadata_json=COALESCE(?, metadata_json),
                 decision_conf=COALESCE(?, decision_conf),
                 updated_at=?
-            WHERE id=?
+            WHERE id=? AND COALESCE(executed, 0) = 0
         """, (
             _params[2], _params[3], _params[4], _params[5], _params[6],
             _params[7], _params[8], _params[9], _params[10], _params[11],
@@ -679,6 +682,15 @@ class PlaybookDB:
             _params[32], _params[33], _params[34], _params[35], _params[36],
             now, _target_id,
         ))
+        if cur.rowcount == 0:
+            # 竞态兜底: 仲裁读后、UPDATE 前被执行器认领 (try_claim_execution 置
+            # executed=1) ⇒ 不覆盖在途/已成交行; 回滚本事务内的 trace 补写。
+            conn.rollback()
+            logger.warning(
+                f"[save_instruction] 更新竞态拦截: {_symbol} ({_date}) 行#{_target_id} "
+                f"在写入前已被执行认领 → 保留原行 (did={_did_new})"
+            )
+            return _target_id
         conn.commit()
         return _target_id
 

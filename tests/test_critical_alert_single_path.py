@@ -39,7 +39,7 @@ class _FakeHub:
 
 
 @pytest.fixture
-def legacy(monkeypatch):
+def legacy(monkeypatch, tmp_path):
     """把旧多通道路径换成记录器, 返回 (records, done_event)。"""
     records: list = []
     done = threading.Event()
@@ -50,6 +50,8 @@ def legacy(monkeypatch):
         return True
 
     monkeypatch.setattr(ca, "send_critical_sync", _fake_sync)
+    # 异步兜底现在有写前留痕 — 隔离到临时目录, 不碰真实 data/critical_alerts.flag
+    monkeypatch.setattr(ca, "_flag_path", lambda: str(tmp_path / "critical_alerts.flag"))
     return records, done
 
 
@@ -141,9 +143,11 @@ def test_source_consumes_hub_result_before_legacy_path():
 
     assert "hub_ok = bool(get_push_hub().push(" in flat, "hub.push() 返回值又被丢弃了"
     assert "if hub_ok:" in flat, "缺少 hub 受理短路 ⇒ 旧路径会无条件并跑"
-    assert flat.index("if hub_ok:") < flat.index("target=send_critical_sync"), \
+    assert flat.index("if hub_ok:") < flat.index("target=_deliver_fallback"), \
         "旧路径必须排在 hub_ok 短路之后, 否则收敛失效"
     assert "sync=not async_mode" in flat, "sync 语义必须透传给 hub (调用方据此判重试)"
+    assert flat.index("_write_pending(content)") < flat.index("target=_deliver_fallback"), \
+        "PENDING 留痕必须排在起线程之前, 否则进程退出窗口内仍会静默丢"
 
 
 # ── ④ flag 哨兵: 空白 flag 不得算"有未送达告警" (§11.9) ──────────

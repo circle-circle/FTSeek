@@ -56,6 +56,10 @@ def compensation_case(monkeypatch, tmp_path):
         "playbook.execute_mode": "futu_simulate",
         "risk.playbook_vix_gate_enabled": False,
         "playbook.live_trial": False,
+        # 2026-10-17: live_manual_arm 的 LIVE 执行前置要求两项 fail-mode 均 closed
+        # (app/core/live_readiness.py, 审计 P1); real 参数化用例须显式提供该配置。
+        "risk.acb_fail_mode": "closed",
+        "risk.preflight_fail_mode": "closed",
         # RFC-130: real 参数化用例走 armed LIVE 前置 (arm 门默认 false 会 HALT_NEW_LIVE,
         # 补偿路径测的是"入场已提交后簿记失败"语义, 须在开火态下才可达)。
         "playbook.live_manual_arm": {"enabled": True, "max_open_positions": 1,
@@ -65,8 +69,12 @@ def compensation_case(monkeypatch, tmp_path):
                                                "authorization_id": "TEST-AUTH",
                                                "direction": "LONG"}},
     }
-    module("app.core.config_container", get_config=lambda: SimpleNamespace(
-        get_dotted=lambda key, default=None: config.get(key, default)))
+    _fake_cfg = SimpleNamespace(
+        get_dotted=lambda key, default=None: config.get(key, default))
+    module("app.core.config_container", get_config=lambda: _fake_cfg,
+           # live_readiness 走 ConfigContainer.get_instance(); 替身须同接口,
+           # 缺它时 LIVE 断言判 config_unreadable ⇒ fail-close 假红。
+           ConfigContainer=SimpleNamespace(get_instance=lambda: _fake_cfg))
     module("app.risk.account_circuit_breaker", check_circuit_breaker=lambda equity, target_env="sim": SimpleNamespace(
         action="NORMAL", reason="sealed"))
     _capital_state = SimpleNamespace(current_equity=100000)

@@ -237,13 +237,9 @@ def _auto_execute_preflight(
                 "reason": f"risk_state_{risk_state}",
             }
     except Exception as error:
-        try:
-            from app.core.config_container import get_config
-            fail_mode = get_config().get_dotted(
-                "risk.preflight_fail_mode", "open"
-            )
-        except Exception:
-            fail_mode = "open"
+        # 2026-10-17 审计: 配置不可读时按环境回落 — LIVE-capable → closed, SIM → open
+        from app.core.live_readiness import preflight_fail_mode
+        fail_mode = preflight_fail_mode()
         if fail_mode == "closed":
             logger.error(f"[playbook] 风险状态检查异常 (fail-close 跳过本轮): {error}")
             return {
