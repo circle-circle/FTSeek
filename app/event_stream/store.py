@@ -77,6 +77,12 @@ class EventStore:
                 conn.execute(
                     "ALTER TABLE canonical_events ADD COLUMN published_to_seen_ms INTEGER"
                 )
+            # 2026-10-17 审计: 按 first_seen 时间窗取事件, 避免 "先取 500 行再过滤"
+            #   导致 24h 内 53% 的事件根本没被读到.
+            conn.execute(
+                """CREATE INDEX IF NOT EXISTS idx_canonical_events_first_seen
+                   ON canonical_events(first_seen_at)"""
+            )
             missing_latency = conn.execute(
                 """SELECT event_id, event_time, first_seen_at
                    FROM canonical_events
@@ -180,25 +186,48 @@ class EventStore:
                    LIMIT ?""",
                 (limit,),
             ).fetchall()
-        events = []
-        for row in rows:
-            events.append(
-                CanonicalEvent(
-                    event_id=row[0],
-                    source_id=row[1],
-                    source_tier=row[2],
-                    source_url=row[3],
-                    event_type=row[4],
-                    event_time=row[5],
-                    headline=row[6],
-                    summary=row[7] or "",
-                    facts=json.loads(row[8]),
-                    status=row[9],
-                    confidence=row[10],
-                    reasoning_version=row[11],
-                )
-            )
-        return events
+        return [self._event_from_row(row) for row in rows]
+
+    def get_canonical_events_since(
+        self,
+        since_iso: str,
+        limit: Optional[int] = None,
+    ) -> List[CanonicalEvent]:
+        """按 first_seen_at 时间窗取事件 (含边界), 不再先用 rowid 截断。
+
+        first_seen_at 由采集侧统一写成 UTC ISO 字符串, 可直接做字典序比较;
+        event_time 是混合格式 (RFC822/纯日期/带时区 ISO), 不参与 SQL 过滤。
+        """
+        sql = """SELECT event_id, source_id, source_tier, source_url, event_type,
+                        event_time, headline, summary, facts_json, status, confidence,
+                        reasoning_version
+                 FROM canonical_events
+                 WHERE first_seen_at IS NOT NULL AND first_seen_at >= ?
+                 ORDER BY rowid DESC"""
+        params: List[object] = [since_iso]
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [self._event_from_row(row) for row in rows]
+
+    @staticmethod
+    def _event_from_row(row) -> CanonicalEvent:
+        return CanonicalEvent(
+            event_id=row[0],
+            source_id=row[1],
+            source_tier=row[2],
+            source_url=row[3],
+            event_type=row[4],
+            event_time=row[5],
+            headline=row[6],
+            summary=row[7] or "",
+            facts=json.loads(row[8]),
+            status=row[9],
+            confidence=row[10],
+            reasoning_version=row[11],
+        )
 
     def mark_source_health(
         self,

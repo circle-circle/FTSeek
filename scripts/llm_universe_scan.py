@@ -1482,14 +1482,19 @@ def _gather_event_stream_clues(db_path: Optional[Path] = None
         # 2026-10-09 F4 修复: db_path=None 时交 EventStore 默认解析 (get_data_dir),
         #   与采集侧同口径; 此前 clue 侧硬编 _ROOT/data, 双口径分歧会让 clue 静默为空。
         store = EventStore(db_path)
-        scan_limit = int(_cfg("universe_expansion.event_stream_clue_scan_limit", 500))
+        scan_limit = int(_cfg("universe_expansion.event_stream_clue_scan_limit", 5000))
         lookback_hours = int(
             _cfg("universe_expansion.event_stream_clue_lookback_hours", 24)
         )
         clue_limit = int(_cfg("universe_expansion.event_stream_clue_limit", 20))
         cutoff = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
         events: List[CanonicalEvent] = []
-        for event in store.get_recent_canonical_events(limit=scan_limit):
+        # 2026-10-17 审计: 原实现先取 rowid 最新 500 行再按 event_time 过滤 —
+        #   24h 内 1058 条事件只读到 500 条 (53% 未进入候选池)。改为按 first_seen
+        #   时间窗查询; scan_limit 仅作安全上限, 默认 5000。
+        for event in store.get_canonical_events_since(
+            cutoff.isoformat(), limit=scan_limit
+        ):
             event_time = _parse_event_stream_time(event.event_time)
             if event_time is None or event_time < cutoff:
                 continue

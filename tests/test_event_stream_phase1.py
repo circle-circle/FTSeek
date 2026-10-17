@@ -259,6 +259,74 @@ def test_ingest_service_stores_raw_and_events(tmp_path):
     assert store.get_recent_canonical_events() == [event]
 
 
+def test_ingest_service_preserves_registry_order(tmp_path):
+    """2026-10-17 审计: T0 源必须先于 T2 执行, 避免慢源耗尽 cron timeout。"""
+    store = EventStore(tmp_path / "event_stream.db")
+    calls = []
+
+    def _fetcher(source_id):
+        def _fetch() -> SourceResult:
+            calls.append(source_id)
+            return SourceResult(
+                source_id=source_id, source_tier="T0", status="OK", latency_ms=1)
+
+        return _fetch
+
+    service = IngestService(
+        store,
+        sources={
+            "SEC_EDGAR_8K_ATOM": _fetcher("SEC_EDGAR_8K_ATOM"),
+            "GOOGLE_NEWS_RSS": _fetcher("GOOGLE_NEWS_RSS"),
+        },
+    )
+    service.ingest()
+    assert calls == ["SEC_EDGAR_8K_ATOM", "GOOGLE_NEWS_RSS"]
+
+
+def test_ingest_service_marks_partial_source_health(tmp_path):
+    """部分 query 失败不得再标 OK + last_error=None。"""
+    store = EventStore(tmp_path / "event_stream.db")
+    raw = _raw_event()
+    event = _event()
+
+    def fake_fetch() -> SourceResult:
+        return SourceResult(
+            source_id="TEST_SOURCE",
+            source_tier="T0",
+            status="OK",
+            latency_ms=12,
+            raw_event=raw,
+            events=[event],
+            error="[spectrum] Timeout: boom",
+        )
+
+    service = IngestService(store, sources={"TEST_SOURCE": fake_fetch})
+    summary = service.ingest()
+    assert summary["TEST_SOURCE"]["status"] == "PARTIAL"
+    assert summary["TEST_SOURCE"]["partial"] is True
+    health = store.get_source_health("TEST_SOURCE")
+    assert health["status"] == "PARTIAL"
+    assert "boom" in health["last_error"]
+    assert health["last_success_at"] is not None
+
+
+def test_event_store_reads_by_first_seen_window(tmp_path):
+    """2026-10-17 审计: 时间窗查询不得被 rowid 行数截断。"""
+    store = EventStore(tmp_path / "event_stream.db")
+    old = _event("old")
+    old.headline = "Old event"
+    store.append_canonical_event(old, first_seen_at="2026-10-08T00:00:00+00:00")
+    recent = _event("recent")
+    recent.headline = "Recent event"
+    store.append_canonical_event(recent, first_seen_at="2026-10-09T12:00:00+00:00")
+
+    events = store.get_canonical_events_since("2026-10-09T00:00:00+00:00")
+    assert [event.event_id for event in events] == ["recent"]
+    assert [event.event_id for event in store.get_canonical_events_since(
+        "2026-10-09T00:00:00+00:00", limit=1)] == ["recent"]
+
+
+
 def test_build_clue_text_formats_events_for_ue():
     text = build_clue_text([_event()])
     assert "[T0/TEST_EVENT] 2026-10-09T00:00:00Z | Test headline" in text
@@ -294,6 +362,59 @@ def test_relevance_filter_requires_uppercase_ticker():
     event.headline = "Ryanair says jet fuel cost could remain higher"
     context = RelevanceContext(symbol_names={"COST": "Costco"}, sector_symbols={})
     assert filter_relevant_events([event], context) == []
+
+
+def test_relevance_ignores_publisher_suffix_and_query_facts():
+    """2026-10-17 审计: "Spectrum News 13" 发布方 + spectrum 查询词不得命中 telecom。"""
+    event = _event()
+    event.headline = (
+        "5 things to know about Kings Entertainment's Spooky Takeover"
+        " - Spectrum News 13"
+    )
+    event.summary = (
+        '<a href="https://news.google.com/rss/articles/xyz" target="_blank">'
+        "5 things to know about Kings Entertainment's Spooky Takeover</a>"
+        '&nbsp;&nbsp;<font color="#6f6f6f">Spectrum News 13</font>'
+    )
+    event.facts = {
+        "source": "Spectrum News 13",
+        "query": "spectrum OR direct-to-cell OR satellite broadband",
+    }
+    context = RelevanceContext(
+        symbol_names={},
+        sector_symbols={"telecom": ["T", "TMUS", "VZ"]},
+    )
+    assert filter_relevant_events([event], context) == []
+
+
+def test_relevance_ignores_query_facts_without_headline_match():
+    event = _event()
+    event.headline = "Local marathon raises record donations"
+    event.summary = ""
+    event.facts = {"query": "spectrum OR direct-to-cell"}
+    context = RelevanceContext(symbol_names={}, sector_symbols={"telecom": ["T"]})
+    assert filter_relevant_events([event], context) == []
+
+
+def test_relevance_still_matches_after_stripping_publisher_suffix():
+    event = _event()
+    event.headline = "Spectrum deal expands wireless carrier coverage - PCMag"
+    event.summary = ""
+    event.facts = {"source": "PCMag"}
+    context = RelevanceContext(symbol_names={}, sector_symbols={"telecom": ["T"]})
+    assert filter_relevant_events([event], context) == [event]
+
+
+def test_relevance_does_not_strip_plain_summary_company_name():
+    """纯文本摘要末尾与 source 同名时不得误削 (只有 HTML 尾注才剥)."""
+    event = _event()
+    event.headline = "New product launch announced"
+    event.summary = "The company discussed is Apple"
+    event.facts = {"source": "Apple"}
+    context = RelevanceContext(
+        symbol_names={"AAPL": "Apple"}, sector_symbols={})
+    assert filter_relevant_events([event], context) == [event]
+
 
 
 def test_cross_source_dedupe_prefers_t0_primary():
@@ -461,3 +582,22 @@ def test_relevance_ticker_not_fooled_by_hyphenated_name():
     assert relevance is not None
     assert "T" not in relevance.symbols
     assert "TMUS" in relevance.symbols
+
+
+def test_dedupe_does_not_collapse_sec_form_titles():
+    """2026-10-17 审计: 186 条不同公司的 8-K 曾因标题归一成 "8 k" 被聚成 1 条。"""
+    events = []
+    for index, company in enumerate(("COST", "V", "GS", "PEP", "TERRA")):
+        event = _event(f"sec-{index}")
+        event.source_id = "SEC_EDGAR_8K_ATOM"
+        event.source_tier = "T0"
+        event.source_url = f"https://sec.gov/{company}"
+        event.headline = f"8-K - {company} (000000000{index}) (Filer)"
+        event.event_time = f"2026-10-09T10:0{index}:00+00:00"
+        events.append(event)
+
+    clusters = deduplicate_events(events)
+    assert len(clusters) == 5
+    assert {cluster.primary.headline for cluster in clusters} == {
+        event.headline for event in events
+    }

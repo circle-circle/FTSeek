@@ -125,6 +125,25 @@ class TestPatientExitEvalWait:
         mode, _ = patient_exit_eval_wait(self._meta(), "LONG", 100.0, 99.5, now_next, self.CFG)
         assert mode == "expire"
 
+    def test_early_close_uses_close_buffer_not_1550(self):
+        """2026-10-17 审计: 13:00 半日市固定 1550 永不触发, armed 仓会过夜。"""
+        now = _ET.localize(datetime(2026, 11, 27, 12, 50))
+        mode, _ = patient_exit_eval_wait(
+            self._meta("2026-11-27"), "LONG", 100.0, 99.5, now, self.CFG)
+        assert mode == "eod"
+
+    def test_early_close_before_buffer_keeps_waiting(self):
+        now = _ET.localize(datetime(2026, 11, 27, 12, 40))
+        mode, _ = patient_exit_eval_wait(
+            self._meta("2026-11-27"), "LONG", 100.0, 99.5, now, self.CFG)
+        assert mode == ""
+
+    def test_early_close_stop_priority_over_eod(self):
+        now = _ET.localize(datetime(2026, 11, 27, 12, 50))
+        mode, _ = patient_exit_eval_wait(
+            self._meta("2026-11-27"), "LONG", 100.0, 98.4, now, self.CFG)
+        assert mode == "stop"
+
     def test_no_state_returns_empty(self):
         now = _ET.localize(datetime(2026, 8, 13, 14, 0))
         assert patient_exit_eval_wait({}, "LONG", 100.0, 99.5, now, self.CFG) == ("", "")

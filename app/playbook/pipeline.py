@@ -2645,6 +2645,23 @@ def patient_exit_eval_wait(meta, direction, entry_price, current_price, now_et, 
         _deadline = int(pb_cfg.get("patient_exit_deadline_hhmm", 1550))
     except Exception:
         _stop_pct, _deadline = 1.5, 1550
+    # 2026-10-17 审计: 固定 1550 在 13:00 半日市永不触发, armed 仓会绕过
+    #   PRE_CLOSE_EXIT 直接过夜。有效截止取 min(配置, 当日收盘前 10 分钟)。
+    _PATIENT_EXIT_CLOSE_BUFFER_MIN = 10
+    try:
+        _deadline_minutes = (_deadline // 100) * 60 + (_deadline % 100)
+        from app.utils.holiday_calendar import get_us_close_minutes_et
+        _close_minutes = get_us_close_minutes_et(now_et.date())
+        _effective_deadline_minutes = min(
+            _deadline_minutes, _close_minutes - _PATIENT_EXIT_CLOSE_BUFFER_MIN
+        )
+    except Exception as _pe_close_e:
+        logger.warning(
+            f"[playbook] patient_exit 收盘时刻解析异常 (回退配置截止 {_deadline:04d}): "
+            f"{_pe_close_e}",
+            exc_info=True,
+        )
+        _effective_deadline_minutes = _deadline_minutes
     if entry_price and entry_price > 0 and current_price and current_price > 0:
         if direction == "LONG":
             _profit_pct = (current_price - entry_price) / entry_price * 100.0
@@ -2665,9 +2682,16 @@ def patient_exit_eval_wait(meta, direction, entry_price, current_price, now_et, 
         if _profit_pct >= _fill_cushion:
             return "fill", f"价格站回净保本线 ({_profit_pct:.2f}% ≥ {_fill_cushion:.2f}%), 净保本退出"
     try:
-        _hhmm = now_et.hour * 100 + now_et.minute
-        if _hhmm >= _deadline:
-            return "eod", f"{_hhmm:04d} ≥ {_deadline:04d} 强制兜底"
+        _now_minutes = now_et.hour * 60 + now_et.minute
+        if _now_minutes >= _effective_deadline_minutes:
+            _effective_hhmm = (
+                _effective_deadline_minutes // 60 * 100
+                + _effective_deadline_minutes % 60
+            )
+            return "eod", (
+                f"{_now_minutes // 60 * 100 + _now_minutes % 60:04d} ≥ "
+                f"{_effective_hhmm:04d} 强制兜底 (收盘前缓冲)"
+            )
     except Exception as _pe_eod_e:
         # 2026-10-08 棘轮清剿: EOD 兜底判定异常须留痕 (原为 except: pass)
         logger.warning(f"[playbook] patient_exit EOD 兜底判定异常 (本轮回退规则链): {_pe_eod_e}",

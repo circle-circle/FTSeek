@@ -45,6 +45,15 @@ def _normalize_url(url: str) -> str:
     return f"{host}{path}"
 
 
+# 2026-10-17 审计修复: SEC Atom 的标题形如 "8-K - Company (CIK) (Filer)",
+#   _normalize_title 先截掉 " - " 之后的内容, 所有 8-K 都归一成 "8 k" ⇒ 186 条
+#   不同公司的 8-K 被聚成 1 条。表单型标题没有可区分实体, 只允许 URL 去重;
+#   标题去重遇到这类裸表单号必须放行 (宁可少合并, 不可误合并)。
+_FORM_ONLY_TITLE = re.compile(
+    r"^(8 k|10 q|10 k|6 k|20 f|40 f|s 1|s 3|s 4|def 14a|sc 13d|sc 13g|form 3|form 4|form 5)( a)?$"
+)
+
+
 def _normalize_title(title: str) -> str:
     title = title.split(" - ", 1)[0]
     return " ".join(re.findall(r"[a-z0-9]+", title.casefold()))
@@ -54,6 +63,8 @@ def _titles_similar(left: str, right: str) -> bool:
     normalized_left = _normalize_title(left)
     normalized_right = _normalize_title(right)
     if not normalized_left or not normalized_right:
+        return False
+    if _FORM_ONLY_TITLE.fullmatch(normalized_left) or _FORM_ONLY_TITLE.fullmatch(normalized_right):
         return False
     if normalized_left == normalized_right:
         return True

@@ -79,6 +79,18 @@ def run_playbook_track(
             if not trading_day_today():
                 logger.debug(f"[playbook] {today} 非交易日, 跳过盘后追踪")
                 return None
+
+        # 2026-10-17 审计: EOD 孤儿平仓必须早于 "无指令/全终态" 的幂等早退 —
+        #   原顺序下这类日子不会执行 force_close_orphaned_sim_positions, 遗留 SIM 仓
+        #   无人兜底。该函数按 open rows 幂等, 重复调用无仓时为零操作。
+        try:
+            sim_closed = force_close_orphaned_sim_positions(scheduler)
+            if sim_closed:
+                logger.info(f"[playbook] EOD sim 强制平仓: {sim_closed} 个 sim 仓位已 broker 平仓")
+        except Exception as _e:
+            logger.warning(f"[playbook] EOD sim 强制平仓异常 (已隔离): {_e}")
+
+        if not force:
             try:
                 from app.playbook.db import PlaybookDB
                 db = PlaybookDB()
@@ -115,12 +127,6 @@ def run_playbook_track(
             market_data=getattr(scheduler, "data_router", None) or getattr(scheduler, "market_data", None),
             trade_store=getattr(scheduler, "trade_store", None),
         )
-        try:
-            sim_closed = force_close_orphaned_sim_positions(scheduler)
-            if sim_closed:
-                logger.info(f"[playbook] EOD sim 强制平仓: {sim_closed} 个 sim 仓位已 broker 平仓")
-        except Exception as _e:
-            logger.warning(f"[playbook] EOD sim 强制平仓异常 (已隔离): {_e}")
 
         tracker.daily_tracking(today)
 

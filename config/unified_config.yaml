@@ -2325,7 +2325,9 @@ universe_expansion:
   #   回滚: false (UE 主链退回无 EventStream 输入; 采集 cron 可独立保留/删除)。
   event_stream_clue_enabled: true
   event_stream_clue_lookback_hours: 24
-  event_stream_clue_scan_limit: 500
+  # 2026-10-17 审计: 原 500 是 rowid 截断, 24h 内约 53% 事件读不到;
+  #   现按 first_seen 时间窗查询, 5000 仅作安全上限 (近期约 1000 条/日).
+  event_stream_clue_scan_limit: 5000
   event_stream_clue_limit: 20
   event_stream_clue_dedupe: true
   clue_peer_surge: true
