@@ -848,6 +848,7 @@ def run_playbook_auto_execute(
                 # 异常 fail-open 到原值 (归一失败维持现状拦截, 不放行未判定单)。
                 _cc_orig = _cc_f
                 _cc_normed = False
+                _gen_cc = None  # 2026-10-17: 预置 (下面 try 内赋值; 异常时保持 None, 供 skip_reason 的 gen= 段安全短路)
                 if _cc_f is not None:
                     try:
                         from app.playbook.entry_band import (
@@ -953,10 +954,23 @@ def run_playbook_auto_execute(
                     #    下轮即放行, 9/8 SNDK 正是因此成交; SKHY 同指令可拦数十轮)。
                     # skip_reason 落库为拦截留痕; auto_execute 重评循环不读它 (REVIEW-20260909 F-2)。
                     if _cc_enforce:
+                        # 2026-10-17 归因: 追加 gen=(生成锚)。使两类死因可**按标签**区分, 无需回解 raw:
+                        #   ①真追高 (帽相对生成锚违规/或价格真涨穿自定容忍带) ②"计划锚被 reprice 抛弃"
+                        #   (cap 对生成锚合规, 但 entry 被逐轮上调后落到锚的错误一侧 ⇒ 出生合规、漂移后死锁)。
+                        #   实测 since 9/1 帽终态杀死 39 条中 28 条 (72%) 属 ② (如 REAL gen=9.30/
+                        #   reprice=10.48/cap=9.50 整日 0 成交; SNDK gen=1535/reprice=1596.49/cap=1580)。
+                        #   前缀 `chase_cap_enforced(reprice=` 逐字不变 (test_chase_cap_enforce / 
+                        #   test_chase_cap_round_counter 按该前缀做源码契约断言); 取不到生成锚时省略 gen 段。
+                        _cc_gen_txt = ""
+                        try:
+                            if _gen_cc:
+                                _cc_gen_txt = f",gen={round(float(_gen_cc), 2)}"
+                        except (TypeError, ValueError):
+                            _cc_gen_txt = ""
                         db.update_instruction_tracking(inst["id"], {
                             "skip_reason": (
                                 f"chase_cap_enforced(reprice={round(_new_entry, 2)},"
-                                f"cap={_cc_f})")})
+                                f"cap={_cc_f}{_cc_gen_txt})")})
                         _emit_exec_gate_audit(
                             inst, action="skipped_chase_cap",
                             entry=_new_entry, size=inst.get("position_size") or 0,

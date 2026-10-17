@@ -276,6 +276,22 @@ class TestPipelineEnforceContract:
         assert "skipped_count += 1" in block
         assert "continue" in block
 
+    def test_skip_reason_carries_generation_anchor(self):
+        """2026-10-17 归因: 帽终态标签必须带 gen=(生成锚), 使两类死因可按标签区分 (RFC-144)。
+
+        实测 since 9/1 帽终态杀死 39 条中 28 条 (72%) 是"计划锚被 reprice 抛弃"型 —
+        cap 对**生成锚**合规, 但 entry 被逐轮上调后落到锚的错误一侧 ⇒ 出生合规、漂移后死锁
+        (REAL gen=9.30→reprice=10.48/cap=9.50 整日 0 成交)。带 gen 后无需回解 raw 即可分类。
+        前缀 `chase_cap_enforced(reprice=` 必须逐字不变 (旧行兼容 + 上方 test_terminal_skip_trio)。
+        """
+        assert '_cc_gen_txt = f",gen={round(float(_gen_cc), 2)}"' in self.s
+        assert 'f"cap={_cc_f}{_cc_gen_txt})"' in self.s
+        assert "_gen_cc = None" in self.s, "缺预置 → try 异常时 gen 段会 NameError"
+        assert 'f"chase_cap_enforced(reprice={round(_new_entry, 2)},"' in self.s, "前缀被改 = 旧行/下游解析断"
+        # gen 段必须在 enforce 判定之后仍可取到生成锚 (归一化块内赋值, 同一作用域)
+        norm_pos = self.s.index("normalize_chase_cap as _cc_norm")
+        assert norm_pos < self.s.index('_cc_gen_txt = f",gen='), "gen 取值点早于归一化块 = 取不到锚"
+
     def test_rollback_path_documented_in_yaml(self):
         s = _src(_SRC_YAML)
         assert "chase_cap_enforce_enabled: true" in s
