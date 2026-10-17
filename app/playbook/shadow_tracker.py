@@ -20,6 +20,8 @@ Usage:
 """
 import json
 import logging
+import os
+from pathlib import Path
 from typing import Dict, List, Optional, Any
 from datetime import datetime, date
 from app.core.scheduler_triggers import ET as _ET
@@ -27,6 +29,78 @@ from app.core.scheduler_triggers import ET as _ET
 from app.playbook.db import PlaybookDB
 
 logger = logging.getLogger(__name__)
+
+# ── 2026-10-17 归因修复: 终态门拦截原因 (见 _terminal_block_reason_for docstring) ──
+_TBR_TELEMETRY = Path(__file__).resolve().parents[2] / "data" / "trigger_miss_telemetry.jsonl"
+_TBR_CACHE: Dict[str, Any] = {"key": None, "map": {}}
+
+
+def _terminal_block_reason_for(
+    inst_id: Any, trade_date: Any, path: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """该指令**当日全部门拦截原因** (无行/异常 → None)。只读, 不做任何写入。
+
+    2026-10-17 归因修复背景: 被门拦下且未成交的指令, EOD 兜底会把 skip_reason 统一写成
+    "未触发 (no_trigger: 盘中价格未突破入场确认条件)"(本文件 :282), 而多数门
+    (low_atr_block / streak_ban / vwap_gate_block / after_cutoff / extreme_gap ...) 只在
+    trigger_miss_telemetry 留行、不写指令级 skip_reason ⇒ 库里**分不清"门拦截"与"价格未到"**。
+    三处代码注释自认此黑洞: pipeline.py:80 / 本文件 :258 / trigger_flow.py:879。
+    实测 2026-10-16: US.COIN 终态写"价格未到", 而日志 43 行连败封禁 + 当日 35 根 bar 触及入场价;
+    US.TSM 终态写"价格未到", 而日志 低ATR门 + `#2 触发窗截止` + 147/390 根 bar 触及 415。
+
+    口径 (为什么存"分布"而不是只存"末次"):
+      - 末次拦截恒为 after_cutoff (14:00 ET 后每轮短路, 当日最后一轮必是它) ⇒ 只存末次等于
+        用无区分度的标签换掉另一个无区分度标签。实测: 有 after_cutoff 的 292 对里,
+        **34% 的主因 ≠ 末次** (COIN: streak_ban 85 + after_cutoff 39; TSM: low_atr 85 + after_cutoff 39)。
+      - 故返回: {"counts": {reason: 轮次}, "primary": 主因, "last": 末次, "ts": 末次 ET 时刻}
+        其中 primary = 剔除 after_cutoff 后的最高频原因 (无其他原因时 = "after_cutoff"
+        ⇒ 诚实表达"到截止都没触发")。判读留给消费方, 写者不做结论。
+    返回 None = 该 (inst_id, date) 无遥测行 (多为 entry_confirm 弃单臂: 它们由
+    entry_confirm_forward.jsonl 承载且自带具体 skip_reason, 不在本修复的缺口内)。
+    缓存按 (路径, mtime, size) 失效, 使一次 EOD 批量追踪只读一遍文件。
+    """
+    try:
+        p = str(path or _TBR_TELEMETRY)
+        st = os.stat(p)
+        key = (p, st.st_mtime, st.st_size)
+        if _TBR_CACHE.get("key") != key:
+            m: Dict[Any, Dict[str, Any]] = {}
+            with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                for ln in f:
+                    try:
+                        r = json.loads(ln)
+                    except Exception:
+                        continue
+                    iid, d, reason = r.get("inst_id"), r.get("date"), r.get("reason")
+                    if iid is None or not d or not reason:
+                        continue
+                    got = m.setdefault((iid, d), {"counts": {}, "last": None, "ts": None})
+                    got["counts"][reason] = got["counts"].get(reason, 0) + 1
+                    got["last"] = reason                       # 追加序 ⇒ 末行胜 (末次拦截)
+                    got["ts"] = r.get("ts") or got["ts"]       # 追加序 ⇒ 末行时刻
+            _TBR_CACHE["map"] = m
+            _TBR_CACHE["key"] = key
+        got = _TBR_CACHE["map"].get((inst_id, trade_date))
+        if not got:
+            return None
+        counts = dict(got.get("counts") or {})
+        primary = None
+        others = {r: c for r, c in counts.items() if r != "after_cutoff"}
+        if others:
+            primary = max(others.items(), key=lambda kv: kv[1])[0]
+        elif counts:
+            primary = max(counts.items(), key=lambda kv: kv[1])[0]
+        return {
+            "counts": counts,
+            "primary": primary,
+            "last": got.get("last"),
+            "ts": got.get("ts"),
+        }
+    except FileNotFoundError:
+        return None
+    except Exception as _e:  # 审计降级优于阻断结算
+        logger.debug(f"[归因] terminal_block_reason 读取失败 (降级跳过): {_e}")
+        return None
 
 # 2026 年美国市场假日
 US_MARKET_HOLIDAYS_2026 = {
@@ -283,6 +357,34 @@ class ShadowTracker:
 
         if updates:
             self.db.update_instruction_tracking(inst_id, updates)
+            # ── 2026-10-17 归因修复 (零行为变更): 非成交行把"当日末次门拦截原因"浅合并进
+            #    metadata_json.terminal_block_reason。**不动 skip_reason 字面** —— 它有 6+
+            #    消费方按字面解析 (dashboard chain / plan_vs_actual / short_supply_funnel ...);
+            #    走 db.merge_instruction_metadata 而非塞进 updates (后者被 _TRACKING_FIELDS
+            #    白名单静默丢弃, 见 db.py:822-845 的 reprice 同型事故)。
+            #    读出方式: json_extract(metadata_json, '$.terminal_block_reason')。
+            #    回滚: 删本块即可 (已写键是纯注记)。
+            try:
+                if not (inst.get("executed") or updates.get("executed")):
+                    _tbr = _terminal_block_reason_for(inst_id, trade_date)
+                    if _tbr and _tbr.get("primary") and self.db.merge_instruction_metadata(
+                        inst_id,
+                        {
+                            "terminal_block_reason": _tbr.get("primary"),
+                            "terminal_block_reasons": _tbr.get("counts"),
+                            "terminal_block_reason_last": _tbr.get("last"),
+                            "terminal_block_reason_ts": _tbr.get("ts"),
+                        },
+                    ):
+                        logger.info(
+                            f"[归因] inst#{inst_id} {symbol} 非成交行补记门拦截原因: "
+                            f"primary={_tbr.get('primary')} counts={_tbr.get('counts')} "
+                            f"last={_tbr.get('last')} @{_tbr.get('ts')}"
+                        )
+            except Exception as _e:
+                logger.warning(
+                    f"[归因] inst#{inst_id} terminal_block_reason 写入失败 (不影响结算): {_e}"
+                )
 
     def _calc_shadow_pnl(
         self, symbol: str, entry_price: Optional[float], direction: str, trade_date: str,

@@ -35,7 +35,7 @@ tags: [gate, miskill, ledger, governance]
 | 面 | 文件 | 覆盖的门 | 结算/消费载体 | 去重口径 |
 |---|---|---|---|---|
 | 影子组合 | `data/shadow_portfolio_entries.jsonl` → `_outcomes.jsonl` | vwap_gate / falsification_vwap_slope / band / vol_gate | `ops/hermes/shadow_settle_daily.sh` (Hermes job `1a4a63fd3dae`, 08:10 CST) | (inst_id,date) **先到先占, 跨原因去重** |
-| 触发未中遥测 | `data/trigger_miss_telemetry.jsonl` | 全部触发门 (streak_ban / low_atr / after_cutoff / thesis_drift …) | `scripts/gate_block_counterfactual.py` (**未挂 cron, 按需跑**) | 轮询级, 按 inst_id 去重 |
+| 触发未中遥测 | `data/trigger_miss_telemetry.jsonl` | 全部触发门 (streak_ban / low_atr / after_cutoff / thesis_drift …) | `scripts/gate_block_counterfactual.py` (**2026-10-17 起挂周更** crontab `50 6 * * 6`, 此前按需跑) | 轮询级, 按 inst_id 去重 |
 | 入场确认门 | `data/shadow/entry_confirm_forward.jsonl` | entry_confirm 弃单 | `scripts/settle_entry_confirm_forward.py` (crontab `37 6 * * 2-6`) + `scripts/entry_confirm_postmortem_v1.py` | 一 (inst, 臂) 一行 |
 | D 案重放 | `data/shadow/pullback_limit_replay_v2_latest.json` | chase_cap / 确认位等待 | crontab `47 5 * * 2-6` | 按 (inst,date) 配对臂 |
 
@@ -85,6 +85,22 @@ PYTHONPATH=. venv/bin/python scripts/cf_pullback_limit_replay.py --from-date 202
 不能作为调阈依据。**修法 (零行为变更, 只加字段不改旧语义)**: EOD 写标签时把真实末次拦截原因写进新字段
 (如 `terminal_block_reason`), 或从 `trigger_miss_telemetry` 末行派生; 落地后本台账 §3.2 判读列与
 §4 全部案例口径需重算。
+
+### 2.1.1 ✅ 已落地 (2026-10-17, 用户裁「同意」P0)
+
+| 项 | 内容 |
+|---|---|
+| 生产接线 | `app/playbook/shadow_tracker.py` EOD 追踪处: 非成交行把当日拦截原因**分布**浅合并进 `playbook_instructions.metadata_json` (经 `db.merge_instruction_metadata`, 零 schema 迁移); **`skip_reason` 字面一字未改** (6+ 消费方按字面解析) |
+| 落库键 | `terminal_block_reason` (主因 = 剔除 `after_cutoff` 后最高频; 只有 cutoff 时 = `after_cutoff`) / `terminal_block_reasons` (全原因轮次) / `terminal_block_reason_last` / `terminal_block_reason_ts` |
+| 为什么存分布不存末次 | 末次恒为 `after_cutoff` (14:00 ET 后每轮短路); 实测有 cutoff 的 292 对里 **34% 主因 ≠ 末次** (COIN: streak_ban 85 + cutoff 39; TSM: low_atr 85 + cutoff 39) ⇒ 只存末次等于换个无区分度标签 |
+| 历史回填 | `scripts/backfill_terminal_block_reason.py` (`--dry` 默认): since 9/1 非成交指令 **2118** 行, 有遥测者 **122** 行全部回填 (其中 **42 行**原本挂着通用"未触发"标签 = 本次修复的失真行); 幂等, 取证台账 `data/shadow/terminal_block_reason_backfill.jsonl`; 既有 metadata 注记 (phantom_repair 等) 实测零丢失 |
+| 立即读数 | 122 行主因分布: `falsification_vwap_slope` 35 / `low_atr_block` 29 / `vwap_gate_block` 26 / `extreme_gap` 8 / `thesis_drift_invalidate` 8 / `borrow_pool_gate` 5 / `vol_gate_block` 4 / `streak_ban` 4 … |
+| 查询 | `SELECT json_extract(metadata_json,'$.terminal_block_reason'), COUNT(*) FROM playbook_instructions WHERE date>='2026-09-01' GROUP BY 1` |
+| 测试 | `tests/test_terminal_block_reason.py` (7 例: 分布/主因/跨日隔离/缺行/坏行/缓存失效 + **源码契约**: 接线仍在且通用字面未被改动) |
+| **新的诚实边界** | since 9/1 非成交 2118 行中 **1996 行 (94%) 无任何门遥测** ⇒ 本面**无证据**说明它们死于门 (≠ 已证明"价格未到"); 122 指令日 vs 1525 轮询事件 ⇒ **轮询行绝不可当样本** |
+
+> 修复后 `falsification_vwap_slope` 等门的主因计数才可信; 但**这仍不是裁决依据** —— 裁决走预注册判据
+> (判据字典 B14/B19), 且 §3.2 的「判读」列语义 (按'至少被拦过一次'选人群) 不因本修复而变正确。
 
 ## 3. 门级基率 (2026-10-16 读数; 逐日漂, 引用须带日期)
 
@@ -152,7 +168,7 @@ n<10 不判: borrow_pool_gate(7) / reanchored(5) / knife_below(4) / earnings_bla
 
 | 轴 | 观察 | 需要的数据 |
 |---|---|---|
-| **A. 方向 (最高优先, 已有既有面读数)** | 既有 B14 面 `data/shadow/da_blocked_cf_latest.json` (2026-10-17 06:15): **BUY n=185 T+1 −0.118% (WR 41.1%) / SELL_SHORT n=44 T+1 +2.064% (WR 70.5%)** —— 门在 BUY 侧拦对了方向, 在 **SHORT 侧拦掉的是赚钱单**; 且 10-16 两条误杀 (NBIS/COIN) **都是 SHORT** | 该拆分**未预注册**且 n=44<50 ⇒ 只能"预注册 + 两侧同报", 不得当裁决依据; 需给 B14 报表加分方向列 + 侧别 n 门限 |
+| **A. 方向 (✅ 已预注册 2026-10-17)** | 既有 B14 面 `data/shadow/da_blocked_cf_latest.json`: 全史 **BUY n=185 T+1 −0.118% (WR 41.1%) / SELL_SHORT n=44 T+1 +2.064% (WR 70.5%)** —— 门在 BUY 侧拦对了方向, 在 **SHORT 侧拦掉的是赚钱单**; 10-16 两条误杀 (NBIS/COIN) **都是 SHORT** | **已做**: `scripts/da_blocked_signal_cf_eval.py` 新增 `preregistered_direction_split` (判据窗 `>= 2026-10-17` 全新样本, 每侧独立 n≥50, 同一 ±0.15% 费用线 + 单侧符号检验, **两侧同报**); 全史桶标 `EXPLORATORY` 只披露不判; 主判据 (B14 全体) 逐字不变 (实测改前后 6 个键全等) |
 | B. **"等待型"门同源?** | entry_confirm (等 2min 反转) + chase_cap (等回落帽下) + D 案 (等确认位) 都是"等价格回来才放行" ⇒ 天然错过已启动行情。CMC 是活标本: 帽的放行点落在**峰值后 1.6%** | D 案已配对重放; entry_confirm 需 n≥60 (v2 窗现 n=4) |
 | C. **封禁类门** | streak_ban 拦死 25/25 全被误标 `未触发` (§2.1) ⇒ 现有读数不可用; 需按 MFE 分层 + 与 `mfe<0.5%` 判据对齐 | 归因修复后重算 |
 | D. **"整日空转"形态** | 同一指令被拦 ≥20 轮且当日 `executed=0` 是最稳的可观测签名 (不需解析文本): CMC 25 轮 / US.REAL 10-15 整日 / 9-8 SKHY 76 轮 | `trigger_miss_telemetry` 按 (inst,date) 聚合轮次 → 日报加一列 |
@@ -165,4 +181,5 @@ n<10 不判: borrow_pool_gate(7) / reanchored(5) / knife_below(4) / earnings_bla
 - 案例 n 均为个位数, **只登记不裁决**; 门级判据仍以各自预注册文本 (判据字典 B14/B19、RFC-141 §4) 为准。
 - **§3.2 判读列与 §4 的"被拦门"字段依赖 DB 终态标签, 而该标签已实证失真 (§2.1)** ⇒ §4 的"门"列
   应读作"当日至少被此门拦过一次", 不是"死于此门"; 修正口径须等归因修复后重算。
-- `gate_block_counterfactual.py` **未挂 cron** ⇒ 其读数会陈旧; 引用前先看产物 mtime, 或当场重跑。
+- `gate_block_counterfactual.py` **已于 2026-10-17 挂周更** (crontab `50 6 * * 6` = ET 周五 18:50 盘后; 台账 §2.4 `crontab-gate-block-cf-weekly`); 引用前仍看产物 mtime。
+- **归因修复改变了可用的分母**: 本台账 §3.2/§4 的门级判读建立在"至少被该门拦过一次"的人群上, 而修复后可知 since 9/1 仅 **122 指令日**有门遥测 (§2.1.1) ⇒ 任何"某门 n=121"的读数都是**轮询放大 + 选样**的产物, 重算须用 `terminal_block_reason` 主因口径。

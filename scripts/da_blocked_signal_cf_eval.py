@@ -20,10 +20,21 @@
   (trade_date, symbol, direction) 去重 — 同日同标的重复拦只计 1 样本。
 
 预注册判据 (B14, 2026-09-01 立项, 主窗 T+1, n_eval≥50 才出裁决):
-  mean_signed ≤ -0.15% (费用线) ∧ p_under ≤ 0.05 → GATE_EFFECTIVE (拦得对, 维持)
-  mean_signed ≥ +0.15% ∧ p_over ≤ 0.05            → OVER_BLOCKING_SUSPECT (误杀, 提案另立DEB诊断)
-  其余 → KEEP_SAMPLING (继续攒样不重置); n_eval<50 一律 KEEP_SAMPLING。
-  T+3/T+5 仅作一致性披露, 不参与裁决 (防多窗拣选)。
+    mean_signed ≤ -0.15% (费用线) ∧ p_under ≤ 0.05 → GATE_EFFECTIVE (拦得对, 维持)
+    mean_signed ≥ +0.15% ∧ p_over ≤ 0.05            → OVER_BLOCKING_SUSPECT (误杀, 提案另立DEB诊断)
+    其余 → KEEP_SAMPLING (继续攒样不重置); n_eval<50 一律 KEEP_SAMPLING。
+    T+3/T+5 仅作一致性披露, 不参与裁决 (防多窗拣选)。
+
+  分方向预注册 (2026-10-17 增, 用户 2026-10-16「同意」; 输出键 preregistered_direction_split):
+    缘起: 门误杀台账(FTSeek-US docs/GATE-MISKILL-LEDGER.md §5 轴A) 发现两条当日误杀
+      (US.NBIS entry_confirm 弃单 / US.COIN 连败封禁) **都是 SELL_SHORT**, 且本面全史
+      by_direction_t1 = BUY n=185 −0.118%(WR41.1%) vs SELL_SHORT n=44 +2.064%(WR70.5%)
+      ⇒ 门在 BUY 侧拦对方向, 在 SHORT 侧拦掉的是赚钱单 (与"核心=真正有空头产出"冲突)。
+    纪律: 上述 44 笔**已结算**, 直接裁决 = 拿已结算案例反推阈值 (阈值购物) ⇒ 本拆分只做
+      **预注册**: 判据窗 = trade_date >= 2026-10-17 (全新样本), 每侧独立 n≥50,
+      同一 ±0.15% 费用线 + 单侧符号检验 p≤0.05, **两侧同报**(防单侧拣选);
+      全史 by_direction_t1 保留但标 EXPLORATORY (只披露, 不作裁决依据)。
+      主判据 (B14 全体) 完全不受影响 — 本块只加读数。
 
 只读输入, 幂等 (同输入同输出); 自身产物 = latest 快照 + history 追加。
 挂载: cron 15 6 * * 2-6 (盘后日K刷新完成)。回滚 = 删 cron 行 + 本脚本 + data/shadow/da_blocked_cf_*。
@@ -46,6 +57,18 @@ PRIMARY_HORIZON = 1
 MIN_N = 50
 FEE_LINE_PCT = 0.15
 SIGN_P = 0.05
+
+# ── 2026-10-17: 分方向拆分预注册 (用户 2026-10-16「同意」) ────────────────────
+# 缘起: 门误杀台账/当日审计发现两条误杀 (US.NBIS entry_confirm 弃单 / US.COIN 连败封禁)
+#   **都是 SELL_SHORT**; 本面全史 by_direction_t1 亦显示 BUY n=185 −0.118%(WR41.1%) vs
+#   SELL_SHORT n=44 +2.064%(WR70.5%) —— 门在 BUY 侧拦对方向、在 SHORT 侧拦掉赚钱单。
+# 纪律 (防阈值购物): 那 44 笔**已结算**, 直接裁决=拿已结算案例反推阈值 ⇒ 本拆分只做
+#   **预注册**, 判据窗从 DIR_SPLIT_PREREG_DATE 起算 (全新样本), 每侧独立 n≥MIN_N,
+#   同一 ±FEE_LINE_PCT 费用线 + 同侧单侧符号检验; T+3/T+5 仍仅一致性披露。
+#   全史 by_direction_t1 保留但显式标注 EXPLORATORY (只披露不判)。
+# 回滚: 删本常量 + evaluate() 内 prereg 段 + 输出两个键 (对主判据零影响)。
+DIR_SPLIT_PREREG_DATE = "2026-10-17"
+DIR_SIDES = ("BUY", "SELL_SHORT")
 
 
 def sign_test_one_sided(k: int, n: int) -> float:
@@ -118,6 +141,8 @@ def evaluate(signals: list[dict]) -> dict:
     censored = {"no_bars": 0, "no_anchor": 0, "window": {h: 0 for h in HORIZONS}}
     by_quality = {"le30": [], "31to60": [], "gt60": [], "unknown": []}
     by_direction = {"BUY": [], "SELL_SHORT": []}
+    # 预注册窗 (>= DIR_SPLIT_PREREG_DATE) 的分方向样本 — 与全史桶严格分开
+    dir_prereg = {s: [] for s in DIR_SIDES}
     detail = []
 
     for r in signals:
@@ -161,6 +186,9 @@ def evaluate(signals: list[dict]) -> dict:
                   else "le30" if q <= 30 else "31to60" if q <= 60 else "gt60")
             by_quality[qb].append(row_cf.get(f"cf_t{PRIMARY_HORIZON}_pct"))
             by_direction[direction].append(row_cf.get(f"cf_t{PRIMARY_HORIZON}_pct"))
+            # 预注册窗: 只收 2026-10-17 及以后 (已结算的 44 笔不进判据窗)
+            if direction in dir_prereg and str(date) >= DIR_SPLIT_PREREG_DATE:
+                dir_prereg[direction].append(row_cf.get(f"cf_t{PRIMARY_HORIZON}_pct"))
 
     horizons_report = {}
     for h in HORIZONS:
@@ -202,6 +230,39 @@ def evaluate(signals: list[dict]) -> dict:
                 f"n_eval={n_eval}≥{MIN_N} 但 T+1 mean={mean:+.3f}% 未越±{FEE_LINE_PCT}%费用线"
                 " 或符号检验不显著 → 继续攒样不重置")
 
+    # ── 分方向预注册裁决 (2026-10-17 立, 每侧独立 n 门限, 两侧同报) ──────────
+    dir_prereg_report = {}
+    for side in DIR_SIDES:
+        vals = [v for v in dir_prereg[side] if v is not None]
+        n_side = len(vals)
+        if n_side == 0:
+            dir_prereg_report[side] = {"n": 0, "verdict": "KEEP_SAMPLING",
+                                       "verdict_reason": f"预注册窗({DIR_SPLIT_PREREG_DATE}起)尚无样本"}
+            continue
+        wins = sum(1 for v in vals if v > 0)
+        mean_side = sum(vals) / n_side
+        p_over = round(sign_test_one_sided(wins, n_side), 4)
+        p_under = round(sign_test_one_sided(n_side - wins, n_side), 4)
+        if n_side < MIN_N:
+            v_side, r_side = "KEEP_SAMPLING", f"n={n_side}<{MIN_N}/侧 攒样中"
+        elif mean_side <= -FEE_LINE_PCT and p_under <= SIGN_P:
+            v_side, r_side = "GATE_EFFECTIVE", (
+                f"T+1 mean={mean_side:+.3f}%≤-{FEE_LINE_PCT}% ∧ p_under={p_under}≤{SIGN_P} → 该侧拦得对")
+        elif mean_side >= FEE_LINE_PCT and p_over <= SIGN_P:
+            v_side, r_side = "OVER_BLOCKING_SUSPECT", (
+                f"T+1 mean={mean_side:+.3f}%≥+{FEE_LINE_PCT}% ∧ p_over={p_over}≤{SIGN_P}"
+                " → 该侧误杀嫌疑, 提案另立DEB诊断")
+        else:
+            v_side, r_side = "KEEP_SAMPLING", (
+                f"n={n_side}≥{MIN_N} 但 T+1 mean={mean_side:+.3f}% 未越±{FEE_LINE_PCT}% 或符号检验不显著")
+        dir_prereg_report[side] = {
+            "n": n_side, "wins": wins, "win_rate": round(wins / n_side, 3),
+            "mean_signed_pct": round(mean_side, 3),
+            "median_signed_pct": round(sorted(vals)[n_side // 2], 3),
+            "p_over": p_over, "p_under": p_under,
+            "verdict": v_side, "verdict_reason": r_side,
+        }
+
     def _qstat(vals):
         vals = [v for v in vals if v is not None]
         if not vals:
@@ -222,6 +283,17 @@ def evaluate(signals: list[dict]) -> dict:
         "horizons": horizons_report,
         "by_quality_t1": {k: _qstat(v) for k, v in by_quality.items()},
         "by_direction_t1": {k: _qstat(v) for k, v in by_direction.items()},
+        # 2026-10-17: 全史分方向读数 = EXPLORATORY (未预注册, 含注册前已结算样本) ⇒ 只披露不判
+        "by_direction_t1_scope": (
+            "EXPLORATORY: 全史读数未预注册 (含 2026-10-17 前已结算样本), 仅供参考, "
+            "不得作裁决/调阈依据; 裁决只看 preregistered_direction_split"
+        ),
+        "preregistered_direction_split": {
+            "preregistered_at": DIR_SPLIT_PREREG_DATE,
+            "window": f">= {DIR_SPLIT_PREREG_DATE} (预注册前样本一律不计入)",
+            "rule": f"每侧独立 n≥{MIN_N}, 同一 ±{FEE_LINE_PCT}% 费用线, 单侧符号检验 p≤{SIGN_P}, 两侧同报",
+            "by_side": dir_prereg_report,
+        },
         "detail": detail,
     }
 
