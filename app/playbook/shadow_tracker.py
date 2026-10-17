@@ -69,7 +69,12 @@ def _terminal_block_reason_for(
                 for ln in f:
                     try:
                         r = json.loads(ln)
-                    except Exception:
+                    except Exception as _parse_err:
+                        # R5 (同 overnight_decision.py:301 先例): 坏行跳过但必须留痕 —
+                        #   静默 = 归因输入腐化不可见 (except:pass 棘轮 922→921 清剿)。
+                        logger.warning(
+                            f"[归因] 遥测档坏行跳过: {_parse_err} | {ln[:120]!r}",
+                            exc_info=True)
                         continue
                     iid, d, reason = r.get("inst_id"), r.get("date"), r.get("reason")
                     if iid is None or not d or not reason:
@@ -99,7 +104,9 @@ def _terminal_block_reason_for(
     except FileNotFoundError:
         return None
     except Exception as _e:  # 审计降级优于阻断结算
-        logger.debug(f"[归因] terminal_block_reason 读取失败 (降级跳过): {_e}")
+        logger.warning(
+            f"[归因] terminal_block_reason 读取失败 (降级跳过): {_e}",
+            exc_info=True)
         return None
 
 # 2026 年美国市场假日
@@ -383,7 +390,8 @@ class ShadowTracker:
                         )
             except Exception as _e:
                 logger.warning(
-                    f"[归因] inst#{inst_id} terminal_block_reason 写入失败 (不影响结算): {_e}"
+                    f"[归因] inst#{inst_id} terminal_block_reason 写入失败 (不影响结算): {_e}",
+                    exc_info=True,
                 )
 
     def _calc_shadow_pnl(

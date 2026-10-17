@@ -1,5 +1,14 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-17 棘轮清剿批（复查另一 agent 批次发现 HEAD 双棘轮红，用户令「修」）
+
+**触发**: 主会话复查 2026-10-17 另一 agent 批次（`7f911981a` 测量面修复 + RFC-144/145 五个提交）时发现：**两个棘轮家族在 HEAD 红**（该批提交前未跑棘轮家族，台账记过的复发模式）——except:pass 921→922（`_terminal_block_reason_for` 遥测解析循环 `except Exception: continue` 静默）、W4 debug swallow 2→3（同函数尾部读取失败只 `logger.debug`）、W6 except stack 4→5（归因写入失败 warning 缺 `exc_info`）。
+**落地**: `shadow_tracker.py` 三处全改留痕（零控制流变更）——①坏行跳过改 `logger.warning(..., exc_info=True)`（R5 模式，同 `overnight_decision.py:301` 先例）②读取失败 debug→warning+exc_info ③写入失败补 `exc_info=True`。
+**自查抓到的错**: 修复①第一版自己又没加 `exc_info` ⇒ 修完 W4 红变 W6 红（我自己成了 +1），第二轮补上方全绿——"修 W4 只升级日志级别不补栈 = 平移违规"，教训与 RFC-145 §2.4 方向盲同级记录。
+**验证**: 棘轮家族全套 + chase_cap 邻域 + terminal_block_reason 共 **83 例全绿**；基线不动（回 921/2/4，只降不升纪律未触发）。
+**生效**: 纯日志留痕、零控制流变更 ⇒ 不重启无正确性影响。`shadow_tracker` 经 pipeline 阶段6/tracking_flow 在主服务进程内有加载，新留痕严格说要 restart 才生效——可并入下次重启窗口，不必单跑。
+**另一 agent 批次补登记**（该批未写 handoff，此处一句话留档）: `7f911981a` 终态门拦截归因（metadata 分布注记 + 回填 122 行已 apply + 分方向预注册窗 2026-10-17 起 + `gate_block_counterfactual` 周更 cron 已挂）；`c9162452f` 帽终态 `skip_reason` 追加 `gen=` 生成锚标签（13:11 重启已生效，新标签首个实证样本待下个交易日）；RFC-144/145 文档批结论=不建重锚机制（重开条件写死在 RFC-145 §5），B1 record-only 机检/B3 空转质量指标为推荐待办，B2 prompt 第二条待裁。
+
 ## 2026-10-16 TP-RR 门禁浮点边界容差（用户令「修复」）
 
 **触发**: 用户贴 RIVN SHORT 门禁刷屏日志（`RR=1.500000<1.5`）令核查全链 + RFC-141 v2（2分钟版）。核查结论: v2 全链健康（今日 3 CONFIRMED 含 AVGO grace recovered / 4 ABANDONED grace persisted / 弃单观测 8 行齐 / delay 126-148s / proxy-mid 回落留痕正常）；RIVN 兜底链 SL_BREAKEVEN +$20.47 接管正常零实损；真病灶=浮点边界——指令几何十进制 RR 恰=1.5（风险0.72/回报1.08），二进制算得 1.4999999999999962 被误吞（49 笔吞单史上首例恰边界）。
