@@ -98,7 +98,11 @@ related: docs/GATE-MISKILL-LEDGER.md, docs/decisions/CHASE-CAP-20260909-post-enf
 - 标签侧：`app/` 改动 ⇒ 已 `systemctl restart`；但新标签**只在帽拦截发生时**才落 ⇒ 盘后/周末**无从产生**，
   属 TOO_EARLY。验收命令（下一交易日帽拦截后）：`grep -o "chase_cap_enforced([^)]*)" logs/ftseek_us.log | tail -3` 应见 `gen=`。
 - prompt 侧：改动在 DA skill 脚本内，**DA 下次生成即生效**（同一进程读取脚本，无需重启）。
+  机检已确认**接线在活路径**上：`llm_synth.py:2201` 由 `DA_SCHEMA_ENFORCE=1`（默认开）调用，违约既进
+  `result["_contract"]["violations"]`，也打 stderr `[Contract] <sym> 违约: ...` ⇒ 验收有现成观测通道。
   指纹已由生产取证确认可观测：`data/da_checkpoint/2026-10-16/*.json` 实测记录 `prompt_hash: "54a787f3427b"`
   = 本次改前的冻结指纹（US.SKHY/US.BWXT/US.NBIS 等）⇒ 改后新生成的 checkpoint 应记录 `3ad15c002fd6`。
   验收：`grep -ho '"prompt_hash": "[0-9a-f]*"' data/da_checkpoint/<date>/*.json | sort | uniq -c`
   应出现 `3ad15c002fd6`，且 `chase_cap_vs_batch2_conflict` 违约率应趋零。
+  真实数据基线（改前，`RFC-144` 探针 + `batch2_realdata_readout.py`）：since 9/1 命中 **8 条**（下界），
+  其中 5 条终态死于帽 ⇒ 这条机检就是那 8 条的攒样尺子。
