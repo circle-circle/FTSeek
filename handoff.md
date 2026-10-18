@@ -23,6 +23,7 @@
 - `entry_anchor_dual` 阶段0 只读结算器: 新增 `scripts/entry_anchor_dual_eval.py` + 2 例契约测试；读数 9704 行 / 1601 anchor / 102 inst / **8 交易日**，缺失率 0%、分歧率 44.6%、护栏触发 41.3%；周期门 8/10 未达 → `PERIOD_GATE`，`eval_on_demand=True`，不误标 READY；输出 `data/shadow/entry_anchor_dual_eval_latest.json`。质量腿仍缺生成锚反事实 PnL，脚本明确标 `NOT_COMPUTABLE_COUNTERFACTUAL`。
 - 上线: 2026-10-18 22:35 CST `systemctl restart ftseek-us`；启动冒烟 **7/7** (ConfigValidator/漂移/热重载/SSOT/双臂/快循环/零 Traceback)。重启前实查：仅 US.ADSK 一个模拟持仓，exit_intents 189 条全 BOOKED，无在途出场。
 - 二轮重启 (slcap 载体 + entry_anchor_dual eval 落盘后): 2026-10-18 22:43 CST，启动冒烟 **7/7**，PID 2241986；重启前同一状态 (ADSK / 189 BOOKED)。
+- **提交**: `6a3fa2bdf` — `[hotfix] 减法修复批: 存储/棘轮/死代码/影子注册表` (未推送; `.env.us` 为 gitignored 运行机改动, 未入提交)。
 - 未做: 85 个 orphan YAML 叶（需 validator/CRITICAL_KEYS/仓外三面复核）、245 条注释 cron、双 carrier、日亏权威、净口径、手动平仓门。
 
 ## 2026-10-18 推送治理 P0+P1（心跳/复盘/回滚/日报降频）
