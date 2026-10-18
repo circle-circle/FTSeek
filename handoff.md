@@ -3,7 +3,7 @@
 ## 2026-10-18 质量反事实报表（只读，是否值得改 DA 校准）
 
 **触发**: prompt/输入同步后，量化“降级高分 LONG / 要求市场确认 / 只保留中分回踩”的历史反事实。
-**落地**（代码已落盘，未提交）:
+**落地**（代码已提交 `d1437ab0d`）:
 - 新增 `scripts/quality_counterfactual.py`: 复用 quality_shadow 标签与执行净利，比较 all / exclude_high_score_long_downgrade / require_market_confirmation / prefer_medium_pullback / exclude_high_score_long；输出 fwd、net、PF、被排除数与漏掉赢家。
 - 实跑（全量 1173 条）: all net **-6.61bps / -$2,345**；排除高分 LONG 降级组 net **-5.69bps / -$1,813**（排除97，漏掉净赢家 **+$1,547**）；要求市场确认 net **-5.62bps / -$1,810**（排除35，漏掉 +$184）；只保留中分+回踩 LONG（SHORT全留）net **+21.64bps / +$3,152**，但排除827、漏掉 +$9,124。
 - 结论: 降级高分 LONG 有小幅净改善但会漏掉尾部赢家；中分+回踩是强 cohort，**不能直接当独立过滤器**；需组合规则 + 资金/仓位回放/影子验证，未改 DA 实盘阈值。
