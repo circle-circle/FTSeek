@@ -476,6 +476,17 @@ class PlaybookDB:
         except Exception as _adm_err:
             logger.warning(f"[admission] 判定异常 (已忽略, 指令照常入库): {_adm_err}")
 
+        # 2026-10-18: record-only 指令质量影子标签 (方向/证据/入场结构) —
+        #   只写 metadata_json.quality_shadow, 不参与任何门/仓位/止损/出场判定.
+        try:
+            from app.playbook.quality_shadow import attach_quality_shadow
+            attach_quality_shadow(inst)
+        except Exception as _qs_err:
+            logger.warning(
+                f"[quality_shadow] 标签写入失败 (不影响指令入库): {_qs_err}",
+                exc_info=True,
+            )
+
         conn = self._conn()
         now = now_utc().isoformat()
 

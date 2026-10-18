@@ -757,3 +757,40 @@ class TestRFC066MultiRoundLedger:
         })
         got = db.get_instruction("2026-08-25", "US.NVDA")
         assert got["id"] == r1 and got["thesis"] == "first"
+
+
+def test_save_instruction_attaches_quality_shadow(db, monkeypatch):
+    """2026-10-18: 统一落库点写 record-only quality_shadow, 不改变指令字段."""
+    monkeypatch.setattr(
+        "app.playbook.admission.apply",
+        lambda inst: (inst, {"verdict": "PASS", "reasons": [], "enforce": False}),
+    )
+    monkeypatch.setattr(
+        "app.playbook.admission.evaluate",
+        lambda inst: {"verdict": "PASS", "reasons": [], "metrics": {}},
+    )
+    row_id = db.save_instruction({
+        "date": "2026-10-18",
+        "symbol": "US.AMD",
+        "direction": "BUY",
+        "confidence": 70,
+        "entry_price": 100.0,
+        "position_size": 10,
+        "decision_id": "DA-20261018-US.AMD-qs",
+        "raw_instruction": {
+            "score": 8.0,
+            "score_band": "HIGH",
+            "entry_archetype": "PULLBACK_LIMIT",
+            "score_lowered_by_challenger": True,
+            "evidence_gaps": ["a", "b"],
+        },
+    })
+    row = db._conn().execute(
+        "SELECT direction, metadata_json FROM playbook_instructions WHERE id=?",
+        (row_id,),
+    ).fetchone()
+    assert row["direction"] == "BUY"
+    meta = json.loads(row["metadata_json"])
+    shadow = meta["quality_shadow"]
+    assert shadow["schema"] == "quality_shadow_v1"
+    assert shadow["would_downgrade_high_score_long"] is True

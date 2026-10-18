@@ -259,8 +259,8 @@ def test_ingest_service_stores_raw_and_events(tmp_path):
     assert store.get_recent_canonical_events() == [event]
 
 
-def test_ingest_service_preserves_registry_order(tmp_path):
-    """2026-10-17 审计: T0 源必须先于 T2 执行, 避免慢源耗尽 cron timeout。"""
+def test_ingest_service_preserves_registry_result_order(tmp_path):
+    """2026-10-17 审计: 结果按注册顺序处理 (T0 在前), 抓取本身并发。"""
     store = EventStore(tmp_path / "event_stream.db")
     calls = []
 
@@ -279,8 +279,56 @@ def test_ingest_service_preserves_registry_order(tmp_path):
             "GOOGLE_NEWS_RSS": _fetcher("GOOGLE_NEWS_RSS"),
         },
     )
-    service.ingest()
-    assert calls == ["SEC_EDGAR_8K_ATOM", "GOOGLE_NEWS_RSS"]
+    summary = service.ingest()
+    assert set(calls) == {"SEC_EDGAR_8K_ATOM", "GOOGLE_NEWS_RSS"}
+    assert list(summary.keys()) == ["SEC_EDGAR_8K_ATOM", "GOOGLE_NEWS_RSS"]
+    assert service.last_total_latency_ms is not None
+
+
+def test_ingest_service_fetches_sources_concurrently(tmp_path):
+    """慢源不得串行阻塞另一源; 两个 fetcher 必须能同时进入."""
+    import threading
+
+    store = EventStore(tmp_path / "event_stream.db")
+    barrier = threading.Barrier(2, timeout=5)
+
+    def _fetcher(source_id):
+        def _fetch() -> SourceResult:
+            barrier.wait()
+            return SourceResult(
+                source_id=source_id, source_tier="T0", status="OK", latency_ms=1)
+
+        return _fetch
+
+    service = IngestService(
+        store,
+        sources={
+            "SEC_EDGAR_8K_ATOM": _fetcher("SEC_EDGAR_8K_ATOM"),
+            "GOOGLE_NEWS_RSS": _fetcher("GOOGLE_NEWS_RSS"),
+        },
+    )
+    summary = service.ingest()
+    assert summary["SEC_EDGAR_8K_ATOM"]["status"] == "OK"
+    assert summary["GOOGLE_NEWS_RSS"]["status"] == "OK"
+
+
+def test_ingest_service_isolates_source_exception(tmp_path):
+    store = EventStore(tmp_path / "event_stream.db")
+
+    def _boom() -> SourceResult:
+        raise RuntimeError("boom")
+
+    def _ok() -> SourceResult:
+        return SourceResult(
+            source_id="GOOGLE_NEWS_RSS", source_tier="T2", status="OK", latency_ms=1)
+
+    service = IngestService(
+        store, sources={"SEC_EDGAR_8K_ATOM": _boom, "GOOGLE_NEWS_RSS": _ok})
+    summary = service.ingest()
+    assert summary["SEC_EDGAR_8K_ATOM"]["status"] == "ERROR"
+    assert "boom" in summary["SEC_EDGAR_8K_ATOM"]["error"]
+    assert summary["GOOGLE_NEWS_RSS"]["status"] == "OK"
+    assert store.get_source_health("SEC_EDGAR_8K_ATOM")["status"] == "ERROR"
 
 
 def test_ingest_service_marks_partial_source_health(tmp_path):

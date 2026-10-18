@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Callable, Dict, Iterable, List, Optional
 
@@ -16,25 +18,70 @@ class IngestService:
     ):
         self.store = store
         self.sources = sources or default_source_registry()
+        self.last_total_latency_ms: Optional[int] = None
+
+    @staticmethod
+    def _fetch_one(fetcher: Callable[[], SourceResult]):
+        started = time.perf_counter()
+        try:
+            return fetcher(), None, int((time.perf_counter() - started) * 1000)
+        except Exception as exc:
+            return None, exc, int((time.perf_counter() - started) * 1000)
 
     def ingest(self, source_ids: Optional[Iterable[str]] = None) -> Dict[str, dict]:
+        started = time.perf_counter()
         requested = set(source_ids) if source_ids else set(self.sources)
         summary: Dict[str, dict] = {}
         # 2026-10-17 审计: 原 sorted(requested) 按字母序执行, SEC T0 排最后;
         #   Google 最坏 81.5s + FR/Finnhub 40s, 可在 cron timeout 120s 前把 SEC 饿死。
-        #   按 sources 注册顺序执行 (default_source_registry 已把 T0 放最前)。
+        #   按 sources 注册顺序处理结果 (default_source_registry 已把 T0 放最前)。
         source_order = {source_id: index for index, source_id in enumerate(self.sources)}
-        for source_id in sorted(
+        ordered = sorted(
             requested, key=lambda sid: (source_order.get(sid, len(source_order)), sid)
-        ):
-            fetcher = self.sources.get(source_id)
-            if fetcher is None:
+        )
+        for source_id in ordered:
+            if source_id not in self.sources:
                 summary[source_id] = {
                     "status": "ERROR",
                     "error": "source not registered",
                 }
+
+        # 2026-10-18: 源级并发 — 单源最坏 81.5s 不应串行叠加到 >120s cron timeout.
+        #   只并发网络抓取; SQLite 写/健康表更新仍按注册顺序在主线程串行执行.
+        fetchable = [sid for sid in ordered if sid in self.sources]
+        results = {}
+        if fetchable:
+            with ThreadPoolExecutor(max_workers=min(4, len(fetchable))) as pool:
+                futures = {
+                    sid: pool.submit(self._fetch_one, self.sources[sid])
+                    for sid in fetchable
+                }
+                for sid in fetchable:
+                    results[sid] = futures[sid].result()
+
+        for source_id in ordered:
+            if source_id not in self.sources:
                 continue
-            result = fetcher()
+            result, fetch_error, fetch_latency = results[source_id]
+            if fetch_error is not None or result is None:
+                error = f"{type(fetch_error).__name__}: {fetch_error}" if fetch_error else "empty result"
+                self.store.mark_source_health(
+                    source_id,
+                    "ERROR",
+                    fetch_latency,
+                    last_success_at=None,
+                    last_error=error[:500],
+                )
+                summary[source_id] = {
+                    "status": "ERROR",
+                    "partial": False,
+                    "latency_ms": fetch_latency,
+                    "raw_inserted": False,
+                    "events_seen": 0,
+                    "events_inserted": 0,
+                    "error": error[:500],
+                }
+                continue
             if result.raw_event is not None:
                 self.store.append_raw_event(result.raw_event)
             inserted_events = 0
@@ -69,4 +116,5 @@ class IngestService:
                 "events_inserted": inserted_events,
                 "error": result.error,
             }
+        self.last_total_latency_ms = int((time.perf_counter() - started) * 1000)
         return summary

@@ -1,0 +1,119 @@
+"""record-only 指令质量影子标签契约 (2026-10-18)."""
+from app.playbook.quality_shadow import attach_quality_shadow, build_quality_shadow
+
+
+def _inst(**over):
+    base = {
+        "date": "2026-10-18",
+        "symbol": "US.AMD",
+        "direction": "BUY",
+        "confidence": 70,
+        "decision_id": "DA-20261018-US.AMD-1",
+        "raw_instruction": {
+            "source": "deep_analysis",
+            "score": 8.0,
+            "score_band": "HIGH",
+            "entry_archetype": "PULLBACK_LIMIT",
+            "score_lowered_by_challenger": True,
+            "evidence_gaps": ["gap1", "gap2"],
+            "challenger_score_shadow": 6.0,
+        },
+    }
+    base.update(over)
+    return base
+
+
+def test_high_score_long_with_challenger_disagreement_is_downgraded():
+    tags = build_quality_shadow(_inst())
+    assert tags["direction"] == "LONG"
+    assert tags["score_band"] == "HIGH"
+    assert tags["would_downgrade_high_score_long"] is True
+    assert tags["evidence_gaps"] == 2
+
+
+def test_high_score_long_without_warning_is_not_downgraded():
+    inst = _inst()
+    inst["raw_instruction"] = {
+        "score_band": "HIGH",
+        "score_lowered_by_challenger": False,
+        "evidence_gaps": [],
+        "corroborated_by_market": True,
+        "self_tier": "HARD_EVENT",
+        "entry_archetype": "PULLBACK_LIMIT",
+    }
+    tags = build_quality_shadow(inst)
+    assert tags["would_downgrade_high_score_long"] is False
+
+
+def test_medium_pullback_is_preferred():
+    inst = _inst()
+    inst["raw_instruction"] = {
+        "score_band": "MEDIUM",
+        "entry_archetype": "PULLBACK_LIMIT",
+    }
+    tags = build_quality_shadow(inst)
+    assert tags["would_prefer_medium_pullback"] is True
+
+
+def test_thesis_only_long_requires_market_confirmation():
+    inst = _inst()
+    inst["raw_instruction"] = {
+        "score_band": "MEDIUM",
+        "origin": {"self_tier": "THESIS_ONLY"},
+    }
+    tags = build_quality_shadow(inst)
+    assert tags["evidence_tier"] == "THESIS_ONLY"
+    assert tags["would_require_market_confirmation"] is True
+
+
+def test_confidence_basis_maps_market_confirmation():
+    inst = _inst()
+    inst["raw_instruction"] = {
+        "score_band": "MEDIUM",
+        "ue_confidence_basis": "MARKET_CONFIRMED",
+    }
+    tags = build_quality_shadow(inst)
+    assert tags["confidence_basis"] == "MARKET_CONFIRMED"
+    assert tags["market_corroborated"] is True
+    assert tags["would_require_market_confirmation"] is False
+
+
+def test_transmission_basis_requires_market_confirmation():
+    inst = _inst()
+    inst["raw_instruction"] = {
+        "score_band": "MEDIUM",
+        "ue_confidence_basis": "TRANSMISSION_ASSUMED",
+    }
+    tags = build_quality_shadow(inst)
+    assert tags["market_corroborated"] is False
+    assert tags["would_require_market_confirmation"] is True
+
+
+def test_short_unknown_borrow_is_tagged():
+    inst = _inst(direction="SELL_SHORT", decision_id="universe_expansion:2026-10-18:ERAS")
+    inst["raw_instruction"] = {
+        "origin": {"short_check": {"borrow_data_basis": "UNKNOWN"}},
+    }
+    tags = build_quality_shadow(inst)
+    assert tags["direction"] == "SHORT"
+    assert tags["borrow_data_basis"] == "UNKNOWN"
+    assert tags["would_allow_unknown_short_small"] is True
+
+
+def test_skip_has_no_quality_tags():
+    assert build_quality_shadow({"direction": "SKIP"}) == {}
+
+
+def test_attach_merges_metadata_and_preserves_existing_keys():
+    inst = _inst(metadata={"entry_confirm": {"status": "CONFIRMED"}})
+    tags = attach_quality_shadow(inst)
+    assert tags["schema"] == "quality_shadow_v1"
+    assert inst["metadata"]["entry_confirm"] == {"status": "CONFIRMED"}
+    assert inst["metadata"]["quality_shadow"]["score_band"] == "HIGH"
+
+
+def test_raw_instruction_json_string_is_parsed():
+    inst = _inst(raw_instruction='{"score_band": "MEDIUM", "entry_archetype": "PULLBACK_LIMIT"}')
+    tags = build_quality_shadow(inst)
+    assert tags["score_band"] == "MEDIUM"
+    assert tags["would_prefer_medium_pullback"] is True

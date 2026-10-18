@@ -1,5 +1,16 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-18 质量影子标签 + 事件采集并发（用户令「按照建议执行」）
+
+**触发**: 借券供给恢复后，按建议继续做 Batch A（方向/证据/入场质量 record-only 标签）与 Batch B（事件采集并发/超时余量）；Batch C 先做只读盘点。
+**落地**（代码已落盘，未提交；quality_shadow 需主服务重启后对新指令生效；事件 ingest 为 cron 新进程）:
+- **Batch A**: 新增 `app/playbook/quality_shadow.py`，在统一落库点 `PlaybookDB.save_instruction` 写 `metadata_json.quality_shadow`（record-only）：`score_band/origin/evidence_tier/market_corroborated/entry_archetype/evidence_gaps` + `would_downgrade_high_score_long / would_prefer_medium_pullback / would_require_market_confirmation / would_allow_unknown_short_small`。不改方向/仓位/止损/出场/门。
+- **Batch B**: `IngestService` 改为源级并发（最多 4）+ 异常隔离 + `last_total_latency_ms`；`scripts/event_stream_ingest.py` 打印总时长，并把 source_health 的 PARTIAL/ERROR/stale(>30min) 折叠进 stderr 告警。T0 不再被慢源串行饿死。
+- **Batch C 只读盘点**: PENDING 3217（terminal skipped/missed 占 3190，属 execution_state 未收敛的观测口径，非交易故障）；空 decision_id 2583（绝大多数为 bridge SKIP）；retention dry-run 0（raw 最早 10/9，14 天窗首个真实清理约 10/23）；`event_stream_ue_check.py` 仍未挂 cron，但 ingest 已补新鲜度日志。**prompt 注入硬化未动**（prompt 变更需 A/B + 版本升级，另批）。
+**验证**: playbook/事件流/UE/离线全链定向 **294 passed**；全量 **7330 passed / 72 skipped / 3 failed**（均为存量红：factor_stats_denominator / pending_adjudication_report / shadow_artifact_consumers；capital_allocator 本轮通过）。按当前规则对历史 1173 条非 SKIP 回算：`would_downgrade_high_score_long` 97、`would_prefer_medium_pullback` 69、`would_require_market_confirmation` 35；历史行未回填，重启后新指令才落 `quality_shadow`。
+**观察**: 新指令的 `metadata_json.quality_shadow` 分层；下一轮 UE scan 的借券补查；事件 ingest 日志的 total_latency 与 health_warning；不改变实盘策略。
+**回滚**: quality_shadow 为 metadata 附加，可直接 revert；事件并发可单文件 revert；无需数据迁移。
+
 ## 2026-10-18 UE 借券 UNKNOWN 逐票补查（用户裁「信息/处理流程问题可直接调整，SIM 恢复供应观察」）
 
 **触发**: 10 月 UE SHORT 候选 24 条中 16 条 UNKNOWN。根因 = 每日借券快照只采 `daily_active_pool.json`（当日约 31–53 只），UE 榜外发现不在池 → prompt 规则10 标 UNKNOWN/false → DA 源头过滤 `borrow_feasible is False` 当死单丢弃。Futu `get_margin_ratio` 本身支持逐票查询。
