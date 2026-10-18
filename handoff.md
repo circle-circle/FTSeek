@@ -3,7 +3,7 @@
 ## 2026-10-18 统一事件元数据 event_meta_v1 + 材料性排序（P0 数据层）
 
 **触发**: 用户同意事件驱动路线并令「按照建议执行」；先补数据/推导基座，不改交易策略。
-**落地**（代码已落盘，未提交；ingest/UE 为 cron 新进程）:
+**落地**（代码已提交 `d7960a8b7`；ingest/UE 为 cron 新进程）:
 - 新增 `app/event_stream/event_schema.py`: `event_meta_v1`（event_family/form/entities/materiality/novelty/corroboration/lifecycle）；确定性先验分，不是收益预测。
 - `CanonicalEvent.event_meta` + `canonical_events.event_meta_json` 列/migration；`IngestService` 落库前补 meta；历史行读取时现场计算，不写库。
 - UE `_gather_event_stream_clues`: 按 materiality/T0 排序后再截 `clue_limit`；clue 行追加 `family/form/mat`，让 LLM 看到结构化事件属性。
