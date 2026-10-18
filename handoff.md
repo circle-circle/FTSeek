@@ -1,5 +1,23 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-18 推送治理 P0+P1（心跳/复盘/回滚/日报降频）
+
+**触发**: 用户令核查钉钉/飞书推送内容与链路信噪比；选择 **P0+P1**。
+**落档**: `docs/decisions/RFC-150-push-governance-p0-p1.md`。
+**证据**: 10/16 共 34 条推送，盘中主动心跳 13 + 通道心跳 5 + 服务启停 8 = 26 条（约 76%）低信噪/重复；04:00–04:35 CST 复盘集群连推 5 条；失败提案连续 4 天重复「自动回滚失败」；Hermes 盘后综合复盘的最终飞书回复与 `daily_alert_summary.py` 内部飞书推送同通道双推。
+**落地**（代码提交 `e1a12983a`）:
+- 盘中心跳 30→**60min** 可配置（`push.intraday_heartbeat_interval_min`，读取失败回退 60）；预期 13→约 7 条/日。
+- 通道心跳跨进程共享：`data/push_health_state.json` 存业务成功证据 + `flock` 全局 ping 时隙；`push.health_check_shared_state` / `health_check_interval_sec` 可回滚。
+- 复盘聚合：`ReviewOrchestrator.run_daily/run_weekly(push_report=False)`，日报/周报只由 `_push_review_text` 发一份；次日提示按 `top_risk/avoid_sessions/caution_symbols` 内容指纹去重（`data/.last_review_hint.json`）；Playbook 指令效果只落日志（已含在 Hermes 05:00 CST 综合复盘）。
+- 自动回滚判据：`ReviewEffectTracker.get_pending_checks()` 只返回 `success=True` 且 `rollback_version` 非空的记录，并按 `issue_id` 去重；失败/不可回滚动作不再每天重复告警。`record_action()` 同 issue 未检查记录不重复追加。
+- Hermes 同通道双推：`daily_alert_summary.py` 新增 `--no-dingtalk/--no-feishu/--no-push`；Hermes job `7a40dd7c9e94` Step 3 已改 `--no-feishu`（备份 `data/backups/hermes_jobs_backup_20261018_push_governance.json`）。
+- P1 降频：DA 链路日检 `5 6 * * 2-6`→`5 6 * * 6`；LLM token 成本 `20 6 * * 2-6`→`20 6 * * 6`；延长时段阶段日报去掉 `--always`（无样本静默，恢复台账既有语义）。crontab 备份 `data/crontab.backup.20261018_push_governance.txt`。
+**验证**: 新增契约 `tests/test_push_governance_20261018.py` 16 例；合并回归 24 个测试文件 **363 passed**；`ConfigValidator(strict_mode=True)` 全通过；`py_compile` 全通过。
+**上线**: 2026-10-18 20:49:45 CST `systemctl restart ftseek-us`（PID 2220246），启动冒烟 **7/7**。重启前实查：仅 `US.ADSK` 1 笔在仓，`exit_intents` 无在途（`BOOKED` 189 条为历史已成交）。重启后日志确认 `💓 盘中心跳后台线程已启动 (interval=60min...)`；`data/push_health_state.json` 已记录钉钉业务成功证据。
+**观察**: 下一交易日盘中心跳应约每小时 1 条且不再出现同小时多进程通道心跳；16:00 ET 复盘应只剩 1 条日报（次日提示仅内容变化时出现）；05:00 CST 综合复盘的飞书不应再与脚本告警汇总重复。周六 06:05/06:20 CST 应看到 DA 链路/LLM token 周报；延长时段无样本日应静默。
+**未做**: 服务启停推送（10/16 8 条）与周度三份报表（周复盘/Playbook 周报/edge 周报）未合并，待观察后再裁；交易策略/阈值/仓位零改动。
+**回滚**: 见 RFC-150 §5（配置改回/`health_check_shared_state=false` + 重启、git revert、crontab/Hermes 备份恢复）。
+
 ## 2026-10-18 财报日盘前研究臂源影子（仅研究臂，20 日观察）
 
 **触发**: 用户问盘前财报日逻辑/链路是否可行；复核发现严格臂近期 0 单，主源是全市场异动榜（仙股多），财报超预期榜/自选股源未启用，严格涨幅带 0.5–2.0% 会挡财报大跳空。用户同意先影子观察。
