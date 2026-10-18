@@ -56,7 +56,8 @@ class EventStore:
                     confidence REAL NOT NULL,
                     reasoning_version TEXT NOT NULL,
                     first_seen_at TEXT,
-                    published_to_seen_ms INTEGER
+                    published_to_seen_ms INTEGER,
+                    event_meta_json TEXT
                 )"""
             )
             conn.execute(
@@ -76,6 +77,10 @@ class EventStore:
             if "published_to_seen_ms" not in columns:
                 conn.execute(
                     "ALTER TABLE canonical_events ADD COLUMN published_to_seen_ms INTEGER"
+                )
+            if "event_meta_json" not in columns:
+                conn.execute(
+                    "ALTER TABLE canonical_events ADD COLUMN event_meta_json TEXT"
                 )
             # 2026-10-17 审计: 按 first_seen 时间窗取事件, 避免 "先取 500 行再过滤"
             #   导致 24h 内 53% 的事件根本没被读到.
@@ -154,7 +159,7 @@ class EventStore:
         with self._connect() as conn:
             cursor = conn.execute(
                 """INSERT OR IGNORE INTO canonical_events VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )""",
                 (
                     event.event_id,
@@ -171,6 +176,7 @@ class EventStore:
                     event.reasoning_version,
                     first_seen_at,
                     published_to_seen_ms,
+                    json.dumps(event.event_meta or {}, ensure_ascii=False, sort_keys=True),
                 ),
             )
             return cursor.rowcount > 0
@@ -180,7 +186,7 @@ class EventStore:
             rows = conn.execute(
                 """SELECT event_id, source_id, source_tier, source_url, event_type,
                           event_time, headline, summary, facts_json, status, confidence,
-                          reasoning_version
+                          reasoning_version, event_meta_json
                    FROM canonical_events
                    ORDER BY rowid DESC
                    LIMIT ?""",
@@ -200,7 +206,7 @@ class EventStore:
         """
         sql = """SELECT event_id, source_id, source_tier, source_url, event_type,
                         event_time, headline, summary, facts_json, status, confidence,
-                        reasoning_version
+                        reasoning_version, event_meta_json
                  FROM canonical_events
                  WHERE first_seen_at IS NOT NULL AND first_seen_at >= ?
                  ORDER BY rowid DESC"""
@@ -214,6 +220,10 @@ class EventStore:
 
     @staticmethod
     def _event_from_row(row) -> CanonicalEvent:
+        try:
+            event_meta = json.loads(row[12]) if row[12] else {}
+        except (TypeError, ValueError):
+            event_meta = {}
         return CanonicalEvent(
             event_id=row[0],
             source_id=row[1],
@@ -227,6 +237,7 @@ class EventStore:
             status=row[9],
             confidence=row[10],
             reasoning_version=row[11],
+            event_meta=event_meta if isinstance(event_meta, dict) else {},
         )
 
     def mark_source_health(

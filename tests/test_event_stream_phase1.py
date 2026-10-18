@@ -374,6 +374,124 @@ def test_event_store_reads_by_first_seen_window(tmp_path):
         "2026-10-09T00:00:00+00:00", limit=1)] == ["recent"]
 
 
+def test_event_store_roundtrips_event_meta(tmp_path):
+    store = EventStore(tmp_path / "event_stream.db")
+    event = _event("meta")
+    event.event_meta = {"schema": "event_meta_v1", "materiality": 0.9}
+    assert store.append_canonical_event(event)
+    got = store.get_recent_canonical_events()[0]
+    assert got.event_meta == event.event_meta
+
+
+def test_build_event_meta_sec_8k():
+    from app.event_stream.event_schema import build_event_meta
+
+    event = _event("8k")
+    event.source_id = "SEC_EDGAR_8K_ATOM"
+    event.source_tier = "T0"
+    event.event_type = "SEC_8K_FILING"
+    event.headline = "8-K - COSTCO WHOLESALE CORP (0000909832) (Filer)"
+    event.facts = {"form": "8-K"}
+    meta = build_event_meta(event)
+    assert meta["schema"] == "event_meta_v1"
+    assert meta["event_family"] == "filing_8k"
+    assert meta["form"] == "8-K"
+    assert meta["entities"]["cik"] == "0000909832"
+    assert "COSTCO" in (meta["entities"]["company"] or "")
+    assert meta["materiality"] >= 0.8
+
+
+def test_build_event_meta_form4_and_13d():
+    from app.event_stream.event_schema import build_event_meta
+
+    form4 = _event("4")
+    form4.source_id = "SEC_EDGAR_8K_ATOM"
+    form4.source_tier = "T0"
+    form4.headline = "4 - ACME CORP (0000000001) (Filer)"
+    form4.facts = {"form": "4"}
+    m4 = build_event_meta(form4)
+    assert m4["event_family"] == "insider"
+    assert m4["form"] == "4"
+
+    d13 = _event("13d")
+    d13.source_id = "SEC_EDGAR_8K_ATOM"
+    d13.source_tier = "T0"
+    d13.headline = "SC 13D - ACME CORP (0000000001) (Filer)"
+    d13.facts = {"form": "SC 13D"}
+    md = build_event_meta(d13)
+    assert md["event_family"] == "activist"
+    assert md["form"] == "13D"
+
+
+def test_build_event_meta_news_is_lower_materiality():
+    from app.event_stream.event_schema import build_event_meta
+
+    news = _event("news")
+    news.source_tier = "T2"
+    news.event_type = "NEWS_DISCOVERY"
+    news.headline = "Company wins a contract - Reuters"
+    news.facts = {"source": "Reuters"}
+    meta = build_event_meta(news)
+    assert meta["event_family"] == "news"
+    assert meta["materiality"] < 0.5
+
+
+def test_ingest_service_populates_event_meta(tmp_path):
+    store = EventStore(tmp_path / "event_stream.db")
+    event = _event("ingest-meta")
+    event.source_id = "SEC_EDGAR_8K_ATOM"
+    event.source_tier = "T0"
+    event.event_type = "SEC_8K_FILING"
+    event.headline = "8-K - TEST (0000000001) (Filer)"
+    event.facts = {"form": "8-K"}
+
+    def fake_fetch() -> SourceResult:
+        return SourceResult(
+            source_id="TEST_SOURCE", source_tier="T0", status="OK",
+            latency_ms=1, events=[event])
+
+    IngestService(store, sources={"TEST_SOURCE": fake_fetch}).ingest()
+    got = store.get_recent_canonical_events()[0]
+    assert got.event_meta["event_family"] == "filing_8k"
+    assert got.event_meta["form"] == "8-K"
+
+
+def test_ue_clue_text_includes_event_meta(tmp_path, monkeypatch):
+    import scripts.llm_universe_scan as ue
+
+    store = EventStore(tmp_path / "event_stream.db")
+    event = _event("ue-meta")
+    event.source_id = "SEC_EDGAR_8K_ATOM"
+    event.source_tier = "T0"
+    event.event_type = "SEC_8K_FILING"
+    event.headline = "8-K - SpaceX receives FCC direct-to-cell authority (0000000001) (Filer)"
+    event.event_time = "2026-10-18T12:00:00+00:00"
+    event.facts = {"form": "8-K"}
+    store.append_canonical_event(event, first_seen_at="2026-10-18T12:01:00+00:00")
+
+    def fake_cfg(key, default=None):
+        values = {
+            "universe_expansion.event_stream_clue_enabled": True,
+            "universe_expansion.event_stream_clue_scan_limit": 5000,
+            "universe_expansion.event_stream_clue_lookback_hours": 24,
+            "universe_expansion.event_stream_clue_limit": 20,
+            "universe_expansion.event_stream_clue_dedupe": True,
+        }
+        return values.get(key, default)
+
+    monkeypatch.setattr(ue, "_cfg", fake_cfg)
+    facts, health = ue._gather_event_stream_clues(
+        db_path=tmp_path / "event_stream.db")
+    assert health.startswith("EventStream:")
+    assert facts
+    text = facts[0]["text"]
+    assert "family=filing_8k" in text
+    assert "form=8-K" in text
+    assert "event_id=" in text
+
+
+
+
 
 def test_build_clue_text_formats_events_for_ue():
     text = build_clue_text([_event()])

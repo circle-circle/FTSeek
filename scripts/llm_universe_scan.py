@@ -1472,6 +1472,7 @@ def _gather_event_stream_clues(db_path: Optional[Path] = None
         from urllib.parse import urlsplit
 
         from app.event_stream.dedupe import deduplicate_events
+        from app.event_stream.event_schema import build_event_meta
         from app.event_stream.models import CanonicalEvent
         from app.event_stream.relevance import (
             filter_relevant_events,
@@ -1505,6 +1506,19 @@ def _gather_event_stream_clues(db_path: Optional[Path] = None
         events = filter_relevant_events(events, context)
         if bool(_cfg("universe_expansion.event_stream_clue_dedupe", True)):
             events = [cluster.primary for cluster in deduplicate_events(events)]
+
+        # 2026-10-18: 统一 event_meta 排序 — 高材料性/T0 优先进入 clue_limit,
+        #   历史行无 event_meta 时现场计算 (只读, 不写库).
+        meta_by_id = {
+            e.event_id: (e.event_meta or build_event_meta(e))
+            for e in events
+        }
+        tier_rank = {"T0": 0, "T1": 1, "T2": 2}
+        events.sort(key=lambda e: (
+            -float(meta_by_id[e.event_id].get("materiality") or 0),
+            tier_rank.get(e.source_tier, 9),
+            e.event_time or "",
+        ))
         events = events[:clue_limit]
 
         facts: List[Dict[str, Any]] = []
@@ -1512,10 +1526,18 @@ def _gather_event_stream_clues(db_path: Optional[Path] = None
             relevance = match_event_relevance(event, context)
             domain = urlsplit(event.source_url).netloc.removeprefix("www.") or event.source_id
             publisher = str(event.facts.get("source") or domain)
+            meta = meta_by_id.get(event.event_id) or {}
+            meta_text = ""
+            if meta:
+                meta_text = (
+                    f" | family={meta.get('event_family') or '?'}"
+                    f" form={meta.get('form') or '?'}"
+                    f" mat={meta.get('materiality')}"
+                )
             text = (
                 f"[{event.source_tier}/{event.event_type}] "
                 f"{event.event_time or 'unknown-time'} | {event.headline} | "
-                f"source={publisher} | event_id={event.event_id}"
+                f"source={publisher} | event_id={event.event_id}{meta_text}"
             )
             facts.append(_fact(
                 "event_stream",

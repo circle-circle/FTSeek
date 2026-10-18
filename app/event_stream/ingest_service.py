@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Callable, Dict, Iterable, List, Optional
 
+from app.event_stream.event_schema import build_event_meta
 from app.event_stream.models import SourceResult
 from app.event_stream.source_registry import default_source_registry
 from app.event_stream.store import EventStore
@@ -87,6 +88,8 @@ class IngestService:
             inserted_events = 0
             first_seen_at = result.raw_event.fetched_at if result.raw_event else None
             for event in result.events:
+                if not event.event_meta:
+                    event.event_meta = build_event_meta(event)
                 if self.store.append_canonical_event(event, first_seen_at=first_seen_at):
                     inserted_events += 1
             now = datetime.now(timezone.utc).isoformat()

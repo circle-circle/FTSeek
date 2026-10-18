@@ -1,5 +1,17 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-18 统一事件元数据 event_meta_v1 + 材料性排序（P0 数据层）
+
+**触发**: 用户同意事件驱动路线并令「按照建议执行」；先补数据/推导基座，不改交易策略。
+**落地**（代码已落盘，未提交；ingest/UE 为 cron 新进程）:
+- 新增 `app/event_stream/event_schema.py`: `event_meta_v1`（event_family/form/entities/materiality/novelty/corroboration/lifecycle）；确定性先验分，不是收益预测。
+- `CanonicalEvent.event_meta` + `canonical_events.event_meta_json` 列/migration；`IngestService` 落库前补 meta；历史行读取时现场计算，不写库。
+- UE `_gather_event_stream_clues`: 按 materiality/T0 排序后再截 `clue_limit`；clue 行追加 `family/form/mat`，让 LLM 看到结构化事件属性。
+- **未改** 交易门/仓位/止损/出场；materiality 仅排序/审计。
+**验证**: 事件流/UE/离线全链定向 **228 passed**；全量 **7336 passed / 72 skipped / 3 failed**（均为存量红）。24h 实查 204 条：news 187 / regulatory 17；materiality <0.5 187、0.5-0.7 17（周末无 SEC 属正常，工作日 T0 会进入高分桶）。
+**生效**: EventStore 下次打开自动加列；ingest/UE cron 新进程加载；主服务无需重启。
+**下一步**: LLM extractor/verifier A/B；主源扩展（Form 4/13D/G、FDA/临床、IR/新闻稿）；source/event 反馈闭环。
+
 ## 2026-10-18 质量影子标签 + 事件采集并发（用户令「按照建议执行」）
 
 **触发**: 借券供给恢复后，按建议继续做 Batch A（方向/证据/入场质量 record-only 标签）与 Batch B（事件采集并发/超时余量）；Batch C 先做只读盘点。

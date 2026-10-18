@@ -51,6 +51,7 @@ class CanonicalEvent:
     status: str = "UNVERIFIED"
     confidence: float = 0.0
     reasoning_version: str = "v0"
+    event_meta: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
