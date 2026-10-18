@@ -19,8 +19,10 @@
 - `scripts/extended_hours_entry_executor.py`:
   - `EXT_ENTRY_RESEARCH_SOURCES=true` 时，研究臂追加 Futu `get_earnings_beat_rank`
     + 自选股源；**严格臂的 `_scan_candidates` 结果不变**。
-  - 研究源独立涨幅带 `EXT_ENTRY_RESEARCH_CHG_BAND=2.0,10.0`，源头价
+  - 研究源独立涨幅带 `EXT_ENTRY_RESEARCH_CHG_BAND=0.5,10.0`，源头价
     `EXT_ENTRY_RESEARCH_MIN_PRICE=5`，最多 `EXT_ENTRY_RESEARCH_MAX_SYMBOLS=80`。
+    （2026-10-18 实源探测：beat 源 14 只里 8 只在 0.5–2%、0 只在 2–10%
+    ⇒ 2–10 会全挡掉，故取 0.5–10；严格臂仍 0.5–2.0。）
   - 源级漏斗 `data/ext_entry_research_funnel.jsonl`：selected/reject/ordered，
     带 source、stage、reason、price/change/volume。
   - 研究臂真单通道新增 held / attempt 复用检查，避免重复研究单。

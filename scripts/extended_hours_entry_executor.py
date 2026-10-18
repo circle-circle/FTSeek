@@ -295,7 +295,9 @@ RESEARCH_GATE_MODE = "research_momentum"
 # 2026-10-18 财报日盘前影子: 研究臂专用源 + 独立涨幅带 + 源级漏斗。
 #   严格臂源开关/带宽/闸门零改动; 这里只把 beat/watchlist 追加进研究池。
 RESEARCH_SOURCES_ON = os.getenv("EXT_ENTRY_RESEARCH_SOURCES", "false").lower() == "true"
-RESEARCH_CHG_BAND_RAW = (os.getenv("EXT_ENTRY_RESEARCH_CHG_BAND", "2.0,10.0") or "").strip()
+# 2026-10-18 实源探测: beat 源 14 只里 8 只落在 0.5–2%、0 只落在 2–10%
+#   ⇒ 研究带取 0.5–10%，避免把财报超预期大票全部挡掉；严格臂仍 0.5–2.0。
+RESEARCH_CHG_BAND_RAW = (os.getenv("EXT_ENTRY_RESEARCH_CHG_BAND", "0.5,10.0") or "").strip()
 RESEARCH_MIN_PRICE = float(os.getenv("EXT_ENTRY_RESEARCH_MIN_PRICE", str(MIN_PRICE)) or MIN_PRICE)
 RESEARCH_MAX_SYMBOLS = int(os.getenv("EXT_ENTRY_RESEARCH_MAX_SYMBOLS", "80"))
 RESEARCH_FUNNEL = ROOT / "data" / "ext_entry_research_funnel.jsonl"
