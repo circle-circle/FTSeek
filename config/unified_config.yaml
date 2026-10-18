@@ -2268,6 +2268,10 @@ universe_expansion:
   # [ADR-046 2026-10-14] UE brief 借券快照段开关。true=把 borrow_rate_series
   # 台账渲染进 short_check 判定材料; false=回到修复前"段落缺失"行为。回滚: false。
   borrow_snapshot_brief: true
+  # 2026-10-18: UE 产出 SHORT 后对 UNKNOWN 逐票补查借券 (Futu get_margin_ratio).
+  #   只补 short_check 的 MATERIAL true/false, 不改 DA 过滤/仓位/止损/执行门.
+  #   回滚: false (回到只靠活跃池快照 + 规则10 UNKNOWN 的旧行为).
+  borrow_on_demand_verify: true
   # U11 (2026-08-26, 用户裁"确认时间点×10min"): 开盘+10min 确认门 (两段式第二段)。
   #   21:10 CST scan 生成假设; 开盘+10min 用真实盘中价裁决信息是否已被价格反映
   #   (双季 cron 双挂: EDT 21:40 / EST 22:40 CST = 09:40 ET, 见 crontab 注释)。

@@ -1,4 +1,5 @@
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,9 +13,11 @@ def test_cardinality_collect_reads_jsonl_and_declares_units(tmp_path, monkeypatc
 
     path = tmp_path / "obs.jsonl"
     rows = []
+    # 相对日期: collect(30) 按 date.today()-30 过滤, 固定 2026-09-17 会在 10/18 漂出窗口.
+    trade_date = (date.today() - timedelta(days=1)).isoformat()
     for index in range(30):
         rows.append({
-            "trade_date": "2026-09-17", "spread_pct": index / 100,
+            "trade_date": trade_date, "spread_pct": index / 100,
             "quote_age_seconds": index,
         })
     path.write_text("\n".join(str(row).replace("'", '"') for row in rows))

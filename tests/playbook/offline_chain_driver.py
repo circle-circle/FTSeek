@@ -124,6 +124,9 @@ FROZEN_CFG = {
     "universe_expansion.prompt_version": "v2",
     "universe_expansion.midday_shadow_enabled": False,
     "universe_expansion.da_candidate_feed": False,
+    # 2026-10-18: 离线全链断网/断券商 (socket 全 forbidden) — 借券逐票补查必须关,
+    #   否则 scan 阶段会连 Futu 被守卫记为 socket.send 越界.
+    "universe_expansion.borrow_on_demand_verify": False,
     "universe_expansion.inject_reject_log": True,
     "universe_expansion.short_boost_shadow": False,
 }

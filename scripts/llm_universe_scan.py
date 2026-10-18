@@ -46,6 +46,7 @@ for _p in (str(_ROOT), str(_SCRIPTS)):
         sys.path.insert(0, _p)
 
 from app.playbook.momentum import classify_ma_trend
+from app.data.borrow_verifier import enrich_surfaced_short_borrow
 
 _SCAN_PATH = _ROOT / "data" / "shadow" / "llm_universe_scan.jsonl"
 # DEB-20260814 §十三 (2026-08-14, 用户裁): 午间影子扫描独立落盘 —
@@ -3259,6 +3260,19 @@ def _cmd_scan_impl(manual_clue, midday, da_feed, batch, result) -> int:
         print(f"  [warn] 契约校验异常 (不阻断): {_u4_e}")
         _contract_stats = {"error": str(_u4_e)}
 
+    # 2026-10-18: SHORT 借券 UNKNOWN 逐票补查 (数据/流程修复, 不改 DA 过滤/执行门).
+    #   活跃池快照覆盖不到 UE 榜外标的; Futu get_margin_ratio 可逐票查.
+    #   只把 UNKNOWN 解析为 MATERIAL true/false; 无数据/异常保持 UNKNOWN 并留痕.
+    _borrow_stats: Dict[str, Any] = {}
+    if not midday and bool(_cfg("universe_expansion.borrow_on_demand_verify", True)):
+        try:
+            _borrow_stats = enrich_surfaced_short_borrow(surfaced, pause_sec=1.0)
+            if _borrow_stats.get("checked") or _borrow_stats.get("error"):
+                print(f"  [borrow] on-demand 补查: {_borrow_stats}")
+        except Exception as _bw_e:
+            _borrow_stats = {"error": str(_bw_e)}
+            print(f"  [warn] 借券逐票补查异常 (不阻断): {_bw_e}")
+
     # 为可评分, 抓 scan 时参考价
     # 2026-08-11: effective 口径 — 盘前时段用 pre_price (last_price=昨收会污染 fwd 基线)
     router = _build_router()
@@ -3368,6 +3382,8 @@ def _cmd_scan_impl(manual_clue, midday, da_feed, batch, result) -> int:
         "input_prescreen": dict(_LAST_INPUT_PRESCREEN or {}),
         # [U4] 契约校验统计 — 攒样判据数据源 (违约率/修复率/方向补丁拒收)
         "contract_stats": _contract_stats,
+        # 2026-10-18: SHORT 借券 UNKNOWN 逐票补查计数 (数据/流程修复, 只补材料)
+        "borrow_on_demand": _borrow_stats,
         # [PROPOSAL-20260906 2026-09-06] RAW 口径契约统计 (normalize/repair 之前) —
         #   P3 判据"invalidation_triggers 填充率基线 36%"是 RAW 口径; contract_stats
         #   是 repair 后口径, 直接对比会高估依从 → 假毕业。同函数即 thinking-eval
