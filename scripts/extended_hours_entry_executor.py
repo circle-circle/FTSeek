@@ -291,6 +291,9 @@ ALLOW_SIM_ENTRY = os.getenv("EXT_ENTRY_ALLOW_SIM", "false").lower() == "true"
 # 回滚: EXT_ENTRY_RESEARCH_MOMENTUM=false (一键; cron 每 tick 新进程, 无需重启)。
 RESEARCH_ARM_ON = os.getenv("EXT_ENTRY_RESEARCH_MOMENTUM", "false").lower() == "true"
 RESEARCH_ARM_UNTIL = os.getenv("EXT_RESEARCH_ARM_UNTIL", "2026-10-31")
+# 新 source 专用死线: 旧 research_momentum 臂仍按 RESEARCH_ARM_UNTIL 停;
+#   2026-10-19 起第 20 个交易日 = 2026-11-13 (11/26 感恩节不计, 11/11 美股正常交易)。
+RESEARCH_SOURCE_UNTIL = os.getenv("EXT_RESEARCH_SOURCE_UNTIL", "2026-11-13")
 RESEARCH_GATE_MODE = "research_momentum"
 # 2026-10-18 财报日盘前影子: 研究臂专用源 + 独立涨幅带 + 源级漏斗。
 #   严格臂源开关/带宽/闸门零改动; 这里只把 beat/watchlist 追加进研究池。
@@ -304,7 +307,7 @@ RESEARCH_FUNNEL = ROOT / "data" / "ext_entry_research_funnel.jsonl"
 
 
 def _research_arm_active():
-    """研究臂本轮是否启用: env 开关 + 未过预注册死线 + SIM 环境, 任一不满足即 False。"""
+    """旧 research_momentum 臂本轮是否启用: env 开关 + 未过预注册死线 + SIM 环境。"""
     if not RESEARCH_ARM_ON:
         return False
     if _today_et() > RESEARCH_ARM_UNTIL:   # ISO 日期串可直接字典序比较
@@ -313,6 +316,26 @@ def _research_arm_active():
         return bool(_mode().is_simulate)   # SIM-only 硬连线; 判定异常 fail-closed
     except Exception:
         return False
+
+
+def _research_sources_active():
+    """新 source 影子是否启用: 独立死线, 不复用旧臂 10-31 的截止。"""
+    if not (RESEARCH_ARM_ON and RESEARCH_SOURCES_ON):
+        return False
+    if _today_et() > RESEARCH_SOURCE_UNTIL:
+        return False
+    try:
+        return bool(_mode().is_simulate)
+    except Exception:
+        return False
+
+
+def _research_existing_symbols(research_pool, results):
+    """只排除已入研究池 / 严格臂已下单的标的; 被严格带拒绝的票仍可进 research 带。"""
+    existing = {str(item.get("symbol") or "") for item in research_pool}
+    existing |= {str(r.get("symbol") or "") for r in results if r.get("ok")}
+    existing.discard("")
+    return existing
 
 
 def _record_research_funnel(session, today, item, stage, reason=""):
@@ -342,7 +365,7 @@ def _record_research_funnel(session, today, item, stage, reason=""):
 
 def _research_source_candidates(session, qctx, existing):
     """研究臂专用财报源: beat rank + watchlist, 只进研究池, 严格臂不可见。"""
-    if not (RESEARCH_ARM_ON and RESEARCH_SOURCES_ON and _research_arm_active()):
+    if not _research_sources_active():
         return []
     try:
         beat = _beat_rank_symbols(qctx)
@@ -2694,15 +2717,14 @@ def collect(session, dry=False):
                     "direction": _direction,
                 })
             # 研究臂 dry 通道: 严格臂候选列完后补列 (无配额模拟, 与严格臂 dry 对称)。
-            if research_active:
-                for _ri in _research_source_candidates(
-                        session, qctx, {m["symbol"] for m in movers}):
-                    research_pool.append(_ri)
-                    _rsrc = str(_ri.get("_source") or "?")
-                    counts[f"research_src_{_rsrc}_pool"] = (
-                        counts.get(f"research_src_{_rsrc}_pool", 0) + 1
-                    )
-                    _record_research_funnel(session, today, _ri, "selected")
+            _existing_research = _research_existing_symbols(research_pool, results)
+            for _ri in _research_source_candidates(session, qctx, _existing_research):
+                research_pool.append(_ri)
+                _rsrc = str(_ri.get("_source") or "?")
+                counts[f"research_src_{_rsrc}_pool"] = (
+                    counts.get(f"research_src_{_rsrc}_pool", 0) + 1
+                )
+                _record_research_funnel(session, today, _ri, "selected")
             if research_pool:
                 counts["research_pool"] = len(research_pool)
                 _research_pass_dry(
@@ -3022,15 +3044,14 @@ def collect(session, dry=False):
                     break
             # 研究臂真单通道 (纪律①严格臂优先): 只有严格臂循环收口后仍有剩余配额才跑。
             #   每单前复查配额+在仓帽 (_open_exposure_gate), 全链 gate_mode 打标。
-            if research_active:
-                for _ri in _research_source_candidates(
-                        session, qctx, {m["symbol"] for m in movers}):
-                    research_pool.append(_ri)
-                    _rsrc = str(_ri.get("_source") or "?")
-                    counts[f"research_src_{_rsrc}_pool"] = (
-                        counts.get(f"research_src_{_rsrc}_pool", 0) + 1
-                    )
-                    _record_research_funnel(session, today, _ri, "selected")
+            _existing_research = _research_existing_symbols(research_pool, results)
+            for _ri in _research_source_candidates(session, qctx, _existing_research):
+                research_pool.append(_ri)
+                _rsrc = str(_ri.get("_source") or "?")
+                counts[f"research_src_{_rsrc}_pool"] = (
+                    counts.get(f"research_src_{_rsrc}_pool", 0) + 1
+                )
+                _record_research_funnel(session, today, _ri, "selected")
             if research_pool:
                 counts["research_pool"] = len(research_pool)
                 total_today, session_today = _research_pass_real(

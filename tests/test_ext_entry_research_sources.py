@@ -1,7 +1,33 @@
 """财报日盘前影子: 研究臂专用源/涨幅带/漏斗契约."""
 import json
+from types import SimpleNamespace
 
 import scripts.extended_hours_entry_executor as mod
+
+
+def test_research_source_deadline_is_separate_from_old_arm(monkeypatch):
+    monkeypatch.setattr(mod, "RESEARCH_ARM_ON", True)
+    monkeypatch.setattr(mod, "RESEARCH_SOURCES_ON", True)
+    monkeypatch.setattr(mod, "RESEARCH_ARM_UNTIL", "2026-10-31")
+    monkeypatch.setattr(mod, "RESEARCH_SOURCE_UNTIL", "2026-11-13")
+    monkeypatch.setattr(mod, "_mode", lambda: SimpleNamespace(is_simulate=True))
+
+    monkeypatch.setattr(mod, "_today_et", lambda: "2026-11-01")
+    assert mod._research_arm_active() is False   # 旧臂已停
+    assert mod._research_sources_active() is True  # 新 source 仍在窗口
+
+    monkeypatch.setattr(mod, "_today_et", lambda: "2026-11-14")
+    assert mod._research_sources_active() is False
+
+
+def test_research_existing_only_excludes_pool_and_ordered():
+    pool = [{"symbol": "US.POOL"}]
+    results = [
+        {"ok": True, "symbol": "US.ORDERED"},
+        {"ok": False, "symbol": "US.STRICT_REJECTED"},
+    ]
+    assert mod._research_existing_symbols(pool, results) == {
+        "US.POOL", "US.ORDERED"}
 
 
 def test_research_chg_band_is_independent(monkeypatch):
@@ -19,7 +45,7 @@ def test_research_sources_are_research_only_and_prefiltered(monkeypatch, tmp_pat
     monkeypatch.setattr(mod, "RESEARCH_MIN_PRICE", 5.0)
     monkeypatch.setattr(mod, "RESEARCH_MAX_SYMBOLS", 80)
     monkeypatch.setattr(mod, "RESEARCH_FUNNEL", tmp_path / "funnel.jsonl")
-    monkeypatch.setattr(mod, "_research_arm_active", lambda: True)
+    monkeypatch.setattr(mod, "_research_sources_active", lambda: True)
     monkeypatch.setattr(mod, "_beat_rank_symbols", lambda q: ["US.BEAT1", "US.BEAT2", "US.DUP"])
     monkeypatch.setattr(mod, "_watchlist_symbols", lambda q: ["US.WATCH1", "US.DUP"])
 

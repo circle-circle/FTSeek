@@ -5,6 +5,11 @@
 候选主要是全市场异动榜（仙股多、价格闸大量拦截），财报超预期榜/自选股源未启用，
 且严格涨幅带 0.5%–2.0% 会挡掉财报大跳空。用户同意先做 20 个交易日影子观察。
 
+**2026-10-18 复核修正**: ①旧 `research_momentum` 臂保持 10-31，新增 source 专用
+`EXT_RESEARCH_SOURCE_UNTIL=2026-11-13`（10/19 起 20 个交易日），不把旧臂一起延长；
+②研究源 `existing` 只排除 research_pool/严格臂已成功下单，不再用全部 movers 排除，
+避免“已上异动榜但被严格带拒绝”的 beat/watchlist 票被漏掉。
+
 ## 1. 证据
 
 - 最近 10 个交易日 `ext_entry.log`：候选 30–50/日，价格闸挡 16–42，
@@ -23,6 +28,12 @@
     `EXT_ENTRY_RESEARCH_MIN_PRICE=5`，最多 `EXT_ENTRY_RESEARCH_MAX_SYMBOLS=80`。
     （2026-10-18 实源探测：beat 源 14 只里 8 只在 0.5–2%、0 只在 2–10%
     ⇒ 2–10 会全挡掉，故取 0.5–10；严格臂仍 0.5–2.0。）
+  - **旧 `research_momentum` 臂保持 `EXT_RESEARCH_ARM_UNTIL=2026-10-31`**；
+    新 source 用独立死线 `EXT_RESEARCH_SOURCE_UNTIL=2026-11-13`
+    （2026-10-19 起第 20 个交易日；11/26 感恩节不计，11/11 美股正常交易）。
+  - 研究源 `existing` 只排除**已入 research_pool 或严格臂已成功下单**的标的，
+    不再排除全部 `movers` —— 这样“已在异动榜但被严格 0.5–2% 带拒绝”的
+    beat/watchlist 票可以进入研究源 0.5–10% 带，覆盖不被削弱。
   - 源级漏斗 `data/ext_entry_research_funnel.jsonl`：selected/reject/ordered，
     带 source、stage、reason、price/change/volume。
   - 研究臂真单通道新增 held / attempt 复用检查，避免重复研究单。
