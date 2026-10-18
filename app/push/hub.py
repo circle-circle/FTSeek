@@ -57,6 +57,11 @@ class PushHub:
         #   时跳过 ping (业务推送成功已是 webhook 可用的直接证据, 此时 ping 是冗余噪音)。
         #   0 = 关闭抑制 (原行为: 每小时必发一条)。探测能力不减: 真失效时无证据 ⇒ ping 照发。
         ping_suppress_window_sec: int = 0,
+        # P0 (2026-10-18 推送治理批): 通道 ping 周期与跨进程共享状态文件。
+        #   共享后「业务成功证据」与「本轮 ping 时隙」全局唯一, 长跑 cron 不再与主服务
+        #   同小时各发一条。health_shared_state_path="" = 关闭共享 (单测/回退)。
+        health_check_interval_sec: int = 3600,
+        health_shared_state_path: str = "",
     ):
         # 默认 channel 优先级: DingTalk > Feishu > FlagFile
         self.channels: List[Channel] = channels or [
@@ -90,7 +95,9 @@ class PushHub:
         self._aggregator.start()
         self._health = (HealthMonitor(
             self.channels,
+            interval_sec=max(60, int(health_check_interval_sec or 3600)),
             suppress_window_sec=max(0, int(ping_suppress_window_sec or 0)),
+            shared_state_path=health_shared_state_path or "",
         ) if enable_health_check else None)
         if self._health:
             self._health.start()
@@ -346,14 +353,26 @@ def get_push_hub() -> PushHub:
                 health = bool(cfg.get_dotted("push.health_check", True))
                 send_retries = int(cfg.get_dotted("push.send_retries", 1))
                 ping_suppress = int(cfg.get_dotted("push.ping_suppress_window_sec", 0))
+                health_interval = int(cfg.get_dotted("push.health_check_interval_sec", 3600))
+                health_shared = bool(cfg.get_dotted("push.health_check_shared_state", True))
             except Exception:
                 dedup_ttl, agg_window, health, send_retries, ping_suppress = 60, 300, True, 1, 0
+                health_interval, health_shared = 3600, True
+            health_shared_path = ""
+            if health and health_shared:
+                try:
+                    from app.core.paths import get_data_dir
+                    health_shared_path = str(get_data_dir() / "push_health_state.json")
+                except Exception:
+                    logger.warning("push health shared state path resolve failed", exc_info=True)
             _singleton = PushHub(
                 dedup_ttl_sec=dedup_ttl,
                 aggregate_window_sec=agg_window,
                 enable_health_check=health,
                 send_retries=send_retries,
                 ping_suppress_window_sec=ping_suppress,
+                health_check_interval_sec=health_interval,
+                health_shared_state_path=health_shared_path,
             )
     return _singleton
 

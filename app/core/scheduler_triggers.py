@@ -498,7 +498,10 @@ def check_daily_review(scheduler: 'TradingScheduler'):
                         notifier=scheduler.notifier,
                         agent_bridge=scheduler.agent_bridge,
                     )
-                    orch_result = orchestrator.run_daily(now_et.date().isoformat())
+                    # P0 (2026-10-18 推送治理): 日报已由 _push_review_text 发出,
+                    #   Orchestrator 只做增强分析, 不再独立推一份「盘后复盘报告」。
+                    orch_result = orchestrator.run_daily(
+                        now_et.date().isoformat(), push_report=False)
                     
                     # 注入 LLM 辩论提取的 Issue 到 review dict
                     llm_issues = orch_result.get("llm_issues", [])
@@ -548,17 +551,25 @@ def check_daily_review(scheduler: 'TradingScheduler'):
                     logger.info(f"[ReviewLoop] 改进闭环完成: {loop_result['issues_detected']} 问题, {loop_result['actions_taken']} 修复")
                     
                     # P0 修复 (2026-05-09): 仅在日复盘时发送次日提示，避免周报/盘中复盘重复
+                    # 2026-10-18 推送治理: 内容指纹未变不推 — 77 条活跃教训本身每天重复,
+                    #   只有 top_risk/避免时段/谨慎标的真正变化时才值得一条推送。
                     exp = loop_result.get("experience_result", {})
                     if scheduler.notifier and exp.get("lesson_count", 0) > 0:
                         hints = exp.get("next_day_hints", {})
-                        hint_msg = f"📋 次日交易提示 ({exp['lesson_count']} 条活跃教训)\n"
-                        if hints.get("top_risk"):
-                            hint_msg += f"\n⚠️ {hints['top_risk']}"
-                        if hints.get("avoid_sessions"):
-                            hint_msg += f"\n🚫 避免时段: {', '.join(hints['avoid_sessions'])}"
-                        if hints.get("caution_symbols"):
-                            hint_msg += f"\n🔍 谨慎标的: {', '.join(hints['caution_symbols'][:5])}"
-                        scheduler.notifier.send_text(hint_msg)
+                        if _has_actionable_review_hint(hints):
+                            _fp = _daily_hint_fingerprint(hints)
+                            if _review_hint_push_needed(_fp):
+                                hint_msg = f"📋 次日交易提示 ({exp['lesson_count']} 条活跃教训)\n"
+                                if hints.get("top_risk"):
+                                    hint_msg += f"\n⚠️ {hints['top_risk']}"
+                                if hints.get("avoid_sessions"):
+                                    hint_msg += f"\n🚫 避免时段: {', '.join(hints['avoid_sessions'])}"
+                                if hints.get("caution_symbols"):
+                                    hint_msg += f"\n🔍 谨慎标的: {', '.join(hints['caution_symbols'][:5])}"
+                                scheduler.notifier.send_text(hint_msg)
+                                _mark_review_hint_pushed(_fp)
+                            else:
+                                logger.info("[ReviewLoop] 次日提示内容未变化, 跳过重复推送")
                 except Exception as loop_err:
                     logger.debug(f"[ReviewLoop] 改进闭环失败 (不影响主流程): {loop_err}")
                 # ── 改进闭环结束 ──
@@ -657,16 +668,14 @@ def check_daily_review(scheduler: 'TradingScheduler'):
                     from app.analysis.plan_effectiveness import PlanEffectivenessTracker
                     tracker = PlanEffectivenessTracker()
                     plan_report = tracker.evaluate_daily_plan(now_et.date().isoformat())
-                    if plan_report and plan_report.get("plan_available") and scheduler.notifier:
+                    if plan_report and plan_report.get("plan_available"):
                         hit_rate = plan_report.get("hit_rate", 0) or 0
                         traded_rate = plan_report.get("traded_rate", 0) or 0
-                        msg = (
-                            f"📊 Playbook 指令效果: 命中率 {hit_rate:.0%}, 执行率 {traded_rate:.0%}"
-                        )
-                        try:
-                            scheduler.notifier.send_text(msg)
-                        except Exception as _silent_e:
-                            logger.debug(f"[silent_except:scheduler_triggers.py] {_silent_e}")
+                        # 2026-10-18 推送治理: 不再单独推送 — 同一指标已包含在
+                        #   05:00 CST Hermes「计划 vs 执行」综合复盘; 日推纯重复。
+                        logger.info(
+                            f"[计划效果] Playbook 指令效果: 命中率 {hit_rate:.0%}, "
+                            f"执行率 {traded_rate:.0%} (只落日志, 不单独推送)")
                 except Exception as pe:
                     logger.debug(f"[计划效果] 评估失败: {pe}")
                 # ── 盘前计划命中率追踪结束 ──
@@ -754,7 +763,9 @@ def check_weekly_review(scheduler: 'TradingScheduler'):
                         notifier=scheduler.notifier,
                         agent_bridge=scheduler.agent_bridge,
                     )
-                    orch_result = orchestrator.run_weekly(week_start, week_end)
+                    # P0 (2026-10-18): 周报已由 _push_review_text 发出, 不再重复推。
+                    orch_result = orchestrator.run_weekly(
+                        week_start, week_end, push_report=False)
                     logger.info(
                         f"[Orchestrator] 周复盘增强完成: "
                         f"mode={orch_result.get('analysis_mode')} | "
@@ -1014,6 +1025,56 @@ def check_position_snapshot(scheduler: 'TradingScheduler'):
             
     except Exception as e:
         logger.error(f"[快照] 记录失败：{e}", exc_info=True)
+
+
+# 2026-10-18 推送治理 P0: 次日提示只在「真正可行动内容变化」时推。
+#   状态文件与调度器进程解耦 (重启不重推); 内容不含 lesson_count —
+#   活跃教训数每天变化不应触发推送。
+_REVIEW_HINT_STATE = get_project_root() / "data" / ".last_review_hint.json"
+
+
+def _has_actionable_review_hint(hints: dict) -> bool:
+    return bool(
+        hints.get("top_risk")
+        or hints.get("avoid_sessions")
+        or hints.get("caution_symbols")
+    )
+
+
+def _daily_hint_fingerprint(hints: dict) -> str:
+    import hashlib
+    import json
+    payload = {
+        "top_risk": hints.get("top_risk") or "",
+        "avoid_sessions": sorted(hints.get("avoid_sessions") or []),
+        "caution_symbols": sorted(hints.get("caution_symbols") or []),
+    }
+    return hashlib.md5(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
+def _review_hint_push_needed(fp: str) -> bool:
+    try:
+        import json
+        state = json.loads(_REVIEW_HINT_STATE.read_text(encoding="utf-8"))
+        return state.get("fingerprint") != fp
+    except Exception:
+        return True
+
+
+def _mark_review_hint_pushed(fp: str) -> None:
+    try:
+        import json
+        _REVIEW_HINT_STATE.parent.mkdir(parents=True, exist_ok=True)
+        _REVIEW_HINT_STATE.write_text(
+            json.dumps({"fingerprint": fp,
+                        "pushed_at": datetime.now().isoformat(timespec="seconds")},
+                       ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception as e:
+        logger.warning(f"[ReviewLoop] 次日提示去重状态写失败 (下轮可能重推一次): {e}")
 
 
 def _push_review_text(scheduler, text: str, label: str) -> None:

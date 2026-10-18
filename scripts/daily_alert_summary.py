@@ -33,6 +33,7 @@ Karpathy 原则:
 import os
 import sys
 import re
+import argparse
 import gzip
 import json
 import sqlite3
@@ -882,7 +883,20 @@ def _last_us_trade_date(et_now: datetime) -> str:
     return get_last_trade_date(et_now)
 
 
-def main():
+def push_report(title: str, content: str, *, dingtalk: bool = True,
+                feishu: bool = True):
+    """推送汇总报告 (可逐通道关闭 — Hermes 场景避免同通道重复)。
+
+    2026-10-18 推送治理 P0: Hermes job `7a40dd7c9e94` 的最终回复本身投递飞书,
+    脚本内再推一次飞书 = 同通道双推。综合复盘 Step 3 改用 --no-feishu,
+    只保留钉钉 (跨通道) + Hermes 飞书正文。
+    """
+    dt_ok = push_to_dingtalk(title, content) if dingtalk else False
+    fs_ok = push_to_feishu(title, content) if feishu else False
+    return dt_ok, fs_ok
+
+
+def main(push_dingtalk: bool = True, push_feishu: bool = True):
     """每日告警汇总报告主入口
 
     时区策略 (SSOT):
@@ -945,14 +959,17 @@ def main():
                                   us_equity_recon=us_equity_recon,
                                   log_coverage=us_cover)
 
-    # 4. 推送 (钉钉 + 飞书)
+    # 4. 推送 (钉钉 + 飞书; 可逐通道关闭)
     title = f"📊 FTSeek 每日告警汇总 — {report_date}"
 
-    dt_ok = push_to_dingtalk(title, report)
-    fs_ok = push_to_feishu(title, report)
-
-    print(f"  钉钉推送: {'✅' if dt_ok else '❌'}")
-    print(f"  飞书推送: {'✅' if fs_ok else '❌'}")
+    dt_ok, fs_ok = push_report(
+        title, report, dingtalk=push_dingtalk, feishu=push_feishu)
+    if push_dingtalk:
+        print(f"  钉钉推送: {'✅' if dt_ok else '❌'}")
+    if push_feishu:
+        print(f"  飞书推送: {'✅' if fs_ok else '❌'}")
+    if not push_dingtalk and not push_feishu:
+        print("  [skip-push] 已关闭脚本内推送 (由调用方交付)")
 
     # 5. 保存到本地
     output_dir = US_ROOT / "data" / "reports"
@@ -966,5 +983,14 @@ def main():
 
 
 if __name__ == "__main__":
-    success = main()
+    ap = argparse.ArgumentParser(description="每日告警汇总报告")
+    ap.add_argument("--no-dingtalk", action="store_true", help="不推钉钉")
+    ap.add_argument("--no-feishu", action="store_true",
+                    help="不推飞书 (Hermes 最终回复已投递飞书时用)")
+    ap.add_argument("--no-push", action="store_true", help="不推任何通道 (只落盘)")
+    _a = ap.parse_args()
+    success = main(
+        push_dingtalk=not (_a.no_push or _a.no_dingtalk),
+        push_feishu=not (_a.no_push or _a.no_feishu),
+    )
     sys.exit(0 if success else 1)

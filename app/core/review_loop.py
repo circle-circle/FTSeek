@@ -794,8 +794,29 @@ class ReviewEffectTracker:
             json.dump(self._effects, f, indent=2, ensure_ascii=False)
     
     def record_action(self, action_result: ActionResult, baseline_metrics: Dict):
-        """记录修复动作和基线指标"""
+        """记录修复动作和基线指标
+
+        2026-10-18 推送治理: 同一 issue 已有未检查记录时不重复追加 —
+        原实现每天追加一条, 3 天后同一 issue 同时进入 pending, 触发多条
+        自动回滚 (且失败动作无法回滚), 形成重复告警。
+        """
         with self._lock:
+            for entry in self._effects.get("actions", []):
+                if (entry.get("issue_id") == action_result.issue_id
+                        and not entry.get("checked")):
+                    # 有新的可回滚成功动作时刷新基线; 失败动作不覆盖已有成功记录
+                    if action_result.success and action_result.rollback_version:
+                        entry.update({
+                            "action": action_result.action_taken,
+                            "success": True,
+                            "baseline": baseline_metrics,
+                            "rollback_version": action_result.rollback_version,
+                            "timestamp": datetime.now().isoformat(),
+                            "check_due": (datetime.now() + timedelta(
+                                days=self.CHECK_PERIOD_DAYS)).isoformat(),
+                        })
+                    self._save()
+                    return
             self._effects["actions"].append({
                 "issue_id": action_result.issue_id,
                 "action": action_result.action_taken,
@@ -891,13 +912,31 @@ class ReviewEffectTracker:
             self._save()
     
     def get_pending_checks(self) -> List[Dict]:
-        """获取待检查的修复动作"""
+        """获取待检查的修复动作
+
+        2026-10-18 推送治理: 只返回「成功且可回滚」的动作, 并按 issue_id 去重。
+        原实现不过滤 success — 失败动作 (如配置路径不在白名单) 3 天后进入检查,
+        execute_rollback 找不到审计记录 → 每天重复推「⚠️ 自动回滚 ... 回滚失败」;
+        实测 10/13-10/16 连续 4 天同一 issue 重复告警。
+        """
         now = datetime.now().isoformat()
+        pending: List[Dict] = []
+        seen = set()
         with self._lock:
-            return [
-                a for a in self._effects.get("actions", [])
-                if not a.get("checked") and a.get("check_due", "") < now
-            ]
+            for a in self._effects.get("actions", []):
+                if a.get("checked") or not a.get("success"):
+                    continue
+                # 无 rollback_version 的动作没有可回滚的配置变更
+                if not a.get("rollback_version"):
+                    continue
+                if a.get("check_due", "") >= now:
+                    continue
+                iid = a.get("issue_id")
+                if iid in seen:
+                    continue
+                seen.add(iid)
+                pending.append(a)
+        return pending
 
 
 # ============================================================================

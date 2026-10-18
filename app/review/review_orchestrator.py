@@ -1663,8 +1663,13 @@ class ReviewOrchestrator:
         self.renderer = ReviewRenderer()
         self._lock = threading.Lock()
     
-    def run_daily(self, date: str = None) -> Dict:
-        """运行日复盘 — 混合架构: Phase 1+2+3"""
+    def run_daily(self, date: str = None, push_report: bool = True) -> Dict:
+        """运行日复盘 — 混合架构: Phase 1+2+3
+
+        push_report=False: 只生成/返回 report_text, 不推送。调度器已先推一份
+        `_format_daily_review` 日报 (2026-10-18 推送治理 P0: 原先同一复盘集群
+        连推日报+Orchestrator 报告+次日提示+教训验证+指令效果 5 条)。
+        """
         if date is None:
             # 2026-07-28 修复 (07-28.json 脏文件真凶): CST 缺省日期在 ET 晚间生成"明日"空复盘
             from app.utils.timezone import now_et as _rd_now_et
@@ -1692,13 +1697,15 @@ class ReviewOrchestrator:
         # 3. 渲染报告
         report_text = self.renderer.render_daily(data, analysis)
         
-        # 4. 推送通知
-        if self.notifier and report_text:
+        # 4. 推送通知 (2026-10-18: push_report=False 时由调度器统一推送)
+        if push_report and self.notifier and report_text:
             try:
                 self.notifier.send_text(report_text)
                 logger.info("[Orchestrator] 日报已推送")
             except Exception as e:
                 logger.error(f"[Orchestrator] 推送失败: {e}")
+        elif report_text:
+            logger.info("[Orchestrator] 日报已生成, 推送由调度器统一发送 (push_report=False)")
         
         # 5. 提取教训 (复用 EOD 的逻辑)
         lessons_count = self._extract_lessons(analysis, data)
@@ -1742,20 +1749,22 @@ class ReviewOrchestrator:
             "validation_result": validation_result,
         }
     
-    def run_weekly(self, week_start: str, week_end: str) -> Dict:
-        """运行周复盘"""
+    def run_weekly(self, week_start: str, week_end: str, push_report: bool = True) -> Dict:
+        """运行周复盘 (push_report=False 时由调度器统一推送)"""
         logger.info(f"[Orchestrator] 开始周复盘: {week_start} ~ {week_end}")
         
         data = self.collector.collect_weekly(week_start, week_end)
         analysis = self.analyst.analyze(data)
         report_text = self.renderer.render_weekly(data, analysis)
         
-        if self.notifier and report_text:
+        if push_report and self.notifier and report_text:
             try:
                 self.notifier.send_text(report_text)
                 logger.info("[Orchestrator] 周报已推送")
             except Exception as e:
                 logger.error(f"[Orchestrator] 推送失败: {e}")
+        elif report_text:
+            logger.info("[Orchestrator] 周报已生成, 推送由调度器统一发送 (push_report=False)")
         
         return {
             "week_start": week_start,

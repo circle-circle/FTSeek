@@ -1845,6 +1845,16 @@ push:
   #   ⚠️ 抑制证据是进程内内存态 ⇒ 短命 cron 进程各算各的, 实际收益 ≤ 上界,
   #   部署后按 HealthMonitor.get_status()['channels'][*]['ping_suppressed'] 实测。
   ping_suppress_window_sec: 14400
+  # P0 (2026-10-18 推送治理批): 通道心跳周期 + 跨进程共享状态。
+  #   shared_state=true ⇒ 业务成功证据与 ping 时隙写入 data/push_health_state.json,
+  #   长驻服务与长跑 cron 全局只发一条/周期 (原各进程各发, 实测 5 条/天)。
+  #   false = 回到进程内抑制 (回滚开关, 无需改代码)。
+  health_check_interval_sec: 3600
+  health_check_shared_state: true
+  # P0 (2026-10-18 推送治理批): 盘中心跳 30→60min (main.py 读取; 仅重启后生效)。
+  #   10/16 实测 34 条推送中心跳 13 条 (38%); 心跳是状态播报非告警, 60min 足够。
+  #   回滚 = 改回 30。
+  intraday_heartbeat_interval_min: 60
   # 2026-09-18 (用户裁「交易类事件双发钉钉+飞书」): 成交/平仓类消息广播到全部可用通道,
   #   不走"主通道成功即停"。根因: 盘中链走 Hub→钉钉, 而延长时段链直连飞书, 同一事件
   #   在两个平台各出现一半 (用户 9/18 实测: WBD 成交在飞书、平仓在钉钉)。

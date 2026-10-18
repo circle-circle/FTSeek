@@ -3,7 +3,8 @@
 第一性原则: 不为监控而监控 — 给"决策者"看的, 信息密度高 + 一眼看完.
 
 设计目标:
-- 30min 一次 (盘中 6.5h × 2 = 13 次/天 + 收盘 1 次 = 14 次)
+- 默认 30min 一次; 生产由 `push.intraday_heartbeat_interval_min` 控制 (2026-10-18
+  推送治理起 = 60min, 盘中约 7 次/天)。心跳是状态播报不是告警。
 - 钉钉合并到现有 PushHub (利用 dedup/aggregate 基础设施)
 - 7 个关键维度: 服务/持仓/资金/盈亏/信号/LLM/风控
 
@@ -505,7 +506,7 @@ def push_heartbeat(scheduler=None, force: bool = False) -> bool:
 # 后台线程 (供 scheduler 启动期注入)
 # ─────────────────────────────────────────────────────
 class HeartbeatLoop:
-    """后台线程, 30min 触发一次 push_heartbeat"""
+    """后台线程, 按 interval_min 触发 push_heartbeat (生产默认由 main.py 传 60)"""
 
     def __init__(self, interval_min: int = 30, scheduler=None):
         self.interval_sec = max(60, interval_min * 60)  # 至少 1min, 防误配

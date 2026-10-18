@@ -690,9 +690,20 @@ def _run_new_scheduler(args):
         if not hasattr(scheduler, "start_time") or not scheduler.start_time:
             scheduler.start_time = time.time()
         from app.observability.intraday_heartbeat import HeartbeatLoop
-        _heartbeat = HeartbeatLoop(interval_min=30, scheduler=scheduler)
+        # P0 (2026-10-18 推送治理批): 30→60min 可配置。原 30min × 6.5h = 13 条/日,
+        #   实测 10/16 全量推送 34 条中心跳占 13 条 (38%)。心跳是状态播报不是告警,
+        #   告警/异常仍有 error_alert + 通道熔断兜底。回滚: 配置改回 30。
+        _hb_interval_min = 60
+        try:
+            from app.core.config_container import get_config as _hb_gc
+            _hb_interval_min = int(_hb_gc().get_dotted(
+                "push.intraday_heartbeat_interval_min", 60))
+        except Exception as _hb_e:
+            logger.warning(f"⚠️ 心跳间隔配置读取失败, 用默认 60min: {_hb_e}")
+        _heartbeat = HeartbeatLoop(interval_min=_hb_interval_min, scheduler=scheduler)
         _heartbeat.start()
-        logger.info("💓 盘中心跳后台线程已启动 (interval=30min, 仅盘中触发)")
+        logger.info(
+            f"💓 盘中心跳后台线程已启动 (interval={_hb_interval_min}min, 仅盘中触发)")
     except Exception as e:
         logger.warning(f"⚠️ 盘中心跳启动失败 (不影响主流程): {e}")
 
