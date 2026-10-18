@@ -3,7 +3,7 @@
 ## 2026-10-18 SEC_PROVIDER 影子适配器（复用现有 provider）
 
 **触发**: 用户继续 P0 主源；检查发现 `sec_8k_provider` 已覆盖 8-K/13DG，`sec_form4_provider` 覆盖 Form 4，禁止另写一套抓取。
-**落地**（代码已提交 `6cad19b34`；默认关闭）:
+**落地**（代码已提交 `6cad19b34` + `8eb930d4b`；默认关闭）:
 - 新增 `app/event_stream/sources/sec_provider.py`: 复用 `fetch_recent_8k` + `fetch_recent_13dg` → canonical events（source_id=`SEC_FILINGS_PROVIDER`，含 form/items/ticker）。
 - `source_registry`: `build_default_registry(provider_enabled)` 开关；config `event_stream.sec_provider_source_enabled` 默认 **false**；true 时替换 raw `SEC_EDGAR_8K_ATOM` 并补 13D/G（二选一，不重复采）。
 - 修 `sec_8k_provider` 13DG 解析：只收 SC 13D/G，丢弃 SC 13E3（going-private），并过滤旧缓存。
