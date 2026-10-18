@@ -47,31 +47,3 @@ class TestExitReasonRegistry:
         from app.risk.exit_reason_registry import normalize_exit_reason
         assert normalize_exit_reason('tp1') == 'TP1_PRICE_ACTION'
         assert normalize_exit_reason('stop_loss') == 'SL_ATR_STOP'
-
-
-class TestBenchmarkTracker:
-    """测试基准对照"""
-
-    def test_benchmark_tracker_init(self):
-        """BenchmarkTracker 应能正常初始化"""
-        from app.analytics.benchmark_tracker import BenchmarkTracker
-        import tempfile
-        db_path = tempfile.mktemp(suffix='.db')
-        try:
-            tracker = BenchmarkTracker(db_path)
-            assert tracker is not None
-        finally:
-            if os.path.exists(db_path):
-                os.unlink(db_path)
-
-
-class TestAttributionScheduler:
-    """测试归因调度器"""
-
-    def test_scheduler_init(self):
-        """AttributionScheduler 应能正常初始化"""
-        from app.review.attribution_scheduler import AttributionScheduler
-        # 使用 mock trade_store
-        scheduler = AttributionScheduler(trade_store=None)
-        assert scheduler is not None
-        assert scheduler.daily_budget_usd == 2.0

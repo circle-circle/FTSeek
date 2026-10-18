@@ -1,5 +1,30 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-18 减法修复批（存储/棘轮/死代码）
+
+**触发**: 用户令「按建议执行修复」— 基于 2026-10-18 减法审计（重复/冲突/过期/性能）。
+**落地**:
+- 存储: `scripts/db_backup.sh` 对 event_stream.db **备份副本**剥离 `raw_events.raw_artifact` 后 VACUUM（真库不动），避免 1.4GB × 7 天全量放大；`scripts/data_retention.py` replay_cache 默认 90→30 天，已 `--apply` 删除 276 个过期文件（147.4MB）。event_stream 保留窗维持 14 天（10-15 用户裁决；10-23 前无行可清）。
+- 守卫: `tests/test_pipeline_size_ratchet.py` BASELINE 10,207→3,700（实际 3,670；原余量 64% 已失效），同步收紧防上调钉子。
+- 死代码: 第一批删零引用 `app/plan/plan_feedback.py`、`app/utils/retry.py`、`app/catalyst/detector.py`；第二批删 `app/analytics/*`、`app/review/attribution_scheduler.py`、`app/observability/failure_tracker.py`、`app/execution/greeks_calculator.py`、`app/playbook/entry_reference.py` 及对应测试；删 9 个 `_tmp_*` 脚本 + `_dump_except_bodies.py`、`config/deprecated/watchlist_us.json`；`app/catalyst/__init__.py` 文档同步。`scripts/_tmp_adf_check.py` 被 `ops/hermes/adf_weekly_check.sh` 与测试引用，已恢复，不删。
+- 卫生: 删除 `data/da_checkpoint/**/*.bak` 466 个（73.7MB，均有对应 base 文件）、1 个脚本 bak、3 个 `.DS_Store`。
+**未做（有意）**:
+- `.env.us` 死键批：审计清单经核对含活跃读者（如 `TIME_STOP_HOURS`、`SIGNAL_*`），不做批量删除；留待跨 `.sh/.service/Hermes` 精确批。
+- 85 个 orphan 配置叶、245 条注释 cron、双 carrier、影子注册表 20 项无 eval、日亏权威、净口径、手动平仓门：需 DEB/用户裁决，未动。
+- event_stream 14→5 天：保留 10-15 用户裁决；备份剥离已解决放大。
+**验证**: 定向回归 **317 passed**（ratchet/retention/dead-db/shadow-chain/archive-import/trade-storage/execution/coordinator）；`bash -n scripts/db_backup.sh` + event_stream strip SQL 小样通过；`app.review/execution/playbook/observability/catalyst/plan/utils` 导入全 OK；已删模块零引用复查通过（archive 证据除外）。
+**无需重启**: 改动均为测试/脚本/死代码/卫生项，未触 Playbook/exit/config 热路径；下一 03:00 备份与 04:20 retention cron 自动生效。
+**回滚**: `git revert` 本批；备份脚本删 event_stream 特殊块；ratchet BASELINE 恢复 10,207（需 DEB）；死代码从 git 恢复。
+**下一步**: 精确死 env/config 跨载体批、da_checkpoint 之外的 `.bak` 归档、双 carrier/影子注册表逐项裁决。
+**追加 (2026-10-18, 第二批)**:
+- `.env.us` 精确死键: 删 **9 个零读者键** (6×`BAILIAN_MODEL_*` 角色模型 + `DEFAULT_DATA_SOURCE` + `TRADING_STYLE` + `WATCHLIST_SYMBOLS`)；`DEEPSEEK_*` / `DATABASE_URL` / `FTSEEK_DEBATE_*` 因仓外 Hermes/archive 读者保留。`config import OK`，无需重启 (死键无读者)。
+- 影子注册表: 复核后修正上一轮误判 — `entry_anchor_dual` 数据实际存在（9704 行 / 1601 dual_anchor 行），`current_n=0` 只是静态字段未 refresh；已补 `no_adjudication_reason` 防误标 READY。`eth_short_probe` 退役（KILLED；cron 已于 10-06 删除、产物 9/26 冻结、无消费方）。`futu_channel_iv_hv`（已停采）/ `ticket_size_breakeven`（read-only 按需）加 `stale_expected` 豁免预期超龄；`short_chase_ban_shadow` / `ext_entry_exec_price_shadow` 补 NO_EVAL_SCRIPT 挂账。`check_mounting` 告警 **5→0**；`overnight_gap_slcap_shadow` 载体重跑 (post-ca4487 10/09–10/16, n=33, `reason_match=0.606<0.80`) 后按用户裁 **退役 (KILLED, collection_retired=True)**，slcap 变体冻结、数据保留；专用产物 `data/exit_replay_slcap_latest.json`，共享 `exit_replay_latest.json` 已恢复 8/11 全窗产物，避免污染 `replay_engine_be_fidelity.py`。`p1_1_vwap_slope` 的终态产物消费方 `gate_block_counterfactual.py` 已按终点报表补 `_CONSUMER_ACK`。`eth_held_exit_shadow` / `ext_entry_earnings_criterion_shadow` 仍待补 eval 或人工结算。
+- 验证 (影子批): 102 passed（mount sentinel / eth probe / artifact consumers / adjudicated note / ticket size / rfc139 / shadow board）。
+- `entry_anchor_dual` 阶段0 只读结算器: 新增 `scripts/entry_anchor_dual_eval.py` + 2 例契约测试；读数 9704 行 / 1601 anchor / 102 inst / **8 交易日**，缺失率 0%、分歧率 44.6%、护栏触发 41.3%；周期门 8/10 未达 → `PERIOD_GATE`，`eval_on_demand=True`，不误标 READY；输出 `data/shadow/entry_anchor_dual_eval_latest.json`。质量腿仍缺生成锚反事实 PnL，脚本明确标 `NOT_COMPUTABLE_COUNTERFACTUAL`。
+- 上线: 2026-10-18 22:35 CST `systemctl restart ftseek-us`；启动冒烟 **7/7** (ConfigValidator/漂移/热重载/SSOT/双臂/快循环/零 Traceback)。重启前实查：仅 US.ADSK 一个模拟持仓，exit_intents 189 条全 BOOKED，无在途出场。
+- 二轮重启 (slcap 载体 + entry_anchor_dual eval 落盘后): 2026-10-18 22:43 CST，启动冒烟 **7/7**，PID 2241986；重启前同一状态 (ADSK / 189 BOOKED)。
+- 未做: 85 个 orphan YAML 叶（需 validator/CRITICAL_KEYS/仓外三面复核）、245 条注释 cron、双 carrier、日亏权威、净口径、手动平仓门。
+
 ## 2026-10-18 推送治理 P0+P1（心跳/复盘/回滚/日报降频）
 
 **触发**: 用户令核查钉钉/飞书推送内容与链路信噪比；选择 **P0+P1**。

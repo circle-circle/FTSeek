@@ -98,6 +98,11 @@ class ShadowItem:
     # eval 执行方式: False=应有 cron/调度挂载 (挂载核对话语权); True=按需手工/
     # 裁决日触发 (哨兵跳过挂载核对, 2026-09-01 挂载核对哨兵引入)
     eval_on_demand: bool = False
+    # 产出超龄属预期 (已停采/read-only 按需重算): True ⇒ check_mounting 跳过
+    # 「产出超龄」告警; 文件缺失仍照常告警. 2026-10-18 减法批引入:
+    # futu_channel_iv_hv (9/21 已停采, 10/21 重看) / ticket_size_breakeven
+    # (read-only 按需重算) 的 27d/15d 超龄是预期状态, 不是断流.
+    stale_expected: bool = False
     # 判据不可裁决时的显式挂账原因 (2026-09-21 清账批 RFC-092 引入): 非空 ⇒
     # refresh_counts 不迁移 READY_TO_EVALUATE (防周检把"样本量达标但无判据可跑"的项
     # 当成"待用户裁决")。取值形如 "PERMANENT_MEASURE: ..." (无毕业门, 永久测量项) /
@@ -935,6 +940,7 @@ REGISTRY: list[ShadowItem] = [
         #   check_mounting 报的「悬空观察」是**假告警**, 非真断供。与 earnings_direction_path
         #   (eval 结构性崩、告警准确指向待办) 性质不同, 故本条豁免、那条**不加**豁免。
         eval_on_demand=True,
+        stale_expected=True,
         created="2026-08-29",
         last_evaluated="2026-09-21",
         verdict_history=[{"date": "2026-09-21", "verdict": "NO_RESIDUAL (判据未达, 效应不可分辨)",
@@ -976,7 +982,9 @@ REGISTRY: list[ShadowItem] = [
                             "另行裁决阶段1 (行为分离); 读数后不得调整入场带/确认位/触发阈值。"
                             "(n 口径 = anchor_recorded 行数 count_mode=where:anchor_recorded=True, "
                             "300 = 按 ETS 日均 ~150 行×2 交易日余量; 判据①-④的比率口径以指令×日去重)",
-        eval_script=None,
+        eval_script="scripts/entry_anchor_dual_eval.py",
+        eval_on_demand=True,
+        no_adjudication_reason="PERIOD_GATE: 8/10 交易日 (截至 2026-10-16); 只读读数已建, 10/20 后重跑; 质量腿需生成锚反事实回放.",
         created="2026-10-07",
         verdict_history=[
             {"date": "2026-10-07", "verdict": "PHASE0_SHADOW_STARTED",
@@ -1769,20 +1777,30 @@ REGISTRY: list[ShadowItem] = [
     # ── DEB-20261016 L1 (2026-10-16 用户裁「全批」): 隔夜 gap × SL 宽度假设影子 ──
     ShadowItem(
         id="overnight_gap_slcap_shadow",
-        name="隔夜跳空×SL宽度上限影子 (slcap_4/slcap_5 变体, DEB-20261016 L1)",
-        status=ShadowStatus.OBSERVING,
+        name="隔夜跳空×SL宽度上限影子 (slcap_4/slcap_5 变体, DEB-20261016 L1) (⛔已退役 2026-10-18)",
+        status=ShadowStatus.KILLED,
         description="假设: 隔夜 gap 亏损 (10 月 LONG 4 笔 −$1296, 跳空 −5.6~−6.4%, SL 距离 "
                     "4.5-5% 被直接击穿) 与入场 SL 宽度相关 ⇒ 收窄上限存在可拦子集。"
                     "载体=退出回放引擎变体 slcap_4/slcap_5 (scripts/exit_replay_backtest.py, "
                     "初始 SL 宽度收窄至 4%/5%, 含赢家误杀面), record-only 零生产耦合。"
                     "前置保真门: validation.reason_match_pct ≥0.80, 未达则变体读数一律冻结 "
                     "(引擎自定门, DEB-20261014 已两次撞门)。",
-        data_path="data/exit_replay_latest.json (variants.slcap_*)",
+        data_path="data/exit_replay_slcap_latest.json (variants.slcap_*)",
         config_key=None,
         min_n=30,
         eval_script="scripts/exit_replay_backtest.py",
         eval_on_demand=True,
         created="2026-10-16",
+        collection_retired=True,
+        verdict_history=[{"date": "2026-10-18", "verdict": "FIDELITY_FAIL_REPLAY",
+                          "evidence": "post-ca4487 窗口 10/09-10/16 重跑: 可回放 33 笔, "
+                                      "reason_match=0.61 (<0.80 冻结点), 回放 baseline 净 -172~-151 "
+                                      "vs 实盘 -495, 固有偏差 +322~+344; slcap_4/slcap_5 读数按 "
+                                      "引擎自定门冻结, 不呈裁. 数据已刷新 (data/exit_replay_slcap_latest.json), "
+                                      "但历史回放仍不可用于裁决; 下一步=前向 record-only 或退役."},
+                         {"date": "2026-10-18", "verdict": "KILLED (用户裁退役)",
+                          "evidence": "用户令「退役」: 历史回放 reason_match=0.606<0.80 不可裁决; "
+                                      "无生产消费方; 数据保留不删; 重开=新预注册, 不许只翻开关."}],
         graduation_criteria="预注册 (DEB-20261016 §三.L1, 期间禁改): 样本门 = era 内隔夜仓 "
                             "n≥30 ∧ ≥10 交易日; 裁决轴 = slcap vs live_baseline 的净 bps 差 "
                             "(含赢家误杀面, 日聚类, t>2 且效应≥MDE80); 死线 ≈2026-11-30 或 n 达门。"
@@ -1790,7 +1808,10 @@ REGISTRY: list[ShadowItem] = [
                             "判据4项全过 → 提请用户裁转生产 (改 SL 宽度=行为变更, 须另立 DEB)。",
         notes="2026-10-16 首跑 (post-ca4487 窗 n=29): **撞保真门 reason_match=0.586<0.80 "
               "⇒ 变体读数按引擎自定门冻结**, 不呈裁; 待锚定续放 (anchor 参数, DEB-20261014 "
-              "v2 先例) 或攒样后重跑。引擎/载体无 bug, 是触发面时序重建保真不足。",
+              "v2 先例) 或攒样后重跑。引擎/载体无 bug, 是触发面时序重建保真不足。"
+              "2026-10-18 用户裁退役: 重跑 n=33 reason_match=0.606<0.80, 历史回放路径穷尽; "
+              "专用产物 data/exit_replay_slcap_latest.json 保留, 共享 exit_replay_latest.json 已恢复全窗; "
+              "collection_retired=True 为账面退役标记 (载体本就按需, 无 cron); 重开须新预注册。",
     ),
     # ── KR3 预注册假设影子 (采集 9/2 上线 cron, **2026-09-06 补登记** — 未登记=无人跟踪) ──
     ShadowItem(
@@ -2082,6 +2103,7 @@ REGISTRY: list[ShadowItem] = [
                             "不计入; 判据须用扫描行作对照臂: 命中组 vs 未命中组净额差 + 方向"
                             "一致率, 单看命中组无 IC 意义 — 2026-09-18 补)",
         eval_script=None,
+        no_adjudication_reason="NO_EVAL_SCRIPT: 预注册判据在, 结算器未建; 死线 2026-10-31, 到点人工结算或退役.",
         created="2026-08-08",
         verdict_history=[
             {"date": "2026-08-08", "verdict": "HARD_GATE_REJECTED_OLD_BASELINE",
@@ -2515,6 +2537,7 @@ REGISTRY: list[ShadowItem] = [
                             "n<30 成交样本裁绩效; 把「影子价池更小」单独解释为「富途请求减少」。"
                             "切换生产须另立 DEB + 用户裁。死线 2026-11-30 自动停采 "
                             "(防僵尸影子, eth_relative_volume_gate 同型先例)。",
+        no_adjudication_reason="NO_EVAL_SCRIPT: 非绩效观测, 预注册窗口至 2026-11-30; 无独立结算器, 到期人工读数或退役.",
         created="2026-09-28",
         cross_ref=("eth_ext_entry_prefilter",),
         notes="P0.5 同轴枚举 (2026-09-28 复核后补登, 立案时漏查注册表违反当日 template 新增"
@@ -2529,8 +2552,8 @@ REGISTRY: list[ShadowItem] = [
     ),
     ShadowItem(
         id="eth_short_probe",
-        name="盘前做空通道探针",
-        status=ShadowStatus.OBSERVING,
+        name="盘前做空通道探针 (⛔已退役 2026-10-18)",
+        status=ShadowStatus.KILLED,
         description="盘前做空通道可达性实证 (能下单/能成交/能建空仓/能平回), 1 股 SIM, 每日 ≤3 次。",
         data_path="data/eth_short_probe.jsonl",
         config_key="EXT_ENTRY_ALLOW_SHORT",
@@ -2538,7 +2561,14 @@ REGISTRY: list[ShadowItem] = [
         graduation_criteria="见 RFC-099 §10 四条回滚触发 (§10.1 更正: 原文实为 4 条编号项, 触发4观测面以②闸计数为唯一可执行口径); 复核日 2026-10-07 (逐日 attempt 上限=额度, 非样本量目标)",
         eval_script="scripts/probe_eth_short_open.py",
         created="2026-09-23",
-        notes="选标按价差最窄且 ≤1%, 无合格返回 no_liquid_candidate (不下一张注定不成交的单)。",
+        verdict_history=[{"date": "2026-10-18", "verdict": "KILLED",
+                          "evidence": "RFC-099 §10 探针已完成可达性实证 (4 行, 9/23-9/26); "
+                                      "crontab 一次性调度 2026-10-06 已删, 产物 9/26 后冻结; "
+                                      "复核日 2026-10-07 已过, 无生产消费方 ⇒ 减法批退役. "
+                                      "数据保留不删; 重开=新预注册, 不许只翻开关."}],
+        collection_retired=True,
+        notes="选标按价差最窄且 ≤1%, 无合格返回 no_liquid_candidate (不下一张注定不成交的单)。"
+              "2026-10-18 减法批: 退役 (cron 已删/数据保留); 重开须新预注册。",
     ),
     ShadowItem(
         id="eth_premarket_exit_shadow",
@@ -3296,6 +3326,7 @@ REGISTRY: list[ShadowItem] = [
         # 2026-10-03 清理批: read_only 按需重算器 (无 cron 亦不应挂 cron — 产物只在
         # 人工复核时刷新), 同 sltp_verify_shadow 等 11 条 eval_on_demand 先例。
         eval_on_demand=True,
+        stale_expected=True,
         created="2026-07-11",
         notes="补登 (2026-09-28): 产物 since 2026-07-11、read_only。DEB-20260928② (供给价格分层) "
               "因 P0.5 普查未见本项而重复立案, §15.2/§17.3 双重确认后撤回并入本项。",
@@ -3919,6 +3950,12 @@ _CONSUMER_ACK: dict[str, str] = {
         "对本 jsonl 是**写方** (PREFILTER_SHADOW 常量 + _record_prefilter_shadow); 现行 cron "
         "未传 EXT_PREFILTER_SHADOW 且默认 false ⇒ 写分支 inert, grep 实测无生产读方。"
         "停采不断任何生产料。"),
+    "p1_1_vwap_slope": (
+        "2026-10-18 减法批补登记: 消费者 scripts/gate_block_counterfactual.py (cron 50 6 * * 6) "
+        "是**终点反事实报表** — 只读 trigger_miss_telemetry.jsonl 的 "
+        "reason=falsification_vwap_slope 行, 产物 gate_block_counterfactual_latest.json "
+        "全仓无其他脚本读, 只落盘/print, 无 push/生产回灌。⇒ 停采只会让周报数字停增, "
+        "不断生产料; p1_1 门本体已 GRADUATED, 采集继续。"),
 }
 
 
@@ -4057,7 +4094,7 @@ def check_mounting() -> list[str]:
             print(f"[mount-sentinel] stat 失败跳过超龄判定: {p}: {e}")
             continue  # 注: 本行在 except 多行体内, 不计棘轮
         age = (today - _dt.fromtimestamp(_mtime).date()).days
-        if age > _STALE_DAYS:
+        if age > _STALE_DAYS and not s.stale_expected:
             warnings.append(
                 f"🪝 产出超龄 [{s.id}] {s.name}: {p.name} 已 {age} 天未更新 "
                 f"(阈值 {_STALE_DAYS} 天, 疑似采集断流)")

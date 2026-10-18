@@ -26,7 +26,19 @@ for db in "$DATA_DIR"/*.db; do
     else
         cp "$db" "$target"
     fi
-    
+
+    # 2026-10-18 减法批: event_stream.db 的 raw_events.raw_artifact 是整篇正文
+    # (~257KB/行, 零仓内消费方), 但每日全量备份会把它复制 7 天 → 6GB 级放大。
+    # 只对备份副本剥离 artifact, 保留 canonical_events/source_health/raw_id 行
+    # (幂等 dedup 基座) — 真库不动。回滚: 删本块。
+    if [ "$name" = "event_stream.db" ]; then
+        if ! sqlite3 "$target" "UPDATE raw_events SET raw_artifact='' WHERE LENGTH(raw_artifact)>0;" 2>>"$LOG_FILE"; then
+            echo "  ⚠️ event_stream raw_artifact strip failed; backup kept as-is" >> "$LOG_FILE"
+        elif ! sqlite3 "$target" "VACUUM;" 2>>"$LOG_FILE"; then
+            echo "  ⚠️ event_stream VACUUM failed; stripped copy kept" >> "$LOG_FILE"
+        fi
+    fi
+
     size=$(stat -c%s "$target" 2>/dev/null || echo 0)
     echo "  ✅ $name → $(numfmt --to=iec $size)" >> "$LOG_FILE"
 done

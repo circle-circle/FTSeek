@@ -15,7 +15,8 @@ import pathlib
 import re
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-BASELINE = 10_207  # 2026-10-08 立项基线 (HEAD 40b4b6a1f 实测, 含当日 F1 +26 行)
+BASELINE = 3_700  # 2026-10-18 减法批: 实际 3,670 行; 原 10,207 基线余量 64% 已失效,
+                  # 按棘轮“只降不升”下调 (DEB-20261008-playbook-pipeline-refactor-roadmap §9.5)
 
 
 def _line_count() -> int:
@@ -35,5 +36,5 @@ def test_baseline_not_tampered_upward():
     """防「调基线过关」: 源码里的 BASELINE 数值不得超过立项值。"""
     src = (REPO / "tests" / "test_pipeline_size_ratchet.py").read_text(encoding="utf-8")
     m = re.search(r"BASELINE = ([\d_]+)", src)
-    assert m and int(m.group(1).replace("_", "")) <= 10_207, (
+    assert m and int(m.group(1).replace("_", "")) <= 3_700, (
         "BASELINE 被调大 — 棘轮失效; 调低需 DEB 落档, 调大禁止")

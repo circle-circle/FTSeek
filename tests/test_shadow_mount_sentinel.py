@@ -14,10 +14,12 @@ import app.playbook.shadow_registry as sr  # noqa: E402
 
 
 def _item(iid, eval_script=None, data_path="data/ftseek_us.db (x)",
-          created="2026-01-01", on_demand=False, status=sr.ShadowStatus.OBSERVING):
+          created="2026-01-01", on_demand=False, stale_expected=False,
+          status=sr.ShadowStatus.OBSERVING):
     return sr.ShadowItem(id=iid, name=iid, status=status, description="",
                          data_path=data_path, eval_script=eval_script,
-                         created=created, eval_on_demand=on_demand)
+                         created=created, eval_on_demand=on_demand,
+                         stale_expected=stale_expected)
 
 
 def test_detects_unmounted_eval(monkeypatch):
@@ -97,6 +99,23 @@ def test_stale_file_warned(monkeypatch, tmp_path):
     monkeypatch.setattr(sr, "_mounted_sources", lambda: ("", {}))
     monkeypatch.setattr(sr, "REGISTRY", [_item("t1", data_path=str(stale))])
     assert any("产出超龄" in w for w in sr.check_mounting())
+
+
+def test_stale_expected_suppresses_stale_warning(monkeypatch, tmp_path):
+    """已停采/read-only 按需项的预期超龄不再报断流, 但文件缺失仍须报."""
+    stale = tmp_path / "stale.jsonl"
+    stale.write_text("{}")
+    old = time.time() - (sr._STALE_DAYS + 2) * 86400
+    os.utime(stale, (old, old))
+    monkeypatch.setattr(sr, "_mounted_sources", lambda: ("", {}))
+    monkeypatch.setattr(sr, "REGISTRY",
+                        [_item("t1", data_path=str(stale), stale_expected=True)])
+    assert sr.check_mounting() == []
+
+    monkeypatch.setattr(sr, "REGISTRY",
+                        [_item("t2", data_path=str(tmp_path / "missing.jsonl"),
+                               stale_expected=True)])
+    assert any("产出缺失" in w for w in sr.check_mounting())
 
 
 def test_killed_items_ignored(monkeypatch):

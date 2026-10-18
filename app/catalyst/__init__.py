@@ -4,7 +4,6 @@
 - models.py: CatalystEvent + CatalystVerdict 数据模型
 - event_classifier.py: 催化事件分类器 (关键词+LLM)
 - catalyst_debate.py: 3模型并行辩论引擎
-- detector.py: 盘前/盘后调度入口
 - reverse_catalyst.py: 行情先行→新闻确认 (反向催化)
 - postmarket_review.py: 盘后催化回看 + 教训提取
 - sources/: 一手信息源 (HKEX, CSRC)

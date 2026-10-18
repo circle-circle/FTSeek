@@ -6,7 +6,8 @@ K 线缓存文件), 不在任何 retention 内; disk_cleanup.sh 只管日志/备
 
 v1 只清**可再生缓存**: replay_cache 的消费方 (scripts/replay_ext_entry_sources.py
 的 CACHE_DIR 读取分支) 在文件缺失时会自动重新拉取并回写 — 删除的代价是
-网络重取, 不是数据损失。判据 = 文件 mtime 超过 N 天 (默认 90)。
+网络重取, 不是数据损失。判据 = 文件 mtime 超过 N 天 (默认 30;
+2026-10-18 减法批 90→30: 最后写入 9-22 的 1.1GB 可再生缓存无需再等 90 天)。
 
 刻意不清 (v1 边界, 扩面需先审计消费方):
   - data/replay_bars*/ : 30+ 个回放/反事实脚本的**历史输入** (按日文件,
@@ -28,7 +29,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CACHE_DIR = ROOT / "data" / "replay_cache"
-DEFAULT_DAYS = 90
+DEFAULT_DAYS = 30
 
 
 def collect_stale(cache_dir: Path, days: int, now: float | None = None) -> list[Path]:

@@ -41,8 +41,6 @@ ALLOWLIST = {
                                         "不得改用 mode-aware 解析器 —— 解析器只返回"
                                         "一个载体, 而本脚本的产出正是两载体之差"
                                         "(判定 READY_TO_SWITCH 的依据)",
-    "app/plan/plan_feedback.py": "模块已冻结 (scheduler_triggers 调用点 2026-08-28 摘除), "
-                                "复活前须先按 docstring 4 项缺陷清单改解析",
     # 2026-09-08 (RFC-078 批A): 本条目同样是**先被本门抓红、后补登记**的 (与
     # env_separation_shadow 同例), 记档以证该门的证伪力。
     "scripts/migrate_live_records_to_live_db.py":
