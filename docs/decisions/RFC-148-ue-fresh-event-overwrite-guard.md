@@ -1,7 +1,19 @@
 # RFC-148 UE 09:10 fresh-event 同标的覆盖风险与最小修复方案
 
-**状态**: 方案待裁 (只读指标已落地; 行为修复未实施)
+**状态**: 已裁决并落地 (2026-10-18 用户裁: 停用当日写库; 方案 A/B 不再实施; 只读指标保留)
 **触发**: 2026-10-18 用户问 “UE 9:10 的扫描经过 DA 后期产出是否能统计到最终指令”; 复核发现可统计，但 wrapper 的同标的排除没有真正作用到 DA pipeline，存在 UPSERT 覆盖风险。
+
+## 0. 裁决 (2026-10-18)
+
+用户裁「逻辑以 DA 为主，避免重复和冲突」→ **停用 09:10 fresh-event 当日写库**:
+
+- crontab 摘除两行末尾的 `&& da_fresh_event_batch.py --execute`；UE 09:10 scan 保留
+  (观察 / confirm / 次日供料)。
+- DA bridge 推送不再传 `--wait-fresh-event`；09:12 直接推 DA 主链批次。
+- `scripts/da_fresh_event_batch.py` 与 `origin=ue_fresh_event` 腿保留供人工影子/回滚，
+  但生产不再新增；`app/review/source_attribution.py` 该腿仅历史归因。
+- 覆盖风险从生产链路消失；§4 的方案 A/B 不再实施，保留为历史备选。
+- 代价: 08:00 后新出的 8-K 不再当日变成 DA 指令，转次日或人工处理。
 
 ## 1. 现状链路与可统计字段
 

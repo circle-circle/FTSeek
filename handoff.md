@@ -15,7 +15,8 @@
 **验证**: 相关域回归（playbook/pipeline/extended-hours/event-stream/premarket/watchdog 共 38 个测试文件）**583 passed**；全量套件超出 10 分钟工具上限未跑完（定向+相关域已覆盖本批改动）。
 **上线**: 代码提交 `5d3e3b2a6`；2026-10-18 16:23 CST `systemctl restart ftseek-us`（PID 2176670），启动冒烟 **7/7**。重启前在途：`trade_records` 仅 US.ADSK LONG，`exit_intents` 0 行。crontab 已备份 `data/crontab.backup.20261018_prepost_empty_run.txt` 并应用：ETH 窗口闸、EventStream `--cadence`、日K双季 cron。重启后实测 ingest 日志出现 `cadence_skip interval=20m`；周末 `llm_scan_state.json` 未再每分钟重写。
 **观察/回滚**: 周一 09:00–09:15 看盘前推送是否等生成完成、是否出现 09:15 兜底；盘中看 ETH cron 窗口闸日志与无仓跳过；17:05 ET 后看日K cron 首跑；EventStream 关键窗应恢复 5m。回滚见 RFC-147 §5。
-**追加 (只读, 2026-10-18)**: `empty_run_metrics.py` 新增 `[UE 09:10 → DA → 最终指令]` 漏斗。10/16 实跑：UE surfaced 3（TSM/ERAS/AN），wrapper 选 2（ERAS/AN）并排除 TSM，DA 实际因借券丢弃 ERAS/AN、重新分析并覆盖 TSM；最终 1 条（TSM BUY，origin=ue_fresh_event，UE 原 SHORT 翻转，未触发），**新增最终标的 0**。10/15：最终 2（AMD 覆盖/翻转、REAL 保持），新增 1。根因=wrapper 的 same-day 排除未传给 pipeline；最小修复方案（`--exclude-symbols` + shadow）见 `docs/decisions/RFC-148-ue-fresh-event-overwrite-guard.md`，**未实施**。
+**追加 (只读, 2026-10-18)**: `empty_run_metrics.py` 新增 `[UE 09:10 → DA → 最终指令]` 漏斗。10/16 实跑：UE surfaced 3（TSM/ERAS/AN），wrapper 选 2（ERAS/AN）并排除 TSM，DA 实际因借券丢弃 ERAS/AN、重新分析并覆盖 TSM；最终 1 条（TSM BUY，origin=ue_fresh_event，UE 原 SHORT 翻转，未触发），**新增最终标的 0**。10/15：最终 2（AMD 覆盖/翻转、REAL 保持），新增 1。根因=wrapper 的 same-day 排除未传给 pipeline。
+**裁决 (2026-10-18, 用户令「逻辑以 DA 为主，避免重复和冲突」)**: **停用 09:10 fresh-event 当日写库**。crontab 已摘除两行末尾 `&& da_fresh_event_batch.py --execute`（UE 09:10 scan 保留观察/confirm/次日供料）；DA bridge 推送去掉 `--wait-fresh-event`（09:12 直接推 DA 主链批次）；`da_fresh_event_batch.py` / `origin=ue_fresh_event` 保留供人工影子/回滚，不再新增。crontab 备份 `data/crontab.backup.20261018_fresh_event_retire.txt`；RFC-148 §0 记裁决，§4 方案 A/B 不再实施。**无代码行为变更、无需重启**；下一次 09:10 只有 UE scan，不再有第二套 DA 写库。
 **回滚**: 见 RFC-147 §5（推送/单例/ETH/ingest/日K 各自可单独回退；crontab 改动前已备份）。
 
 ## 2026-10-18 质量反事实报表（只读，是否值得改 DA 校准）

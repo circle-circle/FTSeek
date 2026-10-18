@@ -40,7 +40,8 @@ def cadence_minutes(now_et: datetime, trading_day: bool) -> int:
 
     2026-10-18 空跑治理: 原 cron 每 5 分钟全量拉 4 源, 实测 10/16 的 1,168 个
     source-run 中 809 个 events=0 (69%), FR 源长期零产出, 全天约 24 分钟
-    花在空抓上。关键窗保留 5 分钟以服务 07:40/09:10 UE 与 DA fresh-event。
+    花在空抓上。关键窗保留 5 分钟以服务 07:40/09:10 UE、confirm 与观察
+    (09:10 fresh-event 当日写库已于 2026-10-18 按「DA 为主」停用)。
     """
     minute_of_day = now_et.hour * 60 + now_et.minute
     if trading_day and 7 * 60 + 30 <= minute_of_day < 9 * 60 + 35:

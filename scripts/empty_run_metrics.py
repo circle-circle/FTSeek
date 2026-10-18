@@ -389,6 +389,7 @@ def main() -> int:
               f"batches={row['batches']}")
 
     print("\n[UE 09:10 → DA → 最终指令]")
+    print("  (2026-10-18 起 fresh-event execute 已停用; 新日期无 wrapper/最终指令属预期)")
     if not data["ue_fresh_event_funnel"]:
         print("  无 premarket UE 批次")
     for item in data["ue_fresh_event_funnel"]:

@@ -38,6 +38,8 @@ PUSH_WINDOW_END_EXCLUSIVE_MIN = 9 * 60 + 29
 # 桥接推送的 DB 计数面会覆盖它们 — 但推送若早于批次完成就漏掉这部分。改为:
 # 推送前等待当日 fresh-event 批次终态行, 到硬死线 (09:28 ET, 留 1min 给推送窗尾) 不等了
 # 照推 (桥接内容是主面, UE 补充是次面, 死线防批次故障拖死推送)。
+# 2026-10-18 用户裁「DA 为主」: fresh-event 当日写库停用; 生产 cron 不再传
+# --wait-fresh-event; 等待函数/flag 保留供回滚与历史重放, 默认不等待。
 FRESH_EVENT_LEDGER = DATA / "shadow" / "ue_fresh_da_candidate_pool.jsonl"
 FRESH_EVENT_WAIT_DEADLINE_MIN = 9 * 60 + 28
 FRESH_EVENT_POLL_SEC = 30

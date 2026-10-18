@@ -16,6 +16,8 @@ PLAYBOOK_SOURCE_SQL = """CASE
 #   origin="ue_fresh_event" (仅 ue_only 模式; Path A da_feed 并入 DA 主链的仍
 #   origin="ue_candidate" → 'DA-UE确认' 腿)。用户裁决 2026-10-14: 三源分账
 #   (DA自选 / DA-UE确认 / DA-UE新事件) 以实盘(SIM)交易测量各腿效果。
+#   [2026-10-18 用户裁「DA 为主」] 生产 fresh-event 当日写库已停用; 'DA-UE新事件'
+#   腿自此仅历史归因, 不再新增; 读取面保留。
 #   CASE 序: ue_fresh_event 腿必须在 ue_candidate 腿**之前** — 若 raw 同时含两个
 #   字面量 (如透传字段带 _source="ue_candidate"), 更具体的腿先归因。
 #   版本号 rfc117_v2→v3 (daily/weekly funnel 落库字段同步)。

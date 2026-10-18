@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """UE premarket fresh events → same-day DA incremental candidate batch.
 
+[2026-10-18 用户裁「DA 为主」] 生产 crontab 已摘除本脚本的串接段, 当日写库停用;
+  保留脚本供人工影子/回滚, 勿在无新裁的情况下重新挂 cron (见 RFC-148).
+
 Default mode is an isolated shadow run: DA analyzes UE candidates but writes to
 `data/shadow/da_fresh_event/<ET date>/` and skips production DB/pool writes.
 
