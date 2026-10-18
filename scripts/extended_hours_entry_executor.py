@@ -160,6 +160,19 @@ def _entry_chg_ok(change_pct):
             except (TypeError, ValueError):
                 print(f"[ext_entry] EXT_ENTRY_CHG_BAND 解析失败 ({ENTRY_CHG_BAND!r}) → 回退 ENTRY_CHANGE_PCT")
     return change_pct >= ENTRY_CHANGE_PCT
+
+
+def _research_chg_ok(change_pct):
+    """研究臂财报源的独立涨幅带; 解析失败回严格带 (fail-safe, 不放大)。"""
+    parts = RESEARCH_CHG_BAND_RAW.split(",")
+    if len(parts) == 2:
+        try:
+            lo, hi = float(parts[0]), float(parts[1])
+            return lo <= change_pct <= hi
+        except (TypeError, ValueError):
+            print(f"[ext_entry] EXT_ENTRY_RESEARCH_CHG_BAND 解析失败 "
+                  f"({RESEARCH_CHG_BAND_RAW!r}) → 回退严格带")
+    return _entry_chg_ok(change_pct)
 # P1-4 盘前保留额度条件化: PREMARKET_MAX_PER_DAY 的目的是"盘后可能还有机会";
 #   当日日历**没有任何 after/post 相位财报**时, 保留是纯机会成本 ⇒ 释放盘前第 3 笔。
 #   日历源故障/空 → 保守视为"有" (继续保留)。回滚: EXT_PREMARKET_RESERVE_CONDITIONAL=false。
@@ -279,6 +292,13 @@ ALLOW_SIM_ENTRY = os.getenv("EXT_ENTRY_ALLOW_SIM", "false").lower() == "true"
 RESEARCH_ARM_ON = os.getenv("EXT_ENTRY_RESEARCH_MOMENTUM", "false").lower() == "true"
 RESEARCH_ARM_UNTIL = os.getenv("EXT_RESEARCH_ARM_UNTIL", "2026-10-31")
 RESEARCH_GATE_MODE = "research_momentum"
+# 2026-10-18 财报日盘前影子: 研究臂专用源 + 独立涨幅带 + 源级漏斗。
+#   严格臂源开关/带宽/闸门零改动; 这里只把 beat/watchlist 追加进研究池。
+RESEARCH_SOURCES_ON = os.getenv("EXT_ENTRY_RESEARCH_SOURCES", "false").lower() == "true"
+RESEARCH_CHG_BAND_RAW = (os.getenv("EXT_ENTRY_RESEARCH_CHG_BAND", "2.0,10.0") or "").strip()
+RESEARCH_MIN_PRICE = float(os.getenv("EXT_ENTRY_RESEARCH_MIN_PRICE", str(MIN_PRICE)) or MIN_PRICE)
+RESEARCH_MAX_SYMBOLS = int(os.getenv("EXT_ENTRY_RESEARCH_MAX_SYMBOLS", "80"))
+RESEARCH_FUNNEL = ROOT / "data" / "ext_entry_research_funnel.jsonl"
 
 
 def _research_arm_active():
@@ -291,6 +311,79 @@ def _research_arm_active():
         return bool(_mode().is_simulate)   # SIM-only 硬连线; 判定异常 fail-closed
     except Exception:
         return False
+
+
+def _record_research_funnel(session, today, item, stage, reason=""):
+    """源级漏斗 (只读 append): 每条研究候选的选取/拒绝/下单去向。"""
+    if not RESEARCH_SOURCES_ON:
+        return
+    try:
+        row = {
+            "ts": datetime.utcnow().isoformat() + "Z",
+            "trade_date": today,
+            "session": session,
+            "symbol": item.get("symbol"),
+            "source": item.get("_source") or "",
+            "stage": stage,
+            "reason": reason,
+            "price": item.get("px"),
+            "change_pct": item.get("chg"),
+            "volume": item.get("vol"),
+            "gate_mode": RESEARCH_GATE_MODE,
+        }
+        RESEARCH_FUNNEL.parent.mkdir(parents=True, exist_ok=True)
+        with RESEARCH_FUNNEL.open("a") as handle:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception:
+        _log.warning("research funnel write failed", exc_info=True)
+
+
+def _research_source_candidates(session, qctx, existing):
+    """研究臂专用财报源: beat rank + watchlist, 只进研究池, 严格臂不可见。"""
+    if not (RESEARCH_ARM_ON and RESEARCH_SOURCES_ON and _research_arm_active()):
+        return []
+    try:
+        beat = _beat_rank_symbols(qctx)
+        watch = _watchlist_symbols(qctx)
+    except Exception as exc:
+        _log.warning("research source fetch failed", exc_info=True)
+        print(f"[ext_entry] 研究臂财报源不可用 (跳过本轮): {type(exc).__name__}: {exc}")
+        return []
+    source_of = {sym: "research_beat" for sym in beat}
+    for sym in watch:
+        source_of.setdefault(sym, "research_watchlist")
+    symbols = [sym for sym in dict.fromkeys(list(beat) + list(watch))
+               if sym and sym not in existing][:RESEARCH_MAX_SYMBOLS]
+    if not symbols:
+        return []
+    try:
+        rows = _snapshot_candidates(session, qctx, symbols)
+    except Exception as exc:
+        _log.warning("research source snapshot failed", exc_info=True)
+        print(f"[ext_entry] 研究臂财报源快照失败 (跳过本轮): {type(exc).__name__}: {exc}")
+        return []
+    out = []
+    today = _today_et()
+    for item in rows:
+        try:
+            price = float(item.get("px") or 0)
+            change = float(item.get("chg") or 0)
+            volume = float(item.get("vol") or 0)
+        except (TypeError, ValueError):
+            continue
+        item["_source"] = source_of.get(item.get("symbol"), "research")
+        # 源头预过滤: 价格下限 + 独立财报涨幅带 + 有量; 其余闸交给研究臂下游。
+        if price < RESEARCH_MIN_PRICE:
+            _record_research_funnel(session, today, item, "reject", "research_price_gate")
+            continue
+        if volume <= 0:
+            _record_research_funnel(session, today, item, "reject", "research_volume")
+            continue
+        if not _research_chg_ok(change):
+            _record_research_funnel(session, today, item, "reject", "research_chg_band")
+            continue
+        out.append(item)
+    return out
 
 
 # ── 交易模式/账户: 单一真相源 (2026-09-20 切实盘开关清单化) ──────────────────
@@ -1247,6 +1340,7 @@ def _research_downstream_gates(item, session, today, qctx, counts, pretrade_reje
     返回 (qty, order_price, position_usd, grade, structure, pretrade_gate) 或 None。
     """
     symbol, price, change_pct, volume = item["symbol"], item["px"], item["chg"], item["vol"]
+    source = str(item.get("_source") or "")
     quote = _liquidity_quote(qctx, symbol)
     grade, grade_reason = _entry_grade(price, volume, quote.get("market_cap") if quote else 0)
     if grade is None:
@@ -1254,6 +1348,7 @@ def _research_downstream_gates(item, session, today, qctx, counts, pretrade_reje
         pretrade_rejects.append({
             "symbol": symbol, "decision_price": price,
             "reason": grade_reason, "quote": quote, "gate_mode": RESEARCH_GATE_MODE,
+            "source": source,
         })
         return None
     window_reason = _entry_window_reason(session, grade)
@@ -1261,7 +1356,7 @@ def _research_downstream_gates(item, session, today, qctx, counts, pretrade_reje
         counts["research_entry_window"] = counts.get("research_entry_window", 0) + 1
         pretrade_rejects.append({
             "symbol": symbol, "decision_price": price, "reason": window_reason,
-            "grade": grade, "gate_mode": RESEARCH_GATE_MODE,
+            "grade": grade, "gate_mode": RESEARCH_GATE_MODE, "source": source,
         })
         return None
     position_usd = POSITION_USD if grade == "A" else POSITION_B_USD
@@ -1279,6 +1374,7 @@ def _research_downstream_gates(item, session, today, qctx, counts, pretrade_reje
         pretrade_rejects.append({
             "symbol": symbol, "decision_price": price, "qty": qty,
             "reason": reject_reason, "quote": quote, "gate_mode": RESEARCH_GATE_MODE,
+            "source": source,
         })
         return None
     order_price = gate["order_price"]
@@ -1291,6 +1387,7 @@ def _research_downstream_gates(item, session, today, qctx, counts, pretrade_reje
             "symbol": symbol, "decision_price": price, "qty": qty,
             "reason": structure_reason, "grade": grade,
             "structure_metrics": structure_metrics, "gate_mode": RESEARCH_GATE_MODE,
+            "source": source,
         })
         return None
     qty = int(position_usd / order_price)
@@ -1305,20 +1402,37 @@ def _research_downstream_gates(item, session, today, qctx, counts, pretrade_reje
 def _research_pass_dry(pool, session, today, qctx, counts, results, pretrade_rejects):
     """研究臂 dry 通道: 只列候选, 不写 state 不下单 (与严格臂 dry 对称, 无配额模拟)。"""
     ordered = 0
+    try:
+        held = _held_symbols()
+    except Exception:
+        held = set()
     for item in pool:
+        symbol = item["symbol"]
+        source = str(item.get("_source") or "?")
+        if symbol in held:
+            _record_research_funnel(session, today, item, "reject", "held")
+            continue
+        before = len(pretrade_rejects)
         passed = _research_downstream_gates(
             item, session, today, qctx, counts, pretrade_rejects
         )
         if passed is None:
+            reason = (pretrade_rejects[-1].get("reason", "")
+                      if len(pretrade_rejects) > before else "not_reached")
+            _record_research_funnel(session, today, item, "reject", reason)
             continue
         qty, order_price, position_usd, grade, structure, gate = passed
         ordered += 1
+        counts[f"research_src_{source}_ordered"] = (
+            counts.get(f"research_src_{source}_ordered", 0) + 1
+        )
+        _record_research_funnel(session, today, item, "ordered")
         results.append({
-            "ok": True, "dry": True, "symbol": item["symbol"],
+            "ok": True, "dry": True, "symbol": symbol,
             "qty": qty, "price": order_price, "decision_price": item["px"],
             "session": session, "change_pct": round(item["chg"], 2),
             "volume": item["vol"], "earnings": None,
-            "gate_mode": RESEARCH_GATE_MODE,
+            "gate_mode": RESEARCH_GATE_MODE, "research_source": source,
             "position_usd": position_usd, "grade": grade,
             "structure": structure, "pretrade": gate,
         })
@@ -1336,11 +1450,24 @@ def _research_pass_real(
     返回 (total_today, session_today)。
     """
     ordered = 0
+    try:
+        held = _held_symbols()
+    except Exception:
+        held = set()
     for item in pool:
         if total_today >= MAX_PER_DAY or (
             session == "premarket" and session_today >= premarket_limit
         ):
             break
+        symbol = item["symbol"]
+        source = str(item.get("_source") or "?")
+        if symbol in held:
+            _record_research_funnel(session, today, item, "reject", "held")
+            continue
+        attempt_key = f"{today}:{symbol}"
+        if attempt_key in attempts:
+            _record_research_funnel(session, today, item, "reject", "attempt_reserved")
+            continue
         exposure_gate = _open_exposure_gate()
         if exposure_gate:
             exposure_gate = dict(exposure_gate)
@@ -1348,27 +1475,36 @@ def _research_pass_real(
             counts["research_exposure_blocked"] = (
                 counts.get("research_exposure_blocked", 0) + 1
             )
+            _record_research_funnel(session, today, item, "reject", "exposure_blocked")
             results.append(exposure_gate)
             break
+        before = len(pretrade_rejects)
         passed = _research_downstream_gates(
             item, session, today, qctx, counts, pretrade_rejects
         )
         if passed is None:
+            reason = (pretrade_rejects[-1].get("reason", "")
+                      if len(pretrade_rejects) > before else "not_reached")
+            _record_research_funnel(session, today, item, "reject", reason)
             continue
         qty, order_price, position_usd, grade, structure, gate = passed
-        symbol = item["symbol"]
-        attempt_key = f"{today}:{symbol}"
         ordered += 1   # 与严格臂 counts["ordered"] 同口径: 发起下单即计数
+        counts[f"research_src_{source}_ordered"] = (
+            counts.get(f"research_src_{source}_ordered", 0) + 1
+        )
+        _record_research_funnel(session, today, item, "ordered")
         attempts[attempt_key] = {
             "status": "reserved", "session": session, "symbol": symbol,
             "trade_date": today, "gate_mode": RESEARCH_GATE_MODE,
+            "research_source": source,
             "reserved_at": datetime.utcnow().isoformat() + "Z",
         }
         _save_state(state)
         # earnings 位: 研究臂无财报事件 — 存根显式标注 gate_mode, surprise 字段为 None
         #   (下游 metadata_json.earnings_* 落 null, 分析面按 gate_mode 过滤, 不混算)。
         earnings_stub = {
-            "gate_mode": RESEARCH_GATE_MODE, "surprise_pct": None, "period": None,
+            "gate_mode": RESEARCH_GATE_MODE, "research_source": source,
+            "surprise_pct": None, "period": None,
             "period_age_days": None, "report_date": None, "report_phase": None,
         }
         try:
@@ -1390,10 +1526,12 @@ def _research_pass_real(
         result["symbol"] = symbol
         result["session"] = session
         result["gate_mode"] = RESEARCH_GATE_MODE
+        result["research_source"] = source
         attempts[attempt_key] = {
             "status": "opened" if result.get("ok") else "failed",
             "session": session, "trade_date": today,
             "gate_mode": RESEARCH_GATE_MODE,
+            "research_source": source,
             "order_id": result.get("buy_order_id"),
             "stop_order_id": result.get("stop_order_id"),
             "filled_qty": result.get("filled_qty"),
@@ -1636,6 +1774,7 @@ def _scan_candidates(session, qctx):
                 skipped_etf.append(sym)
                 continue
             tag_of[sym] = tag
+            it["_source"] = tag
             merged.append(it)
 
     if SOURCE_RANK_BOARD:
@@ -2386,8 +2525,19 @@ def collect(session, dry=False):
             earnings_reason_counts = {}
             earnings_reject_details = []
             earnings_near_misses = []
-            research_pool = []
             research_active = _research_arm_active()
+            research_extra = (
+                _research_source_candidates(
+                    session, qctx, {m["symbol"] for m in movers})
+                if research_active else []
+            )
+            research_pool = list(research_extra)
+            for _ri in research_extra:
+                _rsrc = str(_ri.get("_source") or "?")
+                counts[f"research_src_{_rsrc}_pool"] = (
+                    counts.get(f"research_src_{_rsrc}_pool", 0) + 1
+                )
+                _record_research_funnel(session, today, _ri, "selected")
             for item in movers:
                 symbol, price, change_pct, volume = item["symbol"], item["px"], item["chg"], item["vol"]
                 if symbol in held:
@@ -2473,6 +2623,11 @@ def collect(session, dry=False):
                         # 研究臂池 (纪律③人群): 仅 calendar_missing, 与 near-miss 台账同人群。
                         if research_active:
                             research_pool.append(item)
+                            _rsrc = str(item.get("_source") or "?")
+                            counts[f"research_src_{_rsrc}_pool"] = (
+                                counts.get(f"research_src_{_rsrc}_pool", 0) + 1
+                            )
+                            _record_research_funnel(session, today, item, "selected")
                     continue
                 quote = _liquidity_quote(qctx, symbol)
                 grade, grade_reason = _entry_grade(price, volume, quote.get("market_cap") if quote else 0)
@@ -2659,8 +2814,19 @@ def collect(session, dry=False):
             earnings_reason_counts = {}
             earnings_reject_details = []
             earnings_near_misses = []
-            research_pool = []
             research_active = _research_arm_active()
+            research_extra = (
+                _research_source_candidates(
+                    session, qctx, {m["symbol"] for m in movers})
+                if research_active else []
+            )
+            research_pool = list(research_extra)
+            for _ri in research_extra:
+                _rsrc = str(_ri.get("_source") or "?")
+                counts[f"research_src_{_rsrc}_pool"] = (
+                    counts.get(f"research_src_{_rsrc}_pool", 0) + 1
+                )
+                _record_research_funnel(session, today, _ri, "selected")
             for item in movers:
                 symbol, price, change_pct, volume = item["symbol"], item["px"], item["chg"], item["vol"]
                 attempt_key = f"{today}:{symbol}"
@@ -2753,6 +2919,11 @@ def collect(session, dry=False):
                         #   attempt/held/价/动量/量闸已在本循环上方排除, 池内皆为四闸全过者。
                         if research_active:
                             research_pool.append(item)
+                            _rsrc = str(item.get("_source") or "?")
+                            counts[f"research_src_{_rsrc}_pool"] = (
+                                counts.get(f"research_src_{_rsrc}_pool", 0) + 1
+                            )
+                            _record_research_funnel(session, today, item, "selected")
                     continue
 
                 quote = _liquidity_quote(qctx, symbol)

@@ -1,5 +1,16 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-18 财报日盘前研究臂源影子（仅研究臂，20 日观察）
+
+**触发**: 用户问盘前财报日逻辑/链路是否可行；复核发现严格臂近期 0 单，主源是全市场异动榜（仙股多），财报超预期榜/自选股源未启用，严格涨幅带 0.5–2.0% 会挡财报大跳空。用户同意先影子观察。
+**落地**（`docs/decisions/RFC-149-earnings-day-premarket-shadow.md`）:
+- `scripts/extended_hours_entry_executor.py` 研究臂新增 `EXT_ENTRY_RESEARCH_SOURCES`：追加 Futu 财报超预期榜 + 自选股，**只进研究池**；严格臂源/闸门零改动。
+- 研究源独立涨幅带 `2.0,10.0`、源头价≥$5、最多 80 只；源级漏斗 `data/ext_entry_research_funnel.jsonl`（selected/reject/ordered + source/reason）；研究真单补 held/attempt 复用检查；结果/attempt 带 `research_source`。
+- `.env.us`: `EXT_ENTRY_RESEARCH_SOURCES=true` + 带/价/上限；`EXT_RESEARCH_ARM_UNTIL` 10-31→11-30（覆盖 20 个交易日）。
+- 严格臂 `EXT_ENTRY_CHG_BAND=0.5,2.0`、源开关、价格/量/财报/流动性/结构闸全部不动。
+**验证**: 新增研究源/带/漏斗测试 3 passed；执行器/窗口回归 41 passed。仅 cron 新进程生效，**无需重启**。
+**观察**: 20 个交易日按 source 看 selected→reject→ordered→成交→净 PnL；若仍无成交或净负，关闭研究源，不转正严格臂。回滚 `EXT_ENTRY_RESEARCH_SOURCES=false`（一个词，下一 tick 生效）。
+
 ## 2026-10-18 盘前/盘后链路空跑治理（安全修复 + 运维节流）
 
 **触发**: 用户令核查盘前/盘后链路“是否值得优化和调整和提升，避免空跑”，复核后令按建议落地。
