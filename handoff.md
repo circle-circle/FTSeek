@@ -3,7 +3,7 @@
 ## 2026-10-18 quality_shadow v2 + 源/事件/辩论反馈报表（record-only）
 
 **触发**: 用户认可“不要重复 LLM 链”，继续补 source/event/debate 反馈闭环。
-**落地**（代码已落盘，未提交；v2 标签需主服务重启后对新指令生效）:
+**落地**（代码已提交 `22ba432f0`；v2 标签需主服务重启后对新指令生效）:
 - `quality_shadow` v2 新增: `source / info_channel / first_news_id / evidence_ref / event_ids / event_family / debate_outcome / challenger_self_confidence / challenger_direction / critique_verdict / critique_weakest_link`。
 - 新增 `scripts/quality_shadow_report.py`（只读）: 历史行无标签时现场回算；按 origin/direction/evidence_tier/debate_outcome/quality 标签分组，输出 fwd T+1、gross/fee/net bps、net $、win%、PF。
 - **不新增 LLM 调用、不接线交易**；A/B harness 保持离线研究工具。
