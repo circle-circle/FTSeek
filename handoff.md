@@ -3,7 +3,7 @@
 ## 2026-10-18 UE/DA prompt 同步优化（v2.15 / ue_brief_v7）
 
 **触发**: 复查发现 event_meta/借券补查上线后，UE prompt、brief 版本和 DA 输入未同步。
-**落地**（FTSeek 代码已落盘，未提交；外部 DA 另行备份补丁）:
+**落地**（FTSeek 代码已提交 `04955b0fa`；外部 DA 另行备份补丁）:
 - `PROMPT_VERSION` v2.15：规则10 明确 `UNKNOWN` 只是占位、不代表不可借，不得因缺借券数据跳过有催化的 SHORT；新增规则12 说明 `family/form` 是代码事件属性，不是方向/置信度结论。
 - `BRIEF_TEMPLATE_VERSION` ue_brief_v7：event_meta family/form 注入 + 材料性排序/来源与事件族配额；LLM 文本移除数字 `mat`（仍留代码排序/审计）。
 - event_meta 透传：证据索引 `event_meta` → surfaced `evidence_matched_event_meta` → `quality_shadow.event_family`；外部 DA feed 增加 `ue_event_meta`，SHORT 文案增加 `borrow_data_basis`。
