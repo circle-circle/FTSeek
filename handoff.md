@@ -10,6 +10,7 @@
 - 多样性上限：`event_stream_clue_max_per_source=10`、`max_per_family=12`，防止 8-K 洪峰挤掉新闻/板块线索。
 - 外部 DA 补丁：`/root/.hermes/.../pipeline.py`（备份 `pipeline.py.bak-ue-event-meta-20261018`，py_compile 通过）；不改 DA 评分/方向/过滤。
 **验证**: UE/证据/版本定向 **428 passed**；全量 **7351 passed / 72 skipped / 4 failed**（3 条存量红 + `capital_allocator` 并发跑测假红，单跑绿）。
+**链路健康基线 (只读)**: 最新 scan 10/16 `v2.14/v6`，surfaced SHORT 3（MATERIAL 1/UNKNOWN 2），event_meta 覆盖 0，`borrow_on_demand` 空；DA 10 条 HIGH5/MEDIUM5，`ue_event_meta` 0/10，borrow basis MISSING 10，gaps 9。下一交易日 scan 应为 **v2.15/v7** 且 event_meta/borrow 覆盖上升。
 **未改**: 高分会 LONG 与 `evidence_gaps` 的实盘校准仍留影子（quality_shadow/report），未改 DA 阈值。
 **生效**: UE scan/DA 都是按次进程；主服务无需重启。
 
