@@ -18,6 +18,46 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DB = ROOT / "data" / "ftseek_us.db"
+UE_SCAN_PATH = ROOT / "data" / "shadow" / "llm_universe_scan.jsonl"
+FRESH_EVENT_POOL = ROOT / "data" / "shadow" / "ue_fresh_da_candidate_pool.jsonl"
+_BORROW_DROP_RE = re.compile(
+    r"\[UE-FEED\]\s+(?:US\.)?([A-Z0-9.\-]+)\s+borrow_feasible=False")
+
+
+def _bare_symbol(symbol) -> str:
+    return str(symbol or "").upper().replace("US.", "").strip()
+
+
+def _direction_kept(ue_direction: str, final_direction: str) -> bool:
+    return (
+        (ue_direction == "LONG" and final_direction == "BUY")
+        or (ue_direction == "SHORT" and final_direction == "SELL_SHORT")
+    )
+
+
+def _parse_borrow_dropped(stderr_tail: str) -> list[str]:
+    return sorted({m.group(1) for m in _BORROW_DROP_RE.finditer(stderr_tail or "")})
+
+
+def _is_overwrite(created_at, scanned_at) -> bool | None:
+    """最终行创建时间早于本批扫描时间 = 本批 UPSERT 覆盖了既存行。"""
+    try:
+        created = datetime.fromisoformat(str(created_at))
+        scanned = datetime.fromisoformat(str(scanned_at))
+        if created.tzinfo is None or scanned.tzinfo is None:
+            return None
+        return created < scanned
+    except Exception:
+        return None
+
+
+def _load_jsonl(path: Path) -> list[dict]:
+    try:
+        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()]
+    except Exception:
+        return []
+
 
 
 def _open_text(path: Path):
@@ -62,6 +102,191 @@ def _playbook_actionables(days: int) -> list[dict]:
         else:
             item["other"] += 1
     return [{"date": date, **vals} for date, vals in sorted(by_date.items())]
+
+
+def _playbook_ue_origins(days: int) -> list[dict]:
+    """最终指令按 origin 分账: ue_fresh_event / ue_candidate / (none)."""
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    conn = sqlite3.connect(DB)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT direction, triggered, executed, raw_instruction_json "
+            "FROM playbook_instructions WHERE date >= ?",
+            (cutoff,),
+        ).fetchall()
+    finally:
+        conn.close()
+    out: dict[str, dict] = {}
+    for row in rows:
+        try:
+            raw = json.loads(row["raw_instruction_json"] or "{}") or {}
+        except Exception:
+            continue
+        origin = str(raw.get("origin") or "")
+        batch = str(raw.get("ue_batch_id") or "")
+        if not origin and not batch:
+            continue
+        key = origin or "(none)"
+        item = out.setdefault(key, {
+            "origin": key, "total": 0, "actionable": 0,
+            "triggered": 0, "executed": 0, "batches": set(),
+        })
+        item["total"] += 1
+        if row["direction"] in ("BUY", "SELL_SHORT"):
+            item["actionable"] += 1
+        item["triggered"] += int(row["triggered"] or 0)
+        item["executed"] += int(row["executed"] or 0)
+        if batch:
+            item["batches"].add(batch)
+    result = []
+    for item in out.values():
+        item["batches"] = len(item["batches"])
+        result.append(item)
+    return sorted(result, key=lambda x: (x["origin"],))
+
+
+def _ue_premarket_batches(days: int) -> dict[str, dict]:
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    out: dict[str, dict] = {}
+    for row in _load_jsonl(UE_SCAN_PATH):
+        if row.get("type") != "scan" or row.get("scan_window") != "premarket":
+            continue
+        date = str(row.get("date") or "")
+        if not date:
+            try:
+                date = datetime.fromisoformat(
+                    str(row.get("scanned_at") or "")).strftime("%Y-%m-%d")
+            except Exception:
+                date = ""
+        if date < cutoff:
+            continue
+        batch_id = str(row.get("batch_id") or "")
+        if not batch_id:
+            continue
+        surfaced = []
+        for item in row.get("surfaced") or []:
+            direction = str(item.get("direction") or "").upper()
+            if direction in ("LONG", "SHORT"):
+                surfaced.append({
+                    "symbol": _bare_symbol(item.get("symbol")),
+                    "direction": direction,
+                })
+        out[batch_id] = {
+            "date": date,
+            "batch_id": batch_id,
+            "scanned_at": str(row.get("scanned_at") or ""),
+            "surfaced": surfaced,
+        }
+    return out
+
+
+def _fresh_event_events(days: int) -> dict[str, dict]:
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    out: dict[str, dict] = {}
+    for row in _load_jsonl(FRESH_EVENT_POOL):
+        if row.get("type") != "fresh_event_batch" or row.get("mode") != "execute":
+            continue
+        date = str(row.get("date") or "")
+        if date < cutoff or row.get("status") != "complete":
+            continue
+        batch_id = str(row.get("ue_batch_id") or "")
+        if not batch_id:
+            continue
+        out[batch_id] = {
+            "candidates": row.get("candidates") or [],
+            "same_day_excluded": row.get("same_day_db_excluded") or [],
+            "stderr_tail": row.get("stderr_tail") or "",
+            "started_at": row.get("started_at") or "",
+            "finished_at": row.get("finished_at") or "",
+        }
+    return out
+
+
+def _final_ue_rows(days: int) -> dict[str, list[dict]]:
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    conn = sqlite3.connect(DB)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT symbol, direction, skip_reason, triggered, executed, "
+            "raw_instruction_json, created_at, updated_at "
+            "FROM playbook_instructions WHERE date >= ?",
+            (cutoff,),
+        ).fetchall()
+    finally:
+        conn.close()
+    out: dict[str, list[dict]] = {}
+    for row in rows:
+        try:
+            raw = json.loads(row["raw_instruction_json"] or "{}") or {}
+        except Exception:
+            continue
+        batch_id = str(raw.get("ue_batch_id") or "")
+        if not batch_id:
+            continue
+        out.setdefault(batch_id, []).append({
+            "symbol": _bare_symbol(row["symbol"]),
+            "direction": str(row["direction"] or ""),
+            "skip_reason": str(row["skip_reason"] or ""),
+            "triggered": int(row["triggered"] or 0),
+            "executed": int(row["executed"] or 0),
+            "origin": str(raw.get("origin") or ""),
+            "ue_direction": str(raw.get("ue_direction") or "").upper(),
+            "created_at": str(row["created_at"] or ""),
+            "updated_at": str(row["updated_at"] or ""),
+        })
+    return out
+
+
+def _ue_fresh_funnel(days: int) -> list[dict]:
+    """09:10 premarket UE → DA fresh-event → 最终指令 的逐步漏斗."""
+    scans = _ue_premarket_batches(days)
+    events = _fresh_event_events(days)
+    final = _final_ue_rows(days)
+    result = []
+    for batch_id, scan in sorted(scans.items(), key=lambda kv: kv[1]["date"], reverse=True):
+        event = events.get(batch_id, {})
+        rows = final.get(batch_id, [])
+        surfaced = scan["surfaced"]
+        surfaced_syms = {item["symbol"] for item in surfaced}
+        final_syms = {row["symbol"] for row in rows}
+        actionable = [row for row in rows if row["direction"] in ("BUY", "SELL_SHORT")]
+        kept = [row for row in actionable
+                if _direction_kept(row["ue_direction"], row["direction"])]
+        flipped = [row for row in actionable
+                   if row["ue_direction"] and not _direction_kept(
+                       row["ue_direction"], row["direction"])]
+        overwrites = [
+            row for row in rows
+            if row["origin"] == "ue_fresh_event"
+            and _is_overwrite(row["created_at"], scan["scanned_at"])
+        ]
+        result.append({
+            "date": scan["date"],
+            "batch_id": batch_id,
+            "scanned_at": scan["scanned_at"],
+            "surfaced": surfaced,
+            "wrapper_selected": [
+                {"symbol": _bare_symbol(item.get("symbol")),
+                 "direction": str(item.get("direction") or "").upper()}
+                for item in event.get("candidates") or []
+            ],
+            "same_day_excluded": sorted(
+                _bare_symbol(symbol) for symbol in event.get("same_day_excluded") or []),
+            "borrow_dropped": _parse_borrow_dropped(event.get("stderr_tail") or ""),
+            "final_rows": rows,
+            "actionable": len(actionable),
+            "triggered": sum(row["triggered"] for row in rows),
+            "executed": sum(row["executed"] for row in rows),
+            "kept": [row["symbol"] for row in kept],
+            "flipped": [row["symbol"] for row in flipped],
+            "da_skip": [row["symbol"] for row in rows if row["direction"] == "SKIP"],
+            "overwrites": [row["symbol"] for row in overwrites],
+            "no_final_symbols": sorted(surfaced_syms - final_syms),
+        })
+    return result
+
 
 
 def _da_margins(days: int) -> dict:
@@ -141,6 +366,8 @@ def main() -> int:
     data = {
         "days": args.days,
         "playbook_actionables": _playbook_actionables(args.days),
+        "playbook_ue_origins": _playbook_ue_origins(args.days),
+        "ue_fresh_event_funnel": _ue_fresh_funnel(args.days),
         "da_completion_margin_min": _da_margins(args.days),
         "extended_hours_exit": _eth_metrics(args.days),
         "event_stream_ingest": _ingest_metrics(args.days),
@@ -154,6 +381,36 @@ def main() -> int:
     for row in data["playbook_actionables"]:
         print(f"  {row['date']} actionable={row['actionable']:>2} "
               f"bridge={row['bridge']:>2} other={row['other']:>2}")
+
+    print("\n[UE 来源最终指令]")
+    for row in data["playbook_ue_origins"]:
+        print(f"  {row['origin']}: total={row['total']} actionable={row['actionable']} "
+              f"triggered={row['triggered']} executed={row['executed']} "
+              f"batches={row['batches']}")
+
+    print("\n[UE 09:10 → DA → 最终指令]")
+    if not data["ue_fresh_event_funnel"]:
+        print("  无 premarket UE 批次")
+    for item in data["ue_fresh_event_funnel"]:
+        surfaced = ",".join(
+            f"{x['symbol']}:{x['direction']}" for x in item["surfaced"]) or "-"
+        selected = ",".join(
+            f"{x['symbol']}:{x['direction']}" for x in item["wrapper_selected"]) or "-"
+        finals = ", ".join(
+            f"{r['symbol']}:{r['direction']}(ue={r['ue_direction'] or '-'},"
+            f"origin={r['origin'] or '-'},skip={r['skip_reason'][:24] or '-'})"
+            for r in item["final_rows"]
+        ) or "-"
+        print(f"  {item['date']} {item['batch_id']}")
+        print(f"    surfaced={surfaced}")
+        print(f"    wrapper选中={selected} same_day排除={item['same_day_excluded'] or '-'} "
+              f"borrow丢弃={item['borrow_dropped'] or '-'}")
+        print(f"    最终指令={finals}")
+        print(f"    actionable={item['actionable']} triggered={item['triggered']} "
+              f"executed={item['executed']} kept={item['kept'] or '-'} "
+              f"flipped={item['flipped'] or '-'} overwrite={item['overwrites'] or '-'} "
+              f"无最终指令={item['no_final_symbols'] or '-'}")
+
     margin = data["da_completion_margin_min"]
     print(f"\n[DA 完成余量] n={margin['n']} min={margin['min']}min median={margin['median']}min "
           f"(相对 09:00 ET)")
