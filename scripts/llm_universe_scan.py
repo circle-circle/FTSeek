@@ -35,6 +35,7 @@ import os
 import re
 import sys
 import time
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -89,7 +90,7 @@ _LAST_BRIEF_MATERIALS: List[str] = []
 # 回滚: 还原本段 + _build_clue_brief 尾部派生行 (见 DEB-20260910 §17)。
 _BRIEF_EVIDENCE: List[Dict[str, Any]] = []
 EVIDENCE_SCHEMA = ("evidence_id", "source", "published_at", "symbols",
-                   "event_key", "text")
+                   "event_key", "text", "event_meta")
 
 
 # [P2.1 修正 2026-09-13] 只有"长得像 ticker"的 token 才准进材料索引的 symbols 槽。
@@ -122,7 +123,7 @@ def _ticker_symbols(values) -> List[str]:
 
 
 def _fact(source: str, text: str, *, symbols=(), published_at=None,
-          event_key=None) -> Dict[str, Any]:
+          event_key=None, event_meta=None) -> Dict[str, Any]:
     """[P2.1] 一条结构化事实 — gather 产出、render 消费、索引登记**同一个对象**。
 
     `text` 必须是最终送进 brief 的那一行 (逐字), 否则索引与正文不对应,
@@ -135,6 +136,7 @@ def _fact(source: str, text: str, *, symbols=(), published_at=None,
         "symbols": sorted(set(_ticker_symbols(symbols))),
         "published_at": published_at,
         "event_key": event_key,
+        "event_meta": event_meta if isinstance(event_meta, dict) else None,
     }
 
 
@@ -164,7 +166,7 @@ def brief_evidence_index() -> List[Dict[str, Any]]:
     return [{k: e.get(k) for k in EVIDENCE_SCHEMA} for e in _BRIEF_EVIDENCE]
 
 
-PROMPT_VERSION = "v2.14"  # v2.14=证据分层/校准/反证/事件阶段契约 (2026-10-02)
+PROMPT_VERSION = "v2.15"  # v2.15=借券 UNKNOWN 语义修正 + event_meta family/form 说明 (2026-10-18)
 
 SYSTEM_PROMPT = (
     "你是资深美股宏观-产业链关联分析师。基于给定的今日新闻事件、板块轮动与异动线索, "
@@ -199,8 +201,9 @@ SYSTEM_PROMPT_V2 = (
     "7. invalidation: 一句话失效条件≤40字(非SKIP必填); invalidation_triggers数组每条{metric,operator,value}, metric限收盘价/量比/5日涨跌/盘前涨跌幅, operator限<或>, value纯数字; 无可判定条件填[]。\n"
     "8. horizon_hours: 预期兑现时效整数小时; expected_move_pct: 方向幅度%; move_basis: VOLATILITY_ALIGNED/EVENT_MAP/UNQUALIFIED。若材料给出ATR比例, 预期幅度不得超过2倍ATR%; 无波动依据必须用UNQUALIFIED。\n"
     "9. evidence_checklist四项均bool, 如实勾选: catalyst_specific/catalyst_within_24h/price_volume_confirmed/crowding_low; 量比=当日累计成交量÷最近20个完整交易日平均成交量。\n"
-    "10. 仅SHORT填short_check{borrow_feasible,borrow_data_basis(MATERIAL/UNKNOWN),downside_catalyst_expiry_hours,squeeze_risk(1-5)}, 非SHORT填null。材料无借券数据时borrow_data_basis=UNKNOWN且borrow_feasible=false; 无具体下跌催化剂的SHORT不得浮现。仅SKIP填skip_reason, 非SKIP填null。\n"
+    "10. 仅SHORT填short_check{borrow_feasible,borrow_data_basis(MATERIAL/UNKNOWN),downside_catalyst_expiry_hours,squeeze_risk(1-5)}, 非SHORT填null。材料无借券数据时borrow_data_basis=UNKNOWN且borrow_feasible=false（仅占位，不代表不可借；代码会逐票补查）；不得仅因缺少借券数据跳过有明确下跌催化的SHORT；无具体下跌催化剂的SHORT不得浮现。仅SKIP填skip_reason, 非SKIP填null。\n"
     "11. is_universe_external/winner_loser/corroborated_by_market按事实填写。不输出任何价格数字(entry/止损/止盈由下游代码计算)。\n"
+    "12. 材料行中的 family/form 是代码标注的事件属性（如 filing_8k/insider/activist），只作上下文，不替代你的证据判断；不得把代码标注当成方向或置信度结论。\n"
     "严格只输出JSON, 字段与顺序与示例完全一致:\n"
     "{\"surfaced\": [\n"
     " {\"symbol\": \"AAPL\", \"direction\": \"LONG\", \"evidence_ref\": \"材料中具体证据原文\", \"self_tier\": \"HARD_EVENT\", \"confidence_basis\": \"DIRECT_ENTITY\", \"causal_chain\": \"事实:...; 传导假设:...; 市场确认:...\" , \"counter_evidence\": \"最强反证\", \"confidence\": 0.72, \"event_phase\": \"CONTINUING\", \"invalidation\": \"一句话失效条件\", \"invalidation_triggers\": [{\"metric\": \"收盘价\", \"operator\": \"<\", \"value\": 185.5}], \"evidence_checklist\": {\"catalyst_specific\": true, \"catalyst_within_24h\": true, \"price_volume_confirmed\": true, \"crowding_low\": true}, \"horizon_hours\": 6, \"expected_move_pct\": 2.5, \"move_basis\": \"VOLATILITY_ALIGNED\", \"is_universe_external\": false, \"winner_loser\": \"WINNER\", \"corroborated_by_market\": true, \"short_check\": null, \"skip_reason\": null},\n"
@@ -233,7 +236,8 @@ PROMPT_HASH_V2 = hashlib.sha1(SYSTEM_PROMPT_V2.encode("utf-8")).hexdigest()[:12]
 #                           **不可**当分段键 (每天都变)。
 # 不改动 PROMPT_HASH_V2 的定义与取值: 它是既有 thinking-eval A/B 预注册判据的切分键,
 #   改它等于中途换尺子。brief 侧变更改用 brief_template_hash 切分, 两者并列落库。
-BRIEF_TEMPLATE_VERSION = "ue_brief_v6"  # v6=v5+借券快照段 (ADR-046: 规则10 MATERIAL 可判, 修空头供给归零)
+BRIEF_TEMPLATE_VERSION = "ue_brief_v7"  # v7=v6+event_meta(family/form)+材料性排序/多样性上限 (2026-10-18)
+                                         #  v6 = v5+借券快照段 (ADR-046: 规则10 MATERIAL 可判, 修空头供给归零)
                                          #  v3 = P2.1 材料索引 + P2.2 输入初筛段
 # [P3.1 2026-09-13, DEB-20260910 §18.2] 生成值留档口径版本。
 #   planned_* 记的是"生成时刻的数值与口径", 而 default_stop_pct/default_tp_pct/
@@ -1459,6 +1463,50 @@ def _parse_event_stream_time(value: Optional[str]) -> Optional[datetime]:
     return parsed
 
 
+def _diversify_event_stream_events(
+    events: List[Any],
+    limit: int,
+    *,
+    max_per_source: int = 10,
+    max_per_family: int = 12,
+    meta_by_id: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> List[Any]:
+    """按来源/事件族做轻量配额, 防止单一 8-K 洪峰挤掉新闻/板块线索。
+
+    events 已按 materiality/T0 排序; 先按配额选, 不足 limit 时再按原顺序回填,
+    保证不会因为配额而少给材料.
+    """
+    if limit <= 0:
+        return []
+    selected: List[Any] = []
+    source_counts: Counter = Counter()
+    family_counts: Counter = Counter()
+    for event in events:
+        if len(selected) >= limit:
+            break
+        meta = (meta_by_id or {}).get(getattr(event, "event_id", "")) or (
+            getattr(event, "event_meta", None) or {})
+        source = str(getattr(event, "source_id", "") or "unknown")
+        family = str((meta or {}).get("event_family") or "other")
+        if max_per_source > 0 and source_counts[source] >= max_per_source:
+            continue
+        if max_per_family > 0 and family_counts[family] >= max_per_family:
+            continue
+        selected.append(event)
+        source_counts[source] += 1
+        family_counts[family] += 1
+    if len(selected) < limit:
+        chosen = {getattr(event, "event_id", id(event)) for event in selected}
+        for event in events:
+            if len(selected) >= limit:
+                break
+            key = getattr(event, "event_id", id(event))
+            if key not in chosen:
+                selected.append(event)
+                chosen.add(key)
+    return selected
+
+
 def _gather_event_stream_clues(db_path: Optional[Path] = None
                                ) -> Tuple[List[Dict[str, Any]], str]:
     """EventStream observe-only 线索 → UE 结构化事实。
@@ -1519,7 +1567,15 @@ def _gather_event_stream_clues(db_path: Optional[Path] = None
             tier_rank.get(e.source_tier, 9),
             e.event_time or "",
         ))
-        events = events[:clue_limit]
+        events = _diversify_event_stream_events(
+            events,
+            clue_limit,
+            max_per_source=int(_cfg(
+                "universe_expansion.event_stream_clue_max_per_source", 10)),
+            max_per_family=int(_cfg(
+                "universe_expansion.event_stream_clue_max_per_family", 12)),
+            meta_by_id=meta_by_id,
+        )
 
         facts: List[Dict[str, Any]] = []
         for event in events:
@@ -1532,7 +1588,6 @@ def _gather_event_stream_clues(db_path: Optional[Path] = None
                 meta_text = (
                     f" | family={meta.get('event_family') or '?'}"
                     f" form={meta.get('form') or '?'}"
-                    f" mat={meta.get('materiality')}"
                 )
             text = (
                 f"[{event.source_tier}/{event.event_type}] "
@@ -1545,6 +1600,7 @@ def _gather_event_stream_clues(db_path: Optional[Path] = None
                 symbols=(relevance.symbols if relevance else []),
                 published_at=event.event_time,
                 event_key=f"event_stream/{event.event_id}",
+                event_meta=meta,
             ))
         return facts, f"EventStream:{len(facts)}"
     except Exception as exc:
@@ -2560,6 +2616,7 @@ def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any
             item["evidence_id"] = _cit.get("evidence_id")
             item["evidence_matched_symbols"] = list(_cit.get("matched_symbols") or [])
             item["evidence_matched_source"] = _cit.get("matched_source")
+            item["evidence_matched_event_meta"] = _cit.get("matched_event_meta")
             if _cit.get("state") == "transmission_assumed":
                 transmission_cap = float(_cfg(
                     "universe_expansion.transmission_assumed_confidence_cap", 0.55))
@@ -2743,7 +2800,8 @@ def _classify_evidence_citation(ev: str, symbol: str, index) -> Dict[str, Any]:
     sym = str(symbol or "").strip().upper().replace("US.", "")
     ev = str(ev or "").strip()
     out: Dict[str, Any] = {"state": "no_ref", "evidence_id": None,
-                           "matched_symbols": [], "matched_source": None}
+                           "matched_symbols": [], "matched_source": None,
+                           "matched_event_meta": None}
     if not ev:
         return out
     entries = [e for e in (index or []) if str(e.get("text") or "").strip()]
@@ -2764,6 +2822,8 @@ def _classify_evidence_citation(ev: str, symbol: str, index) -> Dict[str, Any]:
         return out
     out["evidence_id"] = hit.get("evidence_id")
     out["matched_source"] = hit.get("source")
+    out["matched_event_meta"] = hit.get("event_meta") if isinstance(
+        hit.get("event_meta"), dict) else None
     matched = [str(x).strip().upper().replace("US.", "")
                for x in (hit.get("symbols") or []) if str(x).strip()]
     out["matched_symbols"] = matched
@@ -4078,6 +4138,7 @@ def _cmd_inject_impl(*, enabled: bool, dry: bool, min_conf: float, max_n: int,
                     "evidence_ref": (s.get("evidence_ref") or "")[:300] or None,
                     "evidence_citation_state": s.get("evidence_citation_state"),
                     "evidence_matched_symbols": s.get("evidence_matched_symbols"),
+                    "evidence_matched_event_meta": s.get("evidence_matched_event_meta"),
                     "confidence_basis": s.get("confidence_basis"),
                     "confidence_calibration": s.get("confidence_calibration"),
                     "transmission_confirmation_required": s.get("transmission_confirmation_required", False),

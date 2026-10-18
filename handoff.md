@@ -1,5 +1,18 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-18 UE/DA prompt 同步优化（v2.15 / ue_brief_v7）
+
+**触发**: 复查发现 event_meta/借券补查上线后，UE prompt、brief 版本和 DA 输入未同步。
+**落地**（FTSeek 代码已落盘，未提交；外部 DA 另行备份补丁）:
+- `PROMPT_VERSION` v2.15：规则10 明确 `UNKNOWN` 只是占位、不代表不可借，不得因缺借券数据跳过有催化的 SHORT；新增规则12 说明 `family/form` 是代码事件属性，不是方向/置信度结论。
+- `BRIEF_TEMPLATE_VERSION` ue_brief_v7：event_meta family/form 注入 + 材料性排序/来源与事件族配额；LLM 文本移除数字 `mat`（仍留代码排序/审计）。
+- event_meta 透传：证据索引 `event_meta` → surfaced `evidence_matched_event_meta` → `quality_shadow.event_family`；外部 DA feed 增加 `ue_event_meta`，SHORT 文案增加 `borrow_data_basis`。
+- 多样性上限：`event_stream_clue_max_per_source=10`、`max_per_family=12`，防止 8-K 洪峰挤掉新闻/板块线索。
+- 外部 DA 补丁：`/root/.hermes/.../pipeline.py`（备份 `pipeline.py.bak-ue-event-meta-20261018`，py_compile 通过）；不改 DA 评分/方向/过滤。
+**验证**: UE/证据/版本定向 **428 passed**；全量 **7351 passed / 72 skipped / 4 failed**（3 条存量红 + `capital_allocator` 并发跑测假红，单跑绿）。
+**未改**: 高分会 LONG 与 `evidence_gaps` 的实盘校准仍留影子（quality_shadow/report），未改 DA 阈值。
+**生效**: UE scan/DA 都是按次进程；主服务无需重启。
+
 ## 2026-10-18 SEC_PROVIDER 影子适配器（复用现有 provider）
 
 **触发**: 用户继续 P0 主源；检查发现 `sec_8k_provider` 已覆盖 8-K/13DG，`sec_form4_provider` 覆盖 Form 4，禁止另写一套抓取。

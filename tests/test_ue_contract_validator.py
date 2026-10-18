@@ -222,13 +222,13 @@ class TestPromptVersionContract:
         # v2.11 (2026-09-11): 负反馈表 U1 反号修 + U1b 零收益三态, 均在 brief/user 侧。
         # v2.12 (2026-09-12, DEB-20260910 §17): P2.2 输入具名标的可交易性初筛段,
         #   同为 brief/user 侧输入变更 (材料一条不删, 只在末尾追加三态清单)。
-        # v2.14 (2026-10-02): 证据分层/校准/反证/事件阶段契约升级, SYSTEM_PROMPT_V2 有意变更。
+        # v2.15 (2026-10-18): 证据分层/校准/反证/事件阶段契约升级, SYSTEM_PROMPT_V2 有意变更。
         # 升版者必须同时改这里 —— 这条钉子变红是它的设计意图, 不是回归。
-        assert PROMPT_VERSION == "v2.14"
+        assert PROMPT_VERSION == "v2.15"
         expected = hashlib.sha1(SYSTEM_PROMPT_V2.encode("utf-8")).hexdigest()[:12]
         assert PROMPT_HASH_V2 == expected
 
-    def test_v214_prompt_contract_fields_present(self):
+    def test_v215_prompt_contract_fields_present(self):
         required_fragments = (
             "confidence_basis: DIRECT_ENTITY/MARKET_CONFIRMED/TRANSMISSION_ASSUMED/THESIS_ONLY",
             "counter_evidence",
@@ -236,6 +236,8 @@ class TestPromptVersionContract:
             "event_phase: ONE_SHOT",
             "move_basis: VOLATILITY_ALIGNED/EVENT_MAP/UNQUALIFIED",
             "borrow_data_basis",
+            "仅占位，不代表不可借",
+            "family/form 是代码标注的事件属性",
             "事实:...\"+\"传导假设:...\"+\"市场确认:...",
         )
         for fragment in required_fragments:

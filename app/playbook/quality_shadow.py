@@ -112,6 +112,9 @@ def build_quality_shadow(inst: Dict[str, Any]) -> Dict[str, Any]:
     evidence_ref = str(origin.get("evidence_ref") or raw.get("ue_evidence") or "")
     event_ids = sorted(set(re.findall(r"event_id=([A-Za-z0-9_-]{6,})", evidence_ref)))
     critique = raw.get("critique") if isinstance(raw.get("critique"), dict) else {}
+    origin_event_meta = origin.get("evidence_matched_event_meta")
+    if not isinstance(origin_event_meta, dict):
+        origin_event_meta = {}
     origin_label = "UE" if (
         origin or raw.get("ue_batch_id") or raw.get("ue_evidence")
         or decision_id.startswith("universe_expansion")
@@ -151,7 +154,9 @@ def build_quality_shadow(inst: Dict[str, Any]) -> Dict[str, Any]:
         "first_news_id": first_news_id or None,
         "evidence_ref": evidence_ref[:300] or None,
         "event_ids": event_ids,
-        "event_family": str(raw.get("event_family") or origin.get("event_family") or "") or None,
+        "event_family": str(
+            raw.get("event_family") or origin.get("event_family")
+            or origin_event_meta.get("event_family") or "") or None,
         "score": score,
         "score_band": score_band,
         "confidence": confidence,

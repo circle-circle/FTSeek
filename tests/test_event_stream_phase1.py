@@ -572,6 +572,52 @@ def test_ue_clue_text_includes_event_meta(tmp_path, monkeypatch):
     assert "family=filing_8k" in text
     assert "form=8-K" in text
     assert "event_id=" in text
+    assert "mat=" not in text
+    assert facts[0]["event_meta"]["event_family"] == "filing_8k"
+
+
+def test_classify_evidence_citation_preserves_event_meta():
+    import scripts.llm_universe_scan as ue
+
+    evidence_text = "8-K - SpaceX receives FCC direct-to-cell authority"
+    out = ue._classify_evidence_citation(evidence_text, "AAPL", [{
+        "evidence_id": "E001",
+        "source": "event_stream",
+        "text": evidence_text,
+        "symbols": ["AAPL"],
+        "event_meta": {"event_family": "filing_8k", "form": "8-K"},
+    }])
+    assert out["state"] == "entity_linked"
+    assert out["matched_event_meta"]["event_family"] == "filing_8k"
+
+
+def test_ue_event_diversity_caps_source_and_family():
+    from types import SimpleNamespace
+    from scripts.llm_universe_scan import _diversify_event_stream_events
+
+    a = [SimpleNamespace(event_id=f"a{i}", source_id="SRC_A",
+                         event_meta={"event_family": "news"},
+                         event_time="2026-10-18T12:00:00Z") for i in range(15)]
+    b = [SimpleNamespace(event_id=f"b{i}", source_id="SRC_B",
+                         event_meta={"event_family": "filing_8k"},
+                         event_time="2026-10-18T12:00:00Z") for i in range(5)]
+    selected = _diversify_event_stream_events(
+        a + b, 12, max_per_source=10, max_per_family=12)
+    assert len(selected) == 12
+    assert sum(1 for e in selected if e.source_id == "SRC_A") == 10
+    assert sum(1 for e in selected if e.source_id == "SRC_B") == 2
+
+    family_selected = _diversify_event_stream_events(
+        [SimpleNamespace(event_id=f"f{i}", source_id=f"S{i}",
+                         event_meta={"event_family": "filing_8k"},
+                         event_time="2026-10-18T12:00:00Z") for i in range(15)]
+        + [SimpleNamespace(event_id=f"n{i}", source_id=f"N{i}",
+                           event_meta={"event_family": "news"},
+                           event_time="2026-10-18T12:00:00Z") for i in range(5)],
+        12, max_per_source=0, max_per_family=8)
+    assert sum(1 for e in family_selected if e.event_meta["event_family"] == "filing_8k") == 8
+    assert sum(1 for e in family_selected if e.event_meta["event_family"] == "news") == 4
+
 
 
 

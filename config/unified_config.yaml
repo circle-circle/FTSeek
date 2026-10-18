@@ -2344,6 +2344,10 @@ universe_expansion:
   #   现按 first_seen 时间窗查询, 5000 仅作安全上限 (近期约 1000 条/日).
   event_stream_clue_scan_limit: 5000
   event_stream_clue_limit: 20
+  # 2026-10-18: 防止单一源/单一事件族 (如 8-K 洪峰) 挤掉全部 clue.
+  #   只影响材料选择, 不影响交易; 回滚: 调大或设 0=不设限.
+  event_stream_clue_max_per_source: 10
+  event_stream_clue_max_per_family: 12
   event_stream_clue_dedupe: true
   clue_peer_surge: true
   # 2026-08-29 (盘前榜过滤规则, 用户裁"按建议执行"): 富途全市场盘前榜质量门候选线索。

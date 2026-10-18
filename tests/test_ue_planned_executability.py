@@ -1006,12 +1006,12 @@ class TestNoModelInputDrift:
     """P3.3-3.5 不碰模型输入 — 四项指纹必须原样 (与 P3.1 收口时逐值相同)。"""
 
     def test_prompt_rulers_unchanged(self):
-        assert ue.PROMPT_VERSION == "v2.14"
+        assert ue.PROMPT_VERSION == "v2.15"
         assert ue.PROMPT_HASH_V2 == hashlib.sha1(
             ue.SYSTEM_PROMPT_V2.encode("utf-8")).hexdigest()[:12]
         # 2026-10-15 重钉: v5→v6 系 RFC-136 (c162df515, 用户裁决 10-14) 借券快照注入
         # 修空头断供的有意升级, 测试当时未跟 (10-12~14 SSOT 断档期)。
-        assert ue.BRIEF_TEMPLATE_VERSION == "ue_brief_v6"
+        assert ue.BRIEF_TEMPLATE_VERSION == "ue_brief_v7"
 
     def test_compute_numbers_return_shape_unchanged(self):
         """P3.3-3.5 没动 _compute_numbers ⇒ 返回面仍是 P3.1 的 4 键。"""

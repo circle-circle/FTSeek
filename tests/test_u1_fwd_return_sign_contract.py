@@ -288,9 +288,9 @@ def test_prompt_version_bumped_and_blind_spot_declared():
     """
     src = (REPO / "scripts" / "llm_universe_scan.py").read_text(encoding="utf-8")
     # 版本戳棘轮跟**当前**版号走 (升版者必须同时改这里 — 变红是设计意图, 不是回归)。
-    # v2.13→v2.14 (2026-10-02, 证据分层/校准/反证/事件阶段契约, brief/user 侧变更)。
-    assert 'PROMPT_VERSION = "v2.14"' in src, \
-        "版本戳已升过 v2.14 — 同步改本钉 (棘轮意图: 升版必留痕)"
+    # v2.14→v2.15 (2026-10-18, 借券 UNKNOWN 语义修正 + event_meta family/form 说明)。
+    assert 'PROMPT_VERSION = "v2.15"' in src, \
+        "版本戳已升过 v2.15 — 同步改本钉 (棘轮意图: 升版必留痕)"
     # U1 的变更记录不得随后续升版被顺手抹掉 (删注释 = 归因链断, 9/11 前后样本不可分)。
     # v2.14 (2026-10-02, ADR-044) 将原 PROMPT_VERSION 行长注释截短, v2.11 归因从
     #   版本行移入 P2.5 brief 指纹段 (line ~221: "v2.11 改的正是反馈表渲染")。
