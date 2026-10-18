@@ -24,6 +24,7 @@
 - 上线: 2026-10-18 22:35 CST `systemctl restart ftseek-us`；启动冒烟 **7/7** (ConfigValidator/漂移/热重载/SSOT/双臂/快循环/零 Traceback)。重启前实查：仅 US.ADSK 一个模拟持仓，exit_intents 189 条全 BOOKED，无在途出场。
 - 二轮重启 (slcap 载体 + entry_anchor_dual eval 落盘后): 2026-10-18 22:43 CST，启动冒烟 **7/7**，PID 2241986；重启前同一状态 (ADSK / 189 BOOKED)。
 - **提交**: `6a3fa2bdf` — `[hotfix] 减法修复批: 存储/棘轮/死代码/影子注册表` (未推送; `.env.us` 为 gitignored 运行机改动, 未入提交)。
+- 退役后最终重启: 2026-10-18 22:48 CST，启动冒烟 **7/7**，PID 2243763；线上加载 slcap KILLED + entry_anchor_dual PERIOD_GATE。
 - 未做: 85 个 orphan YAML 叶（需 validator/CRITICAL_KEYS/仓外三面复核）、245 条注释 cron、双 carrier、日亏权威、净口径、手动平仓门。
 
 ## 2026-10-18 推送治理 P0+P1（心跳/复盘/回滚/日报降频）
