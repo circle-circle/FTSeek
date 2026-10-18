@@ -21,7 +21,7 @@
 - **ETH 退出**: wrapper 先按 collector 同口径探持仓，无仓跳过子进程；探针失败 fail-open。新增 ET 窗口闸 `extended_hours_exit_cron_gate.sh`（工作日 04:00–20:05 每分钟，其余/周末 5 分钟），孤儿单/close_key 守卫保留。结果 JSON 增 `collector`/`open_positions_n`。
 - **EventStream**: `--cadence` 分时采频（关键窗 07:30–09:35 ET 5m / 交易日 04:00–20:00 15m / 其余 20m）；仅全源 OK 写状态，失败下个 5m tick 重试；`--force` 绕过。
 - **日K刷新**: 移出 AFTER_HOURS 主循环（原单轮 658s），改独立 cron 双季 04:05/05:05 CST + 脚本内 ET 16:00 守卫；执行级日门/失败重试不变；`data/replay_bars_daily` 加入 freshness watchdog（80h）。
-- **降噪/指标**: 关停的 after-hours LLM 推荐不再由调度器打 INFO；周末 `llm_scan_state.json` 去重写；新增只读 `scripts/empty_run_metrics.py`。
+- **降噪/指标**: 关停的 after-hours LLM 推荐不再由调度器打 INFO；周末 `llm_scan_state.json` 去重写；新增只读 `scripts/empty_run_metrics.py`（含 UE da_feed / 09:10 漏斗，2026-10-18 追加 da_feed surfaced→DA注入/借券→最终指令）。
 - **未做**（需影子/DEB）: 09:00 只验证 bridge 候选、DA/UE 发车时刻/握手、峰群前移、复盘推送合一；策略/阈值/仓位零改动。
 **验证**: 相关域回归（playbook/pipeline/extended-hours/event-stream/premarket/watchdog 共 38 个测试文件）**583 passed**；全量套件超出 10 分钟工具上限未跑完（定向+相关域已覆盖本批改动）。
 **上线**: 代码提交 `5d3e3b2a6`；2026-10-18 16:23 CST `systemctl restart ftseek-us`（PID 2176670），启动冒烟 **7/7**。重启前在途：`trade_records` 仅 US.ADSK LONG，`exit_intents` 0 行。crontab 已备份 `data/crontab.backup.20261018_prepost_empty_run.txt` 并应用：ETH 窗口闸、EventStream `--cadence`、日K双季 cron。重启后实测 ingest 日志出现 `cadence_skip interval=20m`；周末 `llm_scan_state.json` 未再每分钟重写。

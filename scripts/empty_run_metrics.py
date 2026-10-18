@@ -146,11 +146,11 @@ def _playbook_ue_origins(days: int) -> list[dict]:
     return sorted(result, key=lambda x: (x["origin"],))
 
 
-def _ue_premarket_batches(days: int) -> dict[str, dict]:
+def _ue_batches(days: int, window: str) -> dict[str, dict]:
     cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
     out: dict[str, dict] = {}
     for row in _load_jsonl(UE_SCAN_PATH):
-        if row.get("type") != "scan" or row.get("scan_window") != "premarket":
+        if row.get("type") != "scan" or row.get("scan_window") != window:
             continue
         date = str(row.get("date") or "")
         if not date:
@@ -179,6 +179,10 @@ def _ue_premarket_batches(days: int) -> dict[str, dict]:
             "surfaced": surfaced,
         }
     return out
+
+
+def _ue_premarket_batches(days: int) -> dict[str, dict]:
+    return _ue_batches(days, "premarket")
 
 
 def _fresh_event_events(days: int) -> dict[str, dict]:
@@ -288,6 +292,99 @@ def _ue_fresh_funnel(days: int) -> list[dict]:
     return result
 
 
+def _da_feed_stderr_path(date: str) -> Path | None:
+    """DA 主链 stderr → da_feed 注入/借券丢弃读数 (rotation 后缀 = ET 日 +1 CST)."""
+    try:
+        suffix = (datetime.strptime(date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y%m%d")
+    except Exception:
+        return None
+    candidates = [
+        ROOT / "logs" / f"da_pipeline_stderr.log-{suffix}.gz",
+        ROOT / "logs" / f"da_pipeline_stderr.log-{suffix}",
+    ]
+    if date == datetime.now().strftime("%Y-%m-%d"):
+        candidates.append(ROOT / "logs" / "da_pipeline_stderr.log")
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
+
+
+def _parse_da_feed_injection(date: str) -> dict:
+    """只读第一段 UE 注入 (da_feed 主链); fresh-event 的第二段不算。"""
+    out = {
+        "injected": [], "injected_count": None, "borrow_dropped": [],
+        "streak_dropped": [], "overlap": None, "source": None,
+    }
+    path = _da_feed_stderr_path(date)
+    if path is None:
+        return out
+    out["source"] = path.name
+    try:
+        for line in _open_text(path):
+            match = re.search(
+                r"\[Pipeline\] UE候选注入: \+(\d+) \(\[(.*?)\]\)", line)
+            if match:
+                out["injected_count"] = int(match.group(1))
+                out["injected"] = re.findall(
+                    r"US\.([A-Z0-9.\-]+)", match.group(2))
+                overlap = re.search(r"重叠归因回填:\s*(\d+)", line)
+                if overlap:
+                    out["overlap"] = int(overlap.group(1))
+                break
+            borrow = re.search(
+                r"\[UE-FEED\]\s+(?:US\.)?([A-Z0-9.\-]+)\s+borrow_feasible=False",
+                line)
+            if borrow:
+                out["borrow_dropped"].append(borrow.group(1))
+            streak = re.search(
+                r"\[UE-FEED\]\s+(?:US\.)?([A-Z0-9.\-]+)\s+streak=(\d+)", line)
+            if streak:
+                out["streak_dropped"].append(streak.group(1))
+    except Exception:
+        pass
+    return out
+
+
+def _ue_da_feed_funnel(days: int) -> list[dict]:
+    """08:00 UE da_feed → DA 主链 → 最终指令 的逐步漏斗."""
+    scans = _ue_batches(days, "da_feed")
+    final = _final_ue_rows(days)
+    result = []
+    for batch_id, scan in sorted(scans.items(), key=lambda kv: kv[1]["date"], reverse=True):
+        rows = final.get(batch_id, [])
+        surfaced = scan["surfaced"]
+        surfaced_syms = {item["symbol"] for item in surfaced}
+        final_syms = {row["symbol"] for row in rows}
+        actionable = [row for row in rows if row["direction"] in ("BUY", "SELL_SHORT")]
+        kept = [row for row in actionable
+                if _direction_kept(row["ue_direction"], row["direction"])]
+        flipped = [row for row in actionable
+                   if row["ue_direction"] and not _direction_kept(
+                       row["ue_direction"], row["direction"])]
+        da = _parse_da_feed_injection(scan["date"])
+        result.append({
+            "date": scan["date"],
+            "batch_id": batch_id,
+            "scanned_at": scan["scanned_at"],
+            "surfaced": surfaced,
+            "da_injected": da["injected"],
+            "da_injected_count": da["injected_count"],
+            "borrow_dropped": da["borrow_dropped"],
+            "streak_dropped": da["streak_dropped"],
+            "overlap": da["overlap"],
+            "stderr_source": da["source"],
+            "final_rows": rows,
+            "actionable": len(actionable),
+            "triggered": sum(row["triggered"] for row in rows),
+            "executed": sum(row["executed"] for row in rows),
+            "kept": [row["symbol"] for row in kept],
+            "flipped": [row["symbol"] for row in flipped],
+            "da_skip": [row["symbol"] for row in rows if row["direction"] == "SKIP"],
+            "no_final_symbols": sorted(surfaced_syms - final_syms),
+        })
+    return result
+
 
 def _da_margins(days: int) -> dict:
     path = ROOT / "data" / "shadow" / "da_main_schedule.jsonl"
@@ -367,6 +464,7 @@ def main() -> int:
         "days": args.days,
         "playbook_actionables": _playbook_actionables(args.days),
         "playbook_ue_origins": _playbook_ue_origins(args.days),
+        "ue_da_feed_funnel": _ue_da_feed_funnel(args.days),
         "ue_fresh_event_funnel": _ue_fresh_funnel(args.days),
         "da_completion_margin_min": _da_margins(args.days),
         "extended_hours_exit": _eth_metrics(args.days),
@@ -387,6 +485,30 @@ def main() -> int:
         print(f"  {row['origin']}: total={row['total']} actionable={row['actionable']} "
               f"triggered={row['triggered']} executed={row['executed']} "
               f"batches={row['batches']}")
+
+    print("\n[UE 08:00 da_feed → DA → 最终指令]")
+    if not data["ue_da_feed_funnel"]:
+        print("  无 da_feed 批次")
+    for item in data["ue_da_feed_funnel"]:
+        surfaced = ",".join(
+            f"{x['symbol']}:{x['direction']}" for x in item["surfaced"]) or "-"
+        finals = ", ".join(
+            f"{r['symbol']}:{r['direction']}(ue={r['ue_direction'] or '-'},"
+            f"origin={r['origin'] or '-'},skip={r['skip_reason'][:20] or '-'})"
+            for r in item["final_rows"]
+        ) or "-"
+        print(f"  {item['date']} {item['batch_id']}")
+        print(f"    surfaced={surfaced}")
+        if item.get("stderr_source") is None:
+            print("    DA注入数据不可用 (无 stderr 载体; 10/16 前历史日志缺失)")
+        else:
+            print(f"    DA注入={item['da_injected'] or '-'} (n={item['da_injected_count']}) "
+                  f"borrow丢弃={item['borrow_dropped'] or '-'} "
+                  f"streak丢弃={item['streak_dropped'] or '-'} overlap={item['overlap']}")
+        print(f"    最终指令={finals}")
+        print(f"    actionable={item['actionable']} triggered={item['triggered']} "
+              f"executed={item['executed']} kept={item['kept'] or '-'} "
+              f"flipped={item['flipped'] or '-'} 无最终指令={item['no_final_symbols'] or '-'}")
 
     print("\n[UE 09:10 → DA → 最终指令]")
     print("  (2026-10-18 起 fresh-event execute 已停用; 新日期无 wrapper/最终指令属预期)")
