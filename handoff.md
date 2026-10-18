@@ -3,7 +3,7 @@
 ## 2026-10-18 UE 借券 UNKNOWN 逐票补查（用户裁「信息/处理流程问题可直接调整，SIM 恢复供应观察」）
 
 **触发**: 10 月 UE SHORT 候选 24 条中 16 条 UNKNOWN。根因 = 每日借券快照只采 `daily_active_pool.json`（当日约 31–53 只），UE 榜外发现不在池 → prompt 规则10 标 UNKNOWN/false → DA 源头过滤 `borrow_feasible is False` 当死单丢弃。Futu `get_margin_ratio` 本身支持逐票查询。
-**落地**（代码已落盘，未提交；UE scan 为 cron 新进程，下一轮生效）:
+**落地**（代码已提交 `f26f643a4`；UE scan 为 cron 新进程，下一轮生效）:
 - 新增 `app/data/borrow_verifier.py`: UE 产出后对 SHORT 的 UNKNOWN 做小批（5）+ 逐票兜底（≤5）补查；只把 UNKNOWN 解析为 MATERIAL true/false；无数据/异常保持 UNKNOWN 并写 `borrow_checked_at/source/status/error`。
 - `scripts/llm_universe_scan.py`: 合约修复后、写 scan 记录前调用；scan 记录新增 `borrow_on_demand` 计数（checked/resolved_true/resolved_false/no_data/error）。
 - `config/unified_config.yaml`: 新增 `universe_expansion.borrow_on_demand_verify: true`。回滚置 false 即回旧行为。
@@ -11,7 +11,7 @@
 **实库验证**: 10 月 16 个唯一 UNKNOWN 空头 → **12 true / 3 false / 1 no_data**；EBS/AN/CTEV 等被误杀标的确认可借；ERAS/RGNX/VSXY 真不可借；QNCX 无数据。Futu 连续 10+ 次逐票会限流 → 小批+兜底+1s 间隔。
 **测试**: borrow verifier 9 passed；UE/事件流定向 124 passed；全量 **7316 passed / 72 skipped / 4 failed**（3 条存量红 + `capital_allocator` 满载异步假红，单跑绿）。离线全链因断网在 FROZEN_CFG 关闭补查；extended-hours 基数测试改为相对日期（原 9/17 固定日期漂出 30 天窗）。
 **观察**: 下一轮 UE scan 的 `borrow_on_demand`、DA feed 放行数、触发时 `borrow_pool_gate` 拦截/借券失败、SIM 空头成交与收益；不改实盘参数。
-**回滚**: `borrow_on_demand_verify: false`（立即回旧行为）；或 revert 本批提交。
+**回滚**: `borrow_on_demand_verify: false`（立即回旧行为）；或 revert `f26f643a4`。
 
 ## 2026-10-18 全链路复查确定性缺陷修复批（用户令「修复」→「下一步继续」）
 
