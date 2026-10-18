@@ -1,5 +1,15 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-18 SEC_PROVIDER 影子适配器（复用现有 provider）
+
+**触发**: 用户继续 P0 主源；检查发现 `sec_8k_provider` 已覆盖 8-K/13DG，`sec_form4_provider` 覆盖 Form 4，禁止另写一套抓取。
+**落地**（代码已落盘，未提交；默认关闭）:
+- 新增 `app/event_stream/sources/sec_provider.py`: 复用 `fetch_recent_8k` + `fetch_recent_13dg` → canonical events（source_id=`SEC_FILINGS_PROVIDER`，含 form/items/ticker）。
+- `source_registry`: `build_default_registry(provider_enabled)` 开关；config `event_stream.sec_provider_source_enabled` 默认 **false**；true 时替换 raw `SEC_EDGAR_8K_ATOM` 并补 13D/G（二选一，不重复采）。
+- 修 `sec_8k_provider` 13DG 解析：只收 SC 13D/G，丢弃 SC 13E3（going-private），并过滤旧缓存。
+**验证**: 事件流定向 **45 passed**；全量 **7345 passed / 72 skipped / 3 failed**（均为存量红）；live adapter 周末返回 0 事件/OK（缓存无 13D/G，属正常）；需交易日影子对比。
+**下一步**: 交易日开 `sec_provider_source_enabled=true` 影子，比较 coverage/重复率/下游材料/延迟；Form 4 只在需要全市场发现时补 EFTS，不复用按 symbol 查询逻辑。
+
 ## 2026-10-18 quality_shadow v2 + 源/事件/辩论反馈报表（record-only）
 
 **触发**: 用户认可“不要重复 LLM 链”，继续补 source/event/debate 反馈闭环。

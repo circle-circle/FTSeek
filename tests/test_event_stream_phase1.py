@@ -237,6 +237,87 @@ def test_default_source_registry_contains_phase0_sources():
     }
 
 
+def test_default_source_registry_provider_switch():
+    from app.event_stream.source_registry import build_default_registry
+
+    raw = build_default_registry(False)
+    provider = build_default_registry(True)
+    assert "SEC_EDGAR_8K_ATOM" in raw and "SEC_FILINGS_PROVIDER" not in raw
+    assert "SEC_FILINGS_PROVIDER" in provider and "SEC_EDGAR_8K_ATOM" not in provider
+    assert list(provider)[0] == "SEC_FILINGS_PROVIDER"
+
+
+def test_sec_provider_builds_canonical_events():
+    from app.event_stream.sources.sec_provider import build_provider_events
+
+    rows_8k = [{
+        "ticker": "AAPL", "company": "Apple Inc.", "items": ["2.02"],
+        "item_labels": ["2.02 业绩公布(方向取决于超预期与否)"],
+        "updated": "2026-10-18T12:00:00+00:00", "url": "https://sec.gov/8k",
+    }]
+    rows_13dg = [{
+        "ticker": "AAPL", "company": "Apple Inc.", "form": "SC 13D",
+        "updated": "2026-10-18T12:05:00+00:00", "url": "https://sec.gov/13d",
+    }]
+    events = build_provider_events(rows_8k, rows_13dg)
+    assert len(events) == 2
+    by_type = {event.event_type: event for event in events}
+    assert by_type["SEC_8K_FILING"].facts["form"] == "8-K"
+    assert by_type["SEC_13DG_FILING"].facts["form"] == "SC 13D"
+    assert "Apple Inc." in by_type["SEC_8K_FILING"].headline
+
+
+def test_fetch_sec_filings_provider_uses_existing_providers(monkeypatch):
+    from app.data import sec_8k_provider
+    from app.event_stream.sources import sec_provider
+
+    monkeypatch.setattr(
+        sec_8k_provider, "fetch_recent_8k",
+        lambda lookback_hours=24: [{
+            "ticker": "MSFT", "company": "Microsoft", "items": ["1.01"],
+            "item_labels": ["1.01 重大协议签订(看多倾向)"],
+            "updated": "2026-10-18T12:00:00+00:00", "url": "https://sec.gov/8k",
+        }])
+    monkeypatch.setattr(
+        sec_8k_provider, "fetch_recent_13dg",
+        lambda lookback_hours=96: [{
+            "ticker": "MSFT", "company": "Microsoft", "form": "SC 13G",
+            "updated": "2026-10-18T12:05:00+00:00", "url": "https://sec.gov/13g",
+        }])
+    result = sec_provider.fetch_sec_filings_provider()
+    assert result.status == "OK"
+    assert len(result.events) == 2
+    assert result.raw_event is not None
+    assert result.raw_event.source_id == "SEC_FILINGS_PROVIDER"
+
+
+def test_fetch_recent_13dg_filters_sc13e3(tmp_path, monkeypatch):
+    """2026-10-18: SC 13E3 (going-private) 不得混入 SC 13D/G."""
+    from app.data import sec_8k_provider
+    from app.data import sec_form4_provider
+
+    atom = """<feed>
+      <entry><title>SC 13D - ACME CORP (0001234567) (Subject)</title>
+        <updated>2026-10-18T12:00:00Z</updated><link href="https://sec.gov/13d"/></entry>
+      <entry><title>SC 13E3/A - OTHER CORP (0007654321) (Subject)</title>
+        <updated>2026-10-18T12:00:00Z</updated><link href="https://sec.gov/13e3"/></entry>
+      <entry><title>SC 13G - ACME CORP (0001234567) (Subject)</title>
+        <updated>2026-10-18T12:01:00Z</updated><link href="https://sec.gov/13g"/></entry>
+    </feed>"""
+    monkeypatch.setattr(sec_8k_provider, "CACHE_13DG_FILE", tmp_path / "13dg.json")
+    monkeypatch.setattr(sec_8k_provider, "_fetch_atom", lambda url=None: atom)
+
+    class _FakeProvider:
+        _cik_ticker_map = {1234567: "ACME"}
+
+    monkeypatch.setattr(sec_form4_provider, "SECForm4Provider", _FakeProvider)
+    rows = sec_8k_provider.fetch_recent_13dg(lookback_hours=96)
+    assert {row["form"] for row in rows} == {"SC 13D", "SC 13G"}
+    assert all(row["ticker"] == "ACME" for row in rows)
+
+
+
+
 def test_ingest_service_stores_raw_and_events(tmp_path):
     store = EventStore(tmp_path / "event_stream.db")
     raw = _raw_event()

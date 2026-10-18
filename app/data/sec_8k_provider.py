@@ -170,12 +170,14 @@ def fetch_recent_13dg(universe_tickers: Optional[set] = None,
                 e = m.group(1)
                 title = re.search(r"<title>(.*?)</title>", e, re.S)
                 t = (title.group(1) if title else "").strip()
-                # 只要 Subject 方 (被举牌标的); Filed by 方=举牌人, 丢
-                if not t.upper().startswith("SC 13") or "(Subject)" not in t:
+                # 只要 Subject 方 (被举牌标的); Filed by 方=举牌人, 丢.
+                # 2026-10-18: 必须只收 SC 13D/G — 原 startswith("SC 13") 会把
+                #   SC 13E3 (私有化/going-private) 也收进来, 且 form 回落成 "SC 13".
+                form_m = re.match(r"(SC 13[DG](?:/A)?)", t, re.IGNORECASE)
+                if "(SUBJECT)" not in t.upper() or not form_m:
                     continue
                 cik_m = re.search(r"\((\d{7,10})\)", t)
-                comp_m = re.search(r"SC 13[DG](?:/A)?\s*-\s*(.+?)\s*\(", t)
-                form_m = re.match(r"(SC 13[DG](?:/A)?)", t)
+                comp_m = re.search(r"SC 13[DG](?:/A)?\s*-\s*(.+?)\s*\(", t, re.IGNORECASE)
                 updated = re.search(r"<updated>(.*?)</updated>", e)
                 link = re.search(r'href="([^"]+)"', e)
                 raw.append({
@@ -198,6 +200,11 @@ def fetch_recent_13dg(universe_tickers: Optional[set] = None,
         logger.warning("[13DG] CIK 映射不可用 (降级空): %s", e)
         return []
 
+    # 兼容旧缓存: 旧解析曾把 SC 13E3 收成 form="SC 13"; 只保留 13D/G.
+    raw = [
+        e for e in (raw or [])
+        if str(e.get("form") or "").upper().startswith(("SC 13D", "SC 13G"))
+    ]
     cutoff = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
     out = []
     for e in raw:

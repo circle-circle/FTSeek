@@ -2229,6 +2229,10 @@ signal_stage:
 #   锚定相关性过滤器的消费面 (监管机关 + sector 触发词英文面), 后续按覆盖缺口增补。
 #   回滚: 删除本块 (回退代码内 DEFAULT_QUERIES/DEFAULT_TERMS)。
 event_stream:
+  # 2026-10-18: SEC provider 适配器影子开关 (复用 sec_8k_provider, 不另写抓取).
+  #   false=保留 raw SEC_EDGAR_8K_ATOM; true=改用 SEC_FILINGS_PROVIDER (8-K+13D/G, 二选一).
+  #   先影子对比 coverage/重复率/下游材料, 再决定是否转正; 回滚: false.
+  sec_provider_source_enabled: false
   google_news_queries:
   - FCC OR FTC OR FDA OR "Securities and Exchange Commission"
   - spectrum OR direct-to-cell OR satellite broadband OR wireless carrier
