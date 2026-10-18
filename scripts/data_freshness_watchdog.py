@@ -56,6 +56,9 @@ except Exception:
 #   weekday_only: True 时周末(周六日)不告警 (盘后才写的源)
 WATCHLIST = [
     ("data/llm_audit.db",                          30, "LLM 审计库 (成本观测地基)",        False),
+    # 2026-10-18: 日K刷新移出 AFTER_HOURS 主循环 → 独立 cron; 目录 mtime 由 tmp+rename
+    #   更新。80h 容忍周末 (周五 16:05 ET → 周一 16:05 ET = 72h), weekday_only 跳过周末。
+    ("data/replay_bars_daily",                     80, "日K缓存 (双季 cron, 周末 80h 口径)", True),
     ("data/opportunity_scan_{today}.json",         30, "DA 指令生成 bridge",               True),
     ("data/factor_ic_latest.json",                 50, "因子 IC 回填 (Tue-Sat cron, 周一 gap 49h 为计划内)", True),
     ("data/shadow/llm_universe_scan.jsonl",        30, "UE 宇宙扫描 shadow",               True),

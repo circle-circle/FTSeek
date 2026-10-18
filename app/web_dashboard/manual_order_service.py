@@ -471,10 +471,16 @@ class ManualOrderService:
 # ─────────────────────────────────────────────────────────────────
 
 _instance: Optional[ManualOrderService] = None
+# 2026-10-18 空跑/安全修复: FundamentalProvider 在 5 线程筛选池里并发调用本单例,
+# 原裸 if 判断可同时建出多个实例, 每个实例 connect() 都会解锁实盘 (实测盘前生成
+# 一次出现 5 次 "[手动下单] 实盘已解锁")。双检锁保证全进程只建一个连接。
+_instance_lock = threading.Lock()
 
 
 def get_manual_order_service() -> ManualOrderService:
     global _instance
     if _instance is None:
-        _instance = ManualOrderService()
+        with _instance_lock:
+            if _instance is None:
+                _instance = ManualOrderService()
     return _instance

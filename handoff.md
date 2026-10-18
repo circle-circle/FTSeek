@@ -1,5 +1,20 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-18 盘前/盘后链路空跑治理（安全修复 + 运维节流）
+
+**触发**: 用户令核查盘前/盘后链路“是否值得优化和调整和提升，避免空跑”，复核后令按建议落地。
+**落档**: `docs/decisions/RFC-147-pre-post-market-empty-run-fix.md`。
+**落地**:
+- **推送顺序**: `run_playbook_morning_push` 09:00 前不推；当日生成完成标记存在才推；09:15 ET 兜底放行（WARNING）。修复 10/16 08:47 先推 13 条、09:01 生成后又把其中 4 条降为 SKIP 且不补推的问题。
+- **实盘单例**: `get_manual_order_service()` 加双检锁；修复 5 线程筛选池并发解锁实盘（10/16 一次 5 次 `实盘已解锁`）。
+- **ETH 退出**: wrapper 先按 collector 同口径探持仓，无仓跳过子进程；探针失败 fail-open。新增 ET 窗口闸 `extended_hours_exit_cron_gate.sh`（工作日 04:00–20:05 每分钟，其余/周末 5 分钟），孤儿单/close_key 守卫保留。结果 JSON 增 `collector`/`open_positions_n`。
+- **EventStream**: `--cadence` 分时采频（关键窗 07:30–09:35 ET 5m / 交易日 04:00–20:00 15m / 其余 20m）；仅全源 OK 写状态，失败下个 5m tick 重试；`--force` 绕过。
+- **日K刷新**: 移出 AFTER_HOURS 主循环（原单轮 658s），改独立 cron 双季 04:05/05:05 CST + 脚本内 ET 16:00 守卫；执行级日门/失败重试不变；`data/replay_bars_daily` 加入 freshness watchdog（80h）。
+- **降噪/指标**: 关停的 after-hours LLM 推荐不再由调度器打 INFO；周末 `llm_scan_state.json` 去重写；新增只读 `scripts/empty_run_metrics.py`。
+- **未做**（需影子/DEB）: 09:00 只验证 bridge 候选、DA/UE 发车时刻/握手、峰群前移、复盘推送合一；策略/阈值/仓位零改动。
+**验证**: 相关域回归（playbook/pipeline/extended-hours/event-stream/premarket/watchdog 共 38 个测试文件）**583 passed**；全量套件超出 10 分钟工具上限未跑完（定向+相关域已覆盖本批改动）。重启冒烟结果见下方追加。
+**回滚**: 见 RFC-147 §5（推送/单例/ETH/ingest/日K 各自可单独回退；crontab 改动前已备份）。
+
 ## 2026-10-18 质量反事实报表（只读，是否值得改 DA 校准）
 
 **触发**: prompt/输入同步后，量化“降级高分 LONG / 要求市场确认 / 只保留中分回踩”的历史反事实。

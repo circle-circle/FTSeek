@@ -599,6 +599,8 @@ def run_after_hours_llm_scan(scheduler, phase=None):
     if phase == MarketPhase.WEEKEND:
         logger.debug("[LLM推荐] 周末休市 → 跳过")
         return
+
+    logger.info("[LLM推荐] 开始: phase=%s", phase.value)
     
     try:
         from app.data.rsshub_us_news import RSSHubUSNewsFetcher

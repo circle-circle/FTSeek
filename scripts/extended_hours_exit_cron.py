@@ -27,6 +27,16 @@ from scripts.exit_closekey_health import scan as scan_closekey_health
 LOCK_FILE = ROOT / "logs" / "extended_hours_exit_cron.lock"
 NEXT_OPEN_START_MINUTES = 570
 NEXT_OPEN_END_MINUTES = 585
+DB_PATH = ROOT / "data" / "ftseek_us.db"
+
+
+def _load_open_positions_for_gate():
+    """与 shadow collector 同一持仓口径; 无仓时省掉一分钟一次的 Python+Futu 连接.
+
+    读取失败必须 fail-open (继续跑 collector), 不能因为探针坏了而停掉退出链。
+    """
+    from scripts.extended_hours_position_scope import load_non_manual_positions
+    return load_non_manual_positions(DB_PATH)
 
 
 def collector_command(session):
@@ -110,15 +120,33 @@ def run_once(dry=False, timeout_s=240, now=None):
         result["skip"] = "outside_extended_hours"
         return result
 
+    # 2026-10-18 空跑治理: 延长时段 570 次/日 collector 里大量"无持仓"启动,
+    #   每次都要起 Python 子进程。开跑前用 collector 同一口径探一次持仓;
+    #   探针失败 fail-open 继续跑 (退出链安全优先), 无仓才跳过本轮。
+    try:
+        positions = _load_open_positions_for_gate()
+        result["open_positions_n"] = len(positions)
+    except Exception as _exc:
+        result["open_positions_n"] = None
+        result["position_probe_error"] = f"{type(_exc).__name__}: {_exc}"[:200]
+    else:
+        if not positions:
+            result["collector"] = "skipped_no_positions"
+            if dry:
+                result["dry"] = True
+                result["command"] = command
+            return result
+
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
     with LOCK_FILE.open("a+") as handle:
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             result["skip"] = "previous_run_still_active"
+            result["collector"] = "skipped_previous_run_active"
             return result
         if dry:
-            result.update({"dry": True, "command": command})
+            result.update({"dry": True, "command": command, "collector": "dry_run"})
             return result
         try:
             completed = subprocess.run(
@@ -133,6 +161,7 @@ def run_once(dry=False, timeout_s=240, now=None):
             result.update({
                 "ok": False,
                 "error": f"collector_timeout_after_{timeout_s}s",
+                "collector": "timeout",
             })
             return result
         result.update({
@@ -140,6 +169,7 @@ def run_once(dry=False, timeout_s=240, now=None):
             "returncode": completed.returncode,
             "stdout_tail": (completed.stdout or "")[-1000:],
             "stderr_tail": (completed.stderr or "")[-1000:],
+            "collector": "ok" if completed.returncode == 0 else "failed",
         })
         return result
 

@@ -2246,10 +2246,15 @@ class TradingScheduler:
         from pathlib import Path as _Path
         _llm_scan_state = _Path(__file__).resolve().parents[2] / "data" / "llm_scan_state.json"
 
+        _persist_state = {"last": "<unset>"}
+
         def _persist_ah(ts):
+            if _persist_state["last"] == ts:
+                return
             try:
                 with open(_llm_scan_state, "w", encoding="utf-8") as _f:
                     _json.dump({"last_afterhours_run": ts.isoformat() if ts else None}, _f)
+                _persist_state["last"] = ts
             except Exception as _pe:
                 # 2026-09-10 debug→warning: 并非"不影响" — 写不进 last_afterhours_run,
                 #   下次重启即复位 None → 首圈命中 is-None 重推盘前/盘后 LLM 推荐,
@@ -2266,6 +2271,9 @@ class TradingScheduler:
         except Exception as _le:
             # 2026-09-10 debug→warning: 载入失败按"无记录"处理 → 重启即重推, 同上必须可见。
             logger.warning(f"[LLM策略] scan 时间载入失败 (视为无记录, 重启将重推LLM推荐): {_le}", exc_info=True)
+        # 2026-10-18: WEEKEND 分支每 60s 调 _persist_ah(None), 原实现每轮重写 JSON;
+        #   记录已落盘值, 值未变则零写入。
+        _persist_state["last"] = last_afterhours_run
 
         while self.running:
             # D2(a): 结算上一轮护航 (停线程 + 落轮次耗时遥测) 再补心跳。原实现只有这一处 ping,
@@ -2407,7 +2415,7 @@ class TradingScheduler:
 
                     # 盘前: 每2小时采集新闻 + LLM 推荐 (不执行交易)
                     if last_afterhours_run is None or (now - last_afterhours_run).total_seconds() >= 7200:
-                        logger.info("[LLM策略] 盘前 → 新闻采集 + LLM 推荐")
+                        logger.debug("[LLM策略] 盘前 → 新闻采集 + LLM 推荐 (关停时函数内静默)")
                         run_after_hours_llm_scan(self, phase=phase)
                         last_afterhours_run = now
                         _persist_ah(now)
@@ -2485,7 +2493,7 @@ class TradingScheduler:
                     
                     # 盘后: 每2小时采集新闻 + LLM 推荐 (不执行交易)
                     if last_afterhours_run is None or (now - last_afterhours_run).total_seconds() >= 7200:
-                        logger.info("[LLM策略] 盘后夜盘 → 新闻采集 + LLM 推荐")
+                        logger.debug("[LLM策略] 盘后夜盘 → 新闻采集 + LLM 推荐 (关停时函数内静默)")
                         run_after_hours_llm_scan(self, phase=phase)
                         last_afterhours_run = now
                         _persist_ah(now)
@@ -2596,17 +2604,10 @@ class TradingScheduler:
                     except Exception as _e:
                         logger.warning(f"[LLM策略] band波动率化影子打标异常 (已隔离): {_e}", exc_info=True)
 
-                    # 日K缓存增量刷新 (2026-08-17, DEB-20260817第4轮根因治理):
-                    #   replay_bars_daily 曾停更3周→A2报告35%行gap被污染。A2的prev_close
-                    #   依赖该缓存是单点, 每日盘后增量刷新防复发 (幂等, 已最新即跳过,
-                    #   ~110票×1.2s限流)。回滚: 配置键 false + 重启。
-                    try:
-                        from app.core.config_container import ConfigContainer as _CC_rb
-                        if bool(_CC_rb.get_instance().get_dotted(
-                                "playbook.daily_bars_refresh_enabled", True)):
-                            self._load_script_module("refresh_daily_bars").run_check(self)
-                    except Exception as _e:
-                        logger.warning(f"[LLM策略] 日K缓存刷新异常 (已隔离): {_e}", exc_info=True)
+                    # 2026-10-18 空跑治理: 日K刷新已移出 AFTER_HOURS 主循环 —
+                    #   原单轮扫描 400 个文件阻塞 658s, 占满盘后窗。现由独立 cron
+                    #   (双季 04:05/05:05 CST, 脚本内 ET 16:00 守卫) 运行, 执行级日门
+                    #   与失败重试语义不变。回滚 = 恢复本调用块 + 删 crontab 两行。
 
                 elif phase == MarketPhase.OVERNIGHT:
                     # 盘后出场影子终评 (2026-08-27, record-only): AH 20:00 收后用完结
@@ -2620,7 +2621,7 @@ class TradingScheduler:
 
                     # 深夜: 每6小时采集新闻 + LLM 推荐 (最低频率)
                     if last_afterhours_run is None or (now - last_afterhours_run).total_seconds() >= 21600:
-                        logger.info("[LLM策略] 深夜 → 低频新闻 + LLM 推荐")
+                        logger.debug("[LLM策略] 深夜 → 低频新闻 + LLM 推荐 (关停时函数内静默)")
                         run_after_hours_llm_scan(self, phase=MarketPhase.OVERNIGHT)
                         last_afterhours_run = now
                         _persist_ah(now)

@@ -349,20 +349,39 @@ def run_playbook_topup_supplement(
         return None
 
 
+# 盘前推送的兜底时刻 (ET HHMM): 生成未完成也不能晚于开盘太近。
+# 正常生成 09:00-09:07 完成; 09:15 是最后一次等待窗口。
+MORNING_PUSH_FALLBACK_ET_HHMM = 915
+
+
 def run_playbook_morning_push(
     scheduler=None,
     *,
     state_path: str,
     logger,
 ) -> Optional[bool]:
-    """独立的盘前指令推送任务 — 不依赖生成内联触发, 每日幂等(持久化), 失败下轮重试."""
+    """独立的盘前指令推送任务 — 不依赖生成内联触发, 每日幂等(持久化), 失败下轮重试.
+
+    2026-10-18 顺序修复: bridge 在 08:35-08:46 先写指令, 而最终生成 09:00-09:07
+    才做二次过滤/降级。原实现只要看到指令就在 08:47 推送并写日期幂等 ⇒ 生成后
+    被降为 SKIP 的行已推给用户且不会补推。现改为:
+      - 09:00 前不推 (等最终生成窗口);
+      - 生成完成标记存在才推;
+      - 09:15 兜底放行 (生成异常/延迟时仍保证盘前有指令), WARNING 留痕。
+    """
     import json as _json
     from datetime import datetime as _dt
     try:
         from app.utils.timezone import now_et
-        today = now_et().date().isoformat()
+        _now = now_et()
     except Exception:
-        today = _dt.now().date().isoformat()
+        try:
+            from zoneinfo import ZoneInfo
+            _now = _dt.now(ZoneInfo("America/New_York"))
+        except Exception:
+            _now = _dt.now()
+    today = _now.date().isoformat()
+    _et_hhmm = _now.hour * 100 + _now.minute
 
     try:
         with open(state_path) as f:
@@ -373,6 +392,13 @@ def run_playbook_morning_push(
     if morning.get(today):
         return None
 
+    if _et_hhmm < 900:
+        logger.debug(
+            "[playbook] 盘前推送等待最终生成 (ET %s < 09:00)",
+            _now.strftime("%H:%M"),
+        )
+        return None
+
     try:
         from app.playbook.db import PlaybookDB
         from app.playbook.feishu_push import PlaybookPusher
@@ -380,6 +406,23 @@ def run_playbook_morning_push(
         instructions = db.get_instructions_by_date(today)
         if not instructions:
             return None
+
+        generated = False
+        try:
+            generated = bool(db.is_generate_completed(today))
+        except Exception as _ge:
+            logger.warning("[playbook] 生成完成标记读取失败 (按未完成处理): %s", _ge)
+        if not generated:
+            if _et_hhmm < MORNING_PUSH_FALLBACK_ET_HHMM:
+                logger.debug(
+                    "[playbook] 盘前推送等待生成完成 (ET %s, %d 条)",
+                    _now.strftime("%H:%M"), len(instructions),
+                )
+                return None
+            logger.warning(
+                "[playbook] 盘前推送 09:15 兜底放行 (生成未完成, %d 条)",
+                len(instructions),
+            )
 
         ok = PlaybookPusher(db).push_morning_instructions(today, sync=True)
         if ok:

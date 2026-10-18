@@ -60,6 +60,20 @@ def _today_et() -> str:
     return datetime.now(ET).strftime("%Y-%m-%d")
 
 
+def _now_et() -> datetime:
+    return datetime.now(ET)
+
+
+def _in_postmarket_window(now: datetime | None = None) -> bool:
+    """cron 双季发车守卫: 只在 ET 16:00 后真正刷新.
+
+    CST 04:05/05:05 两条 cron 覆盖 EDT/EST; 另一季会落在 ET 15:05,
+    此时必须退出, 否则会把当日未收盘的日K 当成完整 bar 写入。
+    """
+    now = now or _now_et()
+    return now.hour >= 16
+
+
 def _load_state() -> dict:
     """读执行门状态。损坏/缺失 → 按"今日未跑"处理 (fail-open 向**做刷新**方向, 不向跳过)。"""
     try:
@@ -82,12 +96,30 @@ def _save_state(st: dict) -> None:
         logger.warning("[日K刷新] 状态文件写失败 (下轮将重刷, 不阻断): %s", e)
 
 
-def run_check(scheduler=None) -> None:
-    """调度器入口 (AFTER_HOURS): 执行级日门 + 失败有限重试。
+def run_check(scheduler=None, *, enforce_window: bool = False) -> None:
+    """调度器/cron 入口: 执行级日门 + 失败有限重试。
 
     一夜语义: 首轮全量刷新 → fail==0 即写 done, 后续 ~31 轮直接跳过;
               fail>0 则后续轮**只重试失败票**, 至多 MAX_ATTEMPTS_ON_FAIL 轮后停并 WARNING。
+
+    2026-10-18: 原由 AFTER_HOURS 主循环调用, 单轮阻塞 658s。现改由独立 cron 双季
+    发车; cron 路径 enforce_window=True, 用 ET 16:00 守卫拒绝另一季 15:05 的误发。
+    调度器旧调用点已移除; 回滚 = crontab 删两行 + 恢复 scheduler_core 调用块。
     """
+    if enforce_window:
+        try:
+            from app.core.config_container import ConfigContainer
+            if not bool(ConfigContainer.get_instance().get_dotted(
+                    "playbook.daily_bars_refresh_enabled", True)):
+                logger.debug("[日K刷新] playbook.daily_bars_refresh_enabled=false, 跳过")
+                return
+        except Exception as _cfg_err:
+            logger.warning("[日K刷新] 配置读取失败 (fail-open 继续刷新): %s", _cfg_err)
+        if not _in_postmarket_window():
+            logger.debug("[日K刷新] ET %s 不在盘后窗口, 跳过 (cron 双季守卫)",
+                         _now_et().strftime("%H:%M"))
+            return
+
     today = _today_et()
     st = _load_state()
     if st.get("date") != today:
@@ -222,7 +254,12 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--ignore-gate", action="store_true",
                     help="CLI 手工运行默认绕开执行级日门 (显式意图); 本开关仅为语义明示")
+    ap.add_argument("--cron", action="store_true",
+                    help="按执行级日门 + ET 盘后窗运行 (cron 双季发车用)")
     args = ap.parse_args()
+    if args.cron:
+        run_check(None, enforce_window=True)
+        return 0
     res = do_refresh(limit=args.limit, dry_run=args.dry_run)
     if res["fail"]:
         logger.warning("[日K刷新] 失败票: %s", ", ".join(res["failed_syms"][:20]))

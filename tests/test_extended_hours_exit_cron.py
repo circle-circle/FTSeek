@@ -5,6 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import scripts.extended_hours_exit_cron as cron
 from scripts import error_alert
 from scripts.extended_hours_exit_cron import (
     _report_failure,
@@ -91,6 +92,12 @@ def _stub_guards(monkeypatch, *, closekey=None, orphan=None):
                         lambda dry=False: closekey or {"ok": True, "deadlocks": []})
 
 
+def _stub_positions(monkeypatch, positions):
+    import scripts.extended_hours_exit_cron as cron
+
+    monkeypatch.setattr(cron, "_load_open_positions_for_gate", lambda: positions)
+
+
 class TestGuardFieldsPresentOnEveryPath:
     """run_once 的所有返回路径都必须带守卫字段 (单一出口契约)。"""
 
@@ -105,6 +112,7 @@ class TestGuardFieldsPresentOnEveryPath:
     def test_in_session_dry_carries_both_guards(self, monkeypatch, tmp_path):
         """窗内 dry 分支 — 首版正是这里丢字段。"""
         _stub_guards(monkeypatch)
+        _stub_positions(monkeypatch, [{"symbol": "US.TEST"}])
         monkeypatch.setattr(
             "scripts.extended_hours_exit_cron.get_exit_cron_session",
             lambda now=None: "premarket")
@@ -120,6 +128,7 @@ class TestGuardFieldsPresentOnEveryPath:
     def test_in_session_exec_carries_both_guards(self, monkeypatch, tmp_path):
         """窗内真跑分支 (subprocess 完成)。"""
         _stub_guards(monkeypatch)
+        _stub_positions(monkeypatch, [{"symbol": "US.TEST"}])
         monkeypatch.setattr(
             "scripts.extended_hours_exit_cron.get_exit_cron_session",
             lambda now=None: "afterhours")
@@ -141,6 +150,7 @@ class TestGuardFieldsPresentOnEveryPath:
         import subprocess as _sp
 
         _stub_guards(monkeypatch)
+        _stub_positions(monkeypatch, [{"symbol": "US.TEST"}])
         monkeypatch.setattr(
             "scripts.extended_hours_exit_cron.get_exit_cron_session",
             lambda now=None: "premarket")
@@ -202,3 +212,50 @@ class TestGuardFailureIsVisible:
         assert r["closekey_health"]["ok"] is False
         assert "RuntimeError" in r["closekey_health"]["error"]
         assert "ledger db locked" in r["closekey_health"]["error"]
+
+
+class TestFlatSessionSkipsCollector:
+    """2026-10-18 空跑治理: 无仓时不启动 collector, 但探针故障必须 fail-open."""
+
+    def test_flat_session_skips_subprocess(self, monkeypatch, tmp_path):
+        _stub_guards(monkeypatch)
+        _stub_positions(monkeypatch, [])
+        monkeypatch.setattr(
+            "scripts.extended_hours_exit_cron.get_exit_cron_session",
+            lambda now=None: "premarket")
+        monkeypatch.setattr("scripts.extended_hours_exit_cron.LOCK_FILE",
+                            tmp_path / "lock.file")
+
+        def _must_not_spawn(*a, **k):
+            raise AssertionError("无持仓时不应启动 collector")
+
+        monkeypatch.setattr("subprocess.run", _must_not_spawn)
+        r = run_once()
+        assert r["collector"] == "skipped_no_positions"
+        assert r["open_positions_n"] == 0
+        assert "orphan" in r and "closekey_health" in r
+
+    def test_probe_error_fails_open_to_collector(self, monkeypatch, tmp_path):
+        _stub_guards(monkeypatch)
+
+        def _boom():
+            raise RuntimeError("db locked")
+
+        monkeypatch.setattr(cron, "_load_open_positions_for_gate", _boom)
+        monkeypatch.setattr(
+            "scripts.extended_hours_exit_cron.get_exit_cron_session",
+            lambda now=None: "afterhours")
+        monkeypatch.setattr("scripts.extended_hours_exit_cron.LOCK_FILE",
+                            tmp_path / "lock.file")
+
+        class _Done:
+            returncode = 0
+            stdout = "collector-ok"
+            stderr = ""
+
+        monkeypatch.setattr("subprocess.run", lambda *a, **k: _Done())
+        r = run_once()
+        assert r["returncode"] == 0
+        assert r["collector"] == "ok"
+        assert r["open_positions_n"] is None
+        assert "RuntimeError" in r["position_probe_error"]

@@ -12,6 +12,8 @@
   ③ 跨日必须重新全量; 状态文件损坏必须 fail-open 向"**做刷新**"方向(不是向跳过方向)。
 """
 import json
+import sys
+from datetime import datetime
 
 import pytest
 
@@ -119,3 +121,28 @@ def test_cli_path_bypasses_gate(gate, monkeypatch):
     assert rdb.main() == 0
     assert seen == {"limit": 5, "dry_run": True}, "CLI 参数必须原样透传"
     assert not gate["state_path"].exists(), "CLI 手工跑不得写执行门状态 (会误挡当晚调度)"
+
+
+def test_cron_window_skips_before_1600_et(gate, monkeypatch):
+    """双季 cron 的另一季会落在 ET 15:05 — 必须跳过, 不能把未收盘日K当完整bar。"""
+    monkeypatch.setattr(rdb, "_now_et",
+                        lambda: datetime(2026, 9, 10, 15, 5, tzinfo=rdb.ET))
+    rdb.run_check(None, enforce_window=True)
+    assert gate["calls"] == []
+
+
+def test_cron_window_runs_after_1600_et(gate, monkeypatch):
+    monkeypatch.setattr(rdb, "_now_et",
+                        lambda: datetime(2026, 9, 10, 16, 5, tzinfo=rdb.ET))
+    rdb.run_check(None, enforce_window=True)
+    assert len(gate["calls"]) == 1
+
+
+def test_cli_cron_uses_execution_gate(gate, monkeypatch):
+    """--cron 必须走 run_check(enforce_window=True), 不能走裸 do_refresh。"""
+    called = {}
+    monkeypatch.setattr(rdb, "run_check",
+                        lambda scheduler=None, **kw: called.update(kw))
+    monkeypatch.setattr(sys, "argv", ["refresh_daily_bars.py", "--cron"])
+    assert rdb.main() == 0
+    assert called.get("enforce_window") is True
