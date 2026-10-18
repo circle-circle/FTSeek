@@ -7,7 +7,9 @@
 - 新增 `app/event_stream/sources/sec_provider.py`: 复用 `fetch_recent_8k` + `fetch_recent_13dg` → canonical events（source_id=`SEC_FILINGS_PROVIDER`，含 form/items/ticker）。
 - `source_registry`: `build_default_registry(provider_enabled)` 开关；config `event_stream.sec_provider_source_enabled` 默认 **false**；true 时替换 raw `SEC_EDGAR_8K_ATOM` 并补 13D/G（二选一，不重复采）。
 - 修 `sec_8k_provider` 13DG 解析：只收 SC 13D/G，丢弃 SC 13E3（going-private），并过滤旧缓存。
-**验证**: 事件流定向 **45 passed**；全量 **7345 passed / 72 skipped / 3 failed**（均为存量红）；live adapter 周末返回 0 事件/OK（缓存无 13D/G，属正常）；需交易日影子对比。
+- 新增 `app/data/sec_form4_discovery.py`: getcurrent Atom 取 Issuer 条目 + 复用现有 `_parse_form4_filing` 解析 XML; 只保留 P/S、金额≥$50K、非 10b5-1; 每次最多 20 个 filing, 10min 缓存.
+- `SEC_FILINGS_PROVIDER` 同时纳入 8-K / 13D/G / Form 4；仍由 `sec_provider_source_enabled` 一开关控制，默认 false.
+**验证**: 事件流/Form4 定向 **48 passed**；全量 **7348 passed / 72 skipped / 3 failed**（均为存量红）；live Form4 probe 5 个 Issuer：解析器正常，1 笔 $47.6K 卖出被 $50K 阈值过滤。
 **下一步**: 交易日开 `sec_provider_source_enabled=true` 影子，比较 coverage/重复率/下游材料/延迟；Form 4 只在需要全市场发现时补 EFTS，不复用按 symbol 查询逻辑。
 
 ## 2026-10-18 quality_shadow v2 + 源/事件/辩论反馈报表（record-only）

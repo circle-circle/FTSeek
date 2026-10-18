@@ -269,6 +269,7 @@ def test_sec_provider_builds_canonical_events():
 
 def test_fetch_sec_filings_provider_uses_existing_providers(monkeypatch):
     from app.data import sec_8k_provider
+    from app.data import sec_form4_discovery
     from app.event_stream.sources import sec_provider
 
     monkeypatch.setattr(
@@ -284,6 +285,8 @@ def test_fetch_sec_filings_provider_uses_existing_providers(monkeypatch):
             "ticker": "MSFT", "company": "Microsoft", "form": "SC 13G",
             "updated": "2026-10-18T12:05:00+00:00", "url": "https://sec.gov/13g",
         }])
+    monkeypatch.setattr(
+        sec_form4_discovery, "discover_recent_form4", lambda limit=20: [])
     result = sec_provider.fetch_sec_filings_provider()
     assert result.status == "OK"
     assert len(result.events) == 2

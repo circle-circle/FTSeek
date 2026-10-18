@@ -4,7 +4,7 @@ import hashlib
 import json
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from app.event_stream.models import (
     CanonicalEvent,
@@ -26,7 +26,17 @@ def _event_from_row(row: Dict[str, Any], form: str) -> CanonicalEvent:
     updated = str(row.get("updated") or "").strip() or None
     items = row.get("items") if isinstance(row.get("items"), list) else []
     item_labels = row.get("item_labels") if isinstance(row.get("item_labels"), list) else []
-    if form.startswith("SC 13"):
+    if form in ("4", "3", "5"):
+        event_type = "SEC_FORM4_FILING"
+        headline = f"Form {form} - {company} ({ticker})"
+        buy_count = int(row.get("buy_count") or 0)
+        sell_count = int(row.get("sell_count") or 0)
+        net_buy = row.get("net_buy_amount")
+        summary = (
+            f"Form {form} insider activity: buy {buy_count} / sell {sell_count}"
+            + (f", net ${float(net_buy):,.0f}" if isinstance(net_buy, (int, float)) else "")
+        )
+    elif form.startswith("SC 13"):
         event_type = "SEC_13DG_FILING"
         headline = f"{form} - {company} ({ticker})"
         summary = f"{form} subject filing"
@@ -51,6 +61,10 @@ def _event_from_row(row: Dict[str, Any], form: str) -> CanonicalEvent:
             "company": company,
             "items": items,
             "item_labels": item_labels,
+            "transactions": row.get("transactions") or [],
+            "buy_count": row.get("buy_count"),
+            "sell_count": row.get("sell_count"),
+            "net_buy_amount": row.get("net_buy_amount"),
         },
         status="UNVERIFIED",
         confidence=0.85,
@@ -61,8 +75,9 @@ def _event_from_row(row: Dict[str, Any], form: str) -> CanonicalEvent:
 def build_provider_events(
     rows_8k: List[Dict[str, Any]],
     rows_13dg: List[Dict[str, Any]],
+    rows_form4: Optional[List[Dict[str, Any]]] = None,
 ) -> List[CanonicalEvent]:
-    """纯函数: 两个 provider 的结果 → canonical events (去重 by event_id)."""
+    """纯函数: provider 结果 → canonical events (去重 by event_id)."""
     events: List[CanonicalEvent] = []
     seen = set()
     for row in rows_8k:
@@ -82,6 +97,13 @@ def build_provider_events(
         if event.event_id not in seen:
             seen.add(event.event_id)
             events.append(event)
+    for row in (rows_form4 or []):
+        if not isinstance(row, dict):
+            continue
+        event = _event_from_row(row, "4")
+        if event.event_id not in seen:
+            seen.add(event.event_id)
+            events.append(event)
     return events
 
 
@@ -98,6 +120,7 @@ def fetch_sec_filings_provider(
     errors: List[str] = []
     rows_8k: List[Dict[str, Any]] = []
     rows_13dg: List[Dict[str, Any]] = []
+    rows_form4: List[Dict[str, Any]] = []
     try:
         from app.data.sec_8k_provider import fetch_recent_8k
 
@@ -110,8 +133,14 @@ def fetch_sec_filings_provider(
         rows_13dg = fetch_recent_13dg(lookback_hours=lookback_13dg_hours) or []
     except Exception as exc:
         errors.append(f"13D/G provider: {type(exc).__name__}: {exc}")
+    try:
+        from app.data.sec_form4_discovery import discover_recent_form4
 
-    events = build_provider_events(rows_8k, rows_13dg)
+        rows_form4 = discover_recent_form4(limit=20) or []
+    except Exception as exc:
+        errors.append(f"Form 4 discovery: {type(exc).__name__}: {exc}")
+
+    events = build_provider_events(rows_8k, rows_13dg, rows_form4)
     latency = int((time.perf_counter() - started) * 1000)
     if errors and not events:
         return SourceResult(
@@ -123,7 +152,8 @@ def fetch_sec_filings_provider(
         )
 
     payload_text = json.dumps(
-        {"8k": rows_8k, "13dg": rows_13dg}, ensure_ascii=False, sort_keys=True)
+        {"8k": rows_8k, "13dg": rows_13dg, "form4": rows_form4},
+        ensure_ascii=False, sort_keys=True)
     payload_hash = hashlib.sha256(payload_text.encode("utf-8")).hexdigest()
     raw = RawEvent(
         raw_id=make_raw_id(SOURCE_ID, payload_hash),
