@@ -405,6 +405,13 @@ llm:
     emergency_review:
       fallback: qwen
       primary: deepseek
+    # 2026-10-18: LLM Event Extractor/Verifier A/B harness (record-only, 默认 dry-run)
+    event_llm_ab:
+      cache_on_fail: false
+      fallback: deepseek
+      max_tokens: 2000
+      primary: qwen-flash
+      temperature: 0.1
     failure_mode_miner:
       fallback: qwen
       primary: deepseek
