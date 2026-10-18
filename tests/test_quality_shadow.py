@@ -107,9 +107,34 @@ def test_skip_has_no_quality_tags():
 def test_attach_merges_metadata_and_preserves_existing_keys():
     inst = _inst(metadata={"entry_confirm": {"status": "CONFIRMED"}})
     tags = attach_quality_shadow(inst)
-    assert tags["schema"] == "quality_shadow_v1"
+    assert tags["schema"] == "quality_shadow_v2"
     assert inst["metadata"]["entry_confirm"] == {"status": "CONFIRMED"}
     assert inst["metadata"]["quality_shadow"]["score_band"] == "HIGH"
+
+
+def test_source_event_debate_attribution_fields():
+    inst = _inst()
+    inst["raw_instruction"] = {
+        "score_band": "HIGH",
+        "source": "universe_expansion",
+        "origin": {
+            "info_channel": "news_headline",
+            "first_news_id": "news-1",
+            "evidence_ref": "event_id=abc123def456 | family=filing_8k",
+        },
+        "debate_outcome": "⚠️ 方向一致但挑战者有质疑(BUY)",
+        "challenger_self_confidence": "MEDIUM",
+        "challenger_direction": "BUY",
+        "critique": {"verdict": "DOWNGRADE", "weakest_link": "证据缺口"},
+    }
+    tags = build_quality_shadow(inst)
+    assert tags["source"] == "universe_expansion"
+    assert tags["info_channel"] == "news_headline"
+    assert tags["first_news_id"] == "news-1"
+    assert tags["event_ids"] == ["abc123def456"]
+    assert "挑战者" in (tags["debate_outcome"] or "")
+    assert tags["challenger_self_confidence"] == "MEDIUM"
+    assert tags["critique_verdict"] == "DOWNGRADE"
 
 
 def test_raw_instruction_json_string_is_parsed():

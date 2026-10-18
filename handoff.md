@@ -1,5 +1,16 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-18 quality_shadow v2 + 源/事件/辩论反馈报表（record-only）
+
+**触发**: 用户认可“不要重复 LLM 链”，继续补 source/event/debate 反馈闭环。
+**落地**（代码已落盘，未提交；v2 标签需主服务重启后对新指令生效）:
+- `quality_shadow` v2 新增: `source / info_channel / first_news_id / evidence_ref / event_ids / event_family / debate_outcome / challenger_self_confidence / challenger_direction / critique_verdict / critique_weakest_link`。
+- 新增 `scripts/quality_shadow_report.py`（只读）: 历史行无标签时现场回算；按 origin/direction/evidence_tier/debate_outcome/quality 标签分组，输出 fwd T+1、gross/fee/net bps、net $、win%、PF。
+- **不新增 LLM 调用、不接线交易**；A/B harness 保持离线研究工具。
+**实跑（只读）**: 高分 LONG 降级 True 组 fwd **-56.3bps** / net **-13.7bps**；挑战者弃权 BUY 组 net **+17.4bps** / PF 1.8；2模型一致 BUY 组 fwd **-71.2bps**；证据层 HARD/MARKET 的 fwd 与执行净利出现分化，说明仍需“证据+方向+入场/出场”联合归因。
+**验证**: quality_shadow/DB/ratchet/pipeline 定向 **134 passed**；全量 **7341 passed / 72 skipped / 3 failed**（均为存量红）；报表在生产库只读实跑通过。顺带修 `test_playbook_pipeline` 伪模块 `AbsoluteCircuitBreaker` 导入隔离，以及 report 坏 instruction_id 留痕（棘轮回 921）。
+**下一步**: 每周跑报表，一次只改一个维度；不新建第二套 LLM 链。
+
 ## 2026-10-18 LLM Event Extractor/Verifier A/B harness（record-only）
 
 **触发**: 用户令「继续」；在 event_meta 数据层之后，先搭 LLM 抽取/审计的 A/B 仪器，不接线交易。

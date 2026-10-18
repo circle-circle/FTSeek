@@ -123,7 +123,10 @@ class TestCloseTradeRecord:
         #   4 条断言红。此处接住 target_env 并记录, 使 per-arm 路由成为可断言事实而非静默通过。
         acb_targets = []
         module("app.risk.absolute_circuit_breaker",
-               get_absolute_circuit_breaker=lambda target_env="sim": (acb_targets.append(target_env), acb)[1])
+               get_absolute_circuit_breaker=lambda target_env="sim": (acb_targets.append(target_env), acb)[1],
+               # 伪模块必须保留 app.risk.__init__ 的另一个导入名, 否则本文件单独运行时
+               # close_flow -> app.risk.exit_reasons 触发 app.risk 初始化会 ImportError.
+               AbsoluteCircuitBreaker=object)
         module("app.risk.pdt_guard", get_pdt_guard=lambda: pdt)
         module("app.coordinator.manual_hold_registry", manual_hold_registry=SimpleNamespace(
             get_hold_info=lambda symbol: {}, unregister=callback("unregister")))

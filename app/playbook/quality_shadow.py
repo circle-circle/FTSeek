@@ -20,7 +20,11 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 from typing import Any, Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 
 def _load_obj(value: Any) -> Dict[str, Any]:
@@ -103,6 +107,11 @@ def build_quality_shadow(inst: Dict[str, Any]) -> Dict[str, Any]:
     ).lower()
     archetype = str(raw.get("entry_archetype") or "UNKNOWN").upper()
     decision_id = str(inst.get("decision_id") or "")
+    info_channel = str(origin.get("info_channel") or raw.get("info_channel") or "")
+    first_news_id = str(origin.get("first_news_id") or raw.get("first_news_id") or "")
+    evidence_ref = str(origin.get("evidence_ref") or raw.get("ue_evidence") or "")
+    event_ids = sorted(set(re.findall(r"event_id=([A-Za-z0-9_-]{6,})", evidence_ref)))
+    critique = raw.get("critique") if isinstance(raw.get("critique"), dict) else {}
     origin_label = "UE" if (
         origin or raw.get("ue_batch_id") or raw.get("ue_evidence")
         or decision_id.startswith("universe_expansion")
@@ -134,9 +143,15 @@ def build_quality_shadow(inst: Dict[str, Any]) -> Dict[str, Any]:
     ))
 
     return {
-        "schema": "quality_shadow_v1",
+        "schema": "quality_shadow_v2",
         "direction": direction,
         "origin": origin_label,
+        "source": str(raw.get("source") or "") or None,
+        "info_channel": info_channel or None,
+        "first_news_id": first_news_id or None,
+        "evidence_ref": evidence_ref[:300] or None,
+        "event_ids": event_ids,
+        "event_family": str(raw.get("event_family") or origin.get("event_family") or "") or None,
         "score": score,
         "score_band": score_band,
         "confidence": confidence,
@@ -147,6 +162,11 @@ def build_quality_shadow(inst: Dict[str, Any]) -> Dict[str, Any]:
         "evidence_gaps": gaps,
         "score_lowered_by_challenger": lowered,
         "challenger_score": _as_float(raw.get("challenger_score_shadow")),
+        "challenger_self_confidence": str(raw.get("challenger_self_confidence") or "") or None,
+        "challenger_direction": str(raw.get("challenger_direction") or "") or None,
+        "critique_verdict": str(critique.get("verdict") or "") or None,
+        "critique_weakest_link": str(critique.get("weakest_link") or "")[:200] or None,
+        "debate_outcome": str(raw.get("debate_outcome") or "")[:200] or None,
         "entry_archetype": archetype,
         "borrow_data_basis": borrow_basis or None,
         "would_downgrade_high_score_long": downgrade,
@@ -171,5 +191,7 @@ def attach_quality_shadow(inst: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         metadata["quality_shadow"] = tags
         inst["metadata"] = metadata
         return tags
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "[quality_shadow] 标签计算失败 (不影响指令入库): %s", exc, exc_info=True)
         return None

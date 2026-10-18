@@ -792,5 +792,5 @@ def test_save_instruction_attaches_quality_shadow(db, monkeypatch):
     assert row["direction"] == "BUY"
     meta = json.loads(row["metadata_json"])
     shadow = meta["quality_shadow"]
-    assert shadow["schema"] == "quality_shadow_v1"
+    assert shadow["schema"] == "quality_shadow_v2"
     assert shadow["would_downgrade_high_score_long"] is True
