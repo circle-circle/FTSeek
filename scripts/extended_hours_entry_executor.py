@@ -2527,19 +2527,8 @@ def collect(session, dry=False):
             earnings_reason_counts = {}
             earnings_reject_details = []
             earnings_near_misses = []
+            research_pool = []
             research_active = _research_arm_active()
-            research_extra = (
-                _research_source_candidates(
-                    session, qctx, {m["symbol"] for m in movers})
-                if research_active else []
-            )
-            research_pool = list(research_extra)
-            for _ri in research_extra:
-                _rsrc = str(_ri.get("_source") or "?")
-                counts[f"research_src_{_rsrc}_pool"] = (
-                    counts.get(f"research_src_{_rsrc}_pool", 0) + 1
-                )
-                _record_research_funnel(session, today, _ri, "selected")
             for item in movers:
                 symbol, price, change_pct, volume = item["symbol"], item["px"], item["chg"], item["vol"]
                 if symbol in held:
@@ -2705,6 +2694,15 @@ def collect(session, dry=False):
                     "direction": _direction,
                 })
             # 研究臂 dry 通道: 严格臂候选列完后补列 (无配额模拟, 与严格臂 dry 对称)。
+            if research_active:
+                for _ri in _research_source_candidates(
+                        session, qctx, {m["symbol"] for m in movers}):
+                    research_pool.append(_ri)
+                    _rsrc = str(_ri.get("_source") or "?")
+                    counts[f"research_src_{_rsrc}_pool"] = (
+                        counts.get(f"research_src_{_rsrc}_pool", 0) + 1
+                    )
+                    _record_research_funnel(session, today, _ri, "selected")
             if research_pool:
                 counts["research_pool"] = len(research_pool)
                 _research_pass_dry(
@@ -2816,19 +2814,8 @@ def collect(session, dry=False):
             earnings_reason_counts = {}
             earnings_reject_details = []
             earnings_near_misses = []
+            research_pool = []
             research_active = _research_arm_active()
-            research_extra = (
-                _research_source_candidates(
-                    session, qctx, {m["symbol"] for m in movers})
-                if research_active else []
-            )
-            research_pool = list(research_extra)
-            for _ri in research_extra:
-                _rsrc = str(_ri.get("_source") or "?")
-                counts[f"research_src_{_rsrc}_pool"] = (
-                    counts.get(f"research_src_{_rsrc}_pool", 0) + 1
-                )
-                _record_research_funnel(session, today, _ri, "selected")
             for item in movers:
                 symbol, price, change_pct, volume = item["symbol"], item["px"], item["chg"], item["vol"]
                 attempt_key = f"{today}:{symbol}"
@@ -3035,6 +3022,15 @@ def collect(session, dry=False):
                     break
             # 研究臂真单通道 (纪律①严格臂优先): 只有严格臂循环收口后仍有剩余配额才跑。
             #   每单前复查配额+在仓帽 (_open_exposure_gate), 全链 gate_mode 打标。
+            if research_active:
+                for _ri in _research_source_candidates(
+                        session, qctx, {m["symbol"] for m in movers}):
+                    research_pool.append(_ri)
+                    _rsrc = str(_ri.get("_source") or "?")
+                    counts[f"research_src_{_rsrc}_pool"] = (
+                        counts.get(f"research_src_{_rsrc}_pool", 0) + 1
+                    )
+                    _record_research_funnel(session, today, _ri, "selected")
             if research_pool:
                 counts["research_pool"] = len(research_pool)
                 total_today, session_today = _research_pass_real(
