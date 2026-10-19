@@ -32,7 +32,16 @@
 - 第六批读数 (2026-10-19, 未提交): `ext_entry_exec_price_shadow` 新增只读读数器 `scripts/ext_entry_exec_price_eval.py` + 契约测试；**1686 轮 / 15 天**，current_price_pool 中位 14 → shadow_execution_pool 中位 2，**中位缩减 86.4%**；prefiltered 19,352 条 / 995 symbols；实际 EXT 成交 5 笔全 >$50、**低价成交 0**、交集 0；登记 `READOUT_ONLY`，11/30 到期人工裁维持/退役。`check_mounting` 0；**128 passed**；只读离线，未重启。
 - 第七批读数 (2026-10-19, 未提交): `da_true_reverse_shadow` 阶段0健康核对: **4 events / 4 unique event_id**（TSLA 9/23、ORCL 9/29、UMC 10/5、SKHY 10/16），artifacts **4/4** 存在、checkpoint 含 `_ic_decision_id`，cron logs 10/07-10/16 无 error；登记 `PHASE0_READOUT` + `stale_expected`（事件稀疏≠断流），Phase1 enforcement 待用户裁；**136 passed**；未重启。
 - **提交**: `4dbd8b26c` — `[hotfix] 影子读数: ext exec price $50 + da_true_reverse 阶段0`（已推送）。
-- 未做: 85 个 orphan YAML 叶（需 validator/CRITICAL_KEYS/仓外三面复核）、245 条注释 cron、双 carrier、日亏权威、净口径、手动平仓门。
+- 第八批配置减法 (2026-10-19, 未提交): 删除 7 个零消费叶 — `pipeline.market_context.capital_safety` 5 键（仅 YAML 自引用；现役水位读 `risk.capital_safety.water_levels`）+ `database.backup_enabled` / `backup_interval_hours`（备份由 `scripts/db_backup.sh` 独立调度）。权威 strict `ConfigValidator` **0 error / 0 warning**；`config_validate.py` 的 348 未用/135 缺失是存量漂移，不含本次 7 键；census 仍显示 65 orphan 因扫描面含历史 `.bak`，live YAML 已无这些键。死键无读者，未重启。
+- 第九批 crontab 减法 (2026-10-19, 非 git): 删除 **26 条被注释掉的完整调度行**（dead jobs）；活动行 **124→124 逐字等价**，总行 394→368，解释性注释保留；备份 `data/backups/crontab.backup.20261019_subtraction.txt`；未重启。
+- 第十批卫生减法 (2026-10-19, 非 git): 删除 `data/*.db` 零字节占位 **12 个**（无数据；event_stream/ftseek_us 等非零库未动）；未重启。
+- 第十一批 carrier 审计 (2026-10-19, 只读未改): `error_alert` 4 条 cron + 4 个 Hermes no_agent carrier 同窗；Hermes 载体正常静默（非双推），executions.db 显示 completed/error=0；双执行约 340 次/周。**裁决建议=保留双侧**（告警冗余价值 > 执行成本）；候选删 4 条 cron 行（active 124→120，等价）已备未安装。`insider` cron 仅写日志，Hermes carrier 负责投递；建议同样保留双侧。
+- 第十二批备份归档 (2026-10-19, 非 git): 40 个旧 crontab 快照 + 8 个旧 config 备份 → `data/backups/config_crontab_archive_20261019.tar.gz`（256KB / 48 members）；保留最新 5 crontab + 3 config；原件删除；未重启。
+- 日亏权威与净口径审计 (2026-10-19, 只读未改): `circuit-breaker-map.md` 与六权威登记已 10-15 刷新、阈值核对一致，无需改文档；净 PnL 双实现横跨 30+ SQL 站点、当前 delta=0，统一属 DEB 级测量重构，未动。
+- 第十三批退役 (2026-10-19, 未提交): 用户令「按合理性和建议执行」⇒ `ext_entry_exec_price_shadow` **KILLED**：1686 轮/15 天，$50 门槛中位缩减 86.4%，实际 EXT 成交 5 笔全 >$50、低价 0、交集 0；crontab 两行内联 `EXT_ENTRY_EXEC_PRICE_SHADOW` 改 **false 真停采**；`_CONSUMER_ACK` 认领 executor 的 inert 写方引用；数据保留；重开=新预注册；**136 passed**。
+- 本轮重启 (退役批): 2026-10-19 11:06 CST，启动冒烟 **7/7**，PID 2341920；重启前仅 ADSK 一个模拟仓，exit_intents 189 条全 BOOKED。
+- 裁决结论 (未改): 双 carrier 保留双侧（非双推，冗余价值 > 执行成本）；六套日亏权威保留分层（地图已准确）；净 PnL 双实现留 DEB 级单口径重构（当前 delta=0）。
+- 未做: 剩余 orphan 叶按块保留 — `options/short_strategy` 有活读者，`exit_profiles/playbook_horizon` 属动态退出配置，`strategies/news/llm` 多为遗留或仓外消费；245 条注释 cron、双 carrier、日亏权威、净口径仍待逐项裁决。（需 validator/CRITICAL_KEYS/仓外三面复核）、245 条注释 cron、双 carrier、日亏权威、净口径、手动平仓门。
 
 ## 2026-10-18 推送治理 P0+P1（心跳/复盘/回滚/日报降频）
 

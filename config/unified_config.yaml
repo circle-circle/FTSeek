@@ -183,8 +183,8 @@ data_sources:
     - K_1M
     active_set_orderflow_enabled: true
 database:
-  backup_enabled: true
-  backup_interval_hours: 24
+  # 2026-10-19 减法批: backup_enabled/backup_interval_hours 零读者;
+  # 备份由 scripts/db_backup.sh 独立调度. 回滚见 git.
   path: data/ftseek_us.db
   type: sqlite
 decision:
@@ -1051,12 +1051,8 @@ paths:
 pipeline:
   market_context:
     cache_ttl_minutes: 30
-    capital_safety:
-      alert_drawdown: -0.1
-      circuit_breaker: -0.35
-      danger_drawdown: -0.2
-      enabled: true
-      warning_drawdown: -0.05
+    # 2026-10-19 减法批: 删除死块 pipeline.market_context.capital_safety
+    # (仅 YAML 自引用; 现役水位读 risk.capital_safety.water_levels). 回滚见 git.
     enabled: true
     vix_threshold: 25
   master_switch: legacy

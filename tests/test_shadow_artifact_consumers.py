@@ -182,11 +182,14 @@ def test_ack_does_not_hide_unclaimed_new_cases():
     + 一次性结算器, 写方链已退役 ⇒ 归档展示型, 逐条实测后认领。
     2026-10-18 新增 p1_1_vwap_slope (减法批): 消费者=gate_block_counterfactual.py 周报,
     产物只落盘/print, 无生产回灌 ⇒ 终点报表型, 逐条实测后认领。
+    2026-10-19 新增 ext_entry_exec_price_shadow (退役批): 活跃 cron 内 executor 是写方,
+    开关 false 后分支 inert, 非生产读方 ⇒ 逐条实测后认领。
     """
     expected = {"universe_expansion_shadow", "limit_entry", "da_glm_shadow",
                 "da_prompt_distill_shadow", "premarket_peer_shadow",
                 "ue_midday_shadow", "ue_earnings_clue_shadow", "eth_ext_entry_prefilter",
-                "ue_short_boost_shadow", "p1_1_vwap_slope"}
+                "ue_short_boost_shadow", "p1_1_vwap_slope",
+                "ext_entry_exec_price_shadow"}
     assert set(sr._CONSUMER_ACK) == expected, (
         f"豁免表新增了未认领条目: {set(sr._CONSUMER_ACK) - expected} — "
         f"每条必须逐条实测 (消费者是终点报表还是生产门) 后才可加, 禁批量豁免")

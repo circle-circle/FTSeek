@@ -2530,8 +2530,8 @@ REGISTRY: list[ShadowItem] = [
     ),
     ShadowItem(
         id="ext_entry_exec_price_shadow",
-        name="EXT 执行池价格 $50 影子 (record-only)",
-        status=ShadowStatus.OBSERVING,
+        name="EXT 执行池价格 $50 影子 (record-only) (⛔已退役 2026-10-19)",
+        status=ShadowStatus.KILLED,
         description="EXT 候选池运行成本/干扰观测 (非绩效影子): $5→$50 执行池价格下限的"
                     "逐轮反事实计数 — 复用已取榜单/快照价记 candidates_n / "
                     "current_price_pool_n / shadow_execution_pool_n + prefiltered_out 明细。"
@@ -2550,8 +2550,14 @@ REGISTRY: list[ShadowItem] = [
                             "(防僵尸影子, eth_relative_volume_gate 同型先例)。",
         eval_script="scripts/ext_entry_exec_price_eval.py",
         eval_on_demand=True,
-        no_adjudication_reason="READOUT_ONLY: 非绩效观测; 2026-10-19 读数 1686 轮/15 天, $50 门槛中位移除 86.4% 价格池, 实际 EXT 成交 5 笔全 >$50/低价 0; 11/30 到期人工裁维持/退役.",
         created="2026-09-28",
+        last_evaluated="2026-10-19",
+        collection_retired=True,
+        verdict_history=[{"date": "2026-10-19", "verdict": "KILLED_REASONABLENESS",
+                          "evidence": "1686 轮/15 天; 实际 EXT 成交 5 笔全 >$50, 低价成交 0, "
+                                      "交集 0; $50 门槛中位缩减 86.4% 价格池; 观测问题已回答, "
+                                      "继续采集无新增信息; crontab 两行内联开关 false; 数据保留; "
+                                      "重开=新预注册."}],
         cross_ref=("eth_ext_entry_prefilter",),
         notes="P0.5 同轴枚举 (2026-09-28 复核后补登, 立案时漏查注册表违反当日 template 新增"
               "强制项): ①eth_ext_entry_prefilter — 同人群(盘前入场候选)同轴(price_band 五档含 "
@@ -2565,7 +2571,11 @@ REGISTRY: list[ShadowItem] = [
               "2026-10-19 只读读数 (scripts/ext_entry_exec_price_eval.py): 1686 轮/15 天; "
               "current_price_pool 中位 14, shadow_execution_pool 中位 2, 中位缩减 86.4%; "
               "prefiltered 19,352 条/995 symbols; 实际 EXT 成交 5 笔全 >$50, 低价成交 0, 交集 0; "
-              "结论=数据已可读数, 维持/退役待裁。",
+              "结论=数据已可读数, 维持/退役待裁。"
+              "2026-10-19 用户令「按合理性和建议执行」⇒ 退役: 1686 轮/15 天, "
+              "$50 门槛中位缩减 86.4%, 实际 EXT 成交 5 笔全 >$50/低价 0/交集 0; "
+              "crontab 两行内联 EXT_ENTRY_EXEC_PRICE_SHADOW 改 false 真停采; "
+              "数据保留; 重开=新预注册。",
     ),
     ShadowItem(
         id="eth_short_probe",
@@ -3978,6 +3988,10 @@ _CONSUMER_ACK: dict[str, str] = {
         "reason=falsification_vwap_slope 行, 产物 gate_block_counterfactual_latest.json "
         "全仓无其他脚本读, 只落盘/print, 无 push/生产回灌。⇒ 停采只会让周报数字停增, "
         "不断生产料; p1_1 门本体已 GRADUATED, 采集继续。"),
+    "ext_entry_exec_price_shadow": (
+        "2026-10-19 退役后实测: 活跃 cron 内的 extended_hours_entry_executor.py 是**写方** "
+        "(只在 EXT_ENTRY_EXEC_PRICE_SHADOW=true 分支写该 jsonl); crontab 两行已改 false "
+        "⇒ 写分支 inert, grep 全仓无生产读方; 停采不断任何生产料。数据保留。"),
 }
 
 
