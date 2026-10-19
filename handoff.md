@@ -25,6 +25,8 @@
 - 二轮重启 (slcap 载体 + entry_anchor_dual eval 落盘后): 2026-10-18 22:43 CST，启动冒烟 **7/7**，PID 2241986；重启前同一状态 (ADSK / 189 BOOKED)。
 - **提交**: `6a3fa2bdf` — `[hotfix] 减法修复批: 存储/棘轮/死代码/影子注册表` (未推送; `.env.us` 为 gitignored 运行机改动, 未入提交)。
 - 退役后最终重启: 2026-10-18 22:48 CST，启动冒烟 **7/7**，PID 2243763；线上加载 slcap KILLED + entry_anchor_dual PERIOD_GATE。
+- 第三批影子读数 (2026-10-19 09:39 CST, 未提交): `eth_held_exit_shadow` 按 10-15 追认改为 **PERMANENT_MEASURE 移交失败监测面** + `stale_expected`（删除过期 NO_EVAL_SCRIPT 挂账）；`ext_entry_earnings_criterion_shadow` 新增 `scripts/ext_earnings_criterion_eval.py` + 契约测试：**6674 行 / 18 ET日 / 522 legacy_blocked_new_pass**，EXT 成交自 09-23 仅 **5 笔**（均 +$15.82）⇒ 判据①样本门未达，登记 `SAMPLE_GATE`；台账轴与成交轴分离。`check_mounting` 0；105 tests passed。
+- 第三批读数后重启: 2026-10-19 09:39 CST，启动冒烟 **7/7**，PID 2326756；重启前仅 ADSK 一个模拟仓，exit_intents 189 条全 BOOKED。
 - 未做: 85 个 orphan YAML 叶（需 validator/CRITICAL_KEYS/仓外三面复核）、245 条注释 cron、双 carrier、日亏权威、净口径、手动平仓门。
 
 ## 2026-10-18 推送治理 P0+P1（心跳/复盘/回滚/日报降频）

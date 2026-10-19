@@ -3544,8 +3544,8 @@ REGISTRY: list[ShadowItem] = [
                             "⇒ 提请阶段1 行为变更 (须用户二次裁决)",
         eval_script=None,
         eval_on_demand=True,
-        no_adjudication_reason="NO_EVAL_SCRIPT: 判据已预注册 (RFC-127 §4) 但无结算执行体 — "
-                               "达门前建 eval 或人工结算",
+        stale_expected=True,
+        no_adjudication_reason="PERMANENT_MEASURE: 移交失败监测面 (2026-10-15 追认后 §4 原判据失效); 新行即 P1, 无毕业门.",
         created="2026-10-01",
         notes="唯一消费者 observe_nightly_supply.py:259-272 (今日有行即 P1 finding)。"
               "现 n=2 (10-01 ACN / 10-08 PEP)。⚠️ **2026-10-15 审计发现 (待用户裁)**: "
@@ -3607,16 +3607,18 @@ REGISTRY: list[ShadowItem] = [
                             "legacy_blocked_new_pass 的日去重计数 ⇒ 10 月财报季裁决「修口径放回多少票」, "
                             "并与 §3.3「温和票 +$23.09/笔」交叉验证; 单票级别不得用比 tick 计数 "
                             "(会被上游闸波动稀释)。",
-        eval_script=None,
+        eval_script="scripts/ext_earnings_criterion_eval.py",
         eval_on_demand=True,
-        no_adjudication_reason="NO_EVAL_SCRIPT: 判据已预注册 (RFC-097 L106-109) 但无结算执行体 — "
-                               "交易日去重计数届时人工或建 eval",
+        no_adjudication_reason="SAMPLE_GATE: EXT 成交自 2026-09-23 仅 5 笔 <20; 台账读数已建, 待 n≥20 再裁; 判据②需人工交叉验证.",
         created="2026-09-22",
         notes="2026-10-15 读数: 5765 行 / 16 ET日 / 2026-09-22~10-14; legacy_blocked_new_pass "
               "True=493。write-only 无代码消费方 (唯一读数=人工 + RFC-097 一次性实证脚本 "
               "verify_earnings_criterion.py)。计数轴注: min_n=20 数的是对照行 "
               "(where:legacy_blocked_new_pass=True), 与判据①的「延长时段成交笔数」不同轴, "
-              "判据①须另行按成交口径读。回滚: EXT_EARNINGS_CRITERION_SHADOW=false (无需重启)。",
+              "判据①须另行按成交口径读。回滚: EXT_EARNINGS_CRITERION_SHADOW=false (无需重启)。"
+              "2026-10-18 只读读数: 6674 行 / 18 ET日 / legacy_blocked_new_pass 522 行; "
+              "EXT 成交自 2026-09-23 仅 5 笔 (均 +$15.82) ⇒ 判据①样本门未达; "
+              "readout scripts/ext_earnings_criterion_eval.py, 待 n≥20 再裁。",
     ),
     # ── 2026-10-17 全链路审计 P0-1: blocked_exits 符号级冻结面的观测 ──
     ShadowItem(
