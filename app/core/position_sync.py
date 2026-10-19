@@ -2342,22 +2342,17 @@ class USPositionSync:
             except Exception:
                 _self_managed = set()
 
-            # 2026-07-14: 同步排除 playbook_sim 仓位 — sync 循环正确跳过了它们 (line 1069),
-            #   但一致性校验未排除 → 永久误报 "Memory 缺少 Broker 持仓"
-            _playbook_symbols = set()
-            try:
-                _pc = safe_sqlite_connect(_get_db_path(), timeout=5)
-                _pb_rows = _pc.execute(
-                    "SELECT DISTINCT symbol FROM open_positions "
-                    "WHERE owner_strategy = 'playbook_sim' "
-                    "AND (sync_status IS NULL OR sync_status NOT IN ("
-                    "'closed_by_daemon','closed_by_scheduler','closed_by_sync',"
-                    "'closed_emergency','stale_not_in_broker'))"
-                ).fetchall()
-                _playbook_symbols = {r[0] for r in _pb_rows}
-                _pc.close()
-            except Exception:
-                pass
+            # 2026-10-20 RFC-151: playbook 自管标的排除集改用 SSOT 判据 —
+            #   trade_records.source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') 且未平,
+            #   与 sync 循环跳过口径 (L1701 playbook_open_check) 同源。
+            #   旧实现查 open_positions.owner_strategy='playbook_sim', 但 EXT (盘前/盘后) 仓的
+            #   owner_strategy='extended_hours_entry' (trade_records 仍记 PLAYBOOK_SIM)
+            #   ⇒ 排除集漏这一级 ⇒ Memory 分支每轮永久误报 "Memory 缺少 Broker 持仓"
+            #   (10/19 实盘: ASML/TSM/BA, 每 5min 一条刷屏)。
+            #   注: load 返回 None (查询失败) 时 playbook_open_check 回退逐 symbol
+            #   is_playbook_open_position, 保留其分层 fail-closed 语义。
+            from app.playbook.pipeline import load_playbook_open_symbols, playbook_open_check
+            _pb_open_syms_mem = load_playbook_open_symbols()
 
             # 检查不一致
             issues = []
@@ -2370,8 +2365,11 @@ class USPositionSync:
                 if missing_futu:
                     issues.append(f"DB 有多余持仓 (Broker 已无): {missing_futu}")
 
-            # Memory 比较时排除自管持仓 + playbook_sim (两者均故意不写入 position_store)
-            futu_set_for_mem = futu_set - (_self_managed or set()) - _playbook_symbols
+            # Memory 比较时排除自管持仓 + playbook 自管仓位 (两者均故意不写入 position_store)
+            futu_set_for_mem = {
+                s for s in (futu_set - (_self_managed or set()))
+                if not playbook_open_check(s, _pb_open_syms_mem)
+            }
             if futu_set_for_mem != mem_set and self.position_store:
                 missing_mem = futu_set_for_mem - mem_set
                 missing_mem_ghost = mem_set - futu_set_for_mem
@@ -2503,7 +2501,9 @@ class USPositionSync:
                     logger.debug(f"[US Sync Capital] Capital Safety 更新失败 (不影响主流程): {e}")
 
         except Exception as e:
-            logger.debug(f"[US Sync Consistency] 校验异常 (已忽略): {e}")
+            # 2026-10-20 RFC-151: debug→warning — 本段是纯可观测性检查, 异常被 debug 吞掉时
+            #   "告警消失" 与 "误报消失" 在日志上无法区分 (假绿), 与本函数要解决的问题同类。
+            logger.warning(f"⚠️ [US Sync Consistency] 校验异常 (整段校验未执行): {e}", exc_info=True)
 
     def _get_trade_env(self) -> int:
         """获取当前交易环境 (0=实盘, 1=模拟) — 跟随 AUTO_TRADE_ACCOUNT"""
