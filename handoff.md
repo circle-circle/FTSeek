@@ -3,7 +3,7 @@
 ## 2026-10-19 财报日历刷新降噪（用户同意）
 
 **触发**: 日志每约 50 分钟重复 `获取财报日历 (horizon=3month)` 311 条；确认是 SignalScanLoop 每 10 轮 `force_refresh=True`，绕过 EarningsCalendar 的 1h 缓存。
-**落地**（代码已落盘，未提交；主服务需重启）:
+**落地**（代码已提交 `7c1e3e5d7`；主服务需重启）:
 - `signal_pipeline`: `_EARNINGS_REFRESH_INTERVAL` 10→12（盘前 5min×12≈60min）；去掉 `force_refresh=True`，由 1h 缓存控制实际拉取。
 - `earnings_calendar`: 增加内容指纹（symbol/reportDate/timeOfTheDay/estimate）；首次/内容变化 INFO，缓存命中/内容不变 DEBUG；`获取财报日历` 降到 DEBUG。
 - 未改数据源、7 天双窗口、全量 310 只覆盖或财报门逻辑。
