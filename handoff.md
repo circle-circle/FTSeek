@@ -1,5 +1,17 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-20 RFC-151 一致性校验 P2 假阳修复（用户令修复，已上线）
+
+**触发**: 10-19 复核发现的 P2 —— `⚠️ [US Sync Consistency] Memory 缺少 Broker 持仓` 贯穿全天刷屏（盘后实测仍每 5min 一条）。
+**根因（口径漂移）**: `_verify_and_sync_capital` 的 Memory 分支用 `open_positions.owner_strategy='playbook_sim'` 构造排除集，而 sync 循环（L1701）用 `playbook_open_check`（判据 = `trade_records.source_type IN (PLAYBOOK_SIM,PLAYBOOK_LIVE)` 且未平）。EXT 盘前/盘后入场仓的 `owner_strategy='extended_hours_entry'`（trade_records 仍记 PLAYBOOK_SIM）⇒ 排除集漏这一级。现场自相矛盾：同一轮 `Done | Futu: 4 | playbook自管: 4 | 一致性: ✓` 紧接一条 Memory 缺失告警（ASML/TSM/BA）。
+**落地** (提交 `609d30fea`, 未推送):
+- 删内联 `owner_strategy='playbook_sim'` 查询（16 行）→ 改 `load_playbook_open_symbols()` + `playbook_open_check`（查询失败回退逐 symbol `is_playbook_open_position`，保留 fail-closed）。**未采用「补 OR extended_hours_entry」**：会给第二套判据再打补丁，下个新通道再漏一次。
+- 同函数整段 `except` 由 `debug` 升 `warning(..., exc_info=True)`：debug 吞异常会让「误报消失」与「整段校验已死」在日志上无法区分（假绿）。
+- 新测试 `tests/test_sync_consistency_memory_exclusion.py`（5 例，双向：不刷屏 / 真缺口仍报 / 预载回退 / 无 owner_strategy 字面量 / 异常可见）。
+**验证**: 定向 **5 passed**；回归面（coordinator + playbook m2 + rfc080 + open_row_pnl + pending_sync + backfill_clock + last_sync_at）**336 passed**。活体：`07:02:44 CST` 重启（PID 2538486 线程在 L676 休眠位），启动对账 + 之后 ≥2 个 300s 周期，`US Sync Consistency` **0 条**、`校验异常` **0 条**、ERROR/CRITICAL **0 条**；`load_playbook_open_symbols()` 实测返回 {ADSK,ASML,TSM,BA} ⇒ `futu_set_for_mem=[]`。
+**回滚**: `git revert 609d30fea` + `systemctl restart ftseek-us`。零交易行为影响（只发日志）。
+**当日实况（ET 10-19 收盘后）**: 已了结 11 笔，毛 +$186.18 / 费 $55.25 / **净 +$130.93**（PEP PRE_CLOSE +106.64、INTC +11.40、MU +10.64 为盘后了结）；持仓 4（ADSK/ASML/TSM/BA，均 playbook 自管）；DB 净值 $99,221，回撤 -0.5% 🟢。
+
 ## 2026-10-19 财报日历刷新降噪（用户同意）
 
 **触发**: 日志每约 50 分钟重复 `获取财报日历 (horizon=3month)` 311 条；确认是 SignalScanLoop 每 10 轮 `force_refresh=True`，绕过 EarningsCalendar 的 1h 缓存。
