@@ -2548,7 +2548,9 @@ REGISTRY: list[ShadowItem] = [
                             "n<30 成交样本裁绩效; 把「影子价池更小」单独解释为「富途请求减少」。"
                             "切换生产须另立 DEB + 用户裁。死线 2026-11-30 自动停采 "
                             "(防僵尸影子, eth_relative_volume_gate 同型先例)。",
-        no_adjudication_reason="NO_EVAL_SCRIPT: 非绩效观测, 预注册窗口至 2026-11-30; 无独立结算器, 到期人工读数或退役.",
+        eval_script="scripts/ext_entry_exec_price_eval.py",
+        eval_on_demand=True,
+        no_adjudication_reason="READOUT_ONLY: 非绩效观测; 2026-10-19 读数 1686 轮/15 天, $50 门槛中位移除 86.4% 价格池, 实际 EXT 成交 5 笔全 >$50/低价 0; 11/30 到期人工裁维持/退役.",
         created="2026-09-28",
         cross_ref=("eth_ext_entry_prefilter",),
         notes="P0.5 同轴枚举 (2026-09-28 复核后补登, 立案时漏查注册表违反当日 template 新增"
@@ -2559,7 +2561,11 @@ REGISTRY: list[ShadowItem] = [
               "②ticket_size_breakeven — 费用地板随价格递减的机制推导已定案 ($5 档 52.6bps "
               "全表最贵), 本案不在费用/绩效轴重复攒样 (DEB §三 禁止2)。"
               "③DEB-20260928-supply-price-tier-shadow 已撤回, 本案不复活供给配额。"
-              "count_mode=lines: 一行=一轮 cron 运行聚合, 天然按轮去重。",
+              "count_mode=lines: 一行=一轮 cron 运行聚合, 天然按轮去重。"
+              "2026-10-19 只读读数 (scripts/ext_entry_exec_price_eval.py): 1686 轮/15 天; "
+              "current_price_pool 中位 14, shadow_execution_pool 中位 2, 中位缩减 86.4%; "
+              "prefiltered 19,352 条/995 symbols; 实际 EXT 成交 5 笔全 >$50, 低价成交 0, 交集 0; "
+              "结论=数据已可读数, 维持/退役待裁。",
     ),
     ShadowItem(
         id="eth_short_probe",
@@ -3102,11 +3108,14 @@ REGISTRY: list[ShadowItem] = [
         graduation_criteria="RFC-125 §5: 连续≥5 交易日正常落盘, 非空 decision_id 多行=0, "
                             "checkpoint 与事件一致, 写失败率<1%; Phase 1 enforcement 另需用户裁。",
         created="2026-10-01",
-        last_evaluated="2026-10-03",
-        no_adjudication_reason="NO_EVAL_SCRIPT: 阶段0健康轴是 cron 扫描成功率而非事件行数; "
-                               "现无独立 eval, 达窗后人工核对 logs 与事件再呈裁",
+        last_evaluated="2026-10-19",
+        stale_expected=True,
+        no_adjudication_reason="PHASE0_READOUT: 4 events/4 unique event_id; artifacts 4/4; cron logs 10/07-10/16 无 error; Phase1 enforcement 待用户裁.",
         notes="cron 20:50 * * 1-5 幂等补扫; 当前 2 条独立真反向 (TSLA 9/23 / ORCL 9/29)。"
-              "事件行数≠交易日健康行, 故不用计数器自动 READY。",
+              "事件行数≠交易日健康行, 故不用计数器自动 READY。"
+              "2026-10-19 只读核对: 4 events / 4 unique event_id (TSLA 9/23, ORCL 9/29, "
+              "UMC 10/5, SKHY 10/16); artifacts 4/4 存在, checkpoint 含 _ic_decision_id; "
+              "cron logs 10/07-10/16 无 error; 事件稀疏≠断流, 故 stale_expected=True。",
     ),
     ShadowItem(
         id="ue_confirm_gate",

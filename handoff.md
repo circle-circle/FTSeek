@@ -29,6 +29,8 @@
 - 第三批读数后重启: 2026-10-19 09:39 CST，启动冒烟 **7/7**，PID 2326756；重启前仅 ADSK 一个模拟仓，exit_intents 189 条全 BOOKED。
 - 第四批影子复核 (2026-10-19, 未提交): `short_chase_ban_shadow` 落 **BLOCKED_DENOMINATOR_SPLIT** — W7 2026-10-16 `divergent_n=128` 未修；命中仅 **13 distinct inst <20**（227 行 / 8 笔匹配净 -$17.3），扫描 85 行 / 62 inst ⇒ 10/31 前先裁分母或到期退役，**不建结算器**。registry 仅 cron/子进程消费，本轮未重启；钉子口径 2→3，**127 passed**。
 - 第五批退役裁决 (2026-10-19, 未提交): 用户裁「退役, 基于合理性」⇒ `short_chase_ban_shadow` **KILLED**：`unified_config.yaml` 的 `short_chase_ban_shadow_enabled` 置 **false 真停采**；注册表 `collection_retired=True` + verdict_history `KILLED_REASONABLENESS`；数据保留，重开须先修分母 + 新预注册。钉子 3→4 + config 开关钉；**127 passed**；重启 09:51 CST 冒烟 **7/7**，PID **2329597**。
+- 第六批读数 (2026-10-19, 未提交): `ext_entry_exec_price_shadow` 新增只读读数器 `scripts/ext_entry_exec_price_eval.py` + 契约测试；**1686 轮 / 15 天**，current_price_pool 中位 14 → shadow_execution_pool 中位 2，**中位缩减 86.4%**；prefiltered 19,352 条 / 995 symbols；实际 EXT 成交 5 笔全 >$50、**低价成交 0**、交集 0；登记 `READOUT_ONLY`，11/30 到期人工裁维持/退役。`check_mounting` 0；**128 passed**；只读离线，未重启。
+- 第七批读数 (2026-10-19, 未提交): `da_true_reverse_shadow` 阶段0健康核对: **4 events / 4 unique event_id**（TSLA 9/23、ORCL 9/29、UMC 10/5、SKHY 10/16），artifacts **4/4** 存在、checkpoint 含 `_ic_decision_id`，cron logs 10/07-10/16 无 error；登记 `PHASE0_READOUT` + `stale_expected`（事件稀疏≠断流），Phase1 enforcement 待用户裁；**136 passed**；未重启。
 - 未做: 85 个 orphan YAML 叶（需 validator/CRITICAL_KEYS/仓外三面复核）、245 条注释 cron、双 carrier、日亏权威、净口径、手动平仓门。
 
 ## 2026-10-18 推送治理 P0+P1（心跳/复盘/回滚/日报降频）
