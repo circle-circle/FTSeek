@@ -173,7 +173,9 @@ def scan_loop(scheduler):
         scheduler.harness_audit_done = False
 
     _earnings_refresh_counter = 0
-    _EARNINGS_REFRESH_INTERVAL = 10
+    # 2026-10-19: 12 轮 ≈ 盘前/盘中 5min×12=60min, 与 EarningsCalendar 1h 缓存对齐;
+    #   不再 force_refresh, 缓存期内不重复打 Futu.
+    _EARNINGS_REFRESH_INTERVAL = 12
 
     while scheduler.running:
         try:
@@ -332,7 +334,7 @@ def scan_loop(scheduler):
                     earnings_cal = getattr(scheduler, 'earnings_calendar', None)
                     earnings_guard = getattr(scheduler, 'earnings_risk_guard', None)
                     if earnings_cal and earnings_guard:
-                        earnings_list = earnings_cal.get_watchlist_earnings(days_ahead=7, force_refresh=True)
+                        earnings_list = earnings_cal.get_watchlist_earnings(days_ahead=7)
                         if earnings_list:
                             from app.data.earnings_calendar import get_sector_atr_multiplier
                             for entry in earnings_list:
@@ -341,8 +343,16 @@ def scan_loop(scheduler):
                                 entry["atr_multiplier"] = atr_cfg["earnings"]
                                 entry["flash_exit_multiplier"] = atr_cfg["flash_exit"]
                             earnings_guard.update_earnings_calendar(earnings_list)
-                            _log_fn = logger.info if scheduler._is_market_open() else logger.debug
-                            _log_fn("[Earnings] 财报日历已刷新: %d 只股票 (未来7天)", len(earnings_list))
+                            _fp = earnings_cal._calendar_fingerprint(earnings_list)
+                            _changed = getattr(
+                                scheduler, "_earnings_calendar_fingerprint", None) != _fp
+                            scheduler._earnings_calendar_fingerprint = _fp
+                            if _changed:
+                                logger.info(
+                                    f"[Earnings] 财报日历已刷新: {len(earnings_list)} 只股票 (未来7天)")
+                            else:
+                                logger.debug(
+                                    f"[Earnings] 财报日历无变化: {len(earnings_list)} 只股票")
                 except Exception as e:
                     logger.debug("[Earnings] 刷新失败 (不影响主流程): %s", e)
 

@@ -1,5 +1,15 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-19 财报日历刷新降噪（用户同意）
+
+**触发**: 日志每约 50 分钟重复 `获取财报日历 (horizon=3month)` 311 条；确认是 SignalScanLoop 每 10 轮 `force_refresh=True`，绕过 EarningsCalendar 的 1h 缓存。
+**落地**（代码已落盘，未提交；主服务需重启）:
+- `signal_pipeline`: `_EARNINGS_REFRESH_INTERVAL` 10→12（盘前 5min×12≈60min）；去掉 `force_refresh=True`，由 1h 缓存控制实际拉取。
+- `earnings_calendar`: 增加内容指纹（symbol/reportDate/timeOfTheDay/estimate）；首次/内容变化 INFO，缓存命中/内容不变 DEBUG；`获取财报日历` 降到 DEBUG。
+- 未改数据源、7 天双窗口、全量 310 只覆盖或财报门逻辑。
+**验证**: 财报日历相关定向 **18 passed**；全量 **7382 passed / 72 skipped / 16 failed** — 16 条来自 HEAD 里另一 agent 的减法/棘轮批（W9/W456/死键/crontab/D4/I10/except_pass/naive_datetime 等）及 2 条存量数据红，与本财报改动无关；本批未触碰这些文件。
+**生效**: `app/data/earnings_calendar.py` + `app/pipeline/signal_pipeline.py` 在主服务进程内 ⇒ 需按军规重启。
+
 ## 2026-10-18 减法修复批（存储/棘轮/死代码）
 
 **触发**: 用户令「按建议执行修复」— 基于 2026-10-18 减法审计（重复/冲突/过期/性能）。

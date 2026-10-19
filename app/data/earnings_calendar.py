@@ -16,7 +16,9 @@ API Key: 通过环境变量 ALPHAVANTAGE_API_KEY 配置
 
 import os
 import csv
+import hashlib
 import io
+import json
 import logging
 import requests
 from datetime import datetime, timedelta
@@ -192,7 +194,25 @@ class EarningsCalendar:
         self._cache = None
         self._cache_time = None
         self._cache_error = None
+        self._cache_fingerprint = None
         self._cache_ttl_seconds = 3600  # 缓存 1 小时
+
+    @staticmethod
+    def _calendar_fingerprint(rows: Optional[List[Dict]]) -> str:
+        """内容指纹: symbol/reportDate/timeOfTheDay/estimate 排序后 hash."""
+        normalized = sorted(
+            (
+                str(row.get("symbol") or ""),
+                str(row.get("reportDate") or ""),
+                str(row.get("timeOfTheDay") or ""),
+                str(row.get("estimate") or ""),
+            )
+            for row in (rows or [])
+            if isinstance(row, dict)
+        )
+        return hashlib.sha1(
+            json.dumps(normalized, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
         
     def _fetch_raw_calendar(self, horizon: str = "3month") -> str:
         """
@@ -274,7 +294,7 @@ class EarningsCalendar:
             logger.debug("使用财报日历缓存")
             return self._cache, self._cache_error
         
-        logger.info(f"获取财报日历 (horizon={horizon})...")
+        logger.debug(f"获取财报日历 (horizon={horizon})...")
         # 2026-08-29 源序反转 (用户裁"2直接做"): 富途原生升主源, AV 降备源。
         #   根因: G6 复核确认活门数据源是 AV 单点外部依赖 (配额/断流/付费墙风险),
         #   而富途原生 get_earnings_calendar (OpenD 本地, 无配额) 8/12 写成
@@ -297,11 +317,21 @@ class EarningsCalendar:
                 "连续出现请查 OpenD 连通性与 AV key。")
 
         # 缓存结果
+        fingerprint = self._calendar_fingerprint(rows)
+        unchanged = (
+            self._cache_fingerprint is not None
+            and fingerprint == self._cache_fingerprint
+        )
         self._cache = rows
         self._cache_time = now
         self._cache_error = source_error
+        self._cache_fingerprint = fingerprint
 
-        logger.info(f"获取到 {len(rows)} 条财报数据")
+        if rows:
+            if unchanged:
+                logger.debug(f"财报日历刷新: {len(rows)} 条 (无变化)")
+            else:
+                logger.info(f"获取到 {len(rows)} 条财报数据")
         return rows, source_error
 
     def get_earnings_calendar(self, horizon: str = "3month", force_refresh: bool = False) -> List[Dict]:
