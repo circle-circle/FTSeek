@@ -38,9 +38,10 @@
 - 第十一批 carrier 审计 (2026-10-19, 只读未改): `error_alert` 4 条 cron + 4 个 Hermes no_agent carrier 同窗；Hermes 载体正常静默（非双推），executions.db 显示 completed/error=0；双执行约 340 次/周。**裁决建议=保留双侧**（告警冗余价值 > 执行成本）；候选删 4 条 cron 行（active 124→120，等价）已备未安装。`insider` cron 仅写日志，Hermes carrier 负责投递；建议同样保留双侧。
 - 第十二批备份归档 (2026-10-19, 非 git): 40 个旧 crontab 快照 + 8 个旧 config 备份 → `data/backups/config_crontab_archive_20261019.tar.gz`（256KB / 48 members）；保留最新 5 crontab + 3 config；原件删除；未重启。
 - 日亏权威与净口径审计 (2026-10-19, 只读未改): `circuit-breaker-map.md` 与六权威登记已 10-15 刷新、阈值核对一致，无需改文档；净 PnL 双实现横跨 30+ SQL 站点、当前 delta=0，统一属 DEB 级测量重构，未动。
-- 第十三批退役 (2026-10-19, 未提交): 用户令「按合理性和建议执行」⇒ `ext_entry_exec_price_shadow` **KILLED**：1686 轮/15 天，$50 门槛中位缩减 86.4%，实际 EXT 成交 5 笔全 >$50、低价 0、交集 0；crontab 两行内联 `EXT_ENTRY_EXEC_PRICE_SHADOW` 改 **false 真停采**；`_CONSUMER_ACK` 认领 executor 的 inert 写方引用；数据保留；重开=新预注册；**136 passed**。
+- 第十三批退役 (2026-10-19, 已提交): 用户令「按合理性和建议执行」⇒ `ext_entry_exec_price_shadow` **KILLED**：1686 轮/15 天，$50 门槛中位缩减 86.4%，实际 EXT 成交 5 笔全 >$50、低价 0、交集 0；crontab 两行内联 `EXT_ENTRY_EXEC_PRICE_SHADOW` 改 **false 真停采**；`_CONSUMER_ACK` 认领 executor 的 inert 写方引用；数据保留；重开=新预注册；**136 passed**。
 - 本轮重启 (退役批): 2026-10-19 11:06 CST，启动冒烟 **7/7**，PID 2341920；重启前仅 ADSK 一个模拟仓，exit_intents 189 条全 BOOKED。
 - 裁决结论 (未改): 双 carrier 保留双侧（非双推，冗余价值 > 执行成本）；六套日亏权威保留分层（地图已准确）；净 PnL 双实现留 DEB 级单口径重构（当前 delta=0）。
+- **提交**: `da86474a9` — `[hotfix] 减法批收口: 配置死键 + ext price 影子退役`（已推送）。
 - 未做: 剩余 orphan 叶按块保留 — `options/short_strategy` 有活读者，`exit_profiles/playbook_horizon` 属动态退出配置，`strategies/news/llm` 多为遗留或仓外消费；245 条注释 cron、双 carrier、日亏权威、净口径仍待逐项裁决。（需 validator/CRITICAL_KEYS/仓外三面复核）、245 条注释 cron、双 carrier、日亏权威、净口径、手动平仓门。
 
 ## 2026-10-18 推送治理 P0+P1（心跳/复盘/回滚/日报降频）
