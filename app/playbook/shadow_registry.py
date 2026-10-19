@@ -2078,8 +2078,8 @@ REGISTRY: list[ShadowItem] = [
     #    其假设并入本项, 触发时刻相位 = B 转正先例 RFC-068)。──
     ShadowItem(
         id="short_chase_ban_shadow",
-        name="SHORT 逆势追空禁入影子 (触发时刻口径)",
-        status=ShadowStatus.OBSERVING,
+        name="SHORT 逆势追空禁入影子 (触发时刻口径) (⛔已退役 2026-10-19)",
+        status=ShadowStatus.KILLED,
         description="DEB-20260808 §8.3 裁定①: 「SHORT 且当日涨>3% 禁入」硬门在 "
                     "post-blackout(1015) 基线残存效应 −$19.80 被否 → 仅 shadow 记录。"
                     "写者 pipeline.py (SHORT 触发评估处, ctx.change_percent 过阈值 → 命中行; "
@@ -2099,11 +2099,12 @@ REGISTRY: list[ShadowItem] = [
                             "**死线 2026-10-31**, 到点不达标 → 裁退役或降纯日志。"
                             "转正前置 (DEB-20260911 C8): 昨收分母分裂修复落地 + 污染期样本"
                             "处置已裁, 否则到点裁的是废样。"
-                            "(n 口径 = 命中行数 count_mode=where:over_threshold=True, 扫描行"
-                            "不计入; 判据须用扫描行作对照臂: 命中组 vs 未命中组净额差 + 方向"
-                            "一致率, 单看命中组无 IC 意义 — 2026-09-18 补)",
+                            "(n 口径 = distinct instructions, count_mode=distinct_where:over_threshold=True; "
+                            "扫描行不计入; 判据须用扫描行作对照臂: 命中组 vs 未命中组净额差 + 方向"
+                            "一致率, 单看命中组无 IC 意义 — 2026-09-18 补; "
+                            "2026-10-18 复核: W7 分母分裂未修复 (divergent_n=128), 当前样本污染, 10/31 前须先裁分母或退役)",
         eval_script=None,
-        no_adjudication_reason="NO_EVAL_SCRIPT: 预注册判据在, 结算器未建; 死线 2026-10-31, 到点人工结算或退役.",
+        collection_retired=True,
         created="2026-08-08",
         verdict_history=[
             {"date": "2026-08-08", "verdict": "HARD_GATE_REJECTED_OLD_BASELINE",
@@ -2113,7 +2114,15 @@ REGISTRY: list[ShadowItem] = [
              "evidence": "DEB-20260911: 禁触窗 8/15 已改 0935 ⇒ 旧否决前提失效, 假设在新基线"
                          "下未检验; A_short_chase 快照规则退役, 假设并入本项作单一证据源 "
                          "(A 的 310 行 IC: SELL_SHORT rho=-0.378 p≈0.005 方向成立, 但载体"
-                         "相位须为触发时刻); A 快照行**不得独立转正**"}],
+                         "相位须为触发时刻); A 快照行**不得独立转正**"},
+            {"date": "2026-10-18", "verdict": "BLOCKED_DENOMINATOR_SPLIT",
+             "evidence": "W7 2026-10-16 读数 divergent_n=128; 命中仅 13 distinct inst <20 "
+                         "(227 行 / 8 笔匹配净 -$17.3); 扫描 85 行 / 62 inst; 分母分裂未修, "
+                         "10/31 样本按污染期处理 ⇒ 不建结算器, 先裁分母或到期退役."},
+            {"date": "2026-10-19", "verdict": "KILLED_REASONABLENESS",
+             "evidence": "用户裁「退役, 基于合理性」: W7 分母分裂自 9/11 未修 (10/16 divergent_n=128), "
+                         "命中仅 13 distinct inst <20; 继续采集只会产出污染样, 10/31 无法有效裁决; "
+                         "旧基线硬门已否决一次 (DEB-20260808 §8.3). 数据保留; 重开须先修分母 + 新预注册."}],
         notes="**污染期标注 (DEB-20260911 P0-2)**: chg 参照 ctx.change_percent (futu_quote, "
               "market_data_router.py:432), 与 premarket_invalidation 快照侧 get_snapshot 的 "
               "prev_close 分母已实锤分裂 — BIDU 9/8 同指令 7 秒内 −7.65% vs +4.07% (隐含分母 "
@@ -2136,7 +2145,9 @@ REGISTRY: list[ShadowItem] = [
               "无歧义)。"
               "**不入 data_freshness_watchdog (9/11 裁)**: 本影子写盘极稀 (18 天 5 行), 小时级"
               "新鲜度阈值会永久误报; 断流由 check_mounting 的 14 天静默哨兵接管。台账行另批补 "
-              "(任务 #9)。回滚 = short_chase_ban_shadow_enabled 置 false。",
+              "(任务 #9)。回滚 = short_chase_ban_shadow_enabled 置 false。"
+              "2026-10-19 用户裁退役 (基于合理性): config 键已置 false 真停采; 数据保留; "
+              "重开须先修分母 + 新预注册; 旧基线硬门否决史见 verdict_history。",
         eval_on_demand=True,
         intent="short_chase_ban",
         cross_ref=("premarket_invalidation",),

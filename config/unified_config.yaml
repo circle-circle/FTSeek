@@ -1325,7 +1325,11 @@ playbook:
     patient_exit_max_underwater_pct: 1.0
     patient_exit_stop_pct: 1.5
     patient_exit_deadline_hhmm: 1550
-    short_chase_ban_shadow_enabled: true
+    # 2026-10-19 用户裁退役 (基于合理性): W7 昨收分母分裂未修 (10-16 divergent_n=128),
+    #   命中仅 13 distinct inst <20; 继续采集只会产出污染样, 10/31 无法有效裁决.
+    #   数据保留 (data/short_chase_ban_shadow.jsonl), 重开须先修分母 + 新预注册.
+    #   回滚: 改回 true + systemctl restart ftseek-us.
+    short_chase_ban_shadow_enabled: false
     short_chase_ban_pct: 3.0
     mfe_stall_exit_enabled: false    # DEB-20260815 P0-B (2026-08-15): §15重放8变体否决(p=0.17/捕获率14%),
     #   7/1起实跑仍出血-$1353(n=31). 撤销已否决组件回基线. 回滚: 改回true.

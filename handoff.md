@@ -27,6 +27,8 @@
 - 退役后最终重启: 2026-10-18 22:48 CST，启动冒烟 **7/7**，PID 2243763；线上加载 slcap KILLED + entry_anchor_dual PERIOD_GATE。
 - 第三批影子读数 (2026-10-19 09:39 CST, 未提交): `eth_held_exit_shadow` 按 10-15 追认改为 **PERMANENT_MEASURE 移交失败监测面** + `stale_expected`（删除过期 NO_EVAL_SCRIPT 挂账）；`ext_entry_earnings_criterion_shadow` 新增 `scripts/ext_earnings_criterion_eval.py` + 契约测试：**6674 行 / 18 ET日 / 522 legacy_blocked_new_pass**，EXT 成交自 09-23 仅 **5 笔**（均 +$15.82）⇒ 判据①样本门未达，登记 `SAMPLE_GATE`；台账轴与成交轴分离。`check_mounting` 0；105 tests passed。
 - 第三批读数后重启: 2026-10-19 09:39 CST，启动冒烟 **7/7**，PID 2326756；重启前仅 ADSK 一个模拟仓，exit_intents 189 条全 BOOKED。
+- 第四批影子复核 (2026-10-19, 未提交): `short_chase_ban_shadow` 落 **BLOCKED_DENOMINATOR_SPLIT** — W7 2026-10-16 `divergent_n=128` 未修；命中仅 **13 distinct inst <20**（227 行 / 8 笔匹配净 -$17.3），扫描 85 行 / 62 inst ⇒ 10/31 前先裁分母或到期退役，**不建结算器**。registry 仅 cron/子进程消费，本轮未重启；钉子口径 2→3，**127 passed**。
+- 第五批退役裁决 (2026-10-19, 未提交): 用户裁「退役, 基于合理性」⇒ `short_chase_ban_shadow` **KILLED**：`unified_config.yaml` 的 `short_chase_ban_shadow_enabled` 置 **false 真停采**；注册表 `collection_retired=True` + verdict_history `KILLED_REASONABLENESS`；数据保留，重开须先修分母 + 新预注册。钉子 3→4 + config 开关钉；**127 passed**；重启 09:51 CST 冒烟 **7/7**，PID **2329597**。
 - 未做: 85 个 orphan YAML 叶（需 validator/CRITICAL_KEYS/仓外三面复核）、245 条注释 cron、双 carrier、日亏权威、净口径、手动平仓门。
 
 ## 2026-10-18 推送治理 P0+P1（心跳/复盘/回滚/日报降频）

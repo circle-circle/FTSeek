@@ -47,10 +47,17 @@ def test_ban_shadow_entry_pins():
     assert b.eval_on_demand is True, "无独立结算器, 必须按需评估 (挂载哨兵豁免)"
     assert b.intent == "short_chase_ban"
     assert "premarket_invalidation" in b.cross_ref
-    assert len(b.verdict_history) == 2
+    assert len(b.verdict_history) == 4
     assert b.verdict_history[0]["verdict"] == "HARD_GATE_REJECTED_OLD_BASELINE"
     assert b.verdict_history[1]["verdict"] == "SSOT_FOR_SHORT_CHASE_INTENT"
-    assert b.status == sr.ShadowStatus.OBSERVING
+    assert b.verdict_history[2]["verdict"] == "BLOCKED_DENOMINATOR_SPLIT"
+    assert b.verdict_history[3]["verdict"] == "KILLED_REASONABLENESS"
+    assert b.status == sr.ShadowStatus.KILLED
+    assert b.collection_retired is True
+    # 真停采 = config 键 false, 不是只改注册表账面
+    import yaml
+    cfg = yaml.safe_load((Path(__file__).resolve().parents[1] / "config" / "unified_config.yaml").read_text())
+    assert cfg["playbook"]["execution_parameters"]["short_chase_ban_shadow_enabled"] is False
 
 
 def test_premarket_entry_retirement_and_crossref():
