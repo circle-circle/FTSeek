@@ -9,6 +9,7 @@
 - 未改数据源、7 天双窗口、全量 310 只覆盖或财报门逻辑。
 **验证**: 财报日历相关定向 **18 passed**；全量 **7382 passed / 72 skipped / 16 failed** — 16 条来自 HEAD 里另一 agent 的减法/棘轮批（W9/W456/死键/crontab/D4/I10/except_pass/naive_datetime 等）及 2 条存量数据红，与本财报改动无关；本批未触碰这些文件。
 **生效**: `app/data/earnings_calendar.py` + `app/pipeline/signal_pipeline.py` 在主服务进程内 ⇒ 需按军规重启。
+**上线**: 2026-10-19 19:53 CST 已重启，PID 2425002，启动冒烟 7/7；`US.ADSK`/`US.ASML` SIM LONG 保留，无非 BOOKED 出场意图。
 
 ## 2026-10-18 减法修复批（存储/棘轮/死代码）
 
