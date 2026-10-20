@@ -1,5 +1,16 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-20 记录卫生：EXT 未平仓 exit_time 归一 NULL + PlanEffectiveness 分母
+
+**触发**: 用户令修复 10-19 交易复查发现的两项记录口径问题。
+**落地**（提交 `aa1e5230e`，未推送）:
+- `scripts/extended_hours_entry_executor.py::_write_open_position`: 未平仓 `trade_records.exit_time` 由空串改 **NULL**；存量 3 行（id 1681 ASML / 1691 TSM / 1694 BA）已 `UPDATE` 为 NULL。`SELECT ... WHERE exit_time IS NULL` 现正确返回 4 个在仓（ADSK + 3 EXT），不再漏 ASML/TSM/BA。
+- `app/analysis/plan_effectiveness.py`: `planned` 分母纳入 `triggered=1 AND skip_reason='entry_confirm_reversed'` 的 2 分钟门放弃目标；新增 `abandoned_count / abandoned_symbols / execution_rate_basis`，日志打印 `traded/abandoned/basis`。10-19 实跑由 7/7=100% 修正为 **7/8=87.5%**（AVGO abandoned）。
+**验证**: 新增 3 例契约测试（PlanEffectiveness 2 + EXT exit_time 1）；本批相关回归 **60 passed**；`py_compile` 通过；生产库只读复算 `planned=8 / traded=7 / abandoned=1 / traded_rate=87.5%`。
+**上线**: 2026-10-20 08:40 CST `systemctl restart ftseek-us`（PID 2554551），启动冒烟 **7/7**；重启前实查 4 个在仓、`exit_intents` 200 条全 BOOKED、无在途出场。
+**已知非本批**: `tests/test_control_loop_ledger.py::test_ledger_job_ids_are_real` 报 `bd564dae37b0` 幽灵 job_id（台账与活体 jobs.json 脱钩）；本批未触碰台账/job，未处理。
+**回滚**: `git revert aa1e5230e`；存量 3 行如需回滚 `UPDATE trade_records SET exit_time='' WHERE id IN (1681,1691,1694)`；零交易策略/阈值变更。
+
 ## 2026-10-20 RFC-151 一致性校验 P2 假阳修复（用户令修复，已上线）
 
 **触发**: 10-19 复核发现的 P2 —— `⚠️ [US Sync Consistency] Memory 缺少 Broker 持仓` 贯穿全天刷屏（盘后实测仍每 5min 一条）。
