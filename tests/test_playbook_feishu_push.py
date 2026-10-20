@@ -63,6 +63,29 @@ class TestMorningPush:
         assert "META" in message
         assert "财报" in message
 
+    def test_morning_skip_grouped_by_reason(self, pusher, db):
+        """2026-10-20 信噪比: 跳过的按原因聚合 — 批量同类折叠为计数, 小批门拦截保留 symbol"""
+        _save_inst(db, symbol="US.NTES", confidence=72)
+        # 10 只同类占位候选 (bulk: 应折叠为 ×10, 不逐只列明细)
+        for i in range(10):
+            _save_inst(db, symbol=f"US.BULK{i}", direction="SKIP",
+                       skip_reason="非当前通道候选(bridge未提名/无方向)")
+        # 1 只真实门拦截 (小批: 应列 symbol)
+        _save_inst(db, symbol="US.AVGO", direction="SKIP",
+                   skip_reason="entry_confirm_reversed")
+
+        instructions = db.get_instructions_by_date("2026-06-18")
+        regime_info = {"regime": "CAUTIOUS", "vix": 14.5, "spy_price": 766}
+        message = pusher._format_morning_message("2026-06-18", instructions, regime_info)
+
+        assert "跳过 11 只" in message
+        # bulk 折叠: 取 "(" 前缀归并, 只给计数, 不逐只列
+        assert "非当前通道候选 ×10" in message
+        assert "US.BULK0" not in message
+        # 小批门拦截: 保留 symbol
+        assert "entry_confirm_reversed ×1" in message
+        assert "US.AVGO" in message
+
     def test_morning_skip_holiday(self, pusher):
         """假日不推送"""
         result = pusher.push_morning_instructions("2026-06-19")  # Juneteenth

@@ -1,5 +1,12 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-20 盘前推送「跳过」段去噪（用户：建议部分重复太多）
+
+**触发**: 用户贴 10-20 盘前推送，`跳过:` 一行把 51 只 `非当前通道候选(bridge未提名/无方向)` 逐只铺开（实测 1648 字符），信噪比低。
+**落地** (代码 `app/playbook/feishu_push.py` `_format_morning_message`): 跳过段改为**按原因类聚合** — 取 `skip_reason` 首个 `(` 前的前缀归并；同类 ≥8 只只给 `×计数`（不列明细，占位候选自动折叠）；<8 只（多为真实门拦截：entry_confirm_reversed / chase_cap / vwap 等）保留逐只 symbol，让可 action 的拦截浮上来。**纯渲染层，零交易/风控/下单行为变更**。
+**验证**: `tests/test_playbook_feishu_push.py::test_morning_skip_grouped_by_reason`（新增）+ 全文件 **19 passed**；真实 10-20 数据干跑预览：51 只占位 → 一行 `• 非当前通道候选 ×51`，1648→聚合后数百字符内。
+**生效**: `feishu_push.py` 在主服务进程内 ⇒ 需重启（本次重启时点为 10-20 盘前 09:19 ET，6 笔在仓、exit_intents 非 BOOKED=0，改动仅推送渲染）。回滚: `git revert` 本提交。
+
 ## 2026-10-20 RFC-152 Phase 0：执行 TCA 台账 + 点差/报价年龄只读影子（已上线；实盘零行为变更）
 
 **触发**: 用户「同意，按照建议执行」— 先做“一杆秤 + 点差门”，量化成交层 implementation shortfall，再谈是否加盘中指标。

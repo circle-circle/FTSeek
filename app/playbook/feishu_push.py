@@ -267,10 +267,24 @@ class PlaybookPusher:
                 lines.append(f"   条件: {' + '.join(conditions[:4])}")
             lines.append("")
 
-        # 跳过的
+        # 跳过的 — 按原因聚合压缩, 优化信噪比 (2026-10-19 用户: 建议部分重复太多)
+        # 此前逐只打印 "symbol(reason)", 占位候选(非当前通道候选)一次几十只会刷屏成一条超长行.
+        # 现按原因类聚合: 同类 >=8 只只给计数(不列明细); <8 只(多为真实门拦截)列 symbol.
         if skipped:
-            skip_parts = [f"{i.get('symbol', '?')}({i.get('skip_reason', 'N/A')})" for i in skipped]
-            lines.append(f"跳过: {', '.join(skip_parts)}")
+            _groups: Dict[str, Dict] = {}
+            for _i in skipped:
+                _raw = str(_i.get("skip_reason", "N/A") or "N/A").strip() or "N/A"
+                _key = _raw.split("(")[0].strip() or _raw  # 归并 门名(详细参数) → 门名
+                _g = _groups.setdefault(_key, {"n": 0, "syms": []})
+                _g["n"] += 1
+                _g["syms"].append(str(_i.get("symbol", "?")))
+            _ordered = sorted(_groups.items(), key=lambda kv: kv[1]["n"], reverse=True)
+            lines.append(f"跳过 {len(skipped)} 只（按原因）:")
+            for _key, _g in _ordered:
+                if _g["n"] >= 8:
+                    lines.append(f"  • {_key} ×{_g['n']}")
+                else:
+                    lines.append(f"  • {_key} ×{_g['n']}: {', '.join(_g['syms'])}")
 
         return "\n".join(lines)
 
