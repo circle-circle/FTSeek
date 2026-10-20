@@ -303,7 +303,9 @@ def test_production_config_end_to_end():
     from app.playbook.config import PlaybookConfig
     cfg = ecg.confirm_gate_config(PlaybookConfig())
     assert cfg == {"enabled": True, "delay_sec": 120, "holdout_pct": 0, "ttl_sec": 600,
-                   "ruler": "mid", "grace_sweeps": 3, "grace_votes": 2}, cfg
+                   "ruler": "mid", "grace_sweeps": 3, "grace_votes": 2,
+                   "fade_short_chase_cap_enabled": True,
+                   "fade_short_max_opp_pct": 1.0, "fade_short_window_min": 15}, cfg
 
 
 def test_orphan_self_heals_after_restart_with_trace(env):

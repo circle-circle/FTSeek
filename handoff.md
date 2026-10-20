@@ -1,5 +1,30 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-20 RFC-153 FADE_SHORT 开盘快跌禁追（SIM 已上线；占用 OKR C1）
+
+**触发**: 用户盘中令「核查记录和影子数据；当前入场大部分就亏损，需要改善」→ 取证后用户批准「批准 SIM 启用」。
+
+**盘中取证**:
+- 今日已平 5 笔：2 胜 +$26.58 / 3 负 −$317.86，净 **−$291.28**；两笔大亏同型。
+- `US.LITE` SHORT 09:44、确认窗顺向 **+1.068%**、执行锚比计划锚低 **340bps**、MFE 0.03% → `SL_INITIAL` −$149.47。
+- `US.NBIS` SHORT 09:41、确认窗顺向 **+1.412%**、执行锚低 **265bps**、MFE 0.52% → `SL_INITIAL` −$147.97。
+- 30 日：`FADE_SHORT` 开盘 09:35–09:45 n=23 净 **−$446.69**；开盘+计划锚偏离>200bps n=11 净 **−$549.34**；确认门已确认 SHORT 中 `opp_cost_pct>=1%` **2/2 全亏 −$297.44**，0.6–1.0% 档 3/3 全赢。
+- 影子/记录本身正常：TCA 4/4 执行落盘；入场确认门正常（COIN/AVGO 被弃）；pullback/trigger 遥测在写；无 ERROR/CRITICAL。
+
+**落地** (`docs/decisions/RFC-153-fade-short-opening-chase-cap.md`):
+- `entry_confirm_gate.py`: `FADE_SHORT` + 开盘 15 分钟内 + 确认点 `opp_cost_pct >= 1.0%` → 直接 `ABANDONED`（不进 grace），cause=`fade_short_chase_cap`；只作用于 FADE_SHORT，PULLBACK_LIMIT/BREAKOUT 零改动。
+- 配置：`entry_confirm_fade_short_chase_cap_enabled: true` / `_max_opp_pct: 1.0` / `_window_min: 15`（一行回滚）。
+- 前瞻行新增 `entry_archetype/abandon_cause/chase_cap_hit/chase_cap_threshold_pct`；`skip_reason` 仍为稳定契约 `entry_confirm_reversed`（日报/PlanEffectiveness 分母口径不变）。
+- 顺带修复 RFC-152 TCA：成功成交行不再携带前几轮拦截的旧 `skip_reason`（改记 `prior_skip_reason`；10-20 RIVN/LITE 实锤）。
+
+**验证**: 门/TCA/下游口径/影子治理/四棘轮定向回归 **214 passed**；`py_compile` 通过；生产配置实读 `cap=True / max_opp=1.0 / window=15`；启动冒烟 **7/7**。
+
+**上线**: 2026-10-20 22:13 CST `systemctl restart ftseek-us`，PID **2689306**；重启前 4 个在仓（ASML/MSFT/NVDA/RIVN）、无在途 exit_intents；重启后无 ERROR/CRITICAL/Traceback。今日开盘窗已过，**首次实际裁决在下一交易日 09:35–09:45**；下一次 arm 的 metadata 将带 `entry_archetype/fade_short_chase_cap_*` 字段。
+
+**预注册裁决**: 自 2026-10-21 起 ≥10 ET 交易日且 ≥30 笔 FADE_SHORT 开盘样本；主判据 = `SL_INITIAL` 笔数较基线下降 ≥50% ∧ 扣费净 bps 不恶化 ∧ 误杀净额 < 避免亏损净额（用 `_POST_WATCH` +5m/+10m 统计）。任一不满足 ⇒ 回滚并落档。
+
+**回滚**: `entry_confirm_fade_short_chase_cap_enabled: false` + 重启（数据保留）；`git revert` 本批 + 重启。**提交状态**: 本批未提交（等用户确认）。
+
 ## 2026-10-20 盘前推送「跳过」段去噪（用户：建议部分重复太多）
 
 **触发**: 用户贴 10-20 盘前推送，`跳过:` 一行把 51 只 `非当前通道候选(bridge未提名/无方向)` 逐只铺开（实测 1648 字符），信噪比低。

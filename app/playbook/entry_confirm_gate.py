@@ -99,6 +99,12 @@ DEFAULT_TTL_SEC = 600            # pending 超期即弃 (防跨日/卡死)
 DEFAULT_RULER = "mid"            # mid-vs-mid 同尺; "legacy" = v1 混尺 (锚 ask/bid × last)
 DEFAULT_GRACE_SWEEPS = 3         # 到点首见逆向后的 grace 复核次数 (10s 间隔)
 DEFAULT_GRACE_VOTES = 2          # grace 内 ≥N 次逆向才 ABANDONED; 0 次 sweep = v1 单点
+# ── RFC-153 (2026-10-20 用户批准): FADE_SHORT 开盘快跌禁追 ──
+#   FADE_SHORT 的本意是等反抽再空; 确认窗内价格已顺向快跌 ≥1% 时, 确认门实际上
+#   变成了追空。开盘 15 分钟内该形态左尾集中 (10-20 LITE/NBIS 双 SL_INITIAL),
+#   故到点直接放弃, 不进 grace。只作用于 FADE_SHORT, 其余 archetype 零改动。
+DEFAULT_FADE_SHORT_MAX_OPP_PCT = 1.0
+DEFAULT_FADE_SHORT_WINDOW_MIN = 15
 _STATE_KEY = "entry_confirm"     # metadata_json 下的旗标键
 
 # 内存 pending 表: inst_id -> arm 快照。有界 (TTL 清理 + 上限防泄漏)。
@@ -142,6 +148,9 @@ _CFG_DEFAULTS: Dict[str, Any] = {
     "ruler": DEFAULT_RULER,
     "grace_sweeps": DEFAULT_GRACE_SWEEPS,
     "grace_votes": DEFAULT_GRACE_VOTES,
+    "fade_short_chase_cap_enabled": True,
+    "fade_short_max_opp_pct": DEFAULT_FADE_SHORT_MAX_OPP_PCT,
+    "fade_short_window_min": DEFAULT_FADE_SHORT_WINDOW_MIN,
 }
 
 
@@ -171,6 +180,17 @@ def confirm_gate_config(pb_cfg=None) -> Dict[str, Any]:
             return int(default)
         return int(v)
 
+    def _float_or(key, default):
+        v = pb_cfg.get(key, None)
+        if v is None:
+            return float(default)
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            logger.warning(f"[EntryConfirm] 非法 {key}={v!r} → 回落 {default}",
+                           exc_info=True)
+            return float(default)
+
     try:
         if pb_cfg is None:
             from app.playbook.config import PlaybookConfig
@@ -187,6 +207,14 @@ def confirm_gate_config(pb_cfg=None) -> Dict[str, Any]:
             cfg["ruler"] = DEFAULT_RULER
         cfg["grace_sweeps"] = _int_or("entry_confirm_grace_sweeps", DEFAULT_GRACE_SWEEPS)
         cfg["grace_votes"] = _int_or("entry_confirm_grace_votes", DEFAULT_GRACE_VOTES)
+        # RFC-153: FADE_SHORT 开盘快跌禁追 (0=关闭; 窗口 0=不启用)
+        _fs_enabled = pb_cfg.get("entry_confirm_fade_short_chase_cap_enabled", None)
+        cfg["fade_short_chase_cap_enabled"] = (
+            True if _fs_enabled is None else bool(_fs_enabled))
+        cfg["fade_short_max_opp_pct"] = _float_or(
+            "entry_confirm_fade_short_max_opp_pct", DEFAULT_FADE_SHORT_MAX_OPP_PCT)
+        cfg["fade_short_window_min"] = _int_or(
+            "entry_confirm_fade_short_window_min", DEFAULT_FADE_SHORT_WINDOW_MIN)
     except Exception as _e:
         # fail-safe: 配置不可读 ⇒ 门关闭 (维持现状基线, 不静默改交易行为)
         logger.warning(f"[EntryConfirm] 配置读取失败 → 门关闭 (维持现状): {_e}",
@@ -203,6 +231,20 @@ def _norm_dir(direction: str) -> str:
     if d in ("SELL_SHORT", "SHORT", "SELL"):
         return "SHORT"
     return d or "UNKNOWN"
+
+
+def _entry_archetype(inst: Dict[str, Any]) -> str:
+    """从 raw_instruction_json 取 archetype; 缺失/损坏 → "" (不启用 RFC-153)。"""
+    try:
+        raw = inst.get("raw_instruction_json")
+        if isinstance(raw, str):
+            raw = json.loads(raw or "{}")
+        if isinstance(raw, dict):
+            arch = raw.get("entry_archetype")
+            return str(arch).upper() if arch else ""
+    except Exception:
+        return ""
+    return ""
 
 
 def _holdout_bucket(inst_id: int, pct: int) -> bool:
@@ -389,6 +431,12 @@ def _gate_inner(inst, db, reprice_params, now_et, cfg, scheduler):
             "ruler": str(cfg.get("ruler") or DEFAULT_RULER),
             "grace_sweeps": int(cfg.get("grace_sweeps") or 0),
             "grace_votes": int(cfg.get("grace_votes") or DEFAULT_GRACE_VOTES),
+            # RFC-153: archetype/阈值同样 arm 时冻结 (在途单不因配置热改而换语义)
+            "entry_archetype": _entry_archetype(inst),
+            "fade_short_chase_cap_enabled": bool(
+                cfg.get("fade_short_chase_cap_enabled", False)),
+            "fade_short_max_opp_pct": float(cfg.get("fade_short_max_opp_pct") or 0.0),
+            "fade_short_window_min": int(cfg.get("fade_short_window_min") or 0),
             "mid_arm": (_q_arm or {}).get("mid"),
         }
         if len(_PENDING) >= _PENDING_MAX:
@@ -399,6 +447,10 @@ def _gate_inner(inst, db, reprice_params, now_et, cfg, scheduler):
             "anchor": anchor, "direction": _arm["direction"],
             "delay_sec": _arm["delay_sec"], "ttl_sec": int(cfg.get("ttl_sec") or DEFAULT_TTL_SEC),
             "ruler": _arm["ruler"], "mid_arm": _arm["mid_arm"],
+            "entry_archetype": _arm["entry_archetype"],
+            "fade_short_chase_cap_enabled": _arm["fade_short_chase_cap_enabled"],
+            "fade_short_max_opp_pct": _arm["fade_short_max_opp_pct"],
+            "fade_short_window_min": _arm["fade_short_window_min"],
         })
         logger.info(
             f"[EntryConfirm] ⏳ {inst.get('symbol')} {_arm['direction']} arm "
@@ -450,6 +502,20 @@ def _restore_arm(inst: Dict[str, Any], state: Dict[str, Any], now_et: datetime,
             "ruler": str(state.get("ruler") or cfg.get("ruler") or DEFAULT_RULER),
             "grace_sweeps": int(cfg.get("grace_sweeps") or 0),
             "grace_votes": int(cfg.get("grace_votes") or DEFAULT_GRACE_VOTES),
+            # RFC-153: 旧旗标缺这些键时回落当前 cfg (不把在途单静默降级, 也不伪造历史值)
+            "entry_archetype": str(state.get("entry_archetype") or ""),
+            "fade_short_chase_cap_enabled": bool(
+                state.get("fade_short_chase_cap_enabled")
+                if state.get("fade_short_chase_cap_enabled") is not None
+                else cfg.get("fade_short_chase_cap_enabled", False)),
+            "fade_short_max_opp_pct": float(
+                state.get("fade_short_max_opp_pct")
+                if state.get("fade_short_max_opp_pct") is not None
+                else (cfg.get("fade_short_max_opp_pct") or 0.0)),
+            "fade_short_window_min": int(
+                state.get("fade_short_window_min")
+                if state.get("fade_short_window_min") is not None
+                else (cfg.get("fade_short_window_min") or 0)),
             "mid_arm": state.get("mid_arm"),
             "restored": True,
         }
@@ -572,11 +638,28 @@ def _judge_one(scheduler, db, inst_id: int, arm: Dict[str, Any],
         arm["direction"], arm["anchor"], arm.get("mid_arm"),
         str(arm.get("ruler") or DEFAULT_RULER), q)
 
+    # ── RFC-153: FADE_SHORT 开盘快跌禁追 ──
+    #   本意是等反抽再空; 确认窗内价格已顺向走掉 ≥1% 时, "确认"其实是追空。
+    #   只作用于 FADE_SHORT + 开盘窗口; 到点直接放弃, 不进 grace (不是单点噪声)。
+    _arch = str(arm.get("entry_archetype") or "")
+    _cap_enabled = bool(arm.get("fade_short_chase_cap_enabled", False))
+    _cap_max = float(arm.get("fade_short_max_opp_pct") or 0.0)
+    _cap_window = int(arm.get("fade_short_window_min") or 0)
+    _arm_session = arm.get("session_min")
+    _fs_cap_hit = bool(
+        _cap_enabled and _arch == "FADE_SHORT" and _cap_max > 0
+        and isinstance(_arm_session, int) and 0 <= _arm_session < _cap_window
+        and still and opp >= _cap_max
+    )
+
     # ── v2 grace 持续性 (RFC-141 §5.10): 首见逆向不即弃, ≤grace_sweeps 次内
     #    ≥grace_votes 次逆向才弃; 任一同侧即确认; 耗尽仍不足票 ⇒ 确认 (fail toward trade) ──
     grace = arm.get("grace")
     grace_outcome = None
-    if not still and int(arm.get("grace_sweeps") or 0) > 0:
+    if _fs_cap_hit:
+        grace_outcome = "fade_short_chase_cap"
+        still = False
+    elif not still and int(arm.get("grace_sweeps") or 0) > 0:
         if grace is None:
             arm["grace"] = {"left": int(arm["grace_sweeps"]), "adv": 0}
             logger.info(
@@ -606,6 +689,8 @@ def _judge_one(scheduler, db, inst_id: int, arm: Dict[str, Any],
                      "mid_move_pct": mid_move, "ruler_used": ruler_used,
                      "bid_at_confirm": q.get("bid"), "ask_at_confirm": q.get("ask"),
                      "quote_ts": q.get("ts")}
+    _ab_cause = (None if still
+                 else ("fade_short_chase_cap" if _fs_cap_hit else "reversed"))
 
     if still:
         # 确认通过: 清 pending 旗标 → 下轮 auto_execute 正常 reprice + 下单
@@ -650,12 +735,18 @@ def _judge_one(scheduler, db, inst_id: int, arm: Dict[str, Any],
             "px_at_confirm": round(float(q["last"]), 4), "opp_cost_pct": opp,
             "delay_actual_sec": _delay_actual, **_quote_fields, "grace": _grace_trace,
             "skip_marked": _ab_ok,
+            "abandon_cause": _ab_cause,
+            "entry_archetype": _arch,
+            "chase_cap_hit": _fs_cap_hit,
+            "chase_cap_threshold_pct": (_cap_max if _fs_cap_hit else None),
         })
         out["abandoned"] += 1
         logger.info(
-            f"[EntryConfirm] ⛔ {symbol} {arm['direction']} 反转持续确认 "
+            f"[EntryConfirm] ⛔ {symbol} {arm['direction']} "
+            f"{'FADE_SHORT 开盘快跌禁追' if _fs_cap_hit else '反转持续确认'} "
             f"(锚${arm['anchor']:.2f} 现价${q['last']:.2f} ruler={ruler_used} "
-            f"mid_move={mid_move} grace={_grace_trace}) → 放弃入场 (RFC-141 v2)")
+            f"opp={opp:+.3f}% arch={_arch or '-'} session_min={_arm_session} "
+            f"cap={_cap_max if _fs_cap_hit else '-'}% grace={_grace_trace}) → 放弃入场")
         # v2: 弃单后观测 (+5m/+10m 补记, 纯留痕供「真避免 vs 误杀」分解)
         if len(_POST_WATCH) >= _POST_WATCH_MAX:
             _oldest = min(_POST_WATCH, key=lambda k: _POST_WATCH[k]["abandoned_at"])
@@ -681,6 +772,10 @@ def _judge_one(scheduler, db, inst_id: int, arm: Dict[str, Any],
         "notional": arm.get("notional") or 0.0,
         "session_min": arm.get("session_min"),
         "outcome": ST_CONFIRMED if still else ST_ABANDONED,
+        "entry_archetype": _arch,
+        "abandon_cause": _ab_cause,
+        "chase_cap_hit": _fs_cap_hit,
+        "chase_cap_threshold_pct": (_cap_max if _fs_cap_hit else None),
         **_quote_fields, "grace": _grace_trace,
     })
 

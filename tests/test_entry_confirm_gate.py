@@ -180,6 +180,10 @@ def test_production_yaml_keys_are_readable_end_to_end():
     assert pb.get("entry_confirm_ruler") == "mid"
     assert pb.get("entry_confirm_grace_sweeps") == 3
     assert pb.get("entry_confirm_grace_votes") == 2
+    # RFC-153: FADE_SHORT 开盘快跌禁追
+    assert pb.get("entry_confirm_fade_short_chase_cap_enabled") is True
+    assert pb.get("entry_confirm_fade_short_max_opp_pct") == 1.0
+    assert pb.get("entry_confirm_fade_short_window_min") == 15
     # 嵌套路径必须读不到 (钉住「不可用 get_dotted 嵌套路径」这条约束)
     from app.core.config_container import get_config
     assert get_config().get_dotted("playbook.entry_confirm.enabled", None) is None
@@ -188,7 +192,9 @@ def test_production_yaml_keys_are_readable_end_to_end():
     # 门自身读到的 = YAML 真值 (不是保守默认)
     assert ecg.confirm_gate_config() == {
         "enabled": True, "delay_sec": 120, "holdout_pct": 0, "ttl_sec": 600,
-        "ruler": "mid", "grace_sweeps": 3, "grace_votes": 2}
+        "ruler": "mid", "grace_sweeps": 3, "grace_votes": 2,
+        "fade_short_chase_cap_enabled": True,
+        "fade_short_max_opp_pct": 1.0, "fade_short_window_min": 15}
 
 
 def test_production_holdout_zero_means_gate_covers_every_order():
@@ -223,12 +229,17 @@ def test_config_zero_values_are_not_swallowed_by_falsy_default():
         def get(self, k, d=None):
             # 模拟真 PlaybookConfig: 键存在且值为 0
             return {"entry_confirm_enabled": True, "entry_confirm_delay_sec": 0,
-                    "entry_confirm_holdout_pct": 0, "entry_confirm_ttl_sec": 0}.get(k, d)
+                    "entry_confirm_holdout_pct": 0, "entry_confirm_ttl_sec": 0,
+                    "entry_confirm_fade_short_chase_cap_enabled": True,
+                    "entry_confirm_fade_short_max_opp_pct": 0,
+                    "entry_confirm_fade_short_window_min": 0}.get(k, d)
 
     cfg = ecg.confirm_gate_config(_ZeroCfg())
     assert cfg["holdout_pct"] == 0, f"0 被 falsy 吃掉 → {cfg['holdout_pct']} (用户意图失效)"
     assert cfg["delay_sec"] == 0, f"delay_sec=0 被吃掉 → {cfg['delay_sec']}"
     assert cfg["ttl_sec"] == 0, f"ttl_sec=0 被吃掉 → {cfg['ttl_sec']}"
+    assert cfg["fade_short_max_opp_pct"] == 0, "0% 禁追阈值被 falsy 吃掉"
+    assert cfg["fade_short_window_min"] == 0, "0 分钟窗口被 falsy 吃掉"
 
     class _NoneCfg:
         """缺键 ⇒ 必须回落默认 (只认 None 为缺, 不认 0)。"""
@@ -240,6 +251,8 @@ def test_config_zero_values_are_not_swallowed_by_falsy_default():
     assert cfg2["holdout_pct"] == ecg.DEFAULT_HOLDOUT_PCT, "缺键未回落默认"
     assert cfg2["delay_sec"] == ecg.DEFAULT_DELAY_SEC, "缺键未回落默认"
     assert cfg2["ttl_sec"] == ecg.DEFAULT_TTL_SEC, "缺键未回落默认"
+    assert cfg2["fade_short_max_opp_pct"] == ecg.DEFAULT_FADE_SHORT_MAX_OPP_PCT
+    assert cfg2["fade_short_window_min"] == ecg.DEFAULT_FADE_SHORT_WINDOW_MIN
 
     # 生产真实值复核 (端到端, 不经替身)
     from app.playbook.config import PlaybookConfig
@@ -1229,3 +1242,73 @@ def test_settler_load_rows_accepts_both_gens_and_skips_post(tmp_path, monkeypatc
     # 双窗推导: 有 v2 ⇒ 裁决窗 = v2 首行 date; 无 v2 ⇒ 退回 v1 开门日
     assert st.verdict_window(rows) == ("2026-10-12", "2026-10-15", "v2")
     assert st.verdict_window(rows[:1]) == ("2026-10-12", "2026-10-12", "v1")
+
+
+# ══════════════════════════════════════════════════════════════
+# RFC-153: FADE_SHORT 开盘快跌禁追 (2026-10-20 用户批准 SIM 启用)
+# ══════════════════════════════════════════════════════════════
+def _fade_inst(i=31):
+    inst = _inst(i=i, direction="SELL_SHORT")
+    inst["raw_instruction_json"] = json.dumps({"entry_archetype": "FADE_SHORT"})
+    return inst
+
+
+def test_fade_short_opening_fast_drop_abandons_without_grace():
+    """SHORT 锚 100, 确认时 98.9 ⇒ opp=+1.1% ≥1% ⇒ 直接弃, 不进 grace。"""
+    db = _FakeDB()
+    t0 = _now()  # 09:40 ET → session_min=10
+    ecg.gate_at_execute(_fade_inst(), db, {"entry_price": 100.0}, t0, CFG_ON)
+    r = ecg.sweep_entry_confirmations(_FakeSched(98.9), db, t0 + timedelta(seconds=122))
+    assert r["abandoned"] == 1 and r["pending"] == 0
+    st = db.merged[-1][1]["entry_confirm"]
+    assert st["status"] == ecg.ST_ABANDONED
+    assert st["abandon_cause"] == "fade_short_chase_cap"
+    assert st["chase_cap_hit"] is True
+    assert st["grace"] is None, "禁追门不应进入 grace"
+    assert db.skips == [(31, ecg.SKIP_REASON_ABANDONED)]
+    rows = [json.loads(x) for x in ecg._FORWARD_PATH.read_text().splitlines()]
+    assert rows[-1]["chase_cap_hit"] is True
+    assert rows[-1]["abandon_cause"] == "fade_short_chase_cap"
+    assert rows[-1]["entry_archetype"] == "FADE_SHORT"
+
+
+def test_fade_short_below_threshold_still_confirms():
+    """SHORT 锚 100, 确认时 99.2 ⇒ opp=+0.8% <1% ⇒ 原确认路径不变。"""
+    db = _FakeDB()
+    t0 = _now()
+    ecg.gate_at_execute(_fade_inst(i=32), db, {"entry_price": 100.0}, t0, CFG_ON)
+    r = ecg.sweep_entry_confirmations(_FakeSched(99.2), db, t0 + timedelta(seconds=122))
+    assert r["confirmed"] == 1 and db.skips == []
+    st = db.merged[-1][1]["entry_confirm"]
+    assert st["status"] == ecg.ST_CONFIRMED
+    assert st.get("chase_cap_hit") is None
+
+
+def test_fade_short_outside_opening_window_not_capped():
+    """09:50 开盘 (session_min=20) 不在 15 分钟窗口 ⇒ 不启用禁追。"""
+    db = _FakeDB()
+    t0 = datetime(2026, 10, 12, 9, 50, tzinfo=_ET)
+    ecg.gate_at_execute(_fade_inst(i=33), db, {"entry_price": 100.0}, t0, CFG_ON)
+    r = ecg.sweep_entry_confirmations(_FakeSched(98.9), db, t0 + timedelta(seconds=122))
+    assert r["confirmed"] == 1 and db.skips == []
+
+
+def test_pullback_limit_not_capped():
+    """PULLBACK_LIMIT 不受 RFC-153 影响 (只作用于 FADE_SHORT)。"""
+    db = _FakeDB()
+    t0 = _now()
+    inst = _inst(i=34, direction="BUY")
+    inst["raw_instruction_json"] = json.dumps({"entry_archetype": "PULLBACK_LIMIT"})
+    ecg.gate_at_execute(inst, db, {"entry_price": 100.0}, t0, CFG_ON)
+    r = ecg.sweep_entry_confirmations(_FakeSched(101.1), db, t0 + timedelta(seconds=122))
+    assert r["confirmed"] == 1 and db.skips == []
+
+
+def test_fade_short_cap_disabled_restores_confirm():
+    """一行配置回滚 (enabled=false) ⇒ 恢复 RFC-153 前的确认行为。"""
+    db = _FakeDB()
+    t0 = _now()
+    cfg = {**CFG_ON, "fade_short_chase_cap_enabled": False}
+    ecg.gate_at_execute(_fade_inst(i=35), db, {"entry_price": 100.0}, t0, cfg)
+    r = ecg.sweep_entry_confirmations(_FakeSched(98.9), db, t0 + timedelta(seconds=122))
+    assert r["confirmed"] == 1 and db.skips == []

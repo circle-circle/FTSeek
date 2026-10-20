@@ -143,7 +143,7 @@ def test_build_row_units_and_provisional_labels():
 
 def test_finalize_writes_one_line_and_fill_deviation(tmp_path, monkeypatch):
     monkeypatch.setattr(tca, "_TCA_PATH", tmp_path / "execution_tca.jsonl")
-    row = _row()
+    row = _row(inst=_inst(skip_reason="old_block_from_prior_cycle"))
     assert row["success"] is None
     ok = tca.finalize_and_record(
         row, result={"success": True, "execution_price": 101.0})
@@ -155,15 +155,19 @@ def test_finalize_writes_one_line_and_fill_deviation(tmp_path, monkeypatch):
     assert saved["fill_price"] == 101.0
     assert saved["exec_to_fill_bps"] == pytest.approx(100.0)       # LONG 更高 = 不利
     assert saved["planned_to_fill_bps"] == pytest.approx(202.0202, rel=1e-4)
+    # 成功成交行不得带前几轮拦截的旧 skip_reason (RIVN/LITE 10-20 实锤)
+    assert saved["skip_reason"] is None
+    assert saved["prior_skip_reason"] == "old_block_from_prior_cycle"
 
 
 def test_finalize_failure_and_exception_never_raise(tmp_path, monkeypatch):
     monkeypatch.setattr(tca, "_TCA_PATH", tmp_path / "execution_tca.jsonl")
-    row = _row()
+    row = _row(inst=_inst(skip_reason="blocked_this_cycle"))
     assert tca.finalize_and_record(
         row, result={"success": False, "message": "no fill"}) is True
     saved = json.loads((tmp_path / "execution_tca.jsonl").read_text().splitlines()[0])
     assert saved["success"] is False and saved["message"] == "no fill"
+    assert saved["skip_reason"] == "blocked_this_cycle", "失败行应保留本轮 skip_reason"
     # 写盘失败只 warn, 不上抛
     monkeypatch.setattr(tca, "_TCA_PATH", tmp_path / "no_dir" / "x.jsonl")
     (tmp_path / "no_dir").write_text("not a directory")

@@ -1282,6 +1282,16 @@ playbook:
     entry_confirm_grace_sweeps: 3     # grace 复核次数 (10s 间隔, 最差附加延迟 ≤30s)
     entry_confirm_grace_votes: 2      # grace 内 ≥N 次逆向才 ABANDONED
 
+    # ── RFC-153 FADE_SHORT 开盘快跌禁追 (2026-10-20 用户批准 SIM 启用) ──
+    #   FADE_SHORT 本意等反抽再空; 确认窗内价格已顺向快跌 ≥1% 时, 确认门变成追空。
+    #   10-20 LITE/NBIS 双 SL_INITIAL (确认窗顺向 +1.07%/+1.41%) 即靶形态;
+    #   30 日 FADE_SHORT 开盘组净 -$446.69, 其中开盘+计划锚偏离>200bps 净 -$549.34。
+    #   只作用于 FADE_SHORT + 开盘 15 分钟; 其余 archetype 零改动。
+    #   回滚: entry_confirm_fade_short_chase_cap_enabled=false + 重启。
+    entry_confirm_fade_short_chase_cap_enabled: true
+    entry_confirm_fade_short_max_opp_pct: 1.0
+    entry_confirm_fade_short_window_min: 15
+
     # ── RFC-152 执行 TCA 台账 + 点差/报价年龄门只读影子 (2026-10-20 用户裁「同意执行」) ──
     #   Phase 0 纯只读: 每笔真走到下单调用的指令落一行 data/shadow/execution_tca.jsonl,
     #   记录计划锚/到达双边报价/点差/报价年龄/成交价/方向归一偏差。零交易行为变更。

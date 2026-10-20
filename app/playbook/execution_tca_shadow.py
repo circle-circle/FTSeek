@@ -275,6 +275,12 @@ def finalize_and_record(
             row["success"] = success
             row["executed"] = success
             if success:
+                # 成功行不得带前几轮拦截的旧 skip_reason (2026-10-20 RIVN/LITE 实锤):
+                # 指令可能先被 chase_cap/falsification 拦过, 后续轮次才成交; 旧标签会让
+                # 报表把成功成交误读成"被拦单"。保留下车原因到 prior_skip_reason。
+                if row.get("skip_reason"):
+                    row["prior_skip_reason"] = row["skip_reason"]
+                    row["skip_reason"] = None
                 fill = _num(result.get("execution_price"))
                 row["fill_price"] = fill
                 row["exec_to_fill_bps"] = deviation_bps(
