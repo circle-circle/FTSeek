@@ -113,7 +113,7 @@ class HealthMonitor:
             except OSError:
                 acquired = False
         except Exception as e:
-            logger.debug(f"[PushHealth] 共享锁打开失败 (fail-open): {e}")
+            logger.warning(f"[PushHealth] 共享锁打开失败 (fail-open): {e}", exc_info=True)
             acquired = True
         try:
             yield acquired
@@ -150,7 +150,7 @@ class HealthMonitor:
                 json.dump(state, f, ensure_ascii=False)
             os.replace(tmp, self.shared_state_path)
         except Exception as e:
-            logger.debug(f"[PushHealth] 共享状态写入失败 (忽略): {e}")
+            logger.warning(f"[PushHealth] 共享状态写入失败 (忽略): {e}", exc_info=True)
 
     def _claim_ping_slot(self) -> bool:
         """全局 ping 时隙: 每个 interval 只允许一个进程发通道心跳."""

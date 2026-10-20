@@ -16,10 +16,14 @@ import json
 import sqlite3
 import statistics
 from collections import Counter
-from datetime import datetime
+import logging
 from pathlib import Path
 
+from app.utils.timezone import now_et
+
 REPO = Path(__file__).resolve().parents[1]
+
+logger = logging.getLogger(__name__)
 DEFAULT_JSONL = REPO / "data" / "ext_entry_exec_price_shadow.jsonl"
 DEFAULT_DB = REPO / "data" / "ftseek_us.db"
 DEFAULT_OUT = REPO / "data" / "shadow" / "ext_entry_exec_price_eval_latest.json"
@@ -37,7 +41,8 @@ def load_rows(path: Path) -> list[dict]:
                 continue
             try:
                 rows.append(json.loads(line))
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                logger.warning("jsonl 坏行跳过: %s", e, exc_info=True)
                 continue
     return rows
 
@@ -167,7 +172,7 @@ def build_report(rows: list[dict], db_path: Path, since: str = SINCE) -> dict:
     low_n = actual["low_price_lt50"]["n"]
     verdict = "WINDOW_MET_READOUT" if window_ok else "INSUFFICIENT_WINDOW"
     return {
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "generated_at": now_et().isoformat(timespec="seconds"),
         "source": str(DEFAULT_JSONL),
         "metrics": m,
         "actual_trades": actual,

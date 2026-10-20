@@ -69,7 +69,8 @@ def _load_bars(symbol: str) -> Optional[list[tuple]]:
             continue
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as e:
+            print(f"[entry_second_chance] 坏行/坏档跳过: {e}", file=sys.stderr)
             continue
         bars = []
         for row in raw:
@@ -77,7 +78,8 @@ def _load_bars(symbol: str) -> Optional[list[tuple]]:
                 bars.append((datetime.strptime(str(row[0]), "%Y-%m-%d %H:%M:%S"),
                              float(row[1]), float(row[2]), float(row[3]),
                              float(row[4])))
-            except Exception:
+            except Exception as e:
+                print(f"[entry_second_chance] 坏行/坏档跳过: {e}", file=sys.stderr)
                 continue
         if bars:
             return bars

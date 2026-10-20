@@ -27,6 +27,7 @@ def _rows():
         {   # 需用户裁 (人工分类为 NEEDS_USER)
             "id": "futu_channel_top_movers",
             "status": "READY_TO_EVALUATE",
+            "needs_adjudication": True,
             "n": 3291, "min_n": 540, "progress": "3291/540", "ready": True,
             "criteria": "IC 显著", "artifact": "data/shadow/top_movers_eval_latest.json",
             "eval_script": "scripts/top_movers_eval.py", "count_mode": None, "evidence": {},

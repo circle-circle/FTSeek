@@ -597,11 +597,10 @@ ADJUDICATED: dict[str, dict] = {
     # ── 2026-10-03 清理批: 待裁面「已读判据」登记 (把 7 项机械读数从 needs_user 面摘下,
     #    全部为当日实跑/既有产物读数, 判据一字未改; 改判据=重新裁决) ──────────────────
     "ue_tier_gate": {
-        "read_at": "2026-10-03", "recheck_after": "2026-10-21", "needs_user": False,
-        "note": "10/03 实跑 ue_tier_gate_shadow_eval.py: 19/15 日, 候选 79, 被拦仅 7 "
-                "(fwd 可评: ALL 2 vs 放行 32; LONG 2 vs 17; SHORT 0 vs 15) ⇒ 被拦子样本"
-                "太小, verdict=KEEP_SAMPLING 自动续观。附带通道经济性 (只印不判): n=88 "
-                "净 −$770, 毛利率 −5.79bps < 费率 13.10bps, 净 t=−1.069 不显著。",
+        "read_at": "2026-10-19", "recheck_after": "", "needs_user": False,
+        "note": "2026-10-19 用户令按建议执行 ⇒ 退役 (KILLED): 写者仅挂 UE inject, "
+                "10/18 DA 主链改造后路径不再运行; 数据止于 10/05; 被拦 fwd n=4<30; "
+                "eval cron 已摘; 数据保留; 重开=新预注册。",
     },
     "ue_quote_freshness_shadow": {
         "read_at": "2026-10-03", "recheck_after": "2026-10-21", "needs_user": False,
@@ -2154,8 +2153,8 @@ REGISTRY: list[ShadowItem] = [
     ),
     ShadowItem(
         id="ue_tier_gate",
-        name="UE tier 闸影子 (PROPOSAL-20260905 U3/P4, 9/11 补结算器)",
-        status=ShadowStatus.OBSERVING,
+        name="UE tier 闸影子 (PROPOSAL-20260905 U3/P4, 9/11 补结算器) (⛔已退役 2026-10-19)",
+        status=ShadowStatus.KILLED,
         description="HARD_EVENT 直进 / MARKET_CORROBORATED 需补强 / THESIS_ONLY 拦 — 影子判定"
                     "落盘 (写者 llm_universe_scan._log_tier_gate_shadow), enforce=false。"
                     "9/11 补 ue_tier_gate_shadow_eval.py: 被拦/放行桶 fwd_return_t1 对照 + "
@@ -2169,6 +2168,13 @@ REGISTRY: list[ShadowItem] = [
                             "方向分层只并列呈报不另设门 (防多重比较挪门柱)。",
         eval_script="scripts/ue_tier_gate_shadow_eval.py",
         created="2026-09-05",
+        last_evaluated="2026-10-19",
+        collection_retired=True,
+        verdict_history=[{"date": "2026-10-19", "verdict": "KILLED_REASONABLENESS",
+                          "evidence": "写者仅挂 UE inject; 10/18 DA 主链改造后 scan --da-feed "
+                                      "skip inject ⇒ 10/05 后断供; 10/19 scan 仍 surfaced 7 但 "
+                                      "无 tier-gate 行; 被拦 fwd n=4<30; eval cron 已摘; "
+                                      "数据保留; 重开=新预注册."}],
         notes="count_mode=distinct:date (每扫描日 1 行, 行数=交易日数, 与 >=15 交易日判据同轴)。"
               "cron 52 5 * * 6 (fwd 回填 05:30 后, 与 ue_tier_shadow_eval 05:50 同窗)。"
               "与 tier_gate_enabled 互锁: 影子期禁止打开 (config 注释在案)。回滚=删 cron 行+结算器+本条目。"
@@ -2189,7 +2195,10 @@ REGISTRY: list[ShadowItem] = [
               "变异测试 4/4 种破坏被抓 ⇒ 守卫有牙齿)。"
               " ⚠️ 审计局限: `fees_est` 是估算列 (伴 fees_source) 未逐笔对账; tier 维度对实盘成交覆盖率 "
               "仅 ~24% (影子 9/08 起, 成交回溯 7/14) ⇒ 任何 tier×盈亏 结论都是小样本, 不得据此立判据; "
-              "前瞻 vs 实盘相关 r=+0.403 (t=+4.01, n=85) ⇒ 尺子有效但不强 (符号一致率 63%)。",
+              "前瞻 vs 实盘相关 r=+0.403 (t=+4.01, n=85) ⇒ 尺子有效但不强 (符号一致率 63%)。"
+              "2026-10-19 用户令按建议执行 ⇒ 退役 (KILLED): 写者只挂 UE inject 路径, "
+              "10/18 DA 主链改造后 scan --da-feed 明确 skip inject ⇒ 影子断供; 数据止于 10/05; "
+              "被拦 fwd n=4<30; eval cron 已摘; 数据保留; 重开=新预注册 + 恢复写入路径。",
         count_mode="distinct:date",
     ),
     # ── 2026-09-15 (DEB-20260910 §22-§25 报价新鲜度门, 用户裁「请执行」) ──
@@ -3992,6 +4001,11 @@ _CONSUMER_ACK: dict[str, str] = {
         "2026-10-19 退役后实测: 活跃 cron 内的 extended_hours_entry_executor.py 是**写方** "
         "(只在 EXT_ENTRY_EXEC_PRICE_SHADOW=true 分支写该 jsonl); crontab 两行已改 false "
         "⇒ 写分支 inert, grep 全仓无生产读方; 停采不断任何生产料。数据保留。"),
+    "ue_tier_gate": (
+        "2026-10-19 退役后实测: 活跃 cron 的 llm_universe_scan.py 是**写方** "
+        "(只在 inject 路径调用 _log_tier_gate_shadow); 现行 scan --da-feed 明确 skip inject "
+        "⇒ 写分支 inert; eval cron 与 data_freshness_watchdog 条目已摘; grep 全仓无生产读方; "
+        "停采不断任何生产料。数据保留。"),
 }
 
 

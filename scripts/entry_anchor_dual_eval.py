@@ -22,10 +22,14 @@ import json
 import sqlite3
 import statistics
 from collections import Counter, defaultdict
-from datetime import datetime
+import logging
 from pathlib import Path
 
+from app.utils.timezone import now_et
+
 REPO = Path(__file__).resolve().parents[1]
+
+logger = logging.getLogger(__name__)
 DEFAULT_JSONL = REPO / "data" / "entry_timing_shadow.jsonl"
 DEFAULT_DB = REPO / "data" / "ftseek_us.db"
 DEFAULT_OUT = REPO / "data" / "shadow" / "entry_anchor_dual_eval_latest.json"
@@ -42,7 +46,8 @@ def load_rows(path: Path) -> list[dict]:
                 continue
             try:
                 rows.append(json.loads(line))
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                logger.warning("jsonl 坏行跳过: %s", e, exc_info=True)
                 continue
     return rows
 
@@ -128,7 +133,8 @@ def join_outcomes(rows: list[dict], db_path: Path) -> dict:
     for t in trades:
         try:
             md = json.loads(t["metadata_json"] or "{}")
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            logger.warning("metadata JSON 坏行: %s", e, exc_info=True)
             md = {}
         pi = md.get("playbook_instruction_id")
         if pi is not None:
@@ -184,7 +190,7 @@ def build_report(rows: list[dict], db_path: Path, min_days: int = MIN_DAYS) -> d
     else:
         verdict = "MANUAL_REVIEW"
     return {
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "generated_at": now_et().isoformat(timespec="seconds"),
         "source": str(DEFAULT_JSONL),
         "min_days": min_days,
         "metrics": m,

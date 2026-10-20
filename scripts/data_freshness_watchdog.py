@@ -76,7 +76,7 @@ WATCHLIST = [
     # 2026-09-11 同日 (DEB-20260911 用户裁「按建议执行」): A_short_chase/C_long_chase 退役,
     #   仅 B_long_knife 打标; 行仍按当日全部可执行指令落盘 ⇒ 新鲜度口径不变。
     ("data/premarket_invalidation_shadow.jsonl",  50, "盘前失效影子 (B 规则; A/C 9/11 退役, 09:35-09:59 ET/交易日)", True),
-    ("data/shadow/ue_tier_gate_shadow.jsonl",     74, "UE tier 闸影子 (UE 扫描日批写, 周末+假日 74h 口径同 U11)", True),
+    # 2026-10-19 退役 ue_tier_gate: 写者路径已断; 从新鲜度清单移除 (回滚见 git).
     # 已知墓地 (DEB-20260723 time-exit-censoring 实证6): 若已裁决停用应从清单移除, 否则持续告警提醒清理
     # 2026-08-26: prompt_eval + shadow_technical_direction 已归档至
     #   data/shadow/archive_20260826/ (上游停产实锤, 全影子普查裁决), 条目移除。

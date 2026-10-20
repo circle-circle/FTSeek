@@ -345,7 +345,7 @@ def run_playbook_topup_supplement(
         logger.info(f"[playbook·topup] ✅ 补量完成 ({_timing}): +{saved} 条 (池评估 {len(screen_results)} 只, 无方向/被门拦下的不计)")
         return {"added": saved, "pool_screened": len(screen_results), "timing": _timing}
     except Exception as e:
-        logger.warning(f"[playbook·topup] 补量任务异常 (已隔离): {e}")
+        logger.warning(f"[playbook·topup] 补量任务异常 (已隔离): {e}", exc_info=True)
         return None
 
 

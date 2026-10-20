@@ -82,7 +82,7 @@ def _load_state() -> dict:
     except FileNotFoundError:
         return {}
     except Exception as e:
-        logger.warning("[日K刷新] 状态文件不可读 (%s) → 视为今日未跑, 重新刷新", e)
+        logger.warning("[日K刷新] 状态文件不可读 (%s) → 视为今日未跑, 重新刷新", e, exc_info=True)
         return {}
 
 

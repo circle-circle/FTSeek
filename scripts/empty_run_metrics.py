@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
+import sys
 import re
 import sqlite3
 import statistics
@@ -121,7 +122,8 @@ def _playbook_ue_origins(days: int) -> list[dict]:
     for row in rows:
         try:
             raw = json.loads(row["raw_instruction_json"] or "{}") or {}
-        except Exception:
+        except Exception as e:
+            print(f"[empty_run_metrics] 坏行/坏档跳过: {e}", file=sys.stderr)
             continue
         origin = str(raw.get("origin") or "")
         batch = str(raw.get("ue_batch_id") or "")
@@ -224,7 +226,8 @@ def _final_ue_rows(days: int) -> dict[str, list[dict]]:
     for row in rows:
         try:
             raw = json.loads(row["raw_instruction_json"] or "{}") or {}
-        except Exception:
+        except Exception as e:
+            print(f"[empty_run_metrics] 坏行/坏档跳过: {e}", file=sys.stderr)
             continue
         batch_id = str(raw.get("ue_batch_id") or "")
         if not batch_id:
@@ -341,7 +344,8 @@ def _parse_da_feed_injection(date: str) -> dict:
                 r"\[UE-FEED\]\s+(?:US\.)?([A-Z0-9.\-]+)\s+streak=(\d+)", line)
             if streak:
                 out["streak_dropped"].append(streak.group(1))
-    except Exception:
+    except Exception as e:
+        print(f"[empty_run_metrics] 坏行/坏档跳过: {e}", file=sys.stderr)
         pass
     return out
 
@@ -398,7 +402,8 @@ def _da_margins(days: int) -> dict:
             continue
         try:
             stamp = datetime.fromisoformat(str(row["finished_at"]))
-        except Exception:
+        except Exception as e:
+            print(f"[empty_run_metrics] 坏行/坏档跳过: {e}", file=sys.stderr)
             continue
         minutes = stamp.hour * 60 + stamp.minute
         margins.append(9 * 60 - minutes)  # 正数 = 距 09:00 ET 的余量
@@ -417,7 +422,8 @@ def _eth_metrics(days: int) -> dict:
                 continue
             try:
                 row = json.loads(line)
-            except Exception:
+            except Exception as e:
+                print(f"[empty_run_metrics] 坏行/坏档跳过: {e}", file=sys.stderr)
                 continue
             runs += 1
             if row.get("skip") == "outside_extended_hours":

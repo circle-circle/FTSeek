@@ -76,7 +76,11 @@
 - 本轮重启 (退役批): 2026-10-19 11:06 CST，启动冒烟 **7/7**，PID 2341920；重启前仅 ADSK 一个模拟仓，exit_intents 189 条全 BOOKED。
 - 裁决结论 (未改): 双 carrier 保留双侧（非双推，冗余价值 > 执行成本）；六套日亏权威保留分层（地图已准确）；净 PnL 双实现留 DEB 级单口径重构（当前 delta=0）。
 - **提交**: `da86474a9` — `[hotfix] 减法批收口: 配置死键 + ext price 影子退役`（已推送）。
-- 未做: 剩余 orphan 叶按块保留 — `options/short_strategy` 有活读者，`exit_profiles/playbook_horizon` 属动态退出配置，`strategies/news/llm` 多为遗留或仓外消费；245 条注释 cron、双 carrier、日亏权威、净口径仍待逐项裁决。（需 validator/CRITICAL_KEYS/仓外三面复核）、245 条注释 cron、双 carrier、日亏权威、净口径、手动平仓门。
+- 第十四批退役 (2026-10-19, 本批整体提交): 用户令按建议执行 ⇒ `ue_tier_gate` **KILLED**：写者仅挂 UE inject，10/18 DA 主链改造后 `scan --da-feed` 明确 skip inject ⇒ 10/05 后断供；10/19 scan 仍 surfaced 7 但无 tier-gate 行；被拦 fwd n=4<30；`universe_expansion.tier_gate_shadow=false`；eval cron 摘除（active 124→123）；`data_freshness_watchdog` 条目移除；`_CONSUMER_ACK` 认领 scan 的 inert 写方；ADJUDICATED recheck 清空；数据保留；重开=新预注册 + 恢复写入路径；**143 passed**；后续随本批重启（见下）。
+- 全量回归 (2026-10-20): 首跑 **7389 passed / 17 failed / 72 skipped** → 修复本批回归（`eth_short_probe` 词典终态、error_alert crontab 注释、3 个 eval 脚本 R5/naive-now）→ 清理 7 项外部红后 **7406 passed / 72 skipped / 0 failed (7:41)**。外部修复：config 5 死键（catalyst.premarket 3 + observability.retention_days×2 + diagnostics.risk_free_rate）、control ledger `bd564dae37b0` 留痕豁免、event_stream 测试回看窗、except-pass 7 处留痕（empty_run_metrics 5 + entry_second_chance 2）、naive generation_flow 重锚、pending top_movers `needs_adjudication`、W4/W6 6 处补栈（push/health×2 + scheduler_triggers/generation_flow/main.py/refresh_daily_bars）。strict ConfigValidator **0/0**。
+- 最终重启: 2026-10-20 10:47 CST，启动冒烟 **7/7**，PID **2576099**；重启前 4 个在仓（ADSK/ASML/TSM/BA），exit_intents 200 条全 BOOKED。
+- **本批整体提交**（hash 见 git log；crontab 的 ue eval 摘除与注释修正属运行机改动，不在 git）。
+- 未做: 剩余 orphan 叶按块保留 — `options/short_strategy` 有活读者，`exit_profiles/playbook_horizon` 属动态退出配置，`strategies/news/llm` 多为遗留或仓外消费；需 validator/CRITICAL_KEYS/仓外三面复核；245 条注释 cron、双 carrier、日亏权威、净口径、手动平仓门仍待逐项裁决。
 
 ## 2026-10-18 推送治理 P0+P1（心跳/复盘/回滚/日报降频）
 

@@ -557,7 +557,8 @@ def test_ue_clue_text_includes_event_meta(tmp_path, monkeypatch):
         values = {
             "universe_expansion.event_stream_clue_enabled": True,
             "universe_expansion.event_stream_clue_scan_limit": 5000,
-            "universe_expansion.event_stream_clue_lookback_hours": 24,
+            # 固定事件时间 2026-10-18; 放大回看窗防测试随时间自然过期
+            "universe_expansion.event_stream_clue_lookback_hours": 24 * 365,
             "universe_expansion.event_stream_clue_limit": 20,
             "universe_expansion.event_stream_clue_dedupe": True,
         }

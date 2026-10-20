@@ -19,10 +19,14 @@ import json
 import sqlite3
 import statistics
 from collections import Counter
-from datetime import datetime
+import logging
 from pathlib import Path
 
+from app.utils.timezone import now_et
+
 REPO = Path(__file__).resolve().parents[1]
+
+logger = logging.getLogger(__name__)
 DEFAULT_JSONL = REPO / "data" / "ext_entry_earnings_criterion_shadow.jsonl"
 DEFAULT_DB = REPO / "data" / "ftseek_us.db"
 DEFAULT_OUT = REPO / "data" / "shadow" / "ext_earnings_criterion_eval_latest.json"
@@ -39,7 +43,8 @@ def load_rows(path: Path) -> list[dict]:
                 continue
             try:
                 rows.append(json.loads(line))
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                logger.warning("jsonl 坏行跳过: %s", e, exc_info=True)
                 continue
     return rows
 
@@ -99,7 +104,8 @@ def compute_trades(db_path: Path, since: str = EFFECTIVE_SINCE) -> dict:
             bps.append(float(r["net"] or 0.0) / notional * 10000)
         try:
             md = json.loads(r["metadata_json"] or "{}")
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            logger.warning("metadata JSON 坏行: %s", e, exc_info=True)
             md = {}
         ch = md.get("ext_change_pct")
         if isinstance(ch, (int, float)) and 0.5 <= abs(ch) <= 2.0:
@@ -134,7 +140,7 @@ def build_report(ledger_rows: list[dict], db_path: Path, since: str = EFFECTIVE_
     else:
         verdict = "MAINTAIN_CANDIDATE_MANUAL_CROSSCHECK"
     return {
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "generated_at": now_et().isoformat(timespec="seconds"),
         "source": str(DEFAULT_JSONL),
         "ledger": ledger,
         "trades": trades,

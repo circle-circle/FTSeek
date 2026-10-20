@@ -257,7 +257,7 @@ def _exit_policy_startup_gate(live_capable: bool) -> None:
     except SystemExit:
         raise
     except Exception as exc:
-        logger.error("[ExitPolicy] 退出策略校验异常 (降级运行): %s", exc)
+        logger.error("[ExitPolicy] 退出策略校验异常 (降级运行): %s", exc, exc_info=True)
         if live_capable:
             raise SystemExit(
                 f"[StartupMode] LIVE-capable 模式下 ExitPolicy 校验异常: {exc}; "

@@ -313,7 +313,7 @@ def _check_recommendation_accuracy(scheduler):
     except ImportError as ie:
         logger.debug(f"[Recommendations] 准确率模块未就绪 (跳过): {ie}")
     except Exception as e:
-        logger.warning(f"[Recommendations] 准确率评估异常: {e}")
+        logger.warning(f"[Recommendations] 准确率评估异常: {e}", exc_info=True)
 
 
 def _trigger_eod_agent_review(scheduler, review: dict):

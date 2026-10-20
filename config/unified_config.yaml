@@ -91,9 +91,7 @@ catalyst:
     generate_lessons: false
   premarket:
     consensus_threshold: 0.4
-    debate_timeout_seconds: 180
-    min_severity: HIGH
-    scan_news_hours: 12
+    # 2026-10-20 减法批: debate_timeout_seconds/min_severity/scan_news_hours 零读者; 删.
   reverse_catalyst:
     enabled: false
     min_change_pct: 0.03
@@ -234,7 +232,7 @@ diagnostics:
     lookback_days: 30
   statistical_validator:
     n_simulations: 1000
-    risk_free_rate: 0.05
+    # 2026-10-20 减法批: risk_free_rate 零读者; 删.
 dual_mode:
   aggressive:
     max_daily_auto_trades: 5
@@ -926,10 +924,10 @@ llm_pushes:
 observability:
   audit_log:
     enabled: true
-    retention_days: 90
+    # 2026-10-20 减法批: retention_days 零读者; 删.
   failure_tracking:
     enabled: true
-    retention_days: 30
+    # 2026-10-20 减法批: retention_days 零读者; 删.
   metrics:
     collect_interval: 10
   notification:
@@ -2438,7 +2436,9 @@ universe_expansion:
   #   ue_corro_syms_{ET}.json 或 raw_conf≥0.70且rubric_score≥3) / THESIS_ONLY 拦。
   #   依据: HARD_EVENT +$101.54/17笔 vs MC −$379.10/12笔; THESIS_ONLY 夹逼漏洞必漏。
   # tier_gate_shadow: 影子判定落盘 data/shadow/ue_tier_gate_shadow.jsonl。回滚: false。
-  tier_gate_shadow: true
+  # 2026-10-19 用户令按建议执行 ⇒ 退役: 写者仅挂 UE inject, DA 主链改造后路径不再运行;
+  #   数据保留, 重开=新预注册. 回滚: true (但需先恢复 inject 写入路径).
+  tier_gate_shadow: false
   # tier_gate_enabled: enforce 开关 — 影子期禁止打开。预注册判据: 攒样≥15交易日且
   #   被影子化桶 fwd 回填 n≥30; 毕业=被拦桶方向性前瞻均值≤0 且放行桶均笔>0 → 用户裁决;
   #   撤闸认错=被拦桶前瞻 >+0.3% 且 n≥30。
