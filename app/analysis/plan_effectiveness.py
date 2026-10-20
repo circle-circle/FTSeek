@@ -10,7 +10,13 @@
 - pnl_contribution: 该目标贡献的实际收益
 - hit_rate / traded_rate / avg_pnl_of_planned / unplanned_trade_count
 
-数据源: playbook_instructions 表 (非 SKIP 指令) vs trade_records 表
+数据源: playbook_instructions 表 vs trade_records 表
+
+口径 (2026-10-20 记录卫生):
+- planned 分母 = 非 SKIP 指令 + 被 2 分钟门放弃的指令 (`skip_reason='entry_confirm_reversed'`)。
+  后者计入 planned 但不计 traded, 因此 traded_rate 是真实执行率 (例: 7 成交 / 8 可交易 = 87.5%),
+  不再出现"只拿已执行目标做分母 ⇒ 恒 100%"的假绿。
+- 放弃目标在 targets 中带 `status='abandoned_entry_confirm'` 与 `skip_reason`, 可逐条追溯。
 
 输出: data/plan_effectiveness/daily_YYYY-MM-DD.json
 """
@@ -107,6 +113,12 @@ class PlanEffectivenessTracker:
             "avg_pnl_of_planned": 0.0,
             "unplanned_trade_count": 0,
             "planned_count": 0,
+            "abandoned_count": 0,
+            "abandoned_symbols": [],
+            "execution_rate": 0.0,
+            "execution_rate_basis": (
+                "traded / (non-SKIP targets + entry_confirm_reversed abandoned)"
+            ),
         }
 
         try:
@@ -167,12 +179,19 @@ class PlanEffectivenessTracker:
                 unplanned += 1
 
         planned_count = len(target_evals)
+        abandoned = [
+            ev for ev in target_evals
+            if ev.get("status") == "abandoned_entry_confirm" and not ev.get("traded")
+        ]
         report["targets"] = target_evals
         report["planned_count"] = planned_count
         report["traded_planned_count"] = traded_count
         report["hit_count"] = hit_count
         report["hit_rate"] = (hit_count / planned_count) if planned_count else 0.0
         report["traded_rate"] = (traded_count / planned_count) if planned_count else 0.0
+        report["execution_rate"] = report["traded_rate"]
+        report["abandoned_count"] = len(abandoned)
+        report["abandoned_symbols"] = [ev.get("symbol") for ev in abandoned]
         report["avg_pnl_of_planned"] = avg_pnl
         report["unplanned_trade_count"] = unplanned
 
@@ -183,8 +202,9 @@ class PlanEffectivenessTracker:
 
         logger.info(
             f"[PlanEffectiveness] {date} | planned={planned_count} | "
+            f"traded={traded_count} | abandoned={len(abandoned)} | "
             f"hit_rate={report['hit_rate']:.2%} | traded_rate={report['traded_rate']:.2%} | "
-            f"unplanned={unplanned}"
+            f"unplanned={unplanned} | basis={report['execution_rate_basis']}"
         )
         return report
 
@@ -192,7 +212,11 @@ class PlanEffectivenessTracker:
     # 内部方法
     # ────────────────────────────────────────────────────────────
     def _load_battle_plan(self, date: str) -> Optional[Dict[str, Any]]:
-        """从 playbook_instructions 表加载指定日期的非 SKIP 指令。
+        """从 playbook_instructions 表加载指定日期的可交易/放弃指令。
+
+        2026-10-20: 除非 SKIP 指令外, 额外纳入 `triggered=1` 且
+        `skip_reason='entry_confirm_reversed'` 的 2 分钟门放弃目标 —
+        否则这些目标从分母消失, traded_rate 会虚高为 100%。
 
         Returns: 兼容旧 battle_plan 格式的 dict: {"date": ..., "targets": [...]}
         """
@@ -205,10 +229,13 @@ class PlanEffectivenessTracker:
             conn.row_factory = sqlite3.Row
             try:
                 rows = conn.execute(
-                    "SELECT symbol, direction, entry_price, stop_loss, take_profit, "
-                    "confidence, triggered, executed "
+                    "SELECT id, symbol, direction, entry_price, stop_loss, take_profit, "
+                    "confidence, triggered, executed, skip_reason "
                     "FROM playbook_instructions "
-                    "WHERE date = ? AND direction != 'SKIP'",
+                    "WHERE date = ? AND ("
+                    "  direction != 'SKIP' "
+                    "  OR (triggered = 1 AND skip_reason = 'entry_confirm_reversed')"
+                    ")",
                     (date,),
                 ).fetchall()
             finally:
@@ -232,11 +259,19 @@ class PlanEffectivenessTracker:
             _DIR_MAP = {"SELL_SHORT": "SHORT", "SELL": "SHORT", "SHORT": "SHORT", "BUY": "LONG", "LONG": "LONG"}
             raw_dir = str(r["direction"] or "").upper()
             direction = _DIR_MAP.get(raw_dir, raw_dir)
+            skip_reason = str(r["skip_reason"] or "")
+            if r["triggered"] and skip_reason == "entry_confirm_reversed":
+                status = "abandoned_entry_confirm"
+            else:
+                status = "triggered" if r["triggered"] else (
+                    "executed" if r["executed"] else "")
             targets.append({
+                "instruction_id": r["id"],
                 "symbol": r["symbol"],
                 "direction": direction,
                 "entry_zone": zone,
-                "status": "triggered" if r["triggered"] else ("executed" if r["executed"] else ""),
+                "status": status,
+                "skip_reason": skip_reason,
             })
 
         return {"date": date, "targets": targets}
@@ -275,6 +310,8 @@ class PlanEffectivenessTracker:
             "plan_direction": plan_direction,
             "entry_zone": list(entry_zone) if isinstance(entry_zone, (list, tuple)) else [],
             "status": target.get("status", ""),
+            "skip_reason": target.get("skip_reason", ""),
+            "instruction_id": target.get("instruction_id"),
             "traded": False,
             "entry_zone_hit": False,
             "direction_match": False,

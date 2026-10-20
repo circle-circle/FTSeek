@@ -3167,7 +3167,10 @@ def _write_open_position(
             " futu_order_id, metadata_json, created_at, exit_price, exit_time, config_version, "
             " entry_session, decision_id) "
             "VALUES (?, ?, ?, ?, ?, ?, 'PLAYBOOK_SIM', 'simulate', 'futu_simulate', "
-            " 'extended_hours_entry', 'extended_hours_entry', ?, ?, ?, 0, '', 'v2', ?, ?)",
+            # 2026-10-20 记录卫生: 未平仓 exit_time 必须 NULL, 不能是空串 —
+            #   `WHERE exit_time IS NULL` 的重启/运维查询会漏掉 EXT 未平仓行
+            #   (10/19 实测 ASML/TSM/BA 三行空串, 只有 ADSK 是 NULL)。
+            " 'extended_hours_entry', 'extended_hours_entry', ?, ?, ?, 0, NULL, 'v2', ?, ?)",
             # config_version='v2': 与规范写入方 app/storage/trade_store.py 一致。该表 schema 是
             # DEFAULT 'v1'，本列不写会落默认值 ⇒ W1 冻结窗出现版本分裂假象 (2026-09-18 F7 修复)。
             # decision_id (RFC-126): EXT-<date>-<symbol>-<session> 归因, 消灭空 did 成交。
