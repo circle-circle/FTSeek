@@ -1000,6 +1000,36 @@ REGISTRY: list[ShadowItem] = [
               "现仅 6 日 ⇒ **n 轴达标 ≠ 判据达标** (双轴陷阱, 同 eth_relative_volume_gate 10-08 "
               "形态); 未擅改 min_n (改=重裁), ADJUDICATED 已挂 10-15 说明, ~10-20 满 10 交易日。",
     ),
+    ShadowItem(
+        id="execution_tca_spread_shadow",
+        name="执行 TCA + 点差/报价年龄门只读影子 (RFC-152 Phase 0)",
+        status=ShadowStatus.OBSERVING,
+        description="每笔真正走到下单调用的指令落一行 data/shadow/execution_tca.jsonl: "
+                    "计划锚/重定价锚/到达双边报价/点差(bps)/报价年龄(ms)/成交价/方向归一偏差。"
+                    "0=只读测量: 不拦截、不改路由/仓位/SL/TP/退出; provisional_would_block "
+                    "只是 jsonl 标签, 不是生效门。用于量化 implementation shortfall 与"
+                    "点差门的反事实, 先回答'点差门能省多少、会误杀多少'。",
+        data_path="data/shadow/execution_tca.jsonl",
+        config_key="playbook.execution_parameters.execution_tca_shadow_enabled",
+        min_n=30,
+        count_mode="where:success=True",
+        graduation_criteria="预注册见 RFC-152 §5: 样本门 ≥10 个 ET 交易日且 ≥30 笔成功成交; "
+                            "必报点差/报价年龄分桶的扣费净 bps + 按日聚类 t + MDE80 + 误杀计数; "
+                            "Phase 1 提案门 = 宽点差组净 bps 显著为负(日聚类 t≤-2.0)+宽点差组 "
+                            "n≥30 且跨≥10 日+阈值前半窗定/后半窗验; **本 Phase 0 不设自动转生产**, "
+                            "任何点差门生效须另立 RFC + 用户批准并占用 OKR-2026-10 C1 名额。",
+        eval_script="scripts/execution_tca_report.py",
+        eval_on_demand=True,
+        created="2026-10-20",
+        notes="2026-10-20 用户裁「同意，按照建议执行」落地 Phase 0。"
+              "阶梯: 一杆秤(本项) → 点差/报价年龄门 → RS → ORB/ATR 衰竭 → 事件避雷针; "
+              "本批只做第一步+点差标签, 其余未开工。"
+              "为什么先做: 近 30 日毛利 +9.64bps vs 费用 16bps, 净 -6.36bps; 10-19 5/8 chase、"
+              "4/8 计划锚偏离>1%; 墓地单(MFE<0.3%, 24 笔)承担几乎全部亏损 — 先量成交层缺口。"
+              "边界: SIM 成交不可直接外推实盘; book proxy 行 spread_bps=None 单列; "
+              "只覆盖已过全部闸门的尝试(选择偏差); 计划锚缺失不反推。"
+              "回滚: execution_tca_shadow_enabled=false + 重启; 数据保留。",
+    ),
     # ── 既有影子 (Phase 0 / 7月) — 代表性事项, 非穷举 ──
     ShadowItem(
         id="entry_band_widen",

@@ -1,10 +1,13 @@
 """Evidence-bearing result layer for the daily review bundle."""
 from __future__ import annotations
 
+import json
 import logging
 import math
 import sqlite3
+import statistics
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping
 
 from app.review.actionability_diagnostics import build_actionability_diagnostics
@@ -13,8 +16,15 @@ from app.review.decision_diagnostics import build_decision_diagnostics
 from app.review.stage_stats import load_trades, stage_breakdown
 from app.utils.timezone import to_et
 
+logger = logging.getLogger(__name__)
 
 _DIRECTION_TO_PLAN = {"LONG": "BUY", "SHORT": "SELL_SHORT"}
+_PULLBACK_SHADOW = (
+    Path(__file__).resolve().parents[2] / "data" / "shadow" / "pullback_limit_shadow.jsonl"
+)
+_POST_EXIT_SHADOW = (
+    Path(__file__).resolve().parents[2] / "data" / "shadow" / "post_exit_path.jsonl"
+)
 
 _log = logging.getLogger(__name__)
 
@@ -120,10 +130,25 @@ def build_slices(
 def build_plan_vs_actual(
     connection: sqlite3.Connection, report_date: str
 ) -> Dict[str, Metric]:
-    """Compare playbook instruction pairs with actual playbook trades."""
+    """Compare playbook instruction pairs with actual playbook trades.
+
+    2026-10-20 P0: 2 分钟门放弃 (`skip_reason='entry_confirm_reversed'`) 必须进
+    planned 分母。该行 direction 已被改成 SKIP, 旧查询只看 BUY/SELL_SHORT ⇒ 目标
+    从分母消失, 执行率虚高 (10-19 实跑 7/7=100%, 正确口径 7/8=87.5%)。
+    """
     instructions = connection.execute(
-        "select symbol, direction from playbook_instructions "
-        "where date = ? and direction in ('BUY', 'SELL_SHORT') order by id",
+        "select symbol, direction, skip_reason, entry_price, "
+        "       coalesce("
+        "         json_extract(raw_instruction_json, '$.confirmation_gap_pct'), "
+        "         case when json_extract(raw_instruction_json, '$.confirmation.price_level') is not null "
+        "                   and entry_price > 0 "
+        "              then (json_extract(raw_instruction_json, '$.confirmation.price_level') "
+        "                    - entry_price) / entry_price * 100 end"
+        "       ) as gap_pct, "
+        "       json_extract(raw_instruction_json, '$.entry_archetype') as archetype "
+        "from playbook_instructions "
+        "where date = ? and (direction in ('BUY', 'SELL_SHORT') "
+        "or skip_reason = 'entry_confirm_reversed') order by id",
         (report_date,),
     ).fetchall()
     trades = connection.execute(
@@ -136,6 +161,23 @@ def build_plan_vs_actual(
 
     planned_pairs = list(
         dict.fromkeys((row["symbol"], row["direction"]) for row in instructions)
+    )
+    abandoned_pairs = list(
+        dict.fromkeys(
+            (row["symbol"], row["direction"])
+            for row in instructions
+            if (row["skip_reason"] or "") == "entry_confirm_reversed"
+        )
+    )
+    abandoned_lookup = set(abandoned_pairs)
+    plan_gap_pairs = list(
+        dict.fromkeys(
+            (row["symbol"], row["direction"])
+            for row in instructions
+            if row["gap_pct"] is not None
+            and abs(float(row["gap_pct"])) > 1.0
+            and str(row["archetype"] or "").upper() in ("PULLBACK_LIMIT", "FADE_SHORT")
+        )
     )
     actual_pairs = list(
         dict.fromkeys(
@@ -153,7 +195,8 @@ def build_plan_vs_actual(
         key=lambda pair: planned_lookup[pair],
     )
     missed_pairs = sorted(
-        (pair for pair in planned_lookup if pair not in actual_lookup),
+        (pair for pair in planned_lookup
+         if pair not in actual_lookup and pair not in abandoned_lookup),
         key=lambda pair: planned_lookup[pair],
     )
     unplanned_pairs = sorted(
@@ -188,6 +231,18 @@ def build_plan_vs_actual(
             "executed_count", executed_count, sample_n, "count", evidence
         ),
         "missed_count": _metric("missed_count", len(missed_pairs), sample_n, "count", evidence),
+        "abandoned_count": _metric(
+            "abandoned_count", len(abandoned_pairs), sample_n, "count", evidence
+        ),
+        "abandoned_symbols": _metric(
+            "abandoned_symbols", [pair[0] for pair in abandoned_pairs], sample_n, "text", evidence
+        ),
+        "plan_gap_count": _metric(
+            "plan_gap_count", len(plan_gap_pairs), sample_n, "count", evidence
+        ),
+        "plan_gap_symbols": _metric(
+            "plan_gap_symbols", [pair[0] for pair in plan_gap_pairs], sample_n, "text", evidence
+        ),
         "unplanned_count": _metric(
             "unplanned_count", len(unplanned_pairs), sample_n, "count", evidence
         ),
@@ -199,6 +254,242 @@ def build_plan_vs_actual(
         ),
         "unplanned_symbols": _metric(
             "unplanned_symbols", [pair[0] for pair in unplanned_pairs], sample_n, "text", evidence
+        ),
+    }
+
+
+def _parse_metadata(raw: Any) -> Dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    try:
+        value = json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def build_research_arm_split(
+    connection: sqlite3.Connection, report_date: str
+) -> Dict[str, Metric]:
+    """Split the headline cohort into research arm vs the rest (read-only).
+
+    2026-10-20 P0: 研究臂 (gate_mode=research_momentum) 自 10-19 起写
+    PLAYBOOK_SIM, 但它是独立研究源, 不经过 DA 入场确认门。日报 headline 仍统计
+    全部成交 (总账), 本 section 只让读者看到分账, 不改 headline/OKR 判分 SQL。
+    """
+    rows = load_trades(connection, report_date, report_date)
+    research = []
+    core = []
+    sources: Dict[str, int] = {}
+    for row in rows:
+        meta = _parse_metadata(row.get("metadata_json"))
+        if str(meta.get("gate_mode") or "") == "research_momentum":
+            research.append(row)
+            source = str(meta.get("research_source") or "unknown")
+            sources[source] = sources.get(source, 0) + 1
+        else:
+            core.append(row)
+
+    open_rows = connection.execute(
+        "select symbol, metadata_json from trade_records "
+        "where exit_time is null and source_type in ('PLAYBOOK_SIM', 'PLAYBOOK_LIVE') "
+        "order by id"
+    ).fetchall()
+    open_research = []
+    open_sources: Dict[str, int] = {}
+    for row in open_rows:
+        meta = _parse_metadata(row["metadata_json"])
+        if str(meta.get("gate_mode") or "") != "research_momentum":
+            continue
+        open_research.append(row["symbol"])
+        source = str(meta.get("research_source") or "unknown")
+        open_sources[source] = open_sources.get(source, 0) + 1
+
+    n = len(rows)
+    evidence = _derived_evidence(
+        "app.review.stage_stats.load_trades then metadata gate_mode split",
+        report_date,
+        n,
+        universe="db:trade_records",
+        note="closed trades only (same cohort as headline); open research positions counted separately",
+    )
+    open_evidence = _derived_evidence(
+        "db:trade_records where exit_time is null",
+        report_date,
+        len(open_rows),
+        universe="db:trade_records",
+        note="open positions, research arm classification from metadata gate_mode",
+    )
+
+    def _sum(rows_, key):
+        return round(math.fsum(float(row.get(key) or 0.0) for row in rows_), 2)
+
+    def _wins(rows_):
+        return sum(1 for row in rows_ if float(row.get("net") or 0.0) > 0)
+
+    def _rate(rows_):
+        return round(_wins(rows_) / len(rows_), 6) if rows_ else 0.0
+
+    source_text = ", ".join(
+        f"{source} {count}" for source, count in sorted(sources.items())
+    )
+    return {
+        "research_trade_count": _metric(
+            "research_trade_count", len(research), n, "count", evidence
+        ),
+        "research_net_pnl": _metric(
+            "research_net_pnl", _sum(research, "net"), n, "usd", evidence
+        ),
+        "research_gross_pnl": _metric(
+            "research_gross_pnl", _sum(research, "gross"), n, "usd", evidence
+        ),
+        "research_fees": _metric(
+            "research_fees", _sum(research, "fees_est"), n, "usd", evidence
+        ),
+        "research_win_count": _metric(
+            "research_win_count", _wins(research), n, "count", evidence
+        ),
+        "research_win_rate": _metric(
+            "research_win_rate", _rate(research), n, "ratio", evidence
+        ),
+        "core_trade_count": _metric(
+            "core_trade_count", len(core), n, "count", evidence
+        ),
+        "core_net_pnl": _metric(
+            "core_net_pnl", _sum(core, "net"), n, "usd", evidence
+        ),
+        "core_win_count": _metric(
+            "core_win_count", _wins(core), n, "count", evidence
+        ),
+        "core_win_rate": _metric(
+            "core_win_rate", _rate(core), n, "ratio", evidence
+        ),
+        "research_sources": _metric(
+            "research_sources", source_text, n, "text", evidence
+        ),
+        "open_research_count": _metric(
+            "open_research_count", len(open_research), len(open_rows), "count", open_evidence
+        ),
+        "open_research_symbols": _metric(
+            "open_research_symbols", open_research, len(open_rows), "text", open_evidence
+        ),
+        "open_research_sources": _metric(
+            "open_research_sources",
+            ", ".join(f"{source} {count}" for source, count in sorted(open_sources.items())),
+            len(open_rows),
+            "text",
+            open_evidence,
+        ),
+    }
+
+
+def _load_jsonl(path: Path) -> List[Dict[str, Any]]:
+    rows = []
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except (TypeError, ValueError) as error:
+                    logger.warning("坏 JSONL 行跳过 (%s): %s", path, error, exc_info=True)
+                    continue
+                if isinstance(row, dict):
+                    rows.append(row)
+    except OSError:
+        return []
+    return rows
+
+
+def build_shadow_paths(
+    report_date: str,
+    pullback_path: Path | None = None,
+    post_exit_path: Path | None = None,
+) -> Dict[str, Metric]:
+    """Expose entry path and post-exit giveback from existing shadow artifacts.
+
+    2026-10-20 P0: 日报三问的 "0 chase" 只按 plan/chase cap 判定, 看不到 DA
+    确认位层面的漂移; post_exit giveback 也只落在影子文件里。本 section 只读
+    `pullback_limit_shadow.jsonl` / `post_exit_path.jsonl`, 不改任何交易路径。
+    """
+    pullback_rows = [
+        row for row in _load_jsonl(pullback_path or _PULLBACK_SHADOW)
+        if row.get("date") == report_date and row.get("type") == "trigger"
+    ]
+    chase = [
+        row for row in pullback_rows
+        if str(row.get("entry_path") or "") == "chase"
+    ]
+    pullback = [
+        row for row in pullback_rows
+        if str(row.get("entry_path") or "") == "pullback"
+    ]
+    gaps = []
+    miss_symbols = []
+    for row in _load_jsonl(post_exit_path or _POST_EXIT_SHADOW):
+        if row.get("date") != report_date:
+            continue
+        try:
+            gap = float(row.get("close_gap_pct"))
+        except (TypeError, ValueError) as error:
+            logger.warning("坏 close_gap_pct 行跳过 (%s): %s",
+                           row.get("symbol"), error, exc_info=True)
+            continue
+        gaps.append(gap)
+        if gap > 1.0:
+            miss_symbols.append(str(row.get("symbol") or "?"))
+
+    entry_n = len(pullback_rows)
+    entry_evidence = _derived_evidence(
+        "data/shadow/pullback_limit_shadow.jsonl",
+        report_date,
+        entry_n,
+        universe="artifact:shadow",
+        note="type=trigger rows; entry_path is direction-aware vs DA confirmation level",
+    )
+    post_n = len(gaps)
+    post_evidence = _derived_evidence(
+        "data/shadow/post_exit_path.jsonl",
+        report_date,
+        post_n,
+        universe="artifact:shadow",
+        note="close_gap_pct > 0 means holding to close would have been better than the exit",
+    )
+    return {
+        "entry_trigger_count": _metric(
+            "entry_trigger_count", entry_n, entry_n, "count", entry_evidence
+        ),
+        "entry_chase_count": _metric(
+            "entry_chase_count", len(chase), entry_n, "count", entry_evidence
+        ),
+        "entry_pullback_count": _metric(
+            "entry_pullback_count", len(pullback), entry_n, "count", entry_evidence
+        ),
+        "entry_chase_symbols": _metric(
+            "entry_chase_symbols", [row.get("symbol") for row in chase],
+            entry_n, "text", entry_evidence
+        ),
+        "entry_pullback_symbols": _metric(
+            "entry_pullback_symbols", [row.get("symbol") for row in pullback],
+            entry_n, "text", entry_evidence
+        ),
+        "post_exit_n": _metric("post_exit_n", post_n, post_n, "count", post_evidence),
+        "post_exit_close_gap_mean": _metric(
+            "post_exit_close_gap_mean",
+            round(math.fsum(gaps) / len(gaps), 4) if gaps else 0.0,
+            post_n, "pp", post_evidence,
+        ),
+        "post_exit_close_gap_median": _metric(
+            "post_exit_close_gap_median",
+            round(statistics.median(gaps), 4) if gaps else 0.0,
+            post_n, "pp", post_evidence,
+        ),
+        "post_exit_miss_gt1_count": _metric(
+            "post_exit_miss_gt1_count", len(miss_symbols), post_n, "count", post_evidence
+        ),
+        "post_exit_miss_symbols": _metric(
+            "post_exit_miss_symbols", miss_symbols, post_n, "text", post_evidence
         ),
     }
 
@@ -259,6 +550,8 @@ def build(connection: sqlite3.Connection, report_date: str) -> Bundle:
         sections={
             "slices": build_slices(connection, report_date),
             "plan_vs_actual": build_plan_vs_actual(connection, report_date),
+            "research_arm": build_research_arm_split(connection, report_date),
+            "shadow_paths": build_shadow_paths(report_date),
             "decision_diagnostics": build_decision_diagnostics(connection, report_date),
             "actionability": build_actionability_diagnostics(connection, report_date),
         },

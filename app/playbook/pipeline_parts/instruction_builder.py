@@ -500,6 +500,22 @@ def _trim_majority_sector(valid: List[Any], sector: str, target_pct: float) -> i
     return trimmed
 
 
+def _confirmation_gap_pct(entry_price, confirmation) -> Optional[float]:
+    """confirmation.price_level vs entry_price 的有符号偏离 (%).
+
+    2026-10-20 10-19 复查: DA 的 FADE_SHORT/PULLBACK_LIMIT 确认位与执行锚
+    可差 2–4%; 先只记 warning + raw 字段, 不改执行 (重锚是第二步)。
+    """
+    try:
+        level = float((confirmation or {}).get("price_level"))
+        entry = float(entry_price or 0)
+    except (TypeError, ValueError, AttributeError):
+        return None
+    if entry <= 0 or level <= 0:
+        return None
+    return round((level - entry) / entry * 100.0, 4)
+
+
 def _instruction_to_db_dict(inst, regime_ctx, today: str) -> Dict[str, Any]:
     """Instruction dataclass → save_instruction 期望的 dict (字段映射, spec 6.1)"""
     conditions = list(getattr(inst, "conditions", []) or [])
@@ -508,6 +524,16 @@ def _instruction_to_db_dict(inst, regime_ctx, today: str) -> Dict[str, Any]:
     ok_dims = sum(1 for v in dq.values() if v == "ok")
     decision_id = str(getattr(inst, "decision_id", "") or "")
     is_da_instruction = decision_id.startswith("DA-")
+    _conf = getattr(inst, "confirmation", None)
+    _gap_pct = _confirmation_gap_pct(getattr(inst, "entry_price", 0), _conf)
+    _arch = str(getattr(inst, "entry_archetype", "") or "").upper()
+    if (is_da_instruction and _gap_pct is not None and abs(_gap_pct) > 1.0
+            and _arch in ("PULLBACK_LIMIT", "FADE_SHORT")):
+        _level = _conf.get("price_level") if isinstance(_conf, dict) else None
+        logger.warning(
+            f"[PlanGap] {inst.symbol} {inst.direction} {_arch} "
+            f"confirmation_level={_level} entry_price={getattr(inst, 'entry_price', 0)} "
+            f"gap={_gap_pct:+.2f}% (>1%, warning-only, 未改执行)")
     return {
         "date": today,
         "symbol": inst.symbol,
@@ -544,6 +570,7 @@ def _instruction_to_db_dict(inst, regime_ctx, today: str) -> Dict[str, Any]:
             # [DEB-20260901] 结构化入场语义落库 (消费方: Phase B 影子; 缺失=旧指令, 按现状行为)
             "entry_archetype": getattr(inst, "entry_archetype", None),
             "confirmation": getattr(inst, "confirmation", None),
+            "confirmation_gap_pct": _gap_pct,
             "chase_cap_price": getattr(inst, "chase_cap_price", None),
         },
         "decision_id": getattr(inst, "decision_id", "") or "",

@@ -47,6 +47,7 @@ DB = ROOT / "data" / "ftseek_us.db"
 
 # ── 预注册基线 (RFC-141 §4, 裁决日禁挪) ──
 # 口径: source_type=PLAYBOOK_SIM ∧ exit_price>0 ∧ COALESCE(pnl_net,realized_pnl) NOT NULL
+#      ∧ 排除 gate_mode=research_momentum 研究臂 (2026-10-20 P0, 见 EXCLUDE_RESEARCH_ARM_SQL)
 #      ∧ trade_date ∈ [BASELINE_SINCE, BASELINE_UNTIL)
 #
 # 📌 v2 窗口变更 (2026-10-10 22:37, 用户裁「从8月份开始统计, 早期的策略和逻辑不够成熟」):
@@ -105,6 +106,16 @@ OPEN_WIN_START, OPEN_WIN_END = "09:35", "09:45"
 # 裁决窗 = 现行代开门日 (v2 存在 ⇒ v2 首行 date); v1 窗单出 legacy_v1_window 留痕不裁决。
 SCHEMA_V1 = "entry_confirm_forward_v1"
 SCHEMA_V2 = "entry_confirm_forward_v2"
+
+# 2026-10-20 P0 口径修复: 研究臂 (RFC-149, gate_mode=research_momentum) 自 10-19
+# 起写 PLAYBOOK_SIM, 但它不经过入场确认门, 也不在 8/1–10/9 冻结基线人群内
+# (研究源 10-18 才启用)。混入裁决队列会把 EXT 结果算成门的效果 (10-19 实证:
+# NVDA -75.50 成为唯一 SL_INITIAL, PEP +106.64 抬高非 SL 族)。只排除研究臂,
+# 保留 strict EXT — strict EXT 在基线窗内已存在, 排除会破坏基线同尺。
+RESEARCH_ARM_GATE_MODE = "research_momentum"
+EXCLUDE_RESEARCH_ARM_SQL = (
+    "COALESCE(json_extract(metadata_json, '$.gate_mode'), '') != 'research_momentum'"
+)
 
 
 def winner_floor(clean: bool = False) -> float:
@@ -197,6 +208,8 @@ def load_sim_pnl(since_date: str):
 
     WHERE 逐字照抄基线口径 (NULL 下等价重写不成立, memory 纪律):
       source_type='PLAYBOOK_SIM' AND exit_price>0 AND COALESCE(pnl_net,realized_pnl) IS NOT NULL
+    2026-10-20 P0: 再排除 gate_mode=research_momentum 的研究臂 — 它是 10-19 才启用的
+    新通道, 不在冻结基线人群内, 且不经过本门。strict EXT 保留 (基线窗内已存在)。
     fee_bps 相关列一并带出 (判据④ 两端同尺需要, 见 §5.6 / DEB §33.3)。
     """
     con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
@@ -209,6 +222,7 @@ def load_sim_pnl(since_date: str):
             "FROM trade_records "
             "WHERE source_type='PLAYBOOK_SIM' AND COALESCE(exit_price,0) > 0 "
             "  AND COALESCE(pnl_net, realized_pnl) IS NOT NULL "
+            f"  AND {EXCLUDE_RESEARCH_ARM_SQL} "
             "  AND trade_date >= ?", (since_date,)):
         out.append(dict(r))
     con.close()
@@ -306,6 +320,7 @@ def load_fills(since_date: str):
     for r in con.execute(
             "SELECT symbol, trade_date, COALESCE(pnl_net, realized_pnl) AS net "
             "FROM trade_records WHERE source_type='PLAYBOOK_SIM' AND exit_price>0 "
+            f"AND {EXCLUDE_RESEARCH_ARM_SQL} "
             "AND trade_date>=?", (since_date,)):
         fills[(r["symbol"], r["trade_date"])].append(float(r["net"] or 0))
     con.close()
@@ -438,7 +453,8 @@ def main():
             "kind": "SIM 真实成交盈亏 (富途 app 可见链路)",
             "table": "trade_records",
             "where": ("source_type='PLAYBOOK_SIM' AND COALESCE(exit_price,0)>0 AND "
-                      "COALESCE(pnl_net, realized_pnl) IS NOT NULL AND trade_date>='"
+                      "COALESCE(pnl_net, realized_pnl) IS NOT NULL AND "
+                      + EXCLUDE_RESEARCH_ARM_SQL + " AND trade_date>='"
                       + verdict_since + "'"),
             "all": p_all, "sl_initial": p_sl, "non_sl_initial": p_rest,
             "open_window_0935_0945": p_win,

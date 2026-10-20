@@ -38,6 +38,7 @@ from app.review.stage_stats import render_stage_section, rows_from_db  # noqa: E
 
 DATA = ROOT / "data"
 DB = DATA / "ftseek_us.db"
+CONFIG_PATH = ROOT / "config" / "unified_config.yaml"
 EXEC_LOG = DATA / "extended_hours_entry_executions.jsonl"
 PRICE_GATE = DATA / "extended_hours_price_gate_rejects.jsonl"
 PRETRADE_GATE = DATA / "extended_hours_pretrade_gate_rejects.jsonl"
@@ -141,6 +142,73 @@ def holding_ext() -> List[Dict[str, Any]]:
         conn.close()
 
 
+def _sector_map() -> Dict[str, str]:
+    """从 unified_config.yaml 的 playbook universe 读 symbol→sector (只读).
+
+    2026-10-20 10-19 复查: 研究臂 7 笔里 5 笔半导体, 需要让行业集中度在日报可见。
+    配置缺失/符号不在表内 ⇒ Unknown; 不猜、不硬编码。
+    """
+    try:
+        import yaml
+        cfg = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+
+    def _find(node: Any) -> Dict[str, str]:
+        if isinstance(node, dict):
+            stocks = node.get("us_stocks")
+            if isinstance(stocks, list):
+                return {
+                    str(stock.get("code", "")).replace("US.", ""):
+                    str(stock.get("sector") or "Unknown")
+                    for stock in stocks
+                    if isinstance(stock, dict) and stock.get("code")
+                }
+            for value in node.values():
+                found = _find(value)
+                if found:
+                    return found
+        elif isinstance(node, list):
+            for value in node:
+                found = _find(value)
+                if found:
+                    return found
+        return {}
+
+    return _find(cfg)
+
+
+def research_exposure(day: str) -> Dict[str, Dict[str, Any]]:
+    """研究臂当日成交 (含在仓) 的行业暴露 — 只读, 不改下单/帽。"""
+    if not DB.exists():
+        return {}
+    sectors = _sector_map()
+    conn = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+    try:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "select symbol, entry_price, quantity, exit_time, metadata_json "
+            "from trade_records where trade_date=? "
+            "and owner_strategy='extended_hours_entry' "
+            "and coalesce(json_extract(metadata_json,'$.gate_mode'),'')='research_momentum'",
+            (day,),
+        ).fetchall()
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+    groups: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        sector = sectors.get(str(row["symbol"]).replace("US.", ""), "Unknown")
+        group = groups.setdefault(sector, {"n": 0, "open": 0, "notional": 0.0, "symbols": []})
+        group["n"] += 1
+        group["notional"] += float(row["entry_price"] or 0) * float(row["quantity"] or 0)
+        if not row["exit_time"]:
+            group["open"] += 1
+        group["symbols"].append(row["symbol"])
+    return groups
+
+
 def _generate_daily_review(day: str) -> dict:
     from app.review.daily_review import generate_daily_review
     return generate_daily_review(day, final_refresh=True)
@@ -200,9 +268,31 @@ def render(day: str, push_date_note: str = "") -> str:
                          f"靠规则引擎 + 开盘兜底")
     else:
         lines.append("- 无")
+    late = [
+        row for row in _read_jsonl(EXEC_LOG)
+        if _et_date_of(row.get("ts")) == day and row.get("late_premarket")
+    ]
+    if late:
+        lines += [
+            "",
+            f"**盘前晚入场 (>=09:00 ET, 只读)**: {len(late)} 笔 — "
+            + ", ".join(str(row.get("symbol") or "?") for row in late),
+        ]
+    exposure = research_exposure(day)
+    if exposure:
+        lines += [
+            "", "**④ 研究臂暴露 (只读, 按 sector)**", "",
+            "| sector | n | 在仓 | 名义额 | 标的 |",
+            "| --- | --- | --- | --- | --- |",
+        ]
+        for sector, group in sorted(exposure.items(), key=lambda kv: (-kv[1]["n"], kv[0])):
+            lines.append(
+                f"| {sector} | {group['n']} | {group['open']} | "
+                f"${group['notional']:,.0f} | {', '.join(group['symbols'])} |"
+            )
     digest = recent_rounds()
     if digest:
-        lines += ["", "**④ 最近轮次 闸计数摘要 (本卡新增, 让「在跑但 0 单」可见)**", "", digest]
+        lines += ["", "**⑤ 最近轮次 闸计数摘要 (本卡新增, 让「在跑但 0 单」可见)**", "", digest]
     return "\n".join(lines)
 
 
@@ -276,7 +366,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(json.dumps({"date": day, "funnel": fun,
                           "trades": [{k: t[k] for k in ("symbol", "stage", "dir_cn", "exit_reason",
                                                         "net", "mfe_pct")} for t in ext_trades],
-                          "holding": holding_ext()}, ensure_ascii=False, indent=2))
+                          "holding": holding_ext(),
+                          "research_exposure": research_exposure(day)},
+                         ensure_ascii=False, indent=2))
 
     if args.push:
         if not has_sample and not args.always:

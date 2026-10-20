@@ -872,6 +872,55 @@ def test_settler_criteria_constants_match_rfc():
     assert "entry_confirm_forward.jsonl" in st.FWD.name
 
 
+def test_settler_excludes_research_arm_from_pnl_cohort(tmp_path, monkeypatch):
+    """研究臂 (gate_mode=research_momentum) 不得混入 RFC-141 裁决队列。
+
+    10-19 实证: NVDA -75.50 被计入 SL_INITIAL 族, 使判据①假性不过; PEP +106.64
+    抬高非 SL 族。研究臂 10-19 才启用, 不在 8/1–10/9 冻结基线人群内, 且不经过
+    入场确认门 ⇒ 必须排除。strict EXT 在基线窗内已存在, 必须保留 (同尺)。
+    """
+    import sqlite3
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from scripts import settle_entry_confirm_forward as st
+
+    db_path = tmp_path / "settle.db"
+    con = sqlite3.connect(db_path)
+    con.execute(
+        "CREATE TABLE trade_records ("
+        "symbol TEXT, trade_date TEXT, entry_time TEXT, exit_time TEXT, "
+        "exit_reason TEXT, fees_est REAL, quantity INTEGER, entry_price REAL, "
+        "pnl_net REAL, realized_pnl REAL, source_type TEXT, exit_price REAL, "
+        "metadata_json TEXT)"
+    )
+    rows = [
+        ("US.DA", "2026-10-19", "SL_BREAKEVEN", 5.0, "PLAYBOOK_SIM", '{}'),
+        ("US.STRICT", "2026-10-19", "SL_BREAKEVEN", 5.0, "PLAYBOOK_SIM",
+         '{"gate_mode": "strict"}'),
+        ("US.RESEARCH", "2026-10-19", "SL_INITIAL", -75.5, "PLAYBOOK_SIM",
+         '{"gate_mode": "research_momentum", "research_source": "research_watchlist"}'),
+    ]
+    for symbol, date, reason, net, source, meta in rows:
+        con.execute(
+            "INSERT INTO trade_records (symbol, trade_date, entry_time, exit_time, "
+            "exit_reason, fees_est, quantity, entry_price, pnl_net, realized_pnl, "
+            "source_type, exit_price, metadata_json) "
+            "VALUES (?, ?, ?, ?, ?, 4.0, 10, 100.0, ?, ?, ?, 101.0, ?)",
+            (symbol, date, f"{date}T09:40:00-04:00", f"{date}T10:00:00-04:00",
+             reason, net, net, source, meta),
+        )
+    con.commit()
+    con.close()
+    monkeypatch.setattr(st, "DB", db_path)
+
+    symbols = {r["symbol"] for r in st.load_sim_pnl("2026-10-19")}
+    assert symbols == {"US.DA", "US.STRICT"}, (
+        "研究臂必须排除; strict EXT 必须保留 (基线同尺)")
+    fills = st.load_fills("2026-10-19")
+    assert set(fills) == {("US.DA", "2026-10-19"), ("US.STRICT", "2026-10-19")}
+    assert st.RESEARCH_ARM_GATE_MODE == "research_momentum"
+    assert "gate_mode" in st.EXCLUDE_RESEARCH_ARM_SQL
+
+
 def test_fee_bps_is_pre_computable_not_post_hoc():
     """fee_bps 必须是**事前可算**量 (下单前就知道), 不是事后标签。
 

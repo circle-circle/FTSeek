@@ -1282,6 +1282,17 @@ playbook:
     entry_confirm_grace_sweeps: 3     # grace 复核次数 (10s 间隔, 最差附加延迟 ≤30s)
     entry_confirm_grace_votes: 2      # grace 内 ≥N 次逆向才 ABANDONED
 
+    # ── RFC-152 执行 TCA 台账 + 点差/报价年龄门只读影子 (2026-10-20 用户裁「同意执行」) ──
+    #   Phase 0 纯只读: 每笔真走到下单调用的指令落一行 data/shadow/execution_tca.jsonl,
+    #   记录计划锚/到达双边报价/点差/报价年龄/成交价/方向归一偏差。零交易行为变更。
+    #   阈值键只用于 jsonl 的 provisional_would_block 标签, **不是生效门**;
+    #   转生产须另立 RFC + 用户批准 (OKR-2026-10 C1 名额), 不得直接启用。
+    #   ⚠️ playbook.* 键热重载穿不透 ⇒ 改动须 systemctl restart ftseek-us。
+    #   回滚: execution_tca_shadow_enabled=false + 重启 (数据保留)。
+    execution_tca_shadow_enabled: true
+    execution_tca_spread_block_bps: 20.0      # bps; 仅标签, 非门
+    execution_tca_quote_age_block_ms: 2000    # ms; 仅标签, 非门
+
     # ── RFC-065 入场带 vol_widen (DEB-20260819 §三十四, 条件版A, 2026-08-19) ──
     entry_band_vol_widen_enabled: false      # 生产开关: 默认false零行为变更; 翻开关判据预注册见RFC-065
     entry_band_widen_shadow_enabled: true    # 影子开关: record-only常开攒样(new/changed双事件)
@@ -1623,6 +1634,10 @@ playbook:
   #   零市价追单, 消除"低吸变追高"机制根因); BREAKOUT/无 archetype 指令不受影响。
   #   启用前提 = ADR-035 预注册判据全过 (影子判读, 首批 9/2 05:47)。回滚: 置 false + 重启。
   entry_archetype_routing_enabled: false
+  # 2026-10-20 10-19 复查: 计划一致性重锚。DA confirmation.price_level 与
+  # 执行锚偏离 >1% 时, 路由开启后用执行锚替代确认位 (不再等大概率不到的价位)。
+  # ⚠️ 依赖 entry_archetype_routing_enabled=true 才有执行意义; 路由当前关 ⇒ 实盘零变化。
+  entry_archetype_reanchor_enabled: true
   # 路由限价单 TTL 上限 (秒); 实际 TTL = min(本值, confirmation.ttl_min×60)。
   #   证据 = DEB-20260806 锚限价影子: 5分钟 TTL Δ+416.8/108对 vs 30分钟 TTL -224.4。
   entry_archetype_ttl_seconds: 300

@@ -51,7 +51,7 @@ def load_trades(conn: sqlite3.Connection, start: str, end: str,
         "id", "symbol", "direction", "entry_time", "exit_time", "exit_reason", "entry_session",
         "strategy_id", "owner_strategy", "source_type", "trade_mode", "entry_reason",
         "signal_id", "decision_id", "entry_price", "exit_price", "realized_pnl",
-        "pnl_net", "fees_est", "mfe_pct", "mae_pct", "quantity",
+        "pnl_net", "fees_est", "mfe_pct", "mae_pct", "quantity", "metadata_json",
     ]
     available_columns = {
         row[1] for row in conn.execute("pragma table_info(trade_records)")

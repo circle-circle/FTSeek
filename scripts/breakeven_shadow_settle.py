@@ -31,7 +31,9 @@ T6 钩子已修 (2026-09-25 复活批, 用户裁「按最佳建议实施」): �
 import json
 import math
 import sqlite3
+import statistics
 import sys
+from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -111,6 +113,21 @@ def profit_pct(direction, entry, price):
     return (price - entry) / entry * 100
 
 
+def scale_out_delta(entry, qty, direction, arm_px, exit_px,
+                    slip_bps=0.0, extra_fee=0.0):
+    """50% 在 BE 武装点减半 vs 真实全仓出场, 价格层增量 (美元).
+
+    2026-10-20 影子 D: 10-19 复查发现 BE 出场把 MFE 回吐到成本附近; 减半
+    先锁定武装点价差, 剩余半仓仍走现行 BE/trail. slip_bps/extra_fee 用于
+    保守口径 (武装点不利滑点 + 二次出场费), 默认 0 保留裸价格读数.
+    """
+    sign = -1.0 if str(direction).upper() == "SHORT" else 1.0
+    fill = float(arm_px) * (1 - slip_bps / 10000.0) if sign > 0 else \
+        float(arm_px) * (1 + slip_bps / 10000.0)
+    return round((fill - float(exit_px)) * (float(qty) / 2.0) * sign
+                 - float(extra_fee), 2)
+
+
 def sign_test_p(diffs):
     """单侧精确二项检验: H1 = P(diff>0) > 0.5. 平局(=0)剔除."""
     vals = [d for d in diffs if d != 0]
@@ -166,6 +183,7 @@ def main():
         trades.append({
             "id": r["id"], "symbol": r["symbol"], "direction": r["direction"],
             "entry": float(r["entry_price"] or 0), "qty": float(r["quantity"] or 0),
+            "exit": float(r["exit_price"] or 0),
             "pnl_net": r["pnl_net"], "fees_est": r["fees_est"] or 0,
             "realized": float(r["realized_pnl"] or 0), "exit_reason": r["exit_reason"],
             "entry_dt": to_aware(datetime.fromisoformat(r["entry_time"]) if r["entry_time"] else None),
@@ -356,6 +374,125 @@ def main():
     for p in a_pairs:
         a_out["exit_why_dist"][p["counter_exit_why"]] = a_out["exit_why_dist"].get(p["counter_exit_why"], 0) + 1
 
+    # ══ [D] BE 武装点减半影子 (2026-10-20, 10-19 复查后新增) ══
+    # 预注册: 主假设=在 MFE>=0.4% 武装点卖出 50%, 剩余 50% 仍走现行出场;
+    # 历史 161 笔只作假设生成, 裁决只看 2026-10-20 之后的前瞻样本 (n>=30)。
+    d_pairs = []
+    for t in trades:
+        if t["exit_reason"] != "SL_BREAKEVEN" or not t["entry_dt"]:
+            continue
+        if t["entry"] <= 0 or t["qty"] <= 0 or t["exit"] <= 0:
+            continue
+        day = t["entry_dt"].strftime("%Y-%m-%d")
+        if day < BE04_ERA_START:
+            continue
+        bars = load_bars(t["symbol"], day=day)
+        if not bars:
+            continue
+        entry_naive = t["entry_dt"].replace(tzinfo=None)
+        arm = None
+        for ts, px in bars:
+            if ts[:10] != day:
+                continue
+            try:
+                bar_dt = datetime.fromisoformat(ts)
+            except ValueError:
+                BAD_BARS.append(f"{t['symbol']}:{ts}")
+                continue
+            if bar_dt >= entry_naive and profit_pct(t["direction"], t["entry"], px) >= BE_ARM_PCT_04:
+                arm = (ts, px)
+                break
+        if arm is None:
+            continue
+        delta = scale_out_delta(t["entry"], t["qty"], t["direction"], arm[1], t["exit"])
+        delta_cons = scale_out_delta(
+            t["entry"], t["qty"], t["direction"], arm[1], t["exit"],
+            slip_bps=10.0, extra_fee=float(t["fees_est"] or 0) * 0.25,
+        )
+        actual_net = t["pnl_net"] if t["pnl_net"] is not None else (
+            t["realized"] - t["fees_est"])
+        d_pairs.append({
+            "trade_id": t["id"], "symbol": t["symbol"], "direction": t["direction"],
+            "day": day, "arm_ts": arm[0], "arm_px": round(arm[1], 4),
+            "exit_px": t["exit"], "delta_usd": delta, "delta_cons_usd": delta_cons,
+            "actual_net_usd": round(float(actual_net or 0), 2),
+            "scale_out_net_usd": round(float(actual_net or 0) + delta, 2),
+        })
+    d_deltas = [p["delta_usd"] for p in d_pairs]
+    d_cons_deltas = [p["delta_cons_usd"] for p in d_pairs]
+    d_actual = [p["actual_net_usd"] for p in d_pairs]
+    d_by_day = defaultdict(list)
+    d_cons_by_day = defaultdict(list)
+    for p in d_pairs:
+        d_by_day[p["day"]].append(p["delta_usd"])
+        d_cons_by_day[p["day"]].append(p["delta_cons_usd"])
+    d_daily = [sum(v) / len(v) for v in d_by_day.values() if v]
+    d_cons_daily = [sum(v) / len(v) for v in d_cons_by_day.values() if v]
+    d_t = (round(statistics.mean(d_daily) / (statistics.stdev(d_daily) / math.sqrt(len(d_daily))), 3)
+           if len(d_daily) > 1 else None)
+    d_cons_t = (round(statistics.mean(d_cons_daily) /
+                      (statistics.stdev(d_cons_daily) / math.sqrt(len(d_cons_daily))), 3)
+                if len(d_cons_daily) > 1 else None)
+    d_excl = sorted(d_deltas, reverse=True)[3:]
+    d_cons_excl = sorted(d_cons_deltas, reverse=True)[3:]
+    d_by_month = defaultdict(list)
+    d_cons_by_month = defaultdict(list)
+    for p in d_pairs:
+        d_by_month[p["day"][:7]].append(p["delta_usd"])
+        d_cons_by_month[p["day"][:7]].append(p["delta_cons_usd"])
+    d_pro = [p for p in d_pairs if p["day"] > "2026-10-20"]
+    d_pro_cons = [p["delta_cons_usd"] for p in d_pro]
+    d_pro_by_day = defaultdict(list)
+    for p in d_pro:
+        d_pro_by_day[p["day"]].append(p["delta_cons_usd"])
+    d_pro_daily = [sum(v) / len(v) for v in d_pro_by_day.values() if v]
+    d_pro_t = (round(statistics.mean(d_pro_daily) /
+                     (statistics.stdev(d_pro_daily) / math.sqrt(len(d_pro_daily))), 3)
+               if len(d_pro_daily) > 1 else None)
+    d_pro_excl = sorted(d_pro_cons, reverse=True)[3:]
+    if len(d_pro) < 30:
+        d_verdict = "KEEP_SAMPLING"
+    elif (sum(d_pro_cons) / len(d_pro_cons) > 0
+          and (d_pro_t is not None and d_pro_t > 2)
+          and (sum(d_pro_excl) / len(d_pro_excl) > 0 if d_pro_excl else False)):
+        d_verdict = "PASS"
+    else:
+        d_verdict = "FAIL"
+    d_out = {
+        "summary_raw": agg(d_deltas, "D_raw_scale_out_50%@BE_arm (美元/笔, 1m收盘)"),
+        "summary_conservative": agg(
+            d_cons_deltas, "D_cons_scale_out_50%@BE_arm (10bps滑点+25%二次费, 美元/笔)"),
+        "actual_net_mean_usd": round(sum(d_actual) / len(d_actual), 2) if d_actual else None,
+        "scale_out_net_mean_usd_raw": (
+            round(sum(d_actual) / len(d_actual) + sum(d_deltas) / len(d_deltas), 2)
+            if d_deltas else None),
+        "scale_out_net_mean_usd_conservative": (
+            round(sum(d_actual) / len(d_actual) + sum(d_cons_deltas) / len(d_cons_deltas), 2)
+            if d_cons_deltas else None),
+        "day_clustered_t_conservative": d_cons_t,
+        "mean_excl_top3_usd_conservative": (
+            round(sum(d_cons_excl) / len(d_cons_excl), 2) if d_cons_excl else None),
+        "by_month_conservative": {
+            m: agg(v, f"month={m}") for m, v in sorted(d_cons_by_month.items())
+        },
+        "prospective": {
+            "since": "2026-10-21",
+            "n": len(d_pro),
+            "summary_conservative": agg(d_pro_cons, "D prospective conservative (美元/笔)"),
+            "day_clustered_t_conservative": d_pro_t,
+            "mean_excl_top3_usd_conservative": (
+                round(sum(d_pro_excl) / len(d_pro_excl), 2) if d_pro_excl else None),
+        },
+        "flip_criteria": "prospective n>=30 AND conservative mean_delta>0 AND day_clustered_t>2 AND mean_excl_top3>0; historical sample only hypothesis-generating",
+        "flip_verdict": d_verdict,
+        "n_pairs": len(d_pairs),
+        "n_candidates": len([t for t in trades if t["exit_reason"] == "SL_BREAKEVEN"
+                             and t["entry_dt"]
+                             and t["entry_dt"].strftime("%Y-%m-%d") >= BE04_ERA_START]),
+        "caveats": "raw uses first 1m close with MFE>=0.4%; conservative = 10bps adverse slip + 25% extra exit fee; remaining half unchanged; bar close approximation",
+        "pairs": d_pairs,
+    }
+
     # ══ [W] 开盘窗武装量化 (冷却窗峰值不武装 gating 反事实) ══
     w_cases, w_normal = [], []
     for t in trades:
@@ -444,7 +581,7 @@ def main():
                     "a_arm_pct": A_ARM_PCT, "cooldown_sl_pct": COOLDOWN_SL_PCT,
                     "c_gate_min": 60,
                     "flip_criteria_A": "n>=30 AND 单侧符号检验p<0.05 AND 均值>0 (era=be0.4 为裁决层)"},
-           "B": b_out, "C": c_out, "A": a_out, "W": w_out}
+           "B": b_out, "C": c_out, "A": a_out, "W": w_out, "D": d_out}
     outp = DATA / "breakeven_shadow_settlement.json"
     outp.write_text(json.dumps(out, ensure_ascii=False, indent=1))
     slim = {k: {kk: vv for kk, vv in v.items() if kk not in ("pairs", "cases")}

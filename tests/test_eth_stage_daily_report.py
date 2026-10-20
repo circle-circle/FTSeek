@@ -37,6 +37,26 @@ def test_refresh_postmarket_failure_is_visible(monkeypatch, capsys):
     assert "db locked" in out
 
 
+def test_render_includes_research_exposure(monkeypatch):
+    empty = {"price_gate": 0, "pretrade_gate": 0, "attempts": 0, "filled": 0,
+             "errors": [], "pretrade_reasons": {}}
+    monkeypatch.setattr(report, "funnel", lambda day: {
+        "premarket": dict(empty), "afterhours": dict(empty),
+    }, raising=True)
+    monkeypatch.setattr(report, "rows_from_db", lambda db, start, end: [], raising=True)
+    monkeypatch.setattr(report, "holding_ext", lambda: [], raising=True)
+    monkeypatch.setattr(report, "recent_rounds", lambda: "", raising=True)
+    monkeypatch.setattr(report, "research_exposure", lambda day: {
+        "Semiconductors": {"n": 2, "open": 1, "notional": 10000.0,
+                           "symbols": ["US.MU", "US.NVDA"]},
+    }, raising=True)
+
+    body = report.render("2026-10-19")
+    assert "研究臂暴露" in body
+    assert "Semiconductors" in body
+    assert "$10,000" in body
+
+
 def test_main_refreshes_only_when_extended_sample_exists(monkeypatch):
     calls = []
     monkeypatch.setattr(report, "funnel", lambda day: {

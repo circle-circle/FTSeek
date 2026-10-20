@@ -395,6 +395,8 @@ def run_playbook_auto_execute(
             _sl_clamp_meta = {}
             _atr_required = True
             _atr_validated = False
+            _ctx = None
+            atr_pct = None
             try:
                 _hp = pb_cfg.get_horizon_params(inst.get("horizon", "short"))
                 _atr_required = bool(_hp.get("vol_buckets") or pb_cfg.get("vol_buckets"))
@@ -420,7 +422,8 @@ def run_playbook_auto_execute(
                         try:
                             from app.playbook.entry_routing import resolve_route
                             _arch_route = resolve_route(
-                                inst.get("raw_instruction_json"), _dir, _new_entry, pb_cfg)
+                                inst.get("raw_instruction_json"), _dir, _new_entry, pb_cfg,
+                                entry_price=inst.get("entry_price"))
                         except Exception as _ar_err:
                             logger.warning(
                                 f"[playbook] {inst['symbol']} archetype 路由解析异常 (回退市价现状): {_ar_err}")
@@ -1111,6 +1114,56 @@ def run_playbook_auto_execute(
                 logger.warning(f"[EntryConfirm] arm 判定异常 (放行): {_ec_gate_err}",
                                exc_info=True)
 
+            # ── [RFC-152] 执行 TCA 台账 + 点差/报价年龄只读影子 ──
+            #   只在通过全部既有闸门、本轮真会下单时快照到达报价; 执行后收口一行 jsonl。
+            #   零行为变更: 所有异常只 warn, 不改变任何执行分支 (度量故障≠交易故障)。
+            _tca_row = None
+            _tca_result = None
+            _tca_error = None
+            try:
+                from app.playbook.execution_tca_shadow import (
+                    build_attempt_row as _tca_build,
+                    resolve_planned_entry as _tca_planned,
+                    tca_config as _tca_cfg_fn,
+                )
+                _tca_cfg = _tca_cfg_fn(pb_cfg)
+                if _tca_cfg.get("enabled"):
+                    _tca_ctx = _ctx if isinstance(_ctx, dict) else None
+                    _tca_quote_source = "reprice_ctx" if _tca_ctx is not None else "missing"
+                    if _tca_ctx is None:
+                        _dr_tca = (getattr(scheduler, "data_router", None)
+                                   or getattr(scheduler, "market_data", None))
+                        if _dr_tca is not None and hasattr(_dr_tca, "get_quote"):
+                            try:
+                                _tca_ctx = _dr_tca.get_quote(inst["symbol"])
+                                _tca_quote_source = ("quote_fallback"
+                                                     if isinstance(_tca_ctx, dict) else "missing")
+                            except Exception as _tca_q_err:
+                                logger.warning(
+                                    f"[TCA] {inst.get('symbol')} 到达报价获取失败 "
+                                    f"(不影响交易): {_tca_q_err}", exc_info=True)
+                    _tca_plan, _tca_plan_src = _tca_planned(inst)
+                    _tca_row = _tca_build(
+                        inst=inst,
+                        direction=inst.get("direction", ""),
+                        planned_entry=_tca_plan,
+                        planned_entry_source=_tca_plan_src,
+                        execution_entry=((_reprice_params or {}).get("entry_price")
+                                         or inst.get("entry_price")),
+                        ctx=_tca_ctx,
+                        quote_source=_tca_quote_source,
+                        now_et=datetime_cls.now(_now_et()),
+                        size=_size,
+                        notional=_new_notional,
+                        # 执行链 atr_pct 是分数口径 (0.025); TCA 契约是百分数 (2.5)
+                        atr_pct=(atr_pct * 100.0 if isinstance(atr_pct, (int, float)) else None),
+                        cfg=_tca_cfg,
+                    )
+            except Exception as _tca_build_err:
+                logger.warning(f"[TCA] 行构建异常 (不影响交易): {_tca_build_err}",
+                               exc_info=True)
+                _tca_row = None
+
             # 自动执行
             _audit_action = "error"
             try:
@@ -1120,6 +1173,7 @@ def run_playbook_auto_execute(
                     custom_params=_reprice_params,  # 2026-06-29: 重新定价后的 entry/stop
                     requested_by="auto:playbook",
                 )
+                _tca_result = result
                 if result.get("success"):
                     executed_count += 1
                     _cycle_new_count += 1  # 2026-08-14 水坝效应修复: 单轮新开仓计数
@@ -1251,8 +1305,19 @@ def run_playbook_auto_execute(
             except Exception as e:
                 skipped_count += 1
                 _audit_action = "error"
+                _tca_error = str(e)
                 errors.append(f"{inst['symbol']}: {str(e)}")
                 logger.warning(f"[playbook] 自动执行失败 {inst['symbol']}: {e}")
+            # [RFC-152] TCA 收口: 成功/失败都落一行; 写盘失败只 warn, 不影响交易。
+            if _tca_row is not None:
+                try:
+                    from app.playbook.execution_tca_shadow import (
+                        finalize_and_record as _tca_flush,
+                    )
+                    _tca_flush(_tca_row, result=_tca_result, error=_tca_error)
+                except Exception as _tca_flush_err:
+                    logger.warning(f"[TCA] 收口异常 (不影响交易): {_tca_flush_err}",
+                                   exc_info=True)
             # 统一收口审计 (2026-07-17): 记录到达下单漏斗并被执行/失败的候选 (含 DA-bridge)
             _emit_exec_gate_audit(inst, action=_audit_action, entry=_entry,
                                   size=_size, notional=_new_notional,

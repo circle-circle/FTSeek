@@ -101,6 +101,23 @@ def test_write_position_persists_admission_meta(ext_db):
     assert md["stop_loss"] and md["stop_source"] == "rule_engine_initial_sl"
 
 
+def test_write_position_persists_research_source(ext_db):
+    """研究臂来源必须落库, 否则 20 日观察无法按 source 复算 (10-19 实跑 4 笔全是 unknown)。"""
+    executor._write_open_position(
+        "US.RSCH", 10, 100.0, 100.0, "afterhours",
+        {"gate_mode": "research_momentum", "research_source": "research_watchlist",
+         "late_premarket": True,
+         "surprise_pct": None, "period": None, "period_age_days": None,
+         "report_date": None, "report_phase": None},
+        1.0, 1000, buy_order_id="rsch-1", gate_mode="research_momentum",
+        decision_id="EXT-2026-10-19-US.RSCH-afterhours",
+    )
+    md = json.loads(_trade_row(ext_db)["metadata_json"])
+    assert md["gate_mode"] == "research_momentum"
+    assert md["research_source"] == "research_watchlist"
+    assert md["late_premarket"] is True
+
+
 def test_write_position_without_did_keeps_legacy_shape(ext_db):
     """向后兼容: 不传 did/admission 时行为与旧版一致 (NULL, 无新键崩溃)。"""
     _write(ext_db, decision_id="", admission_meta=None)

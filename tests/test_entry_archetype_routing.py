@@ -122,6 +122,24 @@ class TestResolveRoute:
         assert r["ttl_seconds"] == 300.0  # DA ttl_min=15 > 配置 300s → 配置生效
         assert r["archetype"] == "PULLBACK_LIMIT"
 
+    def test_reanchor_uses_entry_price_when_gap_exceeds_threshold(self):
+        cfg = {**_ROUTE_CFG, "entry_archetype_reanchor_enabled": True}
+        r = resolve_route(_PB_RAW, "BUY", 145.0, cfg, entry_price=145.0)
+        assert r and r["limit_price"] == 145.0
+        assert r["reanchored"] is True
+
+    def test_reanchor_disabled_keeps_confirmation(self):
+        cfg = {**_ROUTE_CFG, "entry_archetype_reanchor_enabled": False}
+        r = resolve_route(_PB_RAW, "BUY", 145.0, cfg, entry_price=145.0)
+        assert r and r["limit_price"] == 140.5
+        assert r["reanchored"] is False
+
+    def test_reanchor_small_gap_keeps_confirmation(self):
+        cfg = {**_ROUTE_CFG, "entry_archetype_reanchor_enabled": True}
+        r = resolve_route(_PB_RAW, "BUY", 145.0, cfg, entry_price=141.0)
+        assert r and r["limit_price"] == 140.5
+        assert r["reanchored"] is False
+
     def test_breakout_not_routed(self):
         raw = {"entry_archetype": "BREAKOUT", "confirmation": {"price_level": 200}}
         assert resolve_route(raw, "BUY", 198.0, _ROUTE_CFG) is None

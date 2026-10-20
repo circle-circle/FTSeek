@@ -30,6 +30,11 @@ logger = logging.getLogger(__name__)
 # BREAKOUT 不路由 (追突破=市价语义本身, DA 提案缺失→BREAKOUT=现状)。
 ROUTABLE_ARCHS = frozenset({"PULLBACK_LIMIT", "FADE_SHORT"})
 
+# 2026-10-20: 计划一致性重锚阈值。DA 的 confirmation.price_level 与执行锚
+# 偏离 >1% 时, 若路由开启, 用执行锚替代确认位 (不再等一个永远不会到的价位)。
+# 只在 routing_enabled 且 reanchor_enabled 时生效; 路由默认关 ⇒ 零实盘行为变更。
+PLAN_GAP_REANCHOR_PCT = 1.0
+
 # 限价位与现价偏离超此比例 → 视为 DA 数据错误 (笔误/单位错), 不路由,
 # 回退现状市价并留 warning (宁可保守不错杀)。
 _MAX_LEVEL_DEV = 0.25
@@ -52,6 +57,18 @@ def routing_enabled(cfg: Optional[Dict[str, Any]] = None) -> bool:
         from app.core.config_container import get_config
         return bool(get_config().get_dotted(
             "playbook.entry_archetype_routing_enabled", False))
+    except Exception:
+        return False
+
+
+def reanchor_enabled(cfg: Optional[Dict[str, Any]] = None) -> bool:
+    """计划一致性重锚开关 (默认 false; dict 注入时密封, 不回落全局配置)."""
+    if isinstance(cfg, dict):
+        return bool(cfg.get("entry_archetype_reanchor_enabled", False))
+    try:
+        from app.core.config_container import get_config
+        return bool(get_config().get_dotted(
+            "playbook.entry_archetype_reanchor_enabled", False))
     except Exception:
         return False
 
@@ -135,7 +152,8 @@ def chase_cap_enforce_enabled(cfg: Optional[Dict[str, Any]] = None) -> bool:
 
 def resolve_route(raw_instruction_json: Any, direction: str,
                   market_price: float,
-                  cfg: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+                  cfg: Optional[Dict[str, Any]] = None,
+                  entry_price: Optional[float] = None) -> Optional[Dict[str, Any]]:
     """解析执行路由决策。纯函数。
 
     Args:
@@ -143,6 +161,7 @@ def resolve_route(raw_instruction_json: Any, direction: str,
         direction: 指令方向 ("BUY" | "SHORT"/"SELL_SHORT")。
         market_price: 触发时刻市价 (BUY 用 ask / SHORT 用 bid 更佳, 调用方传入)。
         cfg: 可选 playbook 配置 dict (测试注入); 缺省走 config_container。
+        entry_price: 指令执行锚; 给定时, 确认位偏离 >1% 且 reanchor 开关开 ⇒ 用锚。
 
     Returns:
         None — 不路由 (开关关 / 无 archetype / BREAKOUT / 无有效确认位 / 偏离过大),
@@ -184,6 +203,23 @@ def resolve_route(raw_instruction_json: Any, direction: str,
         if abs(level / market_price - 1.0) > _MAX_LEVEL_DEV:
             return None
 
+    # 2026-10-20 计划一致性重锚: DA 确认位与执行锚偏离 >1% 时, 不再等一个
+    # 大概率不会到的价位; 用执行锚作为限价位。仅 routing 开启时才有执行意义。
+    reanchored = False
+    if entry_price not in (None, "") and reanchor_enabled(cfg):
+        try:
+            _entry = float(entry_price)
+        except (TypeError, ValueError):
+            _entry = 0.0
+        if _entry > 0:
+            _gap = (level - _entry) / _entry * 100.0
+            if abs(_gap) > PLAN_GAP_REANCHOR_PCT:
+                logger.info(
+                    f"[entry_routing] {arch} 确认位 {level} 与执行锚 {_entry} "
+                    f"偏离 {_gap:+.2f}% > {PLAN_GAP_REANCHOR_PCT}% → 重锚到执行锚")
+                level = round(_entry, 4)
+                reanchored = True
+
     # TTL: 配置上限 ∧ DA 显式 ttl_min (取短)。DA 默认 ttl_min=15 → 配置 300s 生效。
     ttl = _read_ttl_seconds(cfg)
     try:
@@ -195,4 +231,5 @@ def resolve_route(raw_instruction_json: Any, direction: str,
         logger.warning("[entry_routing] ttl_min 解析失败, 退回配置 TTL: %r", conf.get("ttl_min"))
 
     return {"action": "limit", "limit_price": round(level, 4),
-            "ttl_seconds": ttl, "archetype": arch, "chase_cap_price": cap}
+            "ttl_seconds": ttl, "archetype": arch, "chase_cap_price": cap,
+            "reanchored": reanchored}

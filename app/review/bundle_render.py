@@ -98,6 +98,8 @@ def render_md(bundle: Bundle, escalated: Optional[Dict[str, Any]] = None) -> Tup
     plan = payload["sections"]["plan_vs_actual"]
     diagnostics = payload["sections"]["decision_diagnostics"]
     actionability = payload["sections"]["actionability"]
+    research_arm = payload["sections"].get("research_arm", {})
+    shadow_paths = payload["sections"].get("shadow_paths", {})
     questions = diagnostics["three_questions"]
     stage_direction_reason = diagnostics["stage_direction_reason"]
     price_band_fees = diagnostics["price_band_fees"]
@@ -323,6 +325,18 @@ def render_md(bundle: Bundle, escalated: Optional[Dict[str, Any]] = None) -> Tup
             f"- 计划指令：{plan['planned_count']['value']}",
             f"- 已执行计划：{plan['executed_count']['value']}",
             f"- 错过计划：{plan['missed_count']['value']}",
+            f"- 2分钟门放弃：{plan.get('abandoned_count', {}).get('value', 0)}"
+            + (
+                f"（{', '.join(plan.get('abandoned_symbols', {}).get('value', []))}）"
+                if plan.get('abandoned_symbols', {}).get('value')
+                else ""
+            ),
+            f"- 计划价位偏离>1%：{plan.get('plan_gap_count', {}).get('value', 0)}"
+            + (
+                f"（{', '.join(plan.get('plan_gap_symbols', {}).get('value', []))}）"
+                if plan.get('plan_gap_symbols', {}).get('value')
+                else ""
+            ),
             f"- 计划外交易：{plan['unplanned_count']['value']}"
             + (
                 f"（{', '.join(plan['unplanned_symbols']['value'])}）"
@@ -332,10 +346,64 @@ def render_md(bundle: Bundle, escalated: Optional[Dict[str, Any]] = None) -> Tup
             f"- 执行率：{_ratio(plan['execution_rate']['value'])}",
             f"- 方向错配：{', '.join(plan['direction_mismatch']['value']) or '无'}",
             "",
-            "## 待裁决",
-            "",
         ]
     )
+    if research_arm:
+        lines.extend(
+            [
+                "## 研究臂分账（仅已平仓）",
+                "",
+                f"- 研究臂：{research_arm['research_trade_count']['value']} 笔 / "
+                f"净 {_money(research_arm['research_net_pnl']['value'])} / "
+                f"胜率 {_ratio(research_arm['research_win_rate']['value'])}",
+                f"- 其余（DA+严格臂）：{research_arm['core_trade_count']['value']} 笔 / "
+                f"净 {_money(research_arm['core_net_pnl']['value'])} / "
+                f"胜率 {_ratio(research_arm['core_win_rate']['value'])}",
+                f"- 研究来源：{research_arm['research_sources']['value'] or '无'}",
+                f"- 未平研究仓：{research_arm['open_research_count']['value']}"
+                + (
+                    f"（{', '.join(research_arm['open_research_symbols']['value'])}）"
+                    if research_arm['open_research_symbols']['value']
+                    else ""
+                ),
+                f"- 未平研究来源：{research_arm['open_research_sources']['value'] or '无'}",
+                "",
+            ]
+        )
+    if shadow_paths and (
+        shadow_paths["entry_trigger_count"]["value"]
+        or shadow_paths["post_exit_n"]["value"]
+    ):
+        lines.extend(
+            [
+                "## 入场路径与出场后路径（影子）",
+                "",
+                f"- 入场触发：{shadow_paths['entry_trigger_count']['value']} 笔；"
+                f"chase {shadow_paths['entry_chase_count']['value']}"
+                + (
+                    f"（{', '.join(shadow_paths['entry_chase_symbols']['value'])}）"
+                    if shadow_paths['entry_chase_symbols']['value']
+                    else ""
+                )
+                + f" / pullback {shadow_paths['entry_pullback_count']['value']}"
+                + (
+                    f"（{', '.join(shadow_paths['entry_pullback_symbols']['value'])}）"
+                    if shadow_paths['entry_pullback_symbols']['value']
+                    else ""
+                ),
+                f"- 出场后到收盘：n={shadow_paths['post_exit_n']['value']}，"
+                f"均值 {shadow_paths['post_exit_close_gap_mean']['value']:+.2f}% / "
+                f"中位 {shadow_paths['post_exit_close_gap_median']['value']:+.2f}%；"
+                f">1% {shadow_paths['post_exit_miss_gt1_count']['value']} 笔"
+                + (
+                    f"（{', '.join(shadow_paths['post_exit_miss_symbols']['value'])}）"
+                    if shadow_paths['post_exit_miss_symbols']['value']
+                    else ""
+                ),
+                "",
+            ]
+        )
+    lines.extend(["## 待裁决", ""])
     if pending:
         for row in pending:
             ready_text = "READY" if row["ready"] else "OBSERVING"

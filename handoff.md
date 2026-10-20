@@ -1,5 +1,76 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-20 RFC-152 Phase 0：执行 TCA 台账 + 点差/报价年龄只读影子（已上线；实盘零行为变更）
+
+**触发**: 用户「同意，按照建议执行」— 先做“一杆秤 + 点差门”，量化成交层 implementation shortfall，再谈是否加盘中指标。
+
+**落档**: `docs/decisions/RFC-152-execution-tca-spread-shadow.md`（预注册样本门/判据/回滚；明确 Phase 0 不占 OKR-2026-10 C1 新入场假设名额）。
+
+**落地**:
+- 新增 `app/playbook/execution_tca_shadow.py`: 每笔通过全部既有闸门、真正走到 `execute_instruction` 的指令，快照计划锚/重定价锚/到达双边报价/点差(bps)/报价年龄(ms)/成交价，执行后 append `data/shadow/execution_tca.jsonl`。`book proxy` 不伪造点差；`TEST` 标的零写入；所有异常只 warn，不上抛。
+- `auto_execute_flow.py`: entry_confirm 门之后、下单调用之前快照，执行后收口；全块 try/except，零执行分支改动。
+- 配置: `playbook.execution_parameters.execution_tca_shadow_enabled: true` + `execution_tca_spread_block_bps: 20.0` + `execution_tca_quote_age_block_ms: 2000`（两个阈值仅 jsonl `provisional_would_block` 标签，**不是生效门**）。
+- 新增 `scripts/execution_tca_report.py`: 只读 JSONL + SQLite(mode=ro)，输出点差/年龄分桶 × 扣费净 bps + 日聚类 t/MDE80 + implementation shortfall；产物 `data/shadow/execution_tca_latest.json`。
+- 影子注册表: `execution_tca_spread_shadow`（OBSERVING, min_n=30, count_mode=`where:success=True`, eval_on_demand）。
+- 棘轮清剿（前序 P0/P1 批带入的红点）: `bundle_builder.py` 2 处坏 JSONL 行、`breakeven_shadow_settle.py` 1 处坏 bar 时间、`be_grace_replay.py` 2 处静默吞错 → 全部加留痕/坏行计数，零控制流变更；`except_pass` 921 基线回绿。
+
+**验证**: 新增 10 tests passed；定向回归（执行链+影子治理+四棘轮）**287 passed**；`py_compile` 通过；报表空库冒烟写出 `gate NOT YET`；实读配置 `enabled=True / spread=20.0 / age=2000`；`check_mounting / check_artifact_consumers / check_intent_uniqueness` 全 0；启动冒烟 **7/7**。
+
+**上线**: 2026-10-20 18:04 CST `systemctl restart ftseek-us`，PID **2641637**；重启前 3 个在仓（ADSK/ASML/TSM）、`data/exit_ledger.db::exit_intents` 201 条全 BOOKED；重启后无 ERROR/CRITICAL/Traceback。
+
+**下一步**:
+- 让影子自然采集：≥10 ET 交易日且 ≥30 笔成功成交后跑 `PYTHONPATH=. ./venv/bin/python scripts/execution_tca_report.py` 出第一批读数。
+- Phase 1（点差门真正生效）须另立 RFC + 用户批准，并占用 OKR-2026-10 C1 的新入场假设名额；本批不生效。
+- RS / ORB+ATR 衰竭 / EventStream 风险 overlay 均未开工，按讨论顺序排队。
+
+**回滚**: `execution_tca_shadow_enabled: false` + 重启（数据保留）；或 `git revert` 本批 + 重启。**提交状态**: 本批与前序 P0/P1 批均未提交（等用户确认后提交）。
+
+## 2026-10-20 P1 计划一致性 + EXT 暴露影子（已上线；实盘零行为变更）
+
+**触发**: 用户「同意 按照建议执行」— 在 P0 测量修复后继续执行源/本质层优化。
+
+**落地**:
+- **DA 计划一致性遥测**: `instruction_builder._confirmation_gap_pct` + `[PlanGap]` warning，`raw_instruction_json.confirmation_gap_pct` 落库。10-19 四笔 >1%：COIN +2.22% / RIVN +4.05% / ARM +2.72% / UNH −2.27%，与 `entry_path=chase` 的实质偏差一致；其余 4 笔 ≤0.78%。日报「计划 vs 实际」新增「计划价位偏离>1%」行，10-19 复算 4 笔。
+- **重锚（受路由总开关保护）**: `entry_routing.resolve_route` 新增可选 `entry_price`；`entry_archetype_reanchor_enabled: true` 时，确认位与执行锚偏离 >1% 则用执行锚作为限价位，返回 `reanchored`。**`entry_archetype_routing_enabled` 仍为 false ⇒ 实盘零行为变更**；`auto_execute_flow` 已传入 `entry_price`，待路由转正后自动生效。
+- **EXT 研究臂只读影子**: `late_premarket`（≥09:00 ET 盘前）落 trade metadata/result/attempts；`eth_stage_daily_report` 新增「④ 研究臂暴露（按 sector）」与晚入场提示。10-19 暴露：Semiconductors 3（NVDA/TSM/MU）、Unknown 2（ASML/INTC）、Consumer Defensive 1（PEP）、Industrials 1（BA）；**只读，不加帽/不拦单**。
+- BE 减半 D / 宽限窗 / fee-bps 读数见下一条 P0 条目的「P1 研究读数」。
+
+**验证**: 本批定向 **64 passed**；`py_compile` 通过；`eth_stage_daily_report --date 2026-10-19` 实测新节；10-19 gap 分布复算。
+
+**上线**: 2026-10-20 12:45 CST 首次重启（PID 2596187）；12:48 CST 为日报 plan-gap 渲染二次重启，启动冒烟 **7/7**，PID **2596964**；重启前 4 个在仓（ADSK/ASML/TSM/BA）、exit_intents 200 全 BOOKED；重启后无 ERROR/CRITICAL。
+
+**下一步**: D 减半影子等 2026-10-21 起前瞻 n≥30（保守口径）再裁，转正需 DEB + Playbook 部分平仓执行改造；重锚只在限价路由转正后生效，当前先观察 `PlanGap` 分布；EXT 源并入严格臂须等 20 日观察（至 11-13），行业集中度先只读。**本批与 P0 批均未提交**（等用户确认后提交）。
+
+## 2026-10-20 10-19 全链路复查后的 P0 测量修复（纯测量，已上线）
+
+**触发**: 用户令复查 2026-10-19 美股全链路；发现三处“尺子”不一致（日报执行率 7/7 vs PlanEffectiveness 7/8；entry_confirm 结算混入 EXT 研究臂；日报 headline 未分账研究臂），用户裁「按建议执行」。
+
+**落地**:
+- `scripts/settle_entry_confirm_forward.py`: PnL/机制队列新增 `EXCLUDE_RESEARCH_ARM_SQL`（`gate_mode=research_momentum`），只排除 10-19 新研究臂，**保留 strict EXT**（基线同尺，避免破坏 8/1–10/9 冻结基线复现）。10-16 起队列复算 **11 笔 / SL_INITIAL n=0 / 非 SL +$11.06/笔**；原报告 NVDA −$75.50 被误计入 SL_INITIAL 的假信号消失。
+- `app/review/bundle_builder.py` + `bundle_render.py`: 计划分母纳入 `skip_reason='entry_confirm_reversed'`；10-19 由 7/7=100% 修正为 **计划 8 / 执行 7 / 2 分钟门放弃 1（AVGO）/ 87.5%**。新增「研究臂分账」与「入场路径/出场后路径（影子）」两节；10-19 复算显示研究臂 4 笔 +$53.18 / 其余 7 笔 +$77.75；entry chase 5 / pullback 3；post-exit close_gap 均值 +0.83%、>1% 3 笔（ARM/COIN/CRM）。
+- `app/review/stage_stats.py`: `load_trades` 带出 `metadata_json`，供只读分账。
+- `scripts/extended_hours_entry_executor.py`: `_write_open_position` 补落 `research_source`（此前只有 gate_mode，导致日报来源 unknown）；纯 metadata，无交易行为。
+- 存量回填: 10-19 的 7 笔 EXT（ids 1681/1682/1683/1691/1692/1693/1694）按 `data/ext_entry_research_funnel.jsonl` 的 ordered 源回填 `research_source`（ASML/TSM=beat，PEP/NVDA/MU/INTC/BA=watchlist）；备份 `data/backups/research_source_backfill_20261020_113831.json`。
+- 新增测试: `tests/test_review_bundle_plan_abandoned.py`、`tests/test_review_research_arm_split.py`、`tests/test_review_shadow_paths.py`；`test_entry_confirm_gate.py` 增研究臂排除例；`test_ext_admission_attribution.py` 增 research_source 落库例。
+
+**验证**: 定向回归 **130 passed**（结算/EXT/日报）；新增影子路径测试 **3 passed**；最终日报回归 **22 passed**；`py_compile` 通过；生产库只读复算 10-19 分账/执行率；`render_md` 10-19 实测新节输出正确。
+
+**上线**: 2026-10-20 11:42 CST `systemctl restart ftseek-us`，启动冒烟 **7/7**，PID 2586102；重启前 4 个在仓（ADSK/ASML/TSM/BA）、`exit_intents` 200 条全 BOOKED；重启后无 ERROR/CRITICAL/一致性告警。
+
+**P1 研究读数 (2026-10-20, 未改实盘)**:
+- BE 宽限窗 (5/10/15m): `scripts/be_grace_replay.py` 161 笔，N=10 主判据 **FAIL**（均值 +$3.80 / 中位 −$8.32 / 胜率 27.3% / 日聚类 t=1.48 / 剔 top3 +$0.15）。10-19 的 ARM/COIN 是尾部样本，不具普遍性；**不采纳**。
+- Fee-bps 一刀切: 145 笔中 >20bps 组 7 笔净 **+$145.83**，>30bps 组 4 笔净 +$23.22；堵高费率会伤赢家，**不采纳**（既有 notional 影子维持）。
+- BE 武装点减半 50%: `breakeven_shadow_settle.py` 新增 **[D]**，历史 161 笔原始读数 +$8.25/笔 / 中位 +$5.97 / 胜率 96.3%（日 t=9.21）；**保守口径**（武装点 10bps 不利滑点 + 二次出场费按实际费 25%）仍 **+$3.44/笔 / 中位 +$2.15 / 胜率 72.0% / 日 t=4.71 / 剔 top3 +$2.85**，8/9/10 月同向（+5.61/+2.85/+1.86）。前瞻样本 n=0 / **KEEP_SAMPLING**，不改实盘；需 2026-10-21 起 ≥30 笔前瞻，且 Playbook 当前 close 路径不支持部分平仓，转正须另立 DEB + 执行层改造。
+- 产物: `data/shadow/be_grace_replay_latest.json`（宽限窗 FAIL 留档）、`data/breakeven_shadow_settlement.json` 的 `D`（前瞻减半影子）。
+- next-open 稳健性检查（一次性）: 59 笔可用样本（很多 BE 在下一根 bar 前已出场，无法在 next-open 减半）保守 +$6.05/笔、中位 +$4.86、胜率 94.9%；未写入每日 D，作为 arm-close 保守口径的旁证。
+
+**未做（需另裁/另批）**:
+- P1 入场对齐：DA `entry_price` vs `confirmation.price_level` 分叉（10-19 5/8 `entry_path=chase`；三笔空单成交在确认位下方 2.2–3.9%）；`pullback_limit_shadow` 10-19 成交率 3/8，未达预注册门槛，**未开** `entry_archetype_routing_enabled`。需先定“哪个价格是真值”+影子样本。
+- P1 出场条件化：10-19 post-exit giveback +$425，但 648 笔基线 BE/trail close_gap 均值 −0.119%/−0.395%，不支持全局放宽；需预注册 ATR/趋势条件变体并走 `exit_param_shadow`/`be04`。
+- EXT 研究臂盘前时点闸（NVDA 09:15）、fee-bps 准入、pretrade 卡片 0/66、quality_shadow 常量退化、ASML overnight_arm 缺失、盘前计划截断等 P2/P3 记录卫生。
+
+**回滚**: `git revert` 本批代码；存量 metadata 回滚 `UPDATE trade_records SET metadata_json=json_remove(metadata_json,'$.research_source') WHERE id IN (1681,1682,1683,1691,1692,1693,1694);`（备份见上）。研究臂 PnL 过滤回滚 = 删 `EXCLUDE_RESEARCH_ARM_SQL` 条件并重启/重跑结算。
+
 ## 2026-10-20 记录卫生：EXT 未平仓 exit_time 归一 NULL + PlanEffectiveness 分母
 
 **触发**: 用户令修复 10-19 交易复查发现的两项记录口径问题。

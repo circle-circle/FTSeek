@@ -544,6 +544,21 @@ def _today_et():
     return _now_et().strftime("%Y-%m-%d")
 
 
+def _is_late_premarket(session: str) -> bool:
+    """盘前单是否在 09:00 ET 后入场 (只读标记, 不拦单).
+
+    2026-10-20 10-19 复查: 研究臂 NVDA 09:15 盘前入场后开盘反转, 唯一大亏。
+    先记录晚入场 cohort, 20 日观察后再决定是否加时点闸。
+    """
+    if str(session) != "premarket":
+        return False
+    try:
+        now = _now_et()
+        return now.hour * 60 + now.minute >= 9 * 60
+    except Exception:
+        return False
+
+
 def _et_hour_now() -> int:
     """当前 ET 小时 (0-23); 取不到返回 -1 (调用方据此回落默认门槛)。"""
     try:
@@ -1529,6 +1544,7 @@ def _research_pass_real(
         #   (下游 metadata_json.earnings_* 落 null, 分析面按 gate_mode 过滤, 不混算)。
         earnings_stub = {
             "gate_mode": RESEARCH_GATE_MODE, "research_source": source,
+            "late_premarket": _is_late_premarket(session),
             "surprise_pct": None, "period": None,
             "period_age_days": None, "report_date": None, "report_phase": None,
         }
@@ -1552,11 +1568,13 @@ def _research_pass_real(
         result["session"] = session
         result["gate_mode"] = RESEARCH_GATE_MODE
         result["research_source"] = source
+        result["late_premarket"] = _is_late_premarket(session)
         attempts[attempt_key] = {
             "status": "opened" if result.get("ok") else "failed",
             "session": session, "trade_date": today,
             "gate_mode": RESEARCH_GATE_MODE,
             "research_source": source,
+            "late_premarket": result["late_premarket"],
             "order_id": result.get("buy_order_id"),
             "stop_order_id": result.get("stop_order_id"),
             "filled_qty": result.get("filled_qty"),
@@ -3115,6 +3133,8 @@ def _write_open_position(
                            "ext_turnover_usd": float(entry_px or 0) * float(vol or 0),
                            "entry_grade": grade,
                            "gate_mode": gate_mode,
+                           "research_source": (earn or {}).get("research_source"),
+                           "late_premarket": (earn or {}).get("late_premarket"),
                            "entry_position_usd": float(position_usd or POSITION_USD),
                            "entry_structure": structure,
                            "cert_lock_pct": (
