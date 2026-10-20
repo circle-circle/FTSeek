@@ -1,5 +1,87 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-20 左尾尸检：入场/止损逻辑（只读，零生产变更）
+
+**触发**: 用户「先不动出场，确保先修好左尾（入场/止损）的逻辑合理和可落地」。
+
+**读数** (`docs/analysis/2026-10-20-left-tail-autopsy.md`):
+- 30 日 155 笔（净 −$786.97）；左尾 16 / 墓地 21。
+- **开盘 0–15min：94 笔，净 −$1,175.69，左尾 13/16**；09:45–10:30 +$314.86。
+- **ATR 5–8%：75 笔，净 −$1,711.08，左尾 11/16**；3–5% +$757.97。
+- **UE 源：12 笔，净 −$773.91**；EXT +$166。
+- 计划锚差**非单调**：执行优于计划 29 笔 −$1,042.52；≥200bps 38 笔 −$674.80；
+  0–50/100–200 为正。首版分桶把负值误归 ≥200（n=67 假读数），已更正为 38。
+- 止损不是根因：`SL_INITIAL` MFE 中位≈0、持仓约 17min；放宽初始 SL 只会放大亏损。
+- 根因判断：**archetype 语义未被执行**——FADE_SHORT 市价追跌、PULLBACK_LIMIT 市价接刀；
+  路由开关仍 false。
+
+**P0 路由反事实 (2026-10-20, 只读)**:
+- `scripts/entry_routing_counterfactual.py`，124 笔可评估 (FADE_SHORT 29 / PULLBACK 95)，0 缺 bar。
+- raw_confirm_300：成交率 33.9%，cf −$517.45 vs actual +$72.33 ⇒ **delta −$589.78**；
+  跳过 69 个赢家、实际净额 +$847.44。900s 仍 −$433.47；reanchor_300 −$113.83。
+- **PULLBACK_LIMIT 限价路由是逆向选择**：delta **−$640.32**（跳过大量不回踩的赢家）；
+  FADE_SHORT 小幅正向 **+$50.54**，样本 29、幅度小。
+- **结论：不全局启用 archetype 路由**；RFC-153 的 FADE_SHORT 开盘禁追已覆盖更精准的靶面。
+
+**修订后方案**:
+- **不做**：全局 routing / 宽 PULLBACK 限价路由。
+- P2 风险尺寸影子（优先，10 月可做）：ATR≥5%/开盘/UE/≥2 旗标 → 0.5× 尺寸；
+  反事实 +$828~+$856；去杠杆不是 alpha，单笔 bps 不变，须如实标注。
+- PULLBACK 条件门（11 月 C1）：只对左尾形态做窄门（趋势向下/跌破 VWAP/ATR≥5%/执行价低于计划），
+  先只读分层，11 月预注册；不做宽路由。
+- P3：保持 ATR 初始 SL；墓地时间止损只做影子。
+- C1 约束：10 月新入场假设名额已被 RFC-153 占用；尺寸/条件门仍需 RFC + 用户批准。
+
+**P2 风险尺寸首跑 (2026-10-20, 只读)**:
+- `scripts/risk_size_tier_shadow.py` + `tests/test_risk_size_tier_shadow.py`；产物
+  `data/shadow/risk_size_tier_latest.json`；注册表 `risk_size_tier_shadow`（OBSERVING,
+  `IN_SAMPLE_COUNTERFACTUAL`）；RFC-155。
+- 155 笔/22 日：R1 atr5（主）delta **+$855.54**（回撤 1057.63→656.81；半窗 +229/+626）；
+  R4 ge2 delta **+$1,065.70**（回撤→534.11；半窗 +673/+393）；R6 product +$1,191.86
+  （但影响 123/155 笔）；R2 open15 +$587.84（半窗 +491/+97）；R3 ue +$386.95（半窗 +387/0）。
+- R4 的 ge2 = ATR/开盘/UE ≥2，与左尾尸检表含 plan-gap 的旗标集不同源，不可混读。
+- 结论：预注册主臂 R1 稳定正向；R4 更强但为组合档；**均不直接切生产**。下一步只做前瞻
+  记录影子（记录 would_multiplier/counterfactual_size，不改实际 size），≥10 日/30 笔再裁。
+
+**P2 前瞻记录影子上线 (2026-10-20 23:41 CST)**:
+- `app/playbook/risk_size_shadow.py` + `auto_execute_flow` 接线（execute 前构建/execute 后收口）；
+  只写 `data/shadow/risk_size_tier_forward.jsonl`，**不改实际 `_size`/入场/退出**。
+- 配置 `playbook.execution_parameters.risk_size_shadow_enabled: true`（回滚 false+重启）；
+  注册表 `risk_size_tier_forward`（OBSERVING, min_n=30, where:success=True）；
+  评估器 `scripts/risk_size_tier_forward_eval.py`（只读 join trade_records）。
+- 验证：执行链+影子治理+四棘轮 **294 passed**；编译 OK；启动冒烟 **7/7**，PID **2706354**。
+- 首条前瞻行待下一次成功 execute（重启后首批被 chase_cap 拦下，暂为空）。
+- 读数命令：`PYTHONPATH=. ./venv/bin/python scripts/risk_size_tier_forward_eval.py`；
+  满 10 ET 日/30 笔后再裁是否启用乘数。
+- 重启时日志有一条 FutuLV3 退订部分失败 (真失败=4) — 属重启瞬态，冒烟通过，继续观察。
+
+**状态**: 只读反事实 + 前瞻记录影子；**生产仓位零改动**。
+
+## 2026-10-20 RFC-154 P0 出场条件审计 + P1 影子预注册（零生产变更）
+
+**触发**: 用户问「初盈利就跑、赢小输大，基于幻方经验有无优化方案」→ 认可先做 P0 只读审计 + P1 影子预注册。
+
+**P0 结果** (`scripts/exit_conditional_audit.py`, 产物 `data/shadow/exit_conditional_audit_latest.json`):
+- 648 笔 post_exit → 575 笔有效 trail 样本；止损类 51 笔单列。
+- **测量陷阱**: `SL_INITIAL`/跳空止损的“出场后继续持有”是止损后反转偏差；首版未剔除时 trail_0.8 均值 +32.6bps(t=5.69)，剔除后 **+12.65bps(t=2.66)**，BE 单桶仅 +0.91bps。宽止损必须做入场→出场全路径重放，本审计不评估。
+- **结论**: hold-to-close −10.44bps；trail 1.2–2.0% 与 ATR 宽 trail 全负 → **不要全局让赢家跑**。BE 桶 mean +0.91 / **median −17.20** → BE 多数并不早，体感来自尾部。唯一稳定正向是 `SL_TRAIL_LOCK` +9.01bps(median +2.76, t=2.52)；`TIME_EXIT` +44bps(n=35) 仅探索。
+- 左尾与成本仍是更大杠杆：平均亏 −$104.75；平均赢家 ~44bps vs 费+滑点 ~46bps。
+
+**交付**:
+- `scripts/exit_conditional_audit.py` + `tests/test_exit_conditional_audit.py`（**7 passed**；止损类剔除契约已钉）。
+- `docs/decisions/RFC-154-exit-conditional-shadow.md`: P1 四臂预注册（T=trail min 0.4→0.8 主臂 / B=BE 后移 / D=BE 半仓 / X=时间退出），全路径 replay、扣费净 bps、日聚类 t/MDE、n≥30/10 日；**不碰 exit hash，不改生产参数**。
+- 本批纯脚本/文档，**未重启**。
+
+**T 臂首跑 (2026-10-20, 只读)**:
+- `scripts/exit_t_arm_shadow.py` + `tests/test_exit_t_arm_shadow.py`；产物 `data/shadow/exit_t_arm_latest.json`；注册表 `exit_t_arm_min_dd_08`（OBSERVING, `FIDELITY_GATE`）。
+- 139 笔 / 21 ET 日 / 0 缺 bar；baseline vs T（min DD 0.4→0.8）：pess delta **−5.77bps (t=−1.30)** / opt +0.04bps；harm 1139bps / save 0。
+- **baseline vs 实盘 reason_match=0.604 < 0.80** ⇒ 按回放引擎纪律冻结变体读数；**不采纳 T 臂，不改生产**。P0 的“出场后 trail +9bps”不能直接外推为全路径改进（全路径把持有期回吐算回来了）。
+- 新增可选 `adaptive_cfg` 到 `exit_replay_backtest.replay_trade`（默认 None，现有调用零变化），使回放忠实走 adaptive trailing 公式。
+
+**下一步**: 先修回放保真度（锚定回放 / 10s 报价 / BE 限价成交 / fee-aware 垫），`reason_match ≥0.80` 后才允许读 T/B/D/X 变体；在此之前不提案、不改生产。
+
+**回滚**: 删脚本/RFC 即可，零生产影响。
+
 ## 2026-10-20 RFC-153 FADE_SHORT 开盘快跌禁追（SIM 已上线；占用 OKR C1）
 
 **触发**: 用户盘中令「核查记录和影子数据；当前入场大部分就亏损，需要改善」→ 取证后用户批准「批准 SIM 启用」。

@@ -1120,6 +1120,9 @@ def run_playbook_auto_execute(
             _tca_row = None
             _tca_result = None
             _tca_error = None
+            _risk_row = None
+            _risk_result = None
+            _risk_error = None
             try:
                 from app.playbook.execution_tca_shadow import (
                     build_attempt_row as _tca_build,
@@ -1164,6 +1167,31 @@ def run_playbook_auto_execute(
                                exc_info=True)
                 _tca_row = None
 
+            # ── [RFC-155] 左尾风险尺寸前瞻记录影子 ──
+            #   只记录 would_multiplier / counterfactual_size, 不改 _size 与实际下单。
+            try:
+                from app.playbook.risk_size_shadow import (
+                    build_row as _rs_build,
+                    risk_shadow_enabled as _rs_enabled,
+                )
+                if _rs_enabled(pb_cfg):
+                    _risk_row = _rs_build(
+                        inst=inst,
+                        direction=inst.get("direction", ""),
+                        # 执行链 atr_pct 是分数口径 (0.025); 影子契约是百分数 (2.5)
+                        atr_pct=(atr_pct * 100.0 if isinstance(atr_pct, (int, float))
+                                 else None),
+                        size=_size,
+                        notional=_new_notional,
+                        entry_price=((_reprice_params or {}).get("entry_price")
+                                     or inst.get("entry_price")),
+                        now_et=datetime_cls.now(_now_et()),
+                    )
+            except Exception as _rs_build_err:
+                logger.warning(f"[RiskSizeShadow] 行构建异常 (不影响交易): "
+                               f"{_rs_build_err}", exc_info=True)
+                _risk_row = None
+
             # 自动执行
             _audit_action = "error"
             try:
@@ -1174,6 +1202,7 @@ def run_playbook_auto_execute(
                     requested_by="auto:playbook",
                 )
                 _tca_result = result
+                _risk_result = result
                 if result.get("success"):
                     executed_count += 1
                     _cycle_new_count += 1  # 2026-08-14 水坝效应修复: 单轮新开仓计数
@@ -1306,6 +1335,7 @@ def run_playbook_auto_execute(
                 skipped_count += 1
                 _audit_action = "error"
                 _tca_error = str(e)
+                _risk_error = str(e)
                 errors.append(f"{inst['symbol']}: {str(e)}")
                 logger.warning(f"[playbook] 自动执行失败 {inst['symbol']}: {e}")
             # [RFC-152] TCA 收口: 成功/失败都落一行; 写盘失败只 warn, 不影响交易。
@@ -1318,6 +1348,16 @@ def run_playbook_auto_execute(
                 except Exception as _tca_flush_err:
                     logger.warning(f"[TCA] 收口异常 (不影响交易): {_tca_flush_err}",
                                    exc_info=True)
+            # [RFC-155] 风险尺寸影子收口: 只写 jsonl, 不改交易。
+            if _risk_row is not None:
+                try:
+                    from app.playbook.risk_size_shadow import (
+                        finalize_and_record as _rs_flush,
+                    )
+                    _rs_flush(_risk_row, result=_risk_result, error=_risk_error)
+                except Exception as _rs_flush_err:
+                    logger.warning(f"[RiskSizeShadow] 收口异常 (不影响交易): "
+                                   f"{_rs_flush_err}", exc_info=True)
             # 统一收口审计 (2026-07-17): 记录到达下单漏斗并被执行/失败的候选 (含 DA-bridge)
             _emit_exec_gate_audit(inst, action=_audit_action, entry=_entry,
                                   size=_size, notional=_new_notional,

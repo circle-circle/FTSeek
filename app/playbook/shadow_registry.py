@@ -2063,6 +2063,103 @@ REGISTRY: list[ShadowItem] = [
         count_mode="where:arm=treatment",
         cross_ref=("entry_delay_confirm",),
     ),
+    ShadowItem(
+        id="exit_t_arm_min_dd_08",
+        name="RFC-154 T 臂: adaptive trailing min DD 0.4→0.8 (只读回放)",
+        status=ShadowStatus.OBSERVING,
+        description="只读全路径回放: 同一批 PLAYBOOK_SIM 历史交易, baseline adaptive min DD 0.4 "
+                    "vs T 臂 0.8; 输出扣费净 bps、delta、SL_INITIAL、误杀/避免、日聚类 t/MDE。"
+                    "零交易行为变更; 不改 exit hash/生产参数。",
+        data_path="data/shadow/exit_t_arm_latest.json",
+        config_key=None,
+        min_n=30,
+        count_mode="json_key:sample.n",
+        graduation_criteria="预注册见 RFC-154 §2.2: 全路径入场→出场重放 (pess/opt 双序); "
+                            "样本门 ≥10 ET 日 ∧ ≥30 笔; 提案门 T−baseline 扣费净 bps 均值 ≥+10bps "
+                            "∧ 日聚类 t≥2.0 ∧ SL_INITIAL 不恶化 ∧ 赢家误杀净额 < 亏损避免净额; "
+                            "reason_match<0.80 时按引擎纪律冻结变体读数。",
+        eval_script="scripts/exit_t_arm_shadow.py",
+        eval_on_demand=True,
+        stale_expected=True,
+        no_adjudication_reason="FIDELITY_GATE: 2026-10-20 首跑 reason_match=0.604<0.80 "
+                              "(引擎冻结门); T 臂 delta 读数不可采信, 不提案; 待锚定回放/"
+                              "更高保真数据后重跑.",
+        created="2026-10-20",
+        verdict_history=[
+            {"date": "2026-10-20", "verdict": "FROZEN_BY_FIDELITY",
+             "evidence": "139 笔/21 日; pess delta −5.77bps (t=−1.3), opt +0.04bps (t=0.44); "
+                         "harm 1139bps / save 0; reason_match=0.604<0.80 ⇒ 按回放引擎纪律"
+                         "（scripts/exit_replay_backtest.py 文档线 40）冻结变体读数为不可采信。"
+                         "结论=不改生产 min DD; P0 的出场后 trail +9bps 不能直接外推为全路径改进。"},
+        ],
+        notes="2026-10-20 用户确认开始 T 臂影子。首跑只读缓存 bar (139/139 可回放, 0 缺 bar), "
+              "未触 OpenD。关键教训: P0 出场后反事实 (从实际出场后继续持有) 与全路径回放相反 — "
+              "T 臂把 0.4→0.8 后, 持有期回吐增加, pess 序 harm 1139bps、save 0。"
+              "fidelity 0.604 的原因待查 (1m 粒度/BE 限价成交/费用垫口径), 在解决前不读变体。"
+              "回滚: 删本条目/脚本, 零生产影响。",
+    ),
+    ShadowItem(
+        id="risk_size_tier_shadow",
+        name="RFC-155 左尾风险尺寸分层影子 (只读反事实)",
+        status=ShadowStatus.OBSERVING,
+        description="对已平 PLAYBOOK_SIM 交易按风险旗标缩放仓位 (只读): "
+                    "R1 ATR>=5%→0.5x (主) / R2 开盘0-15min / R3 UE / R4 上述>=2旗标 / "
+                    "R5 any / R6 每旗标0.5x下限0.25x。比较美元净额、日级回撤、左尾净额、"
+                    "避免亏损 vs 放弃赢家。不改单笔 bps/入场信号; 生产零改动。",
+        data_path="data/shadow/risk_size_tier_latest.json",
+        config_key=None,
+        min_n=30,
+        count_mode="json_key:sample.n",
+        graduation_criteria="预注册见 RFC-155 §3: 历史反事实 + 前后半窗拆分; "
+                            "转生产前须前瞻影子 (只记录 would_multiplier/counterfactual_size) "
+                            "≥10 ET 日且 ≥30 笔受影响交易; 缩放下净额/回撤不劣于实际且左尾净额下降, "
+                            "放弃赢家成本 < 避免亏损才采纳; 生产实现为风险乘数, 一行回滚。",
+        eval_script="scripts/risk_size_tier_shadow.py",
+        eval_on_demand=True,
+        stale_expected=True,
+        no_adjudication_reason="IN_SAMPLE_COUNTERFACTUAL: 2026-10-20 首跑仅历史反事实; "
+                              "转生产须前瞻影子 (只记录 would_multiplier) + RFC + 用户批准.",
+        created="2026-10-20",
+        verdict_history=[
+            {"date": "2026-10-20", "verdict": "READOUT_IN_SAMPLE",
+             "evidence": "155 笔/22 日: R1 atr5 delta +$855.54 (DD 1057.63→656.81; "
+                         "半窗 +229.10/+626.43); R4 ge2 delta +$1,065.70 (DD→534.11; "
+                         "半窗 +673.04/+392.67); R6 product +$1,191.86 (DD→258.82, 但影响 123/155 笔); "
+                         "R2 open15 +$587.84 (半窗 +490.69/+97.15); R3 ue +$386.95 (半窗 +386.95/0)。"
+                         "结论=预注册主臂 R1 稳定正向; R4 更强但为组合档, 需前瞻; 均不直接切生产。"},
+        ],
+        notes="2026-10-20 用户确认继续 P2。首跑只读 DB(mode=ro); 费用按净额线性缩放, "
+              "固定佣金非线性未建模。尺寸缩放只改变美元暴露/回撤, 不改变单笔 bps/胜率, "
+              "不得宣称 alpha 改善, 不得借机加仓/提频。"
+              "R4 的 ge2 = >=2 of (ATR>=5%, 开盘0-15min, UE), 与左尾尸检表里含 plan-gap 的"
+              "“>=2 flags”不是同一旗标集, 不可混读。回滚: 删本条目/脚本, 零生产影响。",
+    ),
+    ShadowItem(
+        id="risk_size_tier_forward",
+        name="RFC-155 P2 风险尺寸前瞻记录影子",
+        status=ShadowStatus.OBSERVING,
+        description="每条真正走到 execute_instruction 的指令, 只记录风险旗标/六种 "
+                    "would_multiplier/counterfactual_size 与实际执行结果; "
+                    "**不改实际 size/入场/退出**。用于前瞻验证 R1/R4 尺寸分层。",
+        data_path="data/shadow/risk_size_tier_forward.jsonl",
+        config_key="playbook.execution_parameters.risk_size_shadow_enabled",
+        min_n=30,
+        count_mode="where:success=True",
+        graduation_criteria="预注册见 RFC-155 §3.2: ≥10 ET 日 ∧ ≥30 笔成功执行; "
+                            "缩放下净额/回撤不劣于实际且左尾净额下降; "
+                            "放弃赢家成本 < 避免亏损; 转生产须 RFC + 用户批准。",
+        eval_script="scripts/risk_size_tier_forward_eval.py",
+        eval_on_demand=True,
+        created="2026-10-20",
+        verdict_history=[
+            {"date": "2026-10-20", "verdict": "COLLECTING_STARTED",
+             "evidence": "用户确认实施前瞻记录影子; 只记录 would_multiplier, 不改实际 size。"
+                         "历史反事实 R1 +$855.54 / R4 +$1,065.70 仅作方向证据。"},
+        ],
+        notes="记录器在 execute 前构建、execute 后收口; 成功行清旧 skip_reason 到 "
+              "prior_skip_reason。数据从下次重启后的执行尝试开始; 评估器只读 join "
+              "trade_records。回滚: risk_size_shadow_enabled=false + 重启, 数据保留。",
+    ),
 
     # ── 2026-09-11 断头传感器修复批 (用户裁「做」): 两个有写者无读者/无登记的影子补全判分侧 ──
     ShadowItem(

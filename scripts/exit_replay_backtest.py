@@ -281,10 +281,16 @@ def collect_bars(trades: list[dict], refresh: bool = False,
 
 def _effective_sl(direction: str, entry: float, initial_sl: float, peak_profit_pct: float,
                   exit_cfg: dict, var: dict, fee_cushion: float,
-                  po_threshold: float, po_dd: float) -> float:
+                  po_threshold: float, po_dd: float,
+                  adaptive_cfg: dict | None = None) -> float:
     """变体参数覆盖后调用实盘同函数. trailing=true 因子覆盖 be/dd; tiered 用 dd_low.
     ponytail: be override 也应用到 trailing=false 因子 (原脚本只覆盖 trailing=true,
-    导致 noBE 对照对快速证伪类因子失效)."""
+    导致 noBE 对照对快速证伪类因子失效).
+
+    adaptive_cfg (RFC-154 T 臂, 2026-10-20): 默认 None = 原静态 dd, 现有调用零变化;
+    给定时按实盘 adaptive_trailing 公式算 dd 并传给 SSOT 函数 —— 生产 SIM 走的正是
+    这条路径, 但本引擎此前未建模 (live_baseline 用静态 dd). 只读回放, 不改生产.
+    """
     cfg = dict(exit_cfg)
     if var.get("be") is not None:
         cfg["breakeven_at_pct"] = var["be"]
@@ -299,13 +305,20 @@ def _effective_sl(direction: str, entry: float, initial_sl: float, peak_profit_p
             dd_eff = var.get("tier_dd_low", dd_eff)
         cfg["drawdown_from_peak_pct"] = dd_eff
     # trailing=false 因子走 profit_override 分支 (函数内部读 live config, 语义与 shadow 一致)
+    adaptive_dd = None
+    if adaptive_cfg is not None:
+        from app.playbook.adaptive_trailing import adaptive_trailing_drawdown_pct
+        adaptive_dd = adaptive_trailing_drawdown_pct(
+            peak_profit_pct, adaptive_cfg, "PLAYBOOK_SIM")
     return _compute_dynamic_effective_sl(
-        direction, entry, initial_sl, peak_profit_pct, cfg, fee_cushion)
+        direction, entry, initial_sl, peak_profit_pct, cfg, fee_cushion,
+        adaptive_drawdown_pct=adaptive_dd)
 
 
 def replay_trade(tr: dict, bars: list[dict], exit_cfg: dict, var: dict,
                  params: dict, ordering: str, slippage_bps: float,
-                 anchor: dict | None = None) -> dict:
+                 anchor: dict | None = None,
+                 adaptive_cfg: dict | None = None) -> dict:
     """单笔回放. ordering: 'pess' (不利极值先触) / 'opt' (有利极值先触).
 
     返回 {exit_price, reason, held_min, mfe_pct} — 数学与 _check_playbook_exit_rules 对齐.
@@ -363,7 +376,8 @@ def replay_trade(tr: dict, bars: list[dict], exit_cfg: dict, var: dict,
 
     def _active_sl(peak_pct, held_min, mins_from_open):
         eff = _effective_sl(direction, entry, initial_sl, peak_pct, exit_cfg, var,
-                            fee, params["profit_override_threshold"], params["profit_override_dd"])
+                            fee, params["profit_override_threshold"],
+                            params["profit_override_dd"], adaptive_cfg=adaptive_cfg)
         # 规则0: 开盘15min冷却 → SL放宽到 cooldown_sl_pct
         if mins_from_open < 15:
             cool = entry * (1 - params["cooldown_sl_pct"] / 100 * sign)

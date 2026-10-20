@@ -1302,6 +1302,11 @@ playbook:
     execution_tca_shadow_enabled: true
     execution_tca_spread_block_bps: 20.0      # bps; 仅标签, 非门
     execution_tca_quote_age_block_ms: 2000    # ms; 仅标签, 非门
+    # ── RFC-155 P2 左尾风险尺寸前瞻记录影子 (2026-10-20 用户确认) ──
+    #   只记录 would_multiplier/counterfactual_size, 不改实际 size/入场/退出。
+    #   规则: ATR>=5% / 开盘0-15min / UE; 六种乘数档见 app/playbook/risk_size_shadow.py。
+    #   回滚: false + 重启 (数据保留)。
+    risk_size_shadow_enabled: true
 
     # ── RFC-065 入场带 vol_widen (DEB-20260819 §三十四, 条件版A, 2026-08-19) ──
     entry_band_vol_widen_enabled: false      # 生产开关: 默认false零行为变更; 翻开关判据预注册见RFC-065
