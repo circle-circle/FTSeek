@@ -67,6 +67,29 @@ def _live_gate_state() -> str:
         return "verdict 未知 (读 entry_confirm_forward_latest.json 失败)"
 
 
+def _rfc153_line() -> str:
+    """RFC-153（FADE_SHORT 开盘快跌禁追）live 进度读数.
+
+    计算在结算器 settle_entry_confirm_forward.py（SSOT），本函数只做展示, 不重算 —
+    两处各写一份判据 = 漂移模具。样本门见 RFC-153 §3。
+    """
+    try:
+        d = json.loads(EC_LATEST.read_text()).get("rfc153_chase_cap") or {}
+        if not d:
+            return "RFC-153 开盘禁追(live): 结算器 latest 无 rfc153 块 (旧版产物, 待 06:37 结算)"
+        g = d.get("gate") or {}
+        return (f"RFC-153 开盘禁追(live): 样本 {d.get('n_samples')}/{g.get('need_n')}笔"
+                f" {d.get('n_days')}/{g.get('need_days')}日"
+                f" | 门拦 {d.get('n_chase_cap_abandoned')} 笔"
+                f"(拦时 opp 中位 {d.get('cap_hit_opp_median_pct')}%)"
+                f" | 确认 {d.get('n_confirmed')} 笔 净均 {d.get('confirmed_net_mean')}"
+                f" SL_INITIAL {d.get('confirmed_sl_initial_n')} 笔"
+                f"(基线 n=23 净 -446.69 SL 4)"
+                f" → {'达样本门, 可呈裁' if g.get('pass') else '攒样中, 不裁'}")
+    except Exception as e:  # noqa: BLE001
+        return f"RFC-153 开盘禁追(live): 读取失败 ({e})"
+
+
 def _leg_gates(fw: dict, gap_bp) -> dict:
     """RFC-118 G1-G6 逐门判定 (只做判读, 不改判据); True=过门."""
     ing = fw.get("in_gate") or {}
@@ -290,6 +313,7 @@ def main() -> int:
     # 门本体自 RFC-141 起是 SIM 实弹 (10-10 部署/10-12 首行/10-15 v2 判尺), 裁决源=live 真实盈亏。
     lines.append("影子=record-only 只读(零交易影响) | 现役门=RFC-141 SIM 实弹, 本页为历史 bar 回放参照")
     lines.append(f"live 门裁决面: {_live_gate_state()} — 转正以 live SIM 判据为准, 不用本页判据 (RFC-141 §4)")
+    lines.append(_rfc153_line())
 
     print("\n".join(lines))
     return 0

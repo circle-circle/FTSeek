@@ -85,6 +85,13 @@ R4 的 `ge2` = ATR≥5% / 开盘 0–15min / UE 中 **≥2 个**，与左尾尸�
   复用历史影子美元口径；样本门 ≥10 ET 日且 ≥30 笔成功执行。
 - 验证：294 passed；`py_compile` OK；启动冒烟 7/7；生产 zero size change。
 - 首条前瞻行会在下一次成功 execute 时出现（重启后首批被 chase_cap 拦下，故暂为空）。
+- **2026-10-21 样本门口径对齐**（用户裁「要」，零读数时修，不构成挪门柱）：§3.2 原文是
+  「≥10 ET 日 ∧ ≥30 笔**受影响**交易」，而 `scripts/risk_size_tier_forward_eval.py` 首版
+  实现拿 `sample.n`（全部 join 到的成交）当门 ⇒ 门被放松（30 笔总单里可能只有十来笔真被
+  缩放，然后拿个位数受影响样本下结论 = entry_delay「ALL 过门 ≠ 分层成立」同型坑）。
+  现改为 `rules.any.affected_n ≥ 30`（≥1 旗标为真 ⇒ mult<1），总样本数降级为「只印不判」
+  (`sample_total_n_only_printed`)；契约测试 `test_sample_gate_uses_affected_not_total` 钉住。
+  日数条件沿用全窗 distinct_days。
 
 ## 4. 边界
 

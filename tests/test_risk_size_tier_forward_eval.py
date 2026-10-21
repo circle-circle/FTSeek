@@ -66,3 +66,33 @@ def test_forward_eval_skips_missing_trade(tmp_path):
     assert report["coverage"]["joined"] == 0
     assert report["coverage"]["skipped_no_trade"] == 1
     assert report["sample"]["n"] == 0
+
+
+def test_sample_gate_uses_affected_not_total(tmp_path):
+    """RFC-155 §3.2 原文 = ≥10 ET 日 ∧ ≥30 笔**受影响**交易。
+
+    30 笔一个旗标都没触发的单 (ATR<5% / 非开盘 15min / 非 UE) ⇒ 一笔记账都不会被缩放,
+    不得过样本门。旧实现拿 sample.n (全部 joined) 当门 ⇒ 30 笔无旗标单会假 PASS。
+    """
+    forward = tmp_path / "fwd.jsonl"
+    n = 30
+    _write_forward(forward, [
+        _forward_row(decision_id=f"z{i}", atr_pct=1.0, session_min=60, source="DA")
+        for i in range(n)])
+    rows = ev.load_forward(forward)
+    db = tmp_path / "t.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE trade_records (decision_id TEXT, trade_date TEXT, "
+                "pnl_net REAL, exit_reason TEXT, exit_time TEXT)")
+    for i in range(n):
+        con.execute("INSERT INTO trade_records VALUES (?,?,?,?,?)",
+                    (f"z{i}", "2026-10-01", 10.0, "SL_BREAKEVEN",
+                     "2026-10-01T10:00:00-04:00"))
+    con.commit()
+    con.close()
+    outcomes = ev.load_trade_outcomes(db, {r["decision_id"] for r in rows})
+    report = ev.compute(rows, outcomes)
+    assert report["sample"]["n"] == n                 # 总数只印
+    assert report["gate"]["sample_affected_n"] == 0   # 受影响 = 0 ⇒ 判据不成立
+    assert report["gate"]["sample_total_n_only_printed"] == n
+    assert report["gate"]["pass"] is False

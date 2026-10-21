@@ -427,3 +427,39 @@ def test_v2_abandoned_post_observation_rows_land(env):
     # 逆向幅度方向归一: LONG 100→99.3 = −0.7%
     assert posts[0]["last_move_pct"] == pytest.approx(-0.7, abs=1e-3)
     assert ecg.pending_count() == 0
+
+
+# ══════════════════════════════════════════════════════════════════
+# E. RFC-153 禁追门 进度读数 (只印不判) 的人群/窗口契约
+# ══════════════════════════════════════════════════════════════════
+def test_rfc153_progress_cohort_and_window():
+    """人群 = FADE_SHORT ∧ 开盘 window ∧ date ≥ 生效首日; 判据用样本门, 不是"有行就算"。
+
+    三条否定样本 (非 FADE_SHORT / 开盘窗外 / 生效首日之前) 必须被挡掉 —— 否则进度行会
+    虚高, 30 笔门提前到达。
+    """
+    from scripts import settle_entry_confirm_forward as st
+
+    def row(**kw):
+        base = {"type": "entry_confirm", "entry_archetype": "FADE_SHORT",
+                "session_min": 5, "date": st.RFC153_SINCE, "still_triggers": False,
+                "chase_cap_hit": True, "opp_cost_pct": 1.4, "decision_id": "d1"}
+        base.update(kw)
+        return base
+
+    rows = [
+        row(),                                             # ✅ 计入
+        row(entry_archetype="PULLBACK_LIMIT"),             # ✗ 非 FADE_SHORT
+        row(session_min=30),                               # ✗ 开盘窗外
+        row(date="2026-10-20"),                            # ✗ 生效首日之前
+        row(still_triggers=True, chase_cap_hit=False,       # ✅ 确认成交, 计入
+            opp_cost_pct=0.1, decision_id="d2"),
+    ]
+    joined = {"d2": {"net": -50.0, "exit_reason": "SL_INITIAL"}}
+    blk = st.rfc153_progress(rows, joined=joined)
+    assert blk["n_samples"] == 2, blk
+    assert blk["n_chase_cap_abandoned"] == 1
+    assert blk["n_confirmed"] == 1
+    assert blk["confirmed_net_mean"] == -50.0
+    assert blk["confirmed_sl_initial_n"] == 1
+    assert blk["gate"]["pass"] is False          # 2 笔远未达 30 笔门

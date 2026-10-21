@@ -114,10 +114,17 @@ def compute(forward_rows: list[dict], outcomes: dict[str, dict]) -> dict:
     rows, coverage = build_dataset(forward_rows, outcomes)
     report = hist.compute(rows)
     days = report["sample"]["distinct_days"]
+    # [2026-10-21 口径对齐] RFC-155 §3.2 原文 = 「≥30 笔**受影响**交易」, 旧实现拿
+    #   sample.n (全部 join 到的成交) 当门 ⇒ 门被放松 (30 笔总单里可能只有十来笔真被缩放)。
+    #   any 规则的 affected_n 才是「至少一个旗标为真 ⇒ mult<1」的笔数, 用它对齐原文。
+    affected_n = (report["rules"].get("any") or {}).get("affected_n") or 0
     gate = {
-        "sample_n": report["sample"]["n"] >= MIN_N,
+        "sample_n": affected_n >= MIN_N,          # 判据 = 受影响笔数 (RFC-155 §3.2 原文)
+        "sample_affected_n": affected_n,
+        "sample_total_n_only_printed": report["sample"]["n"],   # 只印不判
         "sample_days": days >= MIN_DAYS,
-        "note": "样本门未达只报进度; 通过不自动改生产",
+        "note": ("样本门未达只报进度; 通过不自动改生产。判据=受影响笔数 (≥1 旗标为真), "
+                 "非全部已执行笔数"),
     }
     gate["pass"] = bool(gate["sample_n"] and gate["sample_days"])
     report["coverage"] = coverage
@@ -132,7 +139,8 @@ def render(report: dict) -> None:
     print("RFC-155 P2 前瞻记录影子读数 (只读)")
     print(f"forward {cov['forward_rows']} / joined {cov['joined']} / "
           f"no-trade {cov['skipped_no_trade']} | n={report['sample']['n']} "
-          f"days={report['sample']['distinct_days']}")
+          f"days={report['sample']['distinct_days']} "
+          f"受影响(判据口径)={report['gate']['sample_affected_n']}/{MIN_N}")
     for rule, block in report["rules"].items():
         print(f"  {rule:8s} aff={block['affected_n']:3d} actual={block['actual_net']:9.2f} "
               f"cf={block['cf_net']:9.2f} delta={block['delta_net']:9.2f} "

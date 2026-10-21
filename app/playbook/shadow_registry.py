@@ -2145,7 +2145,9 @@ REGISTRY: list[ShadowItem] = [
         config_key="playbook.execution_parameters.risk_size_shadow_enabled",
         min_n=30,
         count_mode="where:success=True",
-        graduation_criteria="预注册见 RFC-155 §3.2: ≥10 ET 日 ∧ ≥30 笔成功执行; "
+        graduation_criteria="预注册见 RFC-155 §3.2: ≥10 ET 日 ∧ ≥30 笔受影响交易 "
+                            "(≥1 风险旗标为真 ⇒ 会被缩放; 不是全部已执行笔数 — "
+                            "2026-10-21 评估器实现对齐 RFC 原文, 此前误用 sample.n); "
                             "缩放下净额/回撤不劣于实际且左尾净额下降; "
                             "放弃赢家成本 < 避免亏损; 转生产须 RFC + 用户批准。",
         eval_script="scripts/risk_size_tier_forward_eval.py",

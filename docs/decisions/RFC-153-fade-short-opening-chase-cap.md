@@ -80,3 +80,12 @@ THEN ABANDONED (cause=fade_short_chase_cap)
 ## 6. 变更记录
 
 - 2026-10-20 v1：用户批准 SIM 启用；同批落 RFC-152 TCA 记录质量修复。
+- 2026-10-21 v1.1（用户裁「要」，零行为变更）：**进度读数落地**。结算器
+  `scripts/settle_entry_confirm_forward.py` 新增 `rfc153_chase_cap` 块（样本笔数/日数、
+  门拦笔数、拦时 opp 中位、确认笔数净均、SL_INITIAL 笔数 vs 基线 n=23/净 −446.69/SL 4、
+  样本门状态），D2' 日报末行展示（`ops/hermes/entry_delay_shadow_push.py`）。
+  **计算只在结算器，日报只展示** —— 两处各写一份判据就是漂移模具。人群 =
+  `entry_archetype=='FADE_SHORT' ∧ 0≤session_min<15 ∧ date≥2026-10-21`（gate 已直落这四个
+  字段，无需 join 指令表）；PnL 用 `decision_id` 逐笔对齐（不用 symbol+date，防同日同标的
+  串行）。契约测试 `test_rfc153_progress_cohort_and_window`。
+  设计动机：门生效后若无读数入口，10 天后样本到了也没人裁 —— 正是「结算面停摆 = 假活跃」形态。

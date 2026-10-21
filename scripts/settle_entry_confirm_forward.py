@@ -45,6 +45,16 @@ FWD = ROOT / "data" / "shadow" / "entry_confirm_forward.jsonl"
 OUT = ROOT / "data" / "shadow" / "entry_confirm_forward_latest.json"
 DB = ROOT / "data" / "ftseek_us.db"
 
+# ── RFC-153 FADE_SHORT 开盘快跌禁追门 进度读数 (只印不判) ──
+#   窗口自门生效首日 (2026-10-21 ET) 起; 人群 = FADE_SHORT ∧ 开盘 0–window 分钟。
+#   样本门/主判据见 RFC-153 §3 (读数前写死, 门未达只报进度)。
+RFC153_SINCE = "2026-10-21"
+RFC153_WINDOW_MIN = 15
+RFC153_NEED_N = 30
+RFC153_NEED_DAYS = 10
+RFC153_BASELINE = {"window": "2026-09-23~10-20", "n": 23, "net": -446.69,
+                   "sl_initial_n": 4}
+
 # ── 预注册基线 (RFC-141 §4, 裁决日禁挪) ──
 # 口径: source_type=PLAYBOOK_SIM ∧ exit_price>0 ∧ COALESCE(pnl_net,realized_pnl) NOT NULL
 #      ∧ 排除 gate_mode=research_momentum 研究臂 (2026-10-20 P0, 见 EXCLUDE_RESEARCH_ARM_SQL)
@@ -327,6 +337,75 @@ def load_fills(since_date: str):
     return fills
 
 
+def load_trade_by_decision(decision_ids):
+    """decision_id → {net, exit_reason} (已平 PLAYBOOK_SIM; 只读)。
+
+    用于 RFC-153 进度读数的 cohort join: forward 行带 decision_id, 而 (symbol,date)
+    的 _agg 口径会把同日同标的的其它单混进来 ⇒ 该 cohort 用 decision_id 逐笔对齐。
+    """
+    ids = [str(d) for d in decision_ids if d]
+    if not ids:
+        return {}
+    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    out = {}
+    try:
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            q = ",".join("?" for _ in chunk)
+            for r in con.execute(
+                    "SELECT decision_id, COALESCE(pnl_net, realized_pnl) AS net, exit_reason "
+                    f"FROM trade_records WHERE decision_id IN ({q}) "
+                    "AND COALESCE(exit_price,0)>0", chunk):
+                out[str(r["decision_id"])] = {"net": float(r["net"] or 0),
+                                              "exit_reason": r["exit_reason"]}
+    finally:
+        con.close()
+    return out
+
+
+def rfc153_progress(rows, joined=None):
+    """RFC-153 FADE_SHORT 开盘快跌禁追 进度块 (只印不判; 判据见 RFC-153 §3)。
+
+    人群 = entry_archetype=='FADE_SHORT' ∧ 0 ≤ session_min < window ∧ date ≥ 生效首日。
+    entry_archetype / abandon_cause / chase_cap_hit / session_min 由 gate 直落 forward 行
+    (2026-10-20 起); 更早的行没有这些字段 ⇒ 天然不进本窗。
+    joined: decision_id → {net, exit_reason}; None 时自行查库 (测试可注入)。
+    """
+    _fs_rows = [r for r in rows
+                if r.get("entry_archetype") == "FADE_SHORT"
+                and isinstance(r.get("session_min"), int)
+                and 0 <= r["session_min"] < RFC153_WINDOW_MIN
+                and str(r.get("date") or "") >= RFC153_SINCE]
+    _fs_cap = [r for r in _fs_rows if r.get("chase_cap_hit")]
+    _fs_conf = [r for r in _fs_rows if r.get("still_triggers") is True]
+    _fs_days = sorted({str(r.get("date")) for r in _fs_rows})
+    if joined is None:
+        joined = load_trade_by_decision([r.get("decision_id") for r in _fs_conf])
+    nets = [v["net"] for v in joined.values()]
+    return {
+        "since": RFC153_SINCE, "window_min": RFC153_WINDOW_MIN,
+        "n_samples": len(_fs_rows), "n_days": len(_fs_days),
+        "n_chase_cap_abandoned": len(_fs_cap),
+        "n_confirmed": len(_fs_conf), "n_confirmed_joined": len(nets),
+        "confirmed_net_sum": round(sum(nets), 2) if nets else None,
+        "confirmed_net_mean": round(statistics.mean(nets), 2) if nets else None,
+        "confirmed_sl_initial_n": sum(1 for v in joined.values()
+                                      if (v.get("exit_reason") or "") == "SL_INITIAL"),
+        "cap_hit_opp_median_pct": (
+            round(statistics.median([float(r.get("opp_cost_pct") or 0) for r in _fs_cap]), 4)
+            if _fs_cap else None),
+        "baseline": RFC153_BASELINE,
+        "gate": {"need_n": RFC153_NEED_N, "need_days": RFC153_NEED_DAYS,
+                 "n_ok": len(_fs_rows) >= RFC153_NEED_N,
+                 "days_ok": len(_fs_days) >= RFC153_NEED_DAYS,
+                 "pass": len(_fs_rows) >= RFC153_NEED_N and len(_fs_days) >= RFC153_NEED_DAYS},
+        "note": ("只印不判: 样本门 ≥10 ET 日 ∧ ≥30 笔 (treatment+abandoned 均计入机制样本; "
+                 "PnL 只对有成交的 treatment 计, decision_id 对齐); 主判据见 RFC-153 §3 "
+                 "(SL_INITIAL 笔数下降 ≥50% / 扣费净 bps 不劣 / 误杀净额 < 避免净额)。"),
+    }
+
+
 def main():
     rows = load_rows()
 
@@ -385,6 +464,9 @@ def main():
     treat_cur = treat_v2 if verdict_gen == "v2" else treat_v1
     a_t = _agg(treat_cur, fills)
     hold = [r for r in rows if r.get("arm") == "holdout"]
+
+    # ── RFC-153 FADE_SHORT 开盘快跌禁追 进度 (只印不判, 预注册见 RFC-153 §3) ──
+    rfc153 = rfc153_progress(rows)
 
     # ── 判据 1–4 (RFC-141 §4) ──
     sl_mean = p_sl["net_mean"]
@@ -498,6 +580,7 @@ def main():
             "R1_short_open_window": _agg(r1, fills),
             "long_open_window": _agg(r1_long, fills),
         },
+        "rfc153_chase_cap": rfc153,
         "caliber": ("裁决源=开门后 SIM 真实盈亏 vs 开门前预注册基线; holdout_pct=0 ⇒ "
                     "无同期对照臂, 受市况变化混淆 (披露 RFC §5.4); 判据1/3 为门自身机制量"
                     "不随市况漂, 故列为最强判据。开门日取现行代 forward 首行 date (不硬编码, "
@@ -524,6 +607,15 @@ def main():
     print(f"  机制留痕: 避免率={a_t['avoidance_rate']} opp={a_t['opp_cost_mean_pct']}% "
           f"(n={a_t['n']})")
     print(f"  判据: 1={c1} 2={c2} 3={c3} 4={c4}(剔费裁决) 4_full={c4_full}(并陈) 样本门={sample_ok}")
+    print(f"  RFC-153 FADE_SHORT 开盘禁追: 样本 n={rfc153['n_samples']}"
+          f"/{RFC153_NEED_N} days={rfc153['n_days']}/{RFC153_NEED_DAYS}"
+          f" | 门拦 {rfc153['n_chase_cap_abandoned']} 笔"
+          f" (拦时 opp 中位 {rfc153['cap_hit_opp_median_pct']}%)"
+          f" | 确认 {rfc153['n_confirmed']} 笔 净均 {rfc153['confirmed_net_mean']}"
+          f" SL_INITIAL {rfc153['confirmed_sl_initial_n']} 笔"
+          f" (基线 n={RFC153_BASELINE['n']} 净 {RFC153_BASELINE['net']}"
+          f" SL {RFC153_BASELINE['sl_initial_n']})"
+          f" → {'达样本门(可呈裁)' if rfc153['gate']['pass'] else '攒样中'}")
     return 0
 
 
