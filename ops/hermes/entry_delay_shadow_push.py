@@ -30,6 +30,7 @@ REPO = Path("/opt/ftseek/FTSeek-US")
 JSONL = REPO / "data/shadow/entry_delay_confirm.jsonl"
 LATEST = REPO / "data/shadow/entry_delay_confirm_latest.json"
 CF_LATEST = REPO / "data/shadow/pullback_limit_replay_v2_latest.json"
+EC_LATEST = REPO / "data/shadow/entry_confirm_forward_latest.json"  # RFC-141 现役门裁决面
 DB = REPO / "data/ftseek_us.db"
 
 GRAVE_MFE = 0.3          # 墓地线: MFE<0.3% = 入场即错族
@@ -37,10 +38,47 @@ FORWARD_START = "2026-09-10"  # forward 攒样窗起点 — 与结算脚本 FORW
 STALE_HOURS = 26         # 结算 cron 05:58, 推送 06:10; >26h = 昨晨结算缺失
 D_TARGET_N = 40          # D案配对裁决门槛 (RFC-081 批注二②: 统一 n≥40 最严优先, 溯源 DEB-20260907 §4.9; 30=中间态只说方向不得提请裁决)
 B_TARGET_N = 20          # B案 forward 毕业门槛 (DEB §5.2: n≥20)
+# [2026-10-21] 人群断点: RFC-141 live 门首个 forward 行日 (entry_confirm_forward_latest.gate_live_date)。
+# 从此日起被门 ABANDONED 的信号不会变成 trade_records 行 ⇒ 影子 forward 只剩「已经过门」的子群,
+# 与 pre-live 不是同一人群, 混在同一条 forward 里会把两类人群的净差相加 (实测方向相反)。
+GATE_LIVE_DATE = "2026-10-12"
 
 
 def _fmt_usd(v: float) -> str:
     return f"${v:+,.0f}"
+
+
+def _shadow_net_usd(rows) -> float:
+    """延迟门净差 (美元): 回避省下的钱 − 照进多付的漂移. 负=门净亏."""
+    saved = -sum(float(r.get("pnl_net") or 0) for r in rows if not r.get("still_triggers"))
+    opp = sum(float(r.get("opp_cost_pct") or 0) / 100 * float(r.get("notional") or 0)
+              for r in rows if r.get("still_triggers"))
+    return saved - opp
+
+
+def _live_gate_state() -> str:
+    """RFC-141 现役门的裁决状态 (动态读, 不写死结论 — 写死会随读数翻转说反话)."""
+    try:
+        d = json.loads(EC_LATEST.read_text())
+        return (f"verdict={d.get('verdict') or '?'}"
+                f" (v2窗≥{d.get('verdict_window_since') or '?'},"
+                f" gate_live={d.get('gate_live_date') or '?'})")
+    except Exception:
+        return "verdict 未知 (读 entry_confirm_forward_latest.json 失败)"
+
+
+def _leg_gates(fw: dict, gap_bp) -> dict:
+    """RFC-118 G1-G6 逐门判定 (只做判读, 不改判据); True=过门."""
+    ing = fw.get("in_gate") or {}
+    bp = fw.get("bp_per_trade_vs_market")
+    return {
+        "G1": (fw.get("n_paired") or 0) >= 40,
+        "G2": (ing.get("c3_fill_official_denom") or 0) >= 0.5,
+        "G3": gap_bp is not None and bp is not None and bp >= gap_bp,
+        "G4": bool((fw.get("day_clustered") or {}).get("distinguishable")),
+        "G5": bool((ing.get("miskill_expired") or {}).get("pass")),
+        "G6": (ing.get("forgone_same_ruler_usd") or 0) <= 0,
+    }
 
 
 def _auto_watch_only() -> bool:
@@ -130,6 +168,14 @@ def main() -> int:
         lines.append(
             f"forward({FORWARD_START[5:]}起): n={len(fwd)}/20 | 回避率 {av_rate:.0f}%(门≥30%)"
             f" | 机会成本 {f_opp:.3f}%(门<0.3%) | 净差 {_fmt_usd(f_saved - f_opp_usd)}")
+        # [2026-10-21] 人群断点行: 10-12 起 live 门只让 CONFIRMED 单进入 trade_records,
+        # 影子行变成「已经过门」子群 — 与 pre-live 不是同一人群 (实测净差方向相反), 不可混算。
+        _pre = [r for r in fwd if r["date"] < GATE_LIVE_DATE]
+        _post = [r for r in fwd if r["date"] >= GATE_LIVE_DATE]
+        lines.append(
+            f"  人群断点({GATE_LIVE_DATE[5:]} live门起): pre n={len(_pre)} 净差 {_fmt_usd(_shadow_net_usd(_pre))}"
+            f" | post n={len(_post)} 净差 {_fmt_usd(_shadow_net_usd(_post))}"
+            " (post 只含过门单, 与 pre 不同人群, 不得相加)")
     else:
         lines.append(f"forward({FORWARD_START[5:]}起): n=0/20 攒样中")
 
@@ -151,7 +197,7 @@ def main() -> int:
     lines.append(
         f"全窗参照: n={g2.get('n', '?')} 回避率 {(g2.get('avoidance_rate') or 0) * 100:.0f}%"
         f" 成本 {g2.get('opp_cost_mean_pct', '?')}% | 判据 ALL={'✅' if grad.get('ALL_pass') else '❌'}"
-        f" SL_INIT={'✅' if grad.get('SL_INITIAL_pass') else '❌'}")
+        f" SL_INIT={'✅' if grad.get('SL_INITIAL_pass') else '❌'} (全窗混合人群, 非裁决口径)")
 
     # ── [2026-09-16] B/D 分流人群分层 (RFC-081 §六: 裁决日 B 主判读=B_only 人群) ──
     f_blk = latest.get("delays", {}).get("2", {}).get("forward", {})
@@ -187,8 +233,20 @@ def main() -> int:
             if _extra:
                 lines.append("  " + " | ".join(_extra))
             # 裁决窗口开启提醒 (n 达门槛 → 提请用户裁决, 不自动接线)
+            # [2026-10-21] n≥40 只是「样本够」, 不是「可裁」: 尺子自己标注
+            #   evaluability=NOT_EVALUABLE_FIDELITY 时 adr035_criteria 一律不作数(含通过项),
+            #   只印 n 数会每天催一次不可签的字。故此处加可评估性前置 (fail-open: 读不到照旧提示)。
             if n_p >= D_TARGET_N:
-                lines.append(f"🔔 D案配对样本已达门槛 n={n_p}≥{D_TARGET_N} — 裁决材料齐备, 提请裁决 (读 RFC-081 §六 + ADR-035 §五.2 判读规则)")
+                _ev = (s.get("evaluability") or {}).get("status") or "?"
+                _blocked = (s.get("adr035_verdict") or {}).get("blocked_by")
+                if _ev.startswith("EVALUABLE") and not _blocked:
+                    lines.append(f"🔔 D案配对样本已达门槛 n={n_p}≥{D_TARGET_N} — 裁决材料齐备, 提请裁决"
+                                 " (读 RFC-081 §六 + ADR-035 §五.2 判读规则)")
+                else:
+                    lines.append(
+                        f"⛔ D案 n={n_p}≥{D_TARGET_N} 但不可裁: 尺子 evaluability={_ev}"
+                        + (f" blocked_by={_blocked}" if _blocked else "")
+                        + " — 保真度门不过 ⇒ adr035_criteria 一律不作数(含通过项), 不呈裁")
             # [RFC-118 2026-09-30 用户裁「按建议执行」] 可达性门模拟臂 forward 攒样行
             #   (record-only 观测, 门未接线; G3 门槛=费用缺口bp 动态算, 同屏防手算错尺)
             gs = s.get("rfc118_gate_sim") or {}
@@ -204,13 +262,22 @@ def main() -> int:
                               if _r and _r[0] and _r[2] else None)
                 except Exception:  # noqa: BLE001
                     gap_bp = None
-                _legs_txt = " | ".join(
-                    f"θ={th}: n={(_fw or {}).get('n_paired', 0)}/40"
-                    f" {(_fw or {}).get('bp_per_trade_vs_market') if (_fw or {}).get('bp_per_trade_vs_market') is not None else '–'}bp"
-                    for th, _blk in sorted(gs["legs"].items())
-                    for _fw in [(_blk or {}).get("forward")])
-                lines.append(f"RFC118可达性门(模拟未接线): {_legs_txt}"
-                             + (f" | G3参照门槛=近30d全PLAYBOOK_SIM费用缺口{gap_bp}bp"
+                _legs, _all_fail = [], True
+                for th, _blk in sorted(gs["legs"].items()):
+                    _fw = (_blk or {}).get("forward") or {}
+                    _chk = _leg_gates(_fw, gap_bp)
+                    if all(_chk.values()):
+                        _all_fail = False
+                    _flags = "".join(f"{k}{'✅' if v else '❌'}" for k, v in _chk.items())
+                    _bp = _fw.get("bp_per_trade_vs_market")
+                    _legs.append(f"θ={th}: n={_fw.get('n_paired', 0)}/40 "
+                                 f"{_bp if _bp is not None else '–'}bp {_flags}")
+                # [2026-10-21] 只印数字读不出「在失败」; 逐门 ✅/❌ + 结论句 (RFC-118 裁决规则:
+                #   都不过 → 影子退役留痕). 判据/阈值零改动, 本行只是把已有读数判读出来。
+                lines.append("RFC118可达性门(模拟·已退役留痕): " + " | ".join(_legs))
+                lines.append("  → " + ("两腿均未过全门 ⇒ 按 RFC-118 裁决规则=影子退役留痕, 不呈裁"
+                                        if _all_fail else "有腿过全门 ⇒ 呈裁另裁接线")
+                             + (f" | 门槛={gap_bp}bp(近30d费−毛)"
                                 if gap_bp is not None else ""))
         else:
             lines.append("D案限价路由: latest 无 n_paired 字段 (replay cron 05:47 待跑?)")
@@ -219,7 +286,10 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001
         lines.append(f"D案限价路由: 读取失败 ({e})")
 
-    lines.append("record-only 零交易影响 | 裁决日按 forward 冻结值提请 (RFC-081)")
+    # [2026-10-21] 旧 footer「record-only 零交易影响」只对影子成立, 对门已不成立:
+    # 门本体自 RFC-141 起是 SIM 实弹 (10-10 部署/10-12 首行/10-15 v2 判尺), 裁决源=live 真实盈亏。
+    lines.append("影子=record-only 只读(零交易影响) | 现役门=RFC-141 SIM 实弹, 本页为历史 bar 回放参照")
+    lines.append(f"live 门裁决面: {_live_gate_state()} — 转正以 live SIM 判据为准, 不用本页判据 (RFC-141 §4)")
 
     print("\n".join(lines))
     return 0
