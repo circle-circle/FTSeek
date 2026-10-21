@@ -38,14 +38,16 @@ def _create_db():
           mfe_pct real,
           mae_pct real,
           quantity integer,
-          data_quality text
+          data_quality text,
+          metadata_json text
         );
         create table playbook_instructions (
           id integer primary key,
           date text not null,
           symbol text not null,
-          direction text not null
-          , entry_price real, raw_instruction_json text, metadata_json text,
+          direction text not null,
+          skip_reason text,
+          entry_price real, raw_instruction_json text, metadata_json text,
           decision_id text
         );
         """

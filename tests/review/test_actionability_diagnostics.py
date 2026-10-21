@@ -43,6 +43,7 @@ def _create_db():
           date text not null,
           symbol text not null,
           direction text not null,
+          skip_reason text,
           entry_price real,
           stop_loss real,
           take_profit real,
