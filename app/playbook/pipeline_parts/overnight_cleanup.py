@@ -3,6 +3,81 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+# ── EOD 兜底「可成交窗口」(2026-10-22 P0 TSLA 实锤, 见 eod_close_verdict docstring) ──
+# 盘后窗口里下 RTH 市价腿必被券商撤 ⇒ 意图卡死 ⇒ 该标的进 blocked_exits ⇒ 规则链整行
+# 跳过 (零保护)。实证: trade_records 里 EOD_FORCE_CLOSE 的券商成交 7/7 落在 16:0x。
+_EOD_CLOSE_FILL_WINDOW_MIN = 10
+
+# 延后日志去重 (symbol/env/date/action) — 本函数在 AFTER_HOURS 每 ~2min 被调用
+_EOD_DEFER_LOGGED = set()
+
+
+def _entry_et(entry_time) -> Any:
+    """entry_time → ET datetime; 解析失败 → None。
+
+    entry_time 在库中三种格式混存 (aware ET / naive CST / 空)。naive 按 app 约定
+    视为 CST (app.utils.timezone.to_et), 不做裸日期比较 — 否则 CST 凌晨录入的
+    盘后仓 (ET 前一日 16:xx) 会被算成"今日收盘前"入场。
+    """
+    if not entry_time:
+        return None
+    try:
+        from datetime import datetime as _dt
+        from app.utils.timezone import to_et as _to_et
+        return _to_et(_dt.fromisoformat(str(entry_time)))
+    except Exception:
+        return None
+
+
+def eod_close_verdict(now_et_dt, entry_time, *, phase=None, close_min=None):
+    """EOD 兜底是否可**提交**平仓腿 → (action, detail)。
+
+    action ∈ {"submit", "defer_fresh_ext", "defer_window"}；只决定"是否交腿",
+    不改平仓决策、不改持仓/账本。
+
+    背景 (2026-10-21 TSLA, P0): 16:45:23 EXT 建仓 → 16:45:53 本函数下 RTH 市价腿
+    → 券商 CANCELLED_ALL dealt=0 → intent 卡 PENDING → 该标的进 blocked_exits ⇒
+    SL/TP/时间/因子规则**整行跳过**(零保护静默期)直到人工释放。盘中规则链已由
+    exit_monitor_flow 的 `phase != TRADING → return` 挡住, 本函数是唯一缺口。
+
+    两条判据:
+      ① 收盘后建仓的 EXT 仓不是"收盘孤儿" — 9/17 用户裁 EXT 仓可隔夜 (cohort B),
+         交回 EXT 退出链与次日规则链; 否则会出现"建仓 30 秒后被 EOD 强平"。
+      ② 只在 TRADING, 或收盘后 _EOD_CLOSE_FILL_WINDOW_MIN 分钟内提交腿。
+    延后不降保护: 不建意图 ⇒ 不进 blocked_exits ⇒ 下一 TRADING 相位规则链照常
+    评估 SL/TP/MAX_HOLD (卡死的意图反而会让规则链整行跳过)。
+    """
+    from app.core.scheduler_triggers import get_market_phase, MarketPhase
+
+    if phase is None:
+        phase = get_market_phase()
+    if close_min is None:
+        try:
+            from app.utils.holiday_calendar import get_us_close_minutes_et
+            close_min = int(get_us_close_minutes_et(now_et_dt.date()))
+        except Exception:
+            close_min = 960  # 兜底 16:00 ET, 与 get_us_close_minutes_et 约定一致
+    _now_min = now_et_dt.hour * 60 + now_et_dt.minute
+
+    _entry = _entry_et(entry_time)
+    if (_entry is not None and _entry.date() == now_et_dt.date()
+            and (_entry.hour * 60 + _entry.minute) >= close_min):
+        return "defer_fresh_ext", (
+            "今日收盘后建仓 (%s ET ≥ 收盘 %02d:%02d), 非收盘孤儿; "
+            "交回 EXT/次日退出链 (9/17 裁决 EXT 仓可隔夜)"
+            % (_entry.strftime("%H:%M"), close_min // 60, close_min % 60))
+
+    if phase == MarketPhase.TRADING:
+        return "submit", "TRADING 相位, 可成交"
+    if phase == MarketPhase.AFTER_HOURS and close_min <= _now_min < close_min + _EOD_CLOSE_FILL_WINDOW_MIN:
+        return "submit", "收盘后 %d 分钟窗口内, 可成交" % (_now_min - close_min)
+
+    return "defer_window", (
+        "%s %02d:%02d ET 不在可成交窗口 (TRADING 或 收盘+%dmin); 不提交必被撤的腿, "
+        "仓位保留 SL/规则链, 下一 TRADING 相位接管"
+        % (getattr(phase, "value", phase), _now_min // 60, _now_min % 60,
+           _EOD_CLOSE_FILL_WINDOW_MIN))
+
 
 def _force_close_orphaned_sim_positions(
     scheduler,
@@ -177,6 +252,27 @@ def _force_close_orphaned_sim_positions(
                             continue
                 except Exception as _oex:
                     logger.debug(f"[playbook sim] 隔夜豁免判定异常 {symbol} (不豁免): {_oex}")
+
+                # ── 2026-10-22 P0 (TSLA 10-21 实锤): 只在可成交窗口提交腿, 且不扫收盘后新建仓 ──
+                # 位置刻意放在隔夜豁免判定之后: 豁免/深水闸影子打点(RFC-079)照常记录,
+                # 本守卫只管"是否把腿交给券商", 不回滚任何豁免/持仓/账本状态。
+                try:
+                    from app.utils.timezone import now_et as _now_et_fn
+                    _act, _why = eod_close_verdict(_now_et_fn(), r["entry_time"])
+                except Exception as _gw_err:
+                    # 判据异常 → 保守延后 (宁可不平, 不制造必被撤的卡单意图)
+                    _act, _why = "defer_window", "窗口判据异常 (保守延后): %s" % _gw_err
+                if _act != "submit":
+                    _dday = _today_et_str()
+                    _dk = (r["symbol"], _row_target, _dday, _act)
+                    if _dk not in _EOD_DEFER_LOGGED:
+                        _EOD_DEFER_LOGGED.add(_dk)
+                        if len(_EOD_DEFER_LOGGED) > 200:  # 键含日期, 跨日自然换键
+                            for _k in [k for k in _EOD_DEFER_LOGGED if k[2] != _dday]:
+                                _EOD_DEFER_LOGGED.discard(_k)
+                        logger.info(f"[playbook dual] EOD 兜底延后 {r['symbol']} "
+                                    f"({_row_target}) action={_act}: {_why}")
+                    continue
 
                 _row_target = "real" if r["source_type"] == "PLAYBOOK_LIVE" else "sim"
                 # P1 fix (2026-06-25): 连续失败 3 次后当日放弃, 停止死循环日志刷屏
