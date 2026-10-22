@@ -859,7 +859,7 @@ def check_intraday_trigger(
         #   bypass 臂放行成交 (真实口径), gated 臂维持拦截 (影子反事实口径),
         #   双臂落 data/vwap_gate_ab.jsonl 台账. 非 sim / 开关关 / 异常 → 维持拦截.
         if _vwap_gate_ab_bypass(symbol, is_short, _vwap_dev, _vwap_val, current_price,
-                                inst.get("id"), data_router=data_router):
+                                inst.get("id"), data_router=data_router, inst=inst):
             logger.info(
                 f"[playbook] VWAP门A/B·放行臂: {symbol} price=${current_price:.2f} "
                 f"vwap=${_vwap_val:.2f} dev={_vwap_dev:+.4f} "

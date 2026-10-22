@@ -1346,7 +1346,9 @@ class FutuLV3Provider:
                     self.get_kline(symbol, ktype=ktype, count=count, autype=autype)
             except Exception:
                 self._kline_sick_until = time.time() + _KLINE_SICK_WINDOW_SEC
-                logger.debug("[FutuLV3] %s K 线后台刷新异常", symbol, exc_info=True)
+                # W4 纪律 (2026-10-23): 后台刷新失败必须 warning 可见, debug 会在
+                # INFO 级别下隐形 = 「影子停采」与「链路断了」不可区分。
+                logger.warning("[FutuLV3] %s K 线后台刷新异常", symbol, exc_info=True)
             finally:
                 self._kline_refresh_lock.release()
 

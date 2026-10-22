@@ -368,7 +368,8 @@ def _vwap_ab_arm(symbol: str, date_str: str, direction: str) -> str:
 
 
 def _vwap_gate_ab_bypass(symbol: str, is_short: bool, vwap_dev, vwap_val,
-                         current_price, inst_id, data_router=None) -> bool:
+                         current_price, inst_id, data_router=None,
+                         *, inst: Optional[Dict[str, Any]] = None) -> bool:
     """VWAP 门 A/B 分流判定: 仅 sim + 开关开 + bypass 臂 → True (放行).
 
     双臂首次判定即落实验台账 data/vwap_gate_ab.jsonl (每 symbol-day-direction 一行);
@@ -405,6 +406,31 @@ def _vwap_gate_ab_bypass(symbol: str, is_short: bool, vwap_dev, vwap_val,
                     _slope = _calc_vwap_slope(data_router, symbol)
             except Exception:
                 _slope = None
+            _arch = ""
+            _planned = None
+            if isinstance(inst, dict):
+                try:
+                    import json as _jraw
+                    _raw = inst.get("raw_instruction_json")
+                    if isinstance(_raw, str):
+                        _raw = _jraw.loads(_raw or "{}")
+                    if isinstance(_raw, dict):
+                        _arch = str(_raw.get("entry_archetype") or "").upper()
+                        _candidate = _raw.get("planned_entry")
+                        if _candidate in (None, ""):
+                            _conf = _raw.get("confirmation")
+                            if isinstance(_conf, dict):
+                                _candidate = _conf.get("price_level")
+                        try:
+                            _planned = float(_candidate)
+                        except (TypeError, ValueError):
+                            _planned = None
+                except Exception:
+                    _arch, _planned = "", None
+            _plan_gap = (
+                round((float(current_price) - _planned) / _planned * 100.0, 3)
+                if (_planned and _planned > 0 and current_price) else None
+            )
             _row = {
                 "ts": _dtab.now(_now_et()).isoformat(timespec="seconds"),
                 "date": _d, "symbol": symbol, "direction": _dir, "arm": arm,
@@ -412,6 +438,9 @@ def _vwap_gate_ab_bypass(symbol: str, is_short: bool, vwap_dev, vwap_val,
                 "vwap_dev": round(vwap_dev, 6) if vwap_dev is not None else None,
                 "vwap_slope": round(_slope, 6) if isinstance(_slope, (int, float)) else None,
                 "inst_id": inst_id, "rule": "vwap_gate_ab_50_50",
+                "entry_archetype": _arch or None,
+                "planned_entry": _planned,
+                "plan_gap_pct": _plan_gap,
             }
             with open(_VWAP_AB_LEDGER_PATH, "a", encoding="utf-8") as _fab:
                 _fab.write(_jab.dumps(_row, ensure_ascii=False) + "\n")

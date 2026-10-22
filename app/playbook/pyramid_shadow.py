@@ -60,11 +60,27 @@ def _equity_now():
         return None
 
 
+def _collection_enabled() -> bool:
+    """2026-10-22 用户裁 FAIL 停采 (判据 1/4: 腿净中位 −$0.32 / Σ −$6.60 / 回吐门✓):
+    门控键 playbook.execution_parameters.pyramid_shadow_enabled=false ⇒ 停采。
+    读配置失败 fail-open (维持采集) — 停采是治理动作, 配置读故障不应静默扩大
+    影响面; 真停采由热重载生效。
+    """
+    try:
+        from app.core.config_container import get_config
+        return bool(get_config().get_dotted(
+            "playbook.execution_parameters.pyramid_shadow_enabled", True))
+    except Exception:
+        return True
+
+
 def observe(*, symbol: str, direction: str, entry_price: float, current_price: float,
             qty: float, entry_time_str: str, be_armed: bool, peak_price: float,
             meta: dict, now_et, exiting: bool) -> None:
     """monitor 每轮调用 (武装判定后)。调用方已 try/except; 本函数内部仍自守。"""
     try:
+        if not _collection_enabled():
+            return
         if not symbol or entry_price <= 0 or current_price <= 0:
             return
         armed = meta.get("_pyr_armed")

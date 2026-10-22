@@ -247,6 +247,55 @@ def _entry_archetype(inst: Dict[str, Any]) -> str:
     return ""
 
 
+def _planned_entry(inst: Dict[str, Any]) -> Optional[float]:
+    """DA 计划锚: raw.planned_entry 优先, 回退 confirmation.price_level.
+
+    执行锚 (reprice) 与计划锚可能相差数个百分点; 本字段只记录, 不改门判定。
+    """
+    try:
+        raw = inst.get("raw_instruction_json")
+        if isinstance(raw, str):
+            raw = json.loads(raw or "{}")
+        if not isinstance(raw, dict):
+            return None
+        for candidate in (raw.get("planned_entry"),
+                          (raw.get("confirmation") or {}).get("price_level")
+                          if isinstance(raw.get("confirmation"), dict) else None):
+            try:
+                value = float(candidate)
+            except (TypeError, ValueError):
+                value = None  # 候选字段缺失/不可解析 → 试下一个候选 (纯容错, 不告警)
+            if value is not None and value > 0:
+                return value
+    except Exception:
+        return None
+    return None
+
+
+def _plan_gap_pct(anchor: float, planned: Optional[float]) -> Optional[float]:
+    if not planned or planned <= 0 or not anchor:
+        return None
+    return round((float(anchor) - float(planned)) / float(planned) * 100.0, 3)
+
+
+def _plan_gap_shadow(arch: str, gap: Optional[float], cfg: Dict[str, Any]) -> bool:
+    """record-only: 均值回归 archetype 的执行锚偏离计划锚 ≥ 阈值时留痕.
+
+    2026-10-21 冲突审计: VWAP/entry-confirm 目前按执行锚判定, 计划锚偏离只记录;
+    本标志供 forward 结算按 plan_gap 分桶, 不改变任何入场判定。
+    """
+    try:
+        if not bool(cfg.get("plan_gap_shadow_enabled", True)):
+            return False
+        threshold = float(cfg.get("plan_gap_shadow_pct", 1.0) or 1.0)
+    except (TypeError, ValueError):
+        return False
+    return bool(
+        str(arch or "").upper() in ("PULLBACK_LIMIT", "FADE_SHORT")
+        and gap is not None and abs(float(gap)) >= threshold
+    )
+
+
 def _holdout_bucket(inst_id: int, pct: int) -> bool:
     """确定性分流 (同 inst_id 恒定同臂, 跨轮/跨重启一致)。"""
     if pct <= 0:
@@ -389,6 +438,11 @@ def _gate_inner(inst, db, reprice_params, now_et, cfg, scheduler):
                   if (scheduler is not None and cfg.get("ruler") == "mid") else None)
         if _holdout_bucket(inst_id, int(cfg.get("holdout_pct") or 0)):
             # 对照臂: 照常执行, 只落一行供配对读数
+            _holdout_anchor = float((reprice_params or {}).get("entry_price")
+                                    or inst.get("entry_price") or 0.0)
+            _holdout_planned = _planned_entry(inst)
+            _holdout_gap = _plan_gap_pct(_holdout_anchor, _holdout_planned)
+            _holdout_arch = _entry_archetype(inst)
             _write_state(db, inst_id, {"status": ST_HOLDOUT,
                                        "armed_at": now_et.isoformat()})
             _write_forward_row({
@@ -399,8 +453,12 @@ def _gate_inner(inst, db, reprice_params, now_et, cfg, scheduler):
                 "direction": _norm_dir(inst.get("direction")),
                 "arm": "holdout", "status": "ok",
                 "still_triggers": True, "opp_cost_pct": 0.0,
-                "anchor": float((reprice_params or {}).get("entry_price")
-                                or inst.get("entry_price") or 0.0),
+                "anchor": _holdout_anchor,
+                "planned_entry": _holdout_planned,
+                "plan_gap_pct": _holdout_gap,
+                "plan_gap_shadow": _plan_gap_shadow(_holdout_arch, _holdout_gap, cfg),
+                "plan_gap_threshold_pct": float(cfg.get("plan_gap_shadow_pct", 1.0) or 1.0),
+                "entry_archetype": _holdout_arch,
                 "px_at_confirm": None, "notional": _notional(inst, reprice_params),
                 "session_min": _session_min(now_et),
                 # v2 字段 (holdout 无判定 ⇒ 判定类字段 None, 锚侧报价照常留痕)
@@ -433,6 +491,11 @@ def _gate_inner(inst, db, reprice_params, now_et, cfg, scheduler):
             "grace_votes": int(cfg.get("grace_votes") or DEFAULT_GRACE_VOTES),
             # RFC-153: archetype/阈值同样 arm 时冻结 (在途单不因配置热改而换语义)
             "entry_archetype": _entry_archetype(inst),
+            "planned_entry": _planned_entry(inst),
+            "plan_gap_pct": _plan_gap_pct(anchor, _planned_entry(inst)),
+            # record-only 计划锚影子参数: arm 时冻结 (在途单不因热改换语义)
+            "plan_gap_shadow_enabled": bool(cfg.get("plan_gap_shadow_enabled", True)),
+            "plan_gap_shadow_pct": float(cfg.get("plan_gap_shadow_pct", 1.0) or 1.0),
             "fade_short_chase_cap_enabled": bool(
                 cfg.get("fade_short_chase_cap_enabled", False)),
             "fade_short_max_opp_pct": float(cfg.get("fade_short_max_opp_pct") or 0.0),
@@ -448,6 +511,10 @@ def _gate_inner(inst, db, reprice_params, now_et, cfg, scheduler):
             "delay_sec": _arm["delay_sec"], "ttl_sec": int(cfg.get("ttl_sec") or DEFAULT_TTL_SEC),
             "ruler": _arm["ruler"], "mid_arm": _arm["mid_arm"],
             "entry_archetype": _arm["entry_archetype"],
+            "planned_entry": _arm["planned_entry"],
+            "plan_gap_pct": _arm["plan_gap_pct"],
+            "plan_gap_shadow_enabled": _arm["plan_gap_shadow_enabled"],
+            "plan_gap_shadow_pct": _arm["plan_gap_shadow_pct"],
             "fade_short_chase_cap_enabled": _arm["fade_short_chase_cap_enabled"],
             "fade_short_max_opp_pct": _arm["fade_short_max_opp_pct"],
             "fade_short_window_min": _arm["fade_short_window_min"],
@@ -488,6 +555,18 @@ def _restore_arm(inst: Dict[str, Any], state: Dict[str, Any], now_et: datetime,
             return None
         _delay = state.get("delay_sec")
         delay_sec = int(DEFAULT_DELAY_SEC if _delay is None else _delay)
+        _planned = state.get("planned_entry")
+        if _planned is None:
+            _planned = _planned_entry(inst)
+        _gap = state.get("plan_gap_pct")
+        if _gap is None:
+            _gap = _plan_gap_pct(anchor, _planned)
+        _gap_shadow_enabled = state.get("plan_gap_shadow_enabled")
+        if _gap_shadow_enabled is None:
+            _gap_shadow_enabled = bool(cfg.get("plan_gap_shadow_enabled", True))
+        _gap_shadow_pct = state.get("plan_gap_shadow_pct")
+        if _gap_shadow_pct is None:
+            _gap_shadow_pct = float(cfg.get("plan_gap_shadow_pct", 1.0) or 1.0)
         return {
             "inst_id": inst_id,
             "symbol": inst.get("symbol"),
@@ -504,6 +583,10 @@ def _restore_arm(inst: Dict[str, Any], state: Dict[str, Any], now_et: datetime,
             "grace_votes": int(cfg.get("grace_votes") or DEFAULT_GRACE_VOTES),
             # RFC-153: 旧旗标缺这些键时回落当前 cfg (不把在途单静默降级, 也不伪造历史值)
             "entry_archetype": str(state.get("entry_archetype") or ""),
+            "planned_entry": _planned,
+            "plan_gap_pct": _gap,
+            "plan_gap_shadow_enabled": bool(_gap_shadow_enabled),
+            "plan_gap_shadow_pct": float(_gap_shadow_pct),
             "fade_short_chase_cap_enabled": bool(
                 state.get("fade_short_chase_cap_enabled")
                 if state.get("fade_short_chase_cap_enabled") is not None
@@ -697,6 +780,8 @@ def _judge_one(scheduler, db, inst_id: int, arm: Dict[str, Any],
         _write_state(db, inst_id, {
             "status": ST_CONFIRMED, "armed_at": arm["armed_at"].isoformat(),
             "confirmed_at": now_et.isoformat(), "anchor": arm["anchor"],
+            "planned_entry": arm.get("planned_entry"),
+            "plan_gap_pct": arm.get("plan_gap_pct"),
             "px_at_confirm": round(float(q["last"]), 4), "opp_cost_pct": opp,
             "delay_actual_sec": _delay_actual, **_quote_fields, "grace": _grace_trace,
         })
@@ -737,6 +822,8 @@ def _judge_one(scheduler, db, inst_id: int, arm: Dict[str, Any],
             "skip_marked": _ab_ok,
             "abandon_cause": _ab_cause,
             "entry_archetype": _arch,
+            "planned_entry": arm.get("planned_entry"),
+            "plan_gap_pct": arm.get("plan_gap_pct"),
             "chase_cap_hit": _fs_cap_hit,
             "chase_cap_threshold_pct": (_cap_max if _fs_cap_hit else None),
         })
@@ -773,6 +860,13 @@ def _judge_one(scheduler, db, inst_id: int, arm: Dict[str, Any],
         "session_min": arm.get("session_min"),
         "outcome": ST_CONFIRMED if still else ST_ABANDONED,
         "entry_archetype": _arch,
+        "planned_entry": arm.get("planned_entry"),
+        "plan_gap_pct": arm.get("plan_gap_pct"),
+        "plan_gap_shadow": _plan_gap_shadow(_arch, arm.get("plan_gap_pct"), {
+            "plan_gap_shadow_enabled": arm.get("plan_gap_shadow_enabled", True),
+            "plan_gap_shadow_pct": arm.get("plan_gap_shadow_pct", 1.0),
+        }),
+        "plan_gap_threshold_pct": float(arm.get("plan_gap_shadow_pct", 1.0) or 1.0),
         "abandon_cause": _ab_cause,
         "chase_cap_hit": _fs_cap_hit,
         "chase_cap_threshold_pct": (_cap_max if _fs_cap_hit else None),

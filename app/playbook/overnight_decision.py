@@ -266,7 +266,7 @@ def emit_eod_depth_gate_shadow(decision_point: str, symbol: str, direction: str,
                                source_type: str, entry_price: float, qty,
                                entry_time_str: str, decision_price: float,
                                profit_pct: float, track=None, trade_id=None,
-                               earnings_guard=None) -> None:
+                               earnings_guard=None, peak_price=None) -> None:
     """EOD 豁免成立后的深水闸影子打点。任何异常 → debug 日志，绝不影响豁免主链。
 
     Args:
@@ -275,6 +275,8 @@ def emit_eod_depth_gate_shadow(decision_point: str, symbol: str, direction: str,
         track: 豁免臂标签 (sweeper 传 overnight_arm.source; poll 侧无标签传 None)
         trade_id: **身份锚** (RFC-095, 2026-09-22) = 该仓在 trade_records.id。
             None (旧调用方未传) → 行内 trade_ref 为空, 结算侧退化到 entry_time/价量锚。
+        peak_price: 入场以来最有利价 (RFC-160 MFE 轨, 2026-10-22; 两方向同语义,
+            与 meta["peak_price"] 一致)。None → mfe_pct_at_arm 落 null, 不进 MFE 轨分母。
     去重键 = (arm_date_et, symbol): 同日 poll+sweeper 对同一仓双评估只落首行。
     """
     try:
@@ -335,6 +337,15 @@ def emit_eod_depth_gate_shadow(decision_point: str, symbol: str, direction: str,
             "qty": float(qty or 0),
             "decision_price": float(decision_price or 0),
             "depth_net_pct": round(float(profit_pct), 4) if profit_pct is not None else None,
+            # ── RFC-160 (2026-10-22) MFE 轨: 决策时刻「当日 MFE」是 OGS 灾难/恢复者的
+            #   判别器 (10-17 尸检 §3: 灾难 4 笔全 <0.5%, 恢复者 4/5 ≥0.6%)。
+            #   方向感知 (与 exit_monitor_flow peak_prof 同式): LONG=peak−entry, SHORT=entry−peak。
+            "mfe_pct_at_arm": (
+                round(((float(peak_price) - float(entry_price)) if str(direction).upper() == "LONG"
+                       else (float(entry_price) - float(peak_price)))
+                      / float(entry_price) * 100.0, 4)
+                if peak_price and entry_price and float(entry_price) > 0 else None
+            ),
             "gate_pct": _gate_pct,
             "would_revoke": bool(profit_pct is not None and float(profit_pct) <= -_gate_pct),
             "is_earnings_night": _earnings_night,

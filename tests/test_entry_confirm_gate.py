@@ -691,7 +691,11 @@ def test_registered_in_shadow_registry_with_real_gate_key():
         f"⇒ 周检告警会用错阈值")
     assert item.min_n == 60, f"样本门应为 60 (SIM 真实成交笔数), 实得 {item.min_n}"
     assert item.eval_script == "scripts/settle_entry_confirm_forward.py"
-    assert item.count_mode == "where:arm=treatment"
+    # 2026-10-22 (全链路复查 R3 修复): 计数锚从「机制台帐行」改为「裁决轴 = v2 起 SIM 真实
+    # 成交笔数」(结算器 latest.json 的 adjudication_source.all.n) — 原 where:arm=treatment
+    # 把台帐行 105 计成 n, 是裁决轴 (20) 的 5 倍 ⇒ 假 READY。钉子同步换钉新轴。
+    assert item.count_mode == "json_key:adjudication_source.all.n"
+    assert item.data_path == "data/shadow/entry_confirm_forward_latest.json"
     assert "entry_delay_confirm" in (item.cross_ref or ())
     # 口径变更后注册表不得残留旧的「配对净差/holdout 对照」裁决语义
     assert "配对净差" not in (item.graduation_criteria or ""), \
@@ -1312,3 +1316,26 @@ def test_fade_short_cap_disabled_restores_confirm():
     ecg.gate_at_execute(_fade_inst(i=35), db, {"entry_price": 100.0}, t0, cfg)
     r = ecg.sweep_entry_confirmations(_FakeSched(98.9), db, t0 + timedelta(seconds=122))
     assert r["confirmed"] == 1 and db.skips == []
+
+
+def test_plan_gap_fields_are_recorded_without_changing_gate():
+    """计划锚与执行锚的差值只记录, 不改确认门判定 (2026-10-21 冲突审计)。"""
+    db = _FakeDB()
+    t0 = _now()
+    inst = _inst(i=36, direction="SELL_SHORT")
+    inst["raw_instruction_json"] = json.dumps({
+        "entry_archetype": "FADE_SHORT",
+        "planned_entry": 100.0,
+        "confirmation": {"price_level": 100.0, "side": "above"},
+    })
+    ecg.gate_at_execute(inst, db, {"entry_price": 98.9}, t0, CFG_ON)
+    r = ecg.sweep_entry_confirmations(_FakeSched(98.9), db, t0 + timedelta(seconds=122))
+    assert r["confirmed"] == 1 and db.skips == []
+    rows = [json.loads(x) for x in ecg._FORWARD_PATH.read_text().splitlines()]
+    assert rows[-1]["planned_entry"] == 100.0
+    assert rows[-1]["plan_gap_pct"] == -1.1
+    assert rows[-1]["plan_gap_shadow"] is True
+    assert rows[-1]["plan_gap_threshold_pct"] == 1.0
+    st = db.merged[-1][1]["entry_confirm"]
+    assert st["planned_entry"] == 100.0
+    assert st["plan_gap_pct"] == -1.1

@@ -781,7 +781,8 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
                           meta.get("_source_type", ""), entry_price, meta.get("_qty"),
                           entry_time_str, current_price, _profit_net_pct,
                           trade_id=meta.get("_trade_id"),
-                          earnings_guard=earnings_guard)  # RFC-095 身份锚
+                          earnings_guard=earnings_guard,  # RFC-095 身份锚
+                          peak_price=meta.get("peak_price"))  # RFC-160 MFE 轨
             except Exception as _edg_err:
                 # R5: 打点内层已全量收口, 本层只兜 import 级故障 — 必须留痕 (2026-09-09 棘轮清剿)
                 logger.warning(f"[exit_engine] EOD深水闸影子打点兜底异常 {_symbol}: {_edg_err}")

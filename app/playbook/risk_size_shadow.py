@@ -127,6 +127,9 @@ def build_row(
         "atr_pct": round(float(atr_pct), 6) if atr_pct is not None else None,
         "entry_price": _num(entry_price),
         "flags": flags,
+        # 2026-10-22 (注册表 n 轴对齐 RFC-155 §3.2): 判据轴 = 「受影响笔 (≥1 旗标真)」,
+        # 顶层布尔供注册表 count_mode=where:affected=True 直读 (嵌套 flags 无法表达)。
+        "affected": any(flags.values()),
         "multipliers": multipliers,
         "r1_multiplier": multipliers["atr5"],
         "r4_multiplier": multipliers["ge2"],

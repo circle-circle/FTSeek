@@ -186,6 +186,30 @@ def test_ledger_records_decision_time_slope(monkeypatch, _clean_ab_state):
     assert rows[0]["vwap_slope"] == -0.003012
 
 
+def test_ledger_records_archetype_and_plan_gap(monkeypatch, _clean_ab_state):
+    """2026-10-21 冲突审计: 台账记录 DA archetype/计划锚/执行锚差, 供按 archetype 切片."""
+    import json as _json
+    import app.playbook.pipeline as _p
+    monkeypatch.setattr("app.playbook.config.get_playbook_config", lambda: _FakePB(True))
+    monkeypatch.setattr("app.core.config_container.get_config", lambda: _FakeCC())
+    inst = {
+        "id": "inst-gap",
+        "entry_price": 99.0,
+        "raw_instruction_json": _json.dumps({
+            "entry_archetype": "PULLBACK_LIMIT",
+            "planned_entry": 100.0,
+            "confirmation": {"price_level": 100.0, "side": "below"},
+        }),
+    }
+    _p._vwap_gate_ab_bypass(_TEST_SYM, False, -0.01, 101.0, 99.0, "inst-gap",
+                            inst=inst)
+    rows = _ledger_rows()
+    assert len(rows) == 1
+    assert rows[0]["entry_archetype"] == "PULLBACK_LIMIT"
+    assert rows[0]["planned_entry"] == 100.0
+    assert rows[0]["plan_gap_pct"] == -1.0
+
+
 def test_ledger_slope_none_without_router(monkeypatch, _clean_ab_state):
     """data_router 缺失 → vwap_slope=None (不阻断, 行照落)."""
     import app.playbook.pipeline as _p

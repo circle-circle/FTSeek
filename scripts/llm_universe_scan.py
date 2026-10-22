@@ -90,7 +90,7 @@ _LAST_BRIEF_MATERIALS: List[str] = []
 # 回滚: 还原本段 + _build_clue_brief 尾部派生行 (见 DEB-20260910 §17)。
 _BRIEF_EVIDENCE: List[Dict[str, Any]] = []
 EVIDENCE_SCHEMA = ("evidence_id", "source", "published_at", "symbols",
-                   "event_key", "text", "event_meta")
+                   "event_key", "text", "event_meta", "event_reaction")
 
 
 # [P2.1 修正 2026-09-13] 只有"长得像 ticker"的 token 才准进材料索引的 symbols 槽。
@@ -123,7 +123,7 @@ def _ticker_symbols(values) -> List[str]:
 
 
 def _fact(source: str, text: str, *, symbols=(), published_at=None,
-          event_key=None, event_meta=None) -> Dict[str, Any]:
+          event_key=None, event_meta=None, event_reaction=None) -> Dict[str, Any]:
     """[P2.1] 一条结构化事实 — gather 产出、render 消费、索引登记**同一个对象**。
 
     `text` 必须是最终送进 brief 的那一行 (逐字), 否则索引与正文不对应,
@@ -137,6 +137,7 @@ def _fact(source: str, text: str, *, symbols=(), published_at=None,
         "published_at": published_at,
         "event_key": event_key,
         "event_meta": event_meta if isinstance(event_meta, dict) else None,
+        "event_reaction": event_reaction if isinstance(event_reaction, dict) else None,
     }
 
 
@@ -164,6 +165,134 @@ def _take_facts(facts, *, source: str = "unknown") -> List[str]:
 def brief_evidence_index() -> List[Dict[str, Any]]:
     """[P2.1] 最近一次 _build_clue_brief 的材料索引 (只读副本, 供落盘/核验/测试)。"""
     return [{k: e.get(k) for k in EVIDENCE_SCHEMA} for e in _BRIEF_EVIDENCE]
+
+
+def _clue_event_meta(
+    *,
+    source_id: str,
+    source_tier: str,
+    event_type: str,
+    form: str = "",
+    headline: str = "",
+    symbols=(),
+    company: Optional[str] = None,
+    event_time: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """直连 clue (8-K/13D-G/新闻) 也走 EventStream 同一套 event_meta 口径。
+
+    2026-10-21: 此前只有 event_stream 通道带 meta; sec_8k/news_headline 的
+    evidence_matched_event_meta 恒为 None (10/20 TTD/MYGN/FLUT/VICR/NBIS),
+    同一 hard event 在两条输入路径上口径不一致。构造失败降级 None, 不阻断 clue。
+    """
+    try:
+        from app.event_stream.event_schema import build_event_meta_from_parts
+        return build_event_meta_from_parts(
+            source_id=source_id,
+            source_tier=source_tier,
+            event_type=event_type,
+            form=form,
+            headline=headline,
+            symbols=symbols,
+            company=company,
+            event_time=event_time,
+        )
+    except Exception as exc:
+        print(f"  [warn] clue event_meta 构造失败 (降级 None): {exc}")
+        return None
+
+
+def _sec_8k_clue_fact(
+    row: Dict[str, Any],
+    reaction_ctx: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    ticker = str(row.get("ticker") or "")
+    published_at = str(row.get("updated") or "")[:16] or None
+    text = (
+        f"8-K {ticker}: {'; '.join(row.get('item_labels') or [])} "
+        f"(filed {str(row.get('updated') or '')[:16]})"
+    )
+    fact = _fact(
+        "sec_8k",
+        text,
+        symbols=[ticker],
+        published_at=published_at,
+        event_key="sec_8k",
+        event_meta=_clue_event_meta(
+            source_id="SEC_EDGAR_8K_ATOM",
+            source_tier="T0",
+            event_type="SEC_8K_FILING",
+            form="8-K",
+            headline=text,
+            symbols=[ticker],
+            company=row.get("company"),
+            event_time=row.get("updated"),
+        ),
+    )
+    return _attach_event_reaction(
+        fact, symbols=[ticker], event_time=row.get("updated"),
+        reaction_ctx=reaction_ctx)
+
+
+def _sec_13dg_clue_fact(
+    row: Dict[str, Any],
+    reaction_ctx: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    ticker = str(row.get("ticker") or "")
+    form = str(row.get("form") or "SC 13D")
+    published_at = str(row.get("updated") or "")[:16] or None
+    text = (
+        f"举牌 {ticker}: {form}"
+        f"{' (主动举牌, 看多先验强)' if form.startswith('SC 13D') else ' (被动持仓)'} "
+        f"(filed {str(row.get('updated') or '')[:16]})"
+    )
+    fact = _fact(
+        "sec_13dg",
+        text,
+        symbols=[ticker],
+        published_at=published_at,
+        event_key=form or "sec_13dg",
+        event_meta=_clue_event_meta(
+            source_id="SEC_EDGAR_13DG",
+            source_tier="T0",
+            event_type="SEC_13DG_FILING",
+            form=form,
+            headline=text,
+            symbols=[ticker],
+            company=row.get("company"),
+            event_time=row.get("updated"),
+        ),
+    )
+    return _attach_event_reaction(
+        fact, symbols=[ticker], event_time=row.get("updated"),
+        reaction_ctx=reaction_ctx)
+
+
+def _news_clue_fact(
+    title: str,
+    syms,
+    published_at: Optional[str],
+    age_tag: str = "",
+    reaction_ctx: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    symbols = [str(s) for s in (syms or []) if str(s)]
+    fact = _fact(
+        "news_headline",
+        f"- {title}{age_tag}" + (f"  [{', '.join(symbols)}]" if symbols else ""),
+        symbols=symbols,
+        published_at=published_at or None,
+        event_key="news",
+        event_meta=_clue_event_meta(
+            source_id="NEWS_HEADLINE",
+            source_tier="T2",
+            event_type="NEWS_DISCOVERY",
+            headline=title,
+            symbols=symbols,
+            event_time=published_at or None,
+        ),
+    )
+    return _attach_event_reaction(
+        fact, symbols=symbols, event_time=published_at,
+        reaction_ctx=reaction_ctx)
 
 
 PROMPT_VERSION = "v2.15"  # v2.15=借券 UNKNOWN 语义修正 + event_meta family/form 说明 (2026-10-18)
@@ -236,7 +365,7 @@ PROMPT_HASH_V2 = hashlib.sha1(SYSTEM_PROMPT_V2.encode("utf-8")).hexdigest()[:12]
 #                           **不可**当分段键 (每天都变)。
 # 不改动 PROMPT_HASH_V2 的定义与取值: 它是既有 thinking-eval A/B 预注册判据的切分键,
 #   改它等于中途换尺子。brief 侧变更改用 brief_template_hash 切分, 两者并列落库。
-BRIEF_TEMPLATE_VERSION = "ue_brief_v7"  # v7=v6+event_meta(family/form)+材料性排序/多样性上限 (2026-10-18)
+BRIEF_TEMPLATE_VERSION = "ue_brief_v8"  # v8=v7+event_reaction_v1(age_h/事件后价格反应) (2026-10-21)
                                          #  v6 = v5+借券快照段 (ADR-046: 规则10 MATERIAL 可判, 修空头供给归零)
                                          #  v3 = P2.1 材料索引 + P2.2 输入初筛段
 # [P3.1 2026-09-13, DEB-20260910 §18.2] 生成值留档口径版本。
@@ -392,6 +521,95 @@ def _quote_price(q: Dict[str, Any]) -> Optional[float]:
     if not q:
         return None
     return q.get("price") or q.get("last_price")
+
+
+# 2026-10-21 event_reaction_v1: brief 构建时按事件时间/日线/报价现算事件龄与反应。
+# 纯数据补全, 不改变 surfaced 准入。
+_LAST_PRESCREEN_QUOTES: Dict[str, Dict[str, Any]] = {}
+_REACTION_QUOTE_FETCH_CAP = 30
+
+
+def _build_reaction_ctx() -> Optional[Dict[str, Any]]:
+    try:
+        return {
+            "router": _build_router(),
+            "quotes": _LAST_PRESCREEN_QUOTES,
+            "computed_at": _now_et(),
+            "bars": {},
+            "quote_fetches": 0,
+        }
+    except Exception as exc:
+        print(f"  [warn] event_reaction 上下文构建失败 (降级): {exc}")
+        return None
+
+
+def _reaction_bars(ctx: Dict[str, Any], symbol: str):
+    if symbol in ctx["bars"]:
+        return ctx["bars"][symbol]
+    bars = None
+    try:
+        router = ctx.get("router")
+        if router is not None:
+            bars = router.get_daily_bars(f"US.{symbol}", count=40)
+    except Exception as exc:
+        print(f"  [warn] event_reaction K线获取失败 {symbol} (降级): {exc}")
+    ctx["bars"][symbol] = bars
+    return bars
+
+
+def _reaction_quote(ctx: Dict[str, Any], symbol: str) -> Optional[Dict[str, Any]]:
+    quote = (ctx.get("quotes") or {}).get(symbol)
+    if isinstance(quote, dict) and quote:
+        return quote
+    if int(ctx.get("quote_fetches") or 0) >= _REACTION_QUOTE_FETCH_CAP:
+        return None
+    ctx["quote_fetches"] = int(ctx.get("quote_fetches") or 0) + 1
+    try:
+        fetched = _batch_quotes(ctx.get("router"), [symbol])
+    except Exception as exc:
+        print(f"  [warn] event_reaction 报价获取失败 {symbol} (降级): {exc}")
+        return None
+    quote = fetched.get(symbol) if isinstance(fetched, dict) else None
+    if isinstance(quote, dict) and quote:
+        ctx.setdefault("quotes", {})[symbol] = quote
+        return quote
+    return None
+
+
+def _attach_event_reaction(
+    fact: Dict[str, Any],
+    *,
+    symbols,
+    event_time,
+    reaction_ctx: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    if reaction_ctx is None or not event_time:
+        return fact
+    syms = _ticker_symbols(symbols)[:3]
+    if not syms:
+        return fact
+    try:
+        from app.event_stream.event_reaction import (
+            compute_event_reaction, render_event_reaction)
+        reaction = compute_event_reaction(
+            event_time=event_time,
+            symbols=syms,
+            computed_at=reaction_ctx["computed_at"],
+            bars_by_symbol={s: _reaction_bars(reaction_ctx, s) for s in syms},
+            quotes_by_symbol=reaction_ctx.get("quotes") or {},
+            quote_provider=lambda s: _reaction_quote(reaction_ctx, s),
+            max_symbols=3,
+        )
+        fact["event_reaction"] = reaction
+        # 只在有可量化反应时追加正文; date-only/pending 不往 brief 灌噪声.
+        if any(isinstance(e, dict) and e.get("post_event_move_pct") is not None
+               for e in (reaction.get("by_symbol") or {}).values()):
+            line = render_event_reaction(reaction, symbols=syms, max_symbols=3)
+            if line:
+                fact["text"] = f"{fact.get('text', '')} | {line}"
+    except Exception as exc:
+        print(f"  [warn] event_reaction 计算失败 (降级): {exc}")
+    return fact
 
 
 def _is_da_priority_skip(existing_decision_id: Any) -> bool:
@@ -1507,8 +1725,10 @@ def _diversify_event_stream_events(
     return selected
 
 
-def _gather_event_stream_clues(db_path: Optional[Path] = None
-                               ) -> Tuple[List[Dict[str, Any]], str]:
+def _gather_event_stream_clues(
+    db_path: Optional[Path] = None,
+    reaction_ctx: Optional[Dict[str, Any]] = None,
+) -> Tuple[List[Dict[str, Any]], str]:
     """EventStream observe-only 线索 → UE 结构化事实。
 
     定位: 输入端扩容, 非放行信号。失败降级为空, 不阻断既有 UE 主链。
@@ -1594,13 +1814,19 @@ def _gather_event_stream_clues(db_path: Optional[Path] = None
                 f"{event.event_time or 'unknown-time'} | {event.headline} | "
                 f"source={publisher} | event_id={event.event_id}{meta_text}"
             )
-            facts.append(_fact(
+            fact = _fact(
                 "event_stream",
                 text,
                 symbols=(relevance.symbols if relevance else []),
                 published_at=event.event_time,
                 event_key=f"event_stream/{event.event_id}",
                 event_meta=meta,
+            )
+            facts.append(_attach_event_reaction(
+                fact,
+                symbols=(relevance.symbols if relevance else []),
+                event_time=event.event_time,
+                reaction_ctx=reaction_ctx,
             ))
         return facts, f"EventStream:{len(facts)}"
     except Exception as exc:
@@ -1961,6 +2187,11 @@ def _prescreen_input_symbols(symbols, *, router=None, now=None, policy=None,
             summary["source_asof_available"] = _n_asof
             if _n_asof:
                 summary["source_asof_basis"] = "provider_exchange_timestamp"
+            for _key, _quote in (_quotes or {}).items():
+                if isinstance(_quote, dict):
+                    _bare = str(_key).upper().removeprefix("US.")
+                    if _bare:
+                        _LAST_PRESCREEN_QUOTES[_bare] = _quote
         rows = screen_candidates([{"symbol": s} for s in ordered], router,
                                  source=INPUT_PRESCREEN_SOURCE, batch_id=batch_id,
                                  now=now, policy=policy, quotes=_quotes)
@@ -2176,6 +2407,11 @@ def _build_clue_brief(manual_clue: str = "") -> str:
     hours = int(_cfg("universe_expansion.news_lookback_hours", 24))
     parts = [f"日期: {_today()} (ET)"]
     health: List[str] = []  # [新鲜度 2026-07-22] 各输入源健康摘要 (日志可观测, 区分"无事件"与"链路断")
+    # 2026-10-21: 事件龄/事件后反应 (event_reaction_v1) — 纯数据补全, 不改准入。
+    # 回滚: universe_expansion.event_reaction_enabled=false.
+    reaction_ctx = (_build_reaction_ctx()
+                    if bool(_cfg("universe_expansion.event_reaction_enabled", True))
+                    else None)
 
     if manual_clue:
         parts.append(f"\n[人工线索]\n{manual_clue.strip()}")
@@ -2210,12 +2446,8 @@ def _build_clue_brief(manual_clue: str = "") -> str:
                 "universe_expansion.news_lookback_hours", 24)))
             # [UE-A3 2026-08-29] ETF/权证/商品信托例行文件剔除 (先过滤再取15, 不足不补凑)
             _8k = _filter_8k_noise(_8k)
-            _8k_lines = [_fact("sec_8k",
-                               f"8-K {r['ticker']}: {'; '.join(r['item_labels'])} "
-                               f"(filed {r['updated'][:16]})",
-                               symbols=[r.get("ticker", "")],
-                               published_at=str(r.get("updated") or "")[:16] or None,
-                               event_key="sec_8k") for r in _8k[:15]]
+            _8k_lines = [_sec_8k_clue_fact(r, reaction_ctx=reaction_ctx)
+                         for r in _8k[:15]]
             hard += _8k_lines
             health.append(f"8-K:{len(_8k_lines)}")
             _corro_syms.update(str(r.get("ticker", "")).upper().replace("US.", "")
@@ -2232,13 +2464,7 @@ def _build_clue_brief(manual_clue: str = "") -> str:
             # [UE-A3 2026-08-29] 权证/优先股举牌剔除 (对普通股发现无事件意义)
             _dg = [r for r in _dg
                    if not _is_13dg_noise(r.get("ticker", ""), r.get("company", ""))]
-            _dg_lines = [_fact("sec_13dg",
-                               f"举牌 {r['ticker']}: {r['form']}"
-                               f"{' (主动举牌, 看多先验强)' if r['form'].startswith('SC 13D') else ' (被动持仓)'} "
-                               f"(filed {r['updated'][:16]})",
-                               symbols=[r.get("ticker", "")],
-                               published_at=str(r.get("updated") or "")[:16] or None,
-                               event_key=str(r.get("form") or "sec_13dg"))
+            _dg_lines = [_sec_13dg_clue_fact(r, reaction_ctx=reaction_ctx)
                          for r in _dg[:10]]
             hard += _dg_lines
             health.append(f"13DG:{len(_dg_lines)}")
@@ -2270,7 +2496,8 @@ def _build_clue_brief(manual_clue: str = "") -> str:
     # [Phase 1.7 2026-10-09] EventStream observe-only 线索 — T0/T1/T2 结构化事实。
     #   相关性过滤+跨源去重在前, evidence 索引登记在后; 不改变 UE 下游执行轨道。
     if bool(_cfg("universe_expansion.event_stream_clue_enabled", False)):
-        event_stream_facts, event_stream_health = _gather_event_stream_clues()
+        event_stream_facts, event_stream_health = _gather_event_stream_clues(
+            reaction_ctx=reaction_ctx)
         health.append(event_stream_health)
         if event_stream_facts:
             parts.append("\n[EventStream 一手/发现线索 (observe-only, 相关性过滤+去重)]")
@@ -2366,12 +2593,13 @@ def _build_clue_brief(manual_clue: str = "") -> str:
                 # [P2.1] 事实登记与渲染同源: published_at/symbols 在此刻还在手上,
                 #   渲染完就只剩字符串, 事后无从复原 (原实现正是这样丢的)。
                 parts.extend(_take_facts(
-                    [_fact("news_headline",
-                           f"- {title}{_age_tag}"
-                           + (f"  [{', '.join(syms)}]" if syms else ""),
-                           symbols=syms,
-                           published_at=str(n.get("published_at") or "") or None,
-                           event_key="news")], source="news_headline"))
+                    [_news_clue_fact(
+                        title,
+                        syms,
+                        str(n.get("published_at") or "") or None,
+                        age_tag=_age_tag,
+                        reaction_ctx=reaction_ctx,
+                    )], source="news_headline"))
         health.append(f"新闻:{len(news)}条(带标的{_n_sym})")
     else:
         parts.append("\n[新闻] 无近期新闻 (依赖市场佐证 + 人工线索推理)")
@@ -2617,6 +2845,9 @@ def _normalize_surfaced(raw: Any, with_tier: bool = False) -> List[Dict[str, Any
             item["evidence_matched_symbols"] = list(_cit.get("matched_symbols") or [])
             item["evidence_matched_source"] = _cit.get("matched_source")
             item["evidence_matched_event_meta"] = _cit.get("matched_event_meta")
+            item["evidence_matched_event_reaction"] = _cit.get(
+                "matched_event_reaction_entry")
+            item["evidence_event_reaction"] = _cit.get("matched_event_reaction")
             if _cit.get("state") == "transmission_assumed":
                 transmission_cap = float(_cfg(
                     "universe_expansion.transmission_assumed_confidence_cap", 0.55))
@@ -2801,7 +3032,9 @@ def _classify_evidence_citation(ev: str, symbol: str, index) -> Dict[str, Any]:
     ev = str(ev or "").strip()
     out: Dict[str, Any] = {"state": "no_ref", "evidence_id": None,
                            "matched_symbols": [], "matched_source": None,
-                           "matched_event_meta": None}
+                           "matched_event_meta": None,
+                           "matched_event_reaction": None,
+                           "matched_event_reaction_entry": None}
     if not ev:
         return out
     entries = [e for e in (index or []) if str(e.get("text") or "").strip()]
@@ -2824,6 +3057,13 @@ def _classify_evidence_citation(ev: str, symbol: str, index) -> Dict[str, Any]:
     out["matched_source"] = hit.get("source")
     out["matched_event_meta"] = hit.get("event_meta") if isinstance(
         hit.get("event_meta"), dict) else None
+    reaction = hit.get("event_reaction") if isinstance(
+        hit.get("event_reaction"), dict) else None
+    out["matched_event_reaction"] = reaction
+    if reaction:
+        by_symbol = reaction.get("by_symbol")
+        entry = by_symbol.get(sym) if isinstance(by_symbol, dict) else None
+        out["matched_event_reaction_entry"] = entry if isinstance(entry, dict) else None
     matched = [str(x).strip().upper().replace("US.", "")
                for x in (hit.get("symbols") or []) if str(x).strip()]
     out["matched_symbols"] = matched
@@ -4139,6 +4379,8 @@ def _cmd_inject_impl(*, enabled: bool, dry: bool, min_conf: float, max_n: int,
                     "evidence_citation_state": s.get("evidence_citation_state"),
                     "evidence_matched_symbols": s.get("evidence_matched_symbols"),
                     "evidence_matched_event_meta": s.get("evidence_matched_event_meta"),
+                    "evidence_matched_event_reaction": s.get("evidence_matched_event_reaction"),
+                    "evidence_event_reaction": s.get("evidence_event_reaction"),
                     "confidence_basis": s.get("confidence_basis"),
                     "confidence_calibration": s.get("confidence_calibration"),
                     "transmission_confirmation_required": s.get("transmission_confirmation_required", False),

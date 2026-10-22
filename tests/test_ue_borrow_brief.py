@@ -85,7 +85,7 @@ def test_brief_builder_wires_borrow_section():
     src = inspect.getsource(_build_clue_brief)
     assert "borrow_snapshot_brief" in src          # config kill-switch 在位
     assert "_render_borrow_snapshot(_named)" in src  # 消费 prescreen 具名集合
-    assert "ue_brief_v7" == BRIEF_TEMPLATE_VERSION   # 版本戳已升 (攒样切分键)
+    assert "ue_brief_v8" == BRIEF_TEMPLATE_VERSION   # 版本戳已升 (event_reaction_v1)
     with open(CONFIG_PATH, encoding="utf-8") as config_file:
         config = yaml.safe_load(config_file)
     assert config["universe_expansion"]["borrow_snapshot_brief"] is True

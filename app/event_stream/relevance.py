@@ -9,9 +9,15 @@ from typing import Iterable, List, Optional
 import yaml
 
 from app.catalyst.event_classifier import SECTOR_TRIGGERS
+from app.event_stream.event_schema import extract_headline_tickers
 from app.event_stream.models import CanonicalEvent
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
+_SEC_FORM_PREFIX_RE = re.compile(
+    r"^\s*(?:8-K/A|8-K|10-Q|10-K|6-K|SC\s+13[DG](?:/A)?|FORM\s*[345])\b",
+    re.IGNORECASE,
+)
+_SEC_STATE_SUFFIX_RE = re.compile(r"\s*/\s*[A-Z]{2}\b")
 
 
 @dataclass
@@ -70,6 +76,17 @@ def _strip_source_marker(text: str, source: object, *, strip_tail: bool = False)
     return text
 
 
+def _strip_sec_state_suffix(text: str) -> str:
+    """SEC filing 标题的公司名常带 " / MA" 等注册州后缀 — 裸 ticker 匹配会误中 MA。
+
+    2026-10-21 实测: "8-K - VERTEX PHARMACEUTICALS INC / MA (0000155523)" 被
+    匹配成 Mastercard (MA), 导致证据实体错配。只对 SEC form 标题剥该后缀。
+    """
+    if _SEC_FORM_PREFIX_RE.match(text or ""):
+        return _SEC_STATE_SUFFIX_RE.sub("", text)
+    return text
+
+
 def _trigger_in_text(trigger: str, text: str) -> bool:
     """英文触发词按词边界匹配; 中文无词边界, 保持子串匹配。"""
     trigger = trigger.casefold()
@@ -85,7 +102,8 @@ def match_event_relevance(
     context: RelevanceContext,
 ) -> Optional[RelevanceMatch]:
     source = event.facts.get("source")
-    headline = _strip_source_marker(_plain_text(event.headline), source)
+    headline = _strip_sec_state_suffix(
+        _strip_source_marker(_plain_text(event.headline), source))
     # 2026-10-17 审计: facts 里的 query/term 是检索条件, 不是事件文本 —
     #   Google 查询 "spectrum OR ..." 会让每条结果都命中 telecom。只匹配标题和摘要。
     summary_raw = event.summary or ""
@@ -113,6 +131,14 @@ def match_event_relevance(
             matched_symbols.update(symbols)
             if symbols:
                 reasons.append(f"sector:{sector_key}")
+
+    # 2026-10-21: 标题里明确点名的 ticker 必须进入 symbols — 否则像
+    #   "ASTS Stock Slips..." 这类新闻只剩 telecom 同业 T/TMUS/VZ, 主体 ASTS
+    #   缺席, 证据只能落 transmission_assumed (10/20 实测)。
+    for ticker in extract_headline_tickers(headline):
+        if ticker not in matched_symbols:
+            matched_symbols.add(ticker)
+            reasons.append(f"headline-ticker:{ticker}")
 
     if not matched_symbols:
         return None

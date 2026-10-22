@@ -1271,6 +1271,10 @@ playbook:
     #   代价=无同期对照臂, 市况变化混淆 (披露见 RFC §5.4)。机制保留 inert, 需要对照时改本值。
     entry_confirm_holdout_pct: 0      # 对照臂%: 0=全量走门 (实测 pct=0 命中 0/200, 边界安全)
     entry_confirm_ttl_sec: 600        # pending 超期即 EXPIRED (不计样本, 防跨时段卡死)
+    # 2026-10-21 计划锚冲突审计 (record-only): 执行锚偏离 DA 计划锚 ≥ 阈值时,
+    #   在前瞻行打 plan_gap_shadow, 供按 archetype/plan-gap 分桶; 不改变入场判定.
+    plan_gap_shadow_enabled: true
+    plan_gap_shadow_pct: 1.0
     # ── v2 判尺+持续性 (2026-10-15 用户裁「直接优化落地」, RFC-141 §5.10) ──
     #   缘起 v1 前瞻 54 行: 弃单率 61% 且含 INTC +1.6bp 纯价差噪声杀; 病灶=混尺
     #   (锚=ask/bid×复核=last) + 单点采样一次性终态。v2 = mid-mid 同尺 + grace 2-of-3
@@ -1307,6 +1311,11 @@ playbook:
     #   规则: ATR>=5% / 开盘0-15min / UE; 六种乘数档见 app/playbook/risk_size_shadow.py。
     #   回滚: false + 重启 (数据保留)。
     risk_size_shadow_enabled: true
+    # ── 金字塔影子停采 (2026-10-22 用户裁 FAIL, 判据 1/4: 腿净中位 −$0.32 / Σ −$6.60 / 回吐门✓) ──
+    #   n_executable=86≥40 达标但方向不成立 ⇒ 结题停采; 数据保留不删, 重开=新预注册。
+    #   回滚: true (热重载 60s 生效; pyramid_shadow.py observe 首行门控)。
+    #   读取路径 = playbook.execution_parameters.pyramid_shadow_enabled (本块内)。
+    pyramid_shadow_enabled: false
 
     # ── RFC-065 入场带 vol_widen (DEB-20260819 §三十四, 条件版A, 2026-08-19) ──
     entry_band_vol_widen_enabled: false      # 生产开关: 默认false零行为变更; 翻开关判据预注册见RFC-065
@@ -2281,6 +2290,9 @@ event_stream:
   - Securities and Exchange Commission
 universe_expansion:
   entry_enabled: true
+  # 2026-10-21 RFC-156 Phase 0A: 事件龄/事件后价格反应 (event_reaction_v1) 数据补全.
+  #   只给 UE brief/DA 增加上下文, 不改 surfaced 准入/门/仓位. 回滚: false.
+  event_reaction_enabled: true
   # DEB-20261009 P0 前置: RSSHub 返回空且最后写入超过该时长时发降级告警。
   # 采集 cron 为 3h 一轮, 6h=连续两轮无落库; 回滚: 调大或设 0 禁用。
   rsshub_stale_hours: 6.0

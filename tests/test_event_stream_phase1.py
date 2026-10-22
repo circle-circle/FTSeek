@@ -295,17 +295,25 @@ def test_fetch_sec_filings_provider_uses_existing_providers(monkeypatch):
 
 
 def test_fetch_recent_13dg_filters_sc13e3(tmp_path, monkeypatch):
-    """2026-10-18: SC 13E3 (going-private) 不得混入 SC 13D/G."""
+    """2026-10-18: SC 13E3 (going-private) 不得混入 SC 13D/G.
+
+    2026-10-22 修复: fixture 时间戳改为相对 now (原硬编码 10-18 + 96h 回看,
+    4 天后必假红 — 与"活体数据测试假红"同族的时间炸弹)。
+    """
+    from datetime import datetime, timedelta, timezone
+
     from app.data import sec_8k_provider
     from app.data import sec_form4_provider
 
-    atom = """<feed>
+    ts1 = (datetime.now(timezone.utc) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    ts2 = (datetime.now(timezone.utc) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    atom = f"""<feed>
       <entry><title>SC 13D - ACME CORP (0001234567) (Subject)</title>
-        <updated>2026-10-18T12:00:00Z</updated><link href="https://sec.gov/13d"/></entry>
+        <updated>{ts1}</updated><link href="https://sec.gov/13d"/></entry>
       <entry><title>SC 13E3/A - OTHER CORP (0007654321) (Subject)</title>
-        <updated>2026-10-18T12:00:00Z</updated><link href="https://sec.gov/13e3"/></entry>
+        <updated>{ts1}</updated><link href="https://sec.gov/13e3"/></entry>
       <entry><title>SC 13G - ACME CORP (0001234567) (Subject)</title>
-        <updated>2026-10-18T12:01:00Z</updated><link href="https://sec.gov/13g"/></entry>
+        <updated>{ts2}</updated><link href="https://sec.gov/13g"/></entry>
     </feed>"""
     monkeypatch.setattr(sec_8k_provider, "CACHE_13DG_FILE", tmp_path / "13dg.json")
     monkeypatch.setattr(sec_8k_provider, "_fetch_atom", lambda url=None: atom)
@@ -506,6 +514,15 @@ def test_build_event_meta_form4_and_13d():
     assert md["event_family"] == "activist"
     assert md["form"] == "13D"
 
+    d13a = _event("13da")
+    d13a.source_id = "SEC_EDGAR_8K_ATOM"
+    d13a.source_tier = "T0"
+    d13a.headline = "SC 13D/A - ACME CORP (0000000001) (Subject)"
+    d13a.facts = {"form": "SC 13D/A"}
+    mda = build_event_meta(d13a)
+    assert mda["event_family"] == "activist"
+    assert mda["form"] == "13D/A"
+
 
 def test_build_event_meta_news_is_lower_materiality():
     from app.event_stream.event_schema import build_event_meta
@@ -518,6 +535,134 @@ def test_build_event_meta_news_is_lower_materiality():
     meta = build_event_meta(news)
     assert meta["event_family"] == "news"
     assert meta["materiality"] < 0.5
+
+
+@pytest.fixture
+def ticker_map(tmp_path, monkeypatch):
+    """测试用 ticker 映射 — 生产映射是运行时缓存 (untracked), 测试不依赖它."""
+    from app.event_stream import event_schema
+
+    path = tmp_path / "ticker_cik.json"
+    path.write_text(json.dumps({
+        "ASTS": 1, "TSLA": 2, "NBIS": 3, "TTD": 4, "VICR": 5,
+        "T": 6, "TMUS": 7, "VZ": 8,
+    }), encoding="utf-8")
+    monkeypatch.setattr(event_schema, "_TICKER_MAP_PATH", path)
+    event_schema.known_tickers.cache_clear()
+    yield
+    event_schema.known_tickers.cache_clear()
+
+
+def test_extract_headline_tickers_conservative(ticker_map):
+    from app.event_stream.event_schema import extract_headline_tickers
+
+    assert extract_headline_tickers(
+        "ASTS Stock Slips Overnight: Viasat Urges FCC To Reject AST SpaceMobile"
+    ) == ["ASTS"]
+    assert extract_headline_tickers(
+        "Tesla (TSLA) proxy shows a board getting ready for a SpaceX merger"
+    ) == ["TSLA"]
+    assert extract_headline_tickers(
+        "NBIS 盘前跌#5 -4.7% 盘前成交$77.8M"
+    ) == ["NBIS"]
+    # 全大写普通词/机构缩写不得被当成 ticker
+    assert extract_headline_tickers(
+        "CEO Bob Iger steps down; FCC approves deal; AI stocks rally"
+    ) == []
+    assert extract_headline_tickers(
+        "Spectrum News 13 reports telecom outage"
+    ) == []
+
+
+def test_build_event_meta_extracts_subject_ticker_from_headline(ticker_map):
+    from app.event_stream.event_schema import build_event_meta
+
+    news = _event("news-ticker")
+    news.source_id = "GOOGLE_NEWS_RSS"
+    news.source_tier = "T2"
+    news.event_type = "NEWS_DISCOVERY"
+    news.headline = (
+        "ASTS Stock Slips Overnight: Viasat Urges FCC To Reject "
+        "AST SpaceMobile's Overseas Spectrum Bid - Yahoo Finance"
+    )
+    news.facts = {"source": "Yahoo Finance"}
+    meta = build_event_meta(news)
+    assert "ASTS" in meta["entities"]["symbols"]
+
+
+def test_build_event_meta_from_parts_for_clue_filing():
+    from app.event_stream.event_schema import build_event_meta_from_parts
+
+    meta = build_event_meta_from_parts(
+        source_id="SEC_EDGAR_8K_ATOM",
+        source_tier="T0",
+        event_type="SEC_8K_FILING",
+        form="8-K",
+        headline="8-K TTD: 5.02 高管/董事变动(CEO离任常利空)",
+        symbols=["TTD"],
+        company="The Trade Desk",
+    )
+    assert meta["event_family"] == "filing_8k"
+    assert meta["form"] == "8-K"
+    assert meta["entities"]["symbols"] == ["TTD"]
+    assert meta["entities"]["company"] == "The Trade Desk"
+    assert meta["materiality"] >= 0.8
+
+
+def test_ue_clue_fact_builders_carry_event_meta(ticker_map):
+    import scripts.llm_universe_scan as ue
+
+    k8 = ue._sec_8k_clue_fact({
+        "ticker": "TTD", "company": "The Trade Desk",
+        "item_labels": ["5.02 高管/董事变动(CEO离任常利空)"],
+        "updated": "2026-10-20T09:03:00Z",
+    })
+    assert k8["event_meta"]["event_family"] == "filing_8k"
+    assert k8["event_meta"]["entities"]["symbols"] == ["TTD"]
+
+    dg = ue._sec_13dg_clue_fact({
+        "ticker": "VICR", "company": "Vicor", "form": "SC 13D",
+        "updated": "2026-10-20T08:00:00Z",
+    })
+    assert dg["event_meta"]["event_family"] == "activist"
+    assert dg["event_meta"]["form"] == "13D"
+
+    news = ue._news_clue_fact(
+        "NBIS 盘前跌#5 -4.7%", ["NBIS"], "2026-10-20T08:00:00Z")
+    assert news["event_meta"]["event_family"] == "news"
+    assert news["event_meta"]["entities"]["symbols"] == ["NBIS"]
+
+
+def test_ue_attach_event_reaction_and_citation():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    import scripts.llm_universe_scan as ue
+
+    et = ZoneInfo("America/New_York")
+    fact = ue._fact("event_stream", "HIMS old news", symbols=["HIMS"])
+    ctx = {
+        "router": None,
+        "quotes": {},
+        "computed_at": datetime(2026, 10, 21, 8, 2, 59, tzinfo=et),
+        "bars": {"HIMS": [
+            {"time": "2026-10-19", "close": 28.15},
+            {"time": "2026-10-20", "close": 29.21},
+        ]},
+        "quote_fetches": 0,
+    }
+    out = ue._attach_event_reaction(
+        fact, symbols=["HIMS"],
+        event_time="2026-10-20T08:49:00-04:00",
+        reaction_ctx=ctx)
+    entry = out["event_reaction"]["by_symbol"]["HIMS"]
+    assert round(entry["post_event_move_pct"], 2) == 3.77
+    assert "事件后: HIMS +3.77%" in out["text"]
+    assert "同日收盘" in out["text"]
+
+    cit = ue._classify_evidence_citation(out["text"], "HIMS", [out])
+    assert cit["state"] == "entity_linked"
+    assert round(cit["matched_event_reaction_entry"]["post_event_move_pct"], 2) == 3.77
 
 
 def test_ingest_service_populates_event_meta(tmp_path):
@@ -879,6 +1024,43 @@ def test_relevance_ticker_not_fooled_by_hyphenated_name():
     assert relevance is not None
     assert "T" not in relevance.symbols
     assert "TMUS" in relevance.symbols
+
+
+def test_relevance_includes_subject_ticker_from_headline(ticker_map):
+    """10/20 ASTS 案: 主体 ticker 不在 watchlist 时也必须进入 symbols。"""
+    event = _event()
+    event.headline = (
+        "ASTS Stock Slips Overnight: Viasat Urges FCC To Reject "
+        "AST SpaceMobile's Overseas Spectrum Bid - Yahoo Finance"
+    )
+    event.facts = {"source": "Yahoo Finance"}
+    context = RelevanceContext(
+        symbol_names={},
+        sector_symbols={"telecom": ["T", "TMUS", "VZ"]},
+    )
+    from app.event_stream.relevance import match_event_relevance
+
+    relevance = match_event_relevance(event, context)
+    assert relevance is not None
+    assert "ASTS" in relevance.symbols
+    assert "headline-ticker:ASTS" in relevance.reasons
+
+
+def test_relevance_ignores_sec_state_suffix_ticker():
+    """SEC 公司名后的 " / MA" 不得把 Mastercard (MA) 误挂到 Vertex 8-K。"""
+    event = _event()
+    event.source_id = "SEC_EDGAR_8K_ATOM"
+    event.source_tier = "T0"
+    event.headline = "8-K - VERTEX PHARMACEUTICALS INC / MA (0000155523) (Filer)"
+    event.facts = {"form": "8-K"}
+    context = RelevanceContext(
+        symbol_names={"MA": "Mastercard"},
+        sector_symbols={},
+    )
+    from app.event_stream.relevance import match_event_relevance
+
+    relevance = match_event_relevance(event, context)
+    assert relevance is None or "MA" not in relevance.symbols
 
 
 def test_dedupe_does_not_collapse_sec_form_titles():

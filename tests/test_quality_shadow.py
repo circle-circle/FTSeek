@@ -100,6 +100,53 @@ def test_short_unknown_borrow_is_tagged():
     assert tags["would_allow_unknown_short_small"] is True
 
 
+def test_event_reaction_fields_propagate():
+    inst = _inst()
+    inst["raw_instruction"] = {
+        "score_band": "MEDIUM",
+        "ue_event_reaction": {
+            "age_h": 23.2,
+            "post_event_move_pct": 3.77,
+            "reaction_basis": "same_day_close",
+            "source": "futu_daily_kline",
+            "reason": None,
+        },
+    }
+    tags = build_quality_shadow(inst)
+    assert tags["event_age_h"] == 23.2
+    assert tags["post_event_move_pct"] == 3.77
+    assert tags["reaction_basis"] == "same_day_close"
+    assert tags["reaction_source"] == "futu_daily_kline"
+    assert tags["reaction_reason"] is None
+
+
+def test_quality_report_supports_event_reaction_dimensions():
+    from scripts.quality_shadow_report import DIMENSIONS, _dim_value
+
+    assert {"reaction_basis", "reaction_source", "event_age_bucket"} <= set(DIMENSIONS)
+    assert _dim_value({"event_age_h": 23.2}, "event_age_bucket") == "12-24h"
+    assert _dim_value({"event_age_h": 2.0}, "event_age_bucket") == "<=6h"
+    assert _dim_value({"event_age_h": None}, "event_age_bucket") == "UNKNOWN"
+    assert "plan_gap_bucket" in DIMENSIONS
+    assert _dim_value({"plan_gap_pct": 2.5}, "plan_gap_bucket") == ">=1%"
+    assert _dim_value({"plan_gap_pct": -1.2}, "plan_gap_bucket") == "<=-1%"
+    assert _dim_value({"plan_gap_pct": 0.2}, "plan_gap_bucket") == "-1..1%"
+
+
+def test_plan_gap_fields_propagate():
+    inst = _inst()
+    inst["entry_price"] = 61.74
+    inst["raw_instruction"] = {
+        "score_band": "MEDIUM",
+        "entry_archetype": "PULLBACK_LIMIT",
+        "planned_entry": 60.2,
+        "confirmation": {"price_level": 60.2, "side": "below"},
+    }
+    tags = build_quality_shadow(inst)
+    assert tags["planned_entry"] == 60.2
+    assert tags["plan_gap_pct"] == 2.558
+
+
 def test_skip_has_no_quality_tags():
     assert build_quality_shadow({"direction": "SKIP"}) == {}
 

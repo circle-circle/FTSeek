@@ -232,3 +232,41 @@ class TestTriggerDedupeAndVerdict:
         assert sp._verdict(8, +500.0, 2) == "GATE_NOT_WORTH"
         assert sp._verdict(8, +500.0, 1) == "GRADUATION_LINE_HIT"
         assert sp.MIN_N == 8 and sp.MAX_MISKILL == 1 and sp.FEE_LINE == 5.0
+
+
+# ── RFC-160 (2026-10-22): MFE 轨 (当日 MFE<0.5% ∧ 水下) 契约钉 ─────────────
+class TestMfeTrack:
+    """MFE 轨与 B19 深度轨同尺同判据形态, 但触发谓词独立 (判别器不同)。"""
+
+    def _row(self, tid, mfe, depth, delta, held=True, arm="2026-10-20"):
+        return dict(trade_id=tid, arm_date=arm, status="settled", held_overnight=held,
+                    cf_delta=delta, mfe_pct_at_arm=mfe, depth_net_pct=depth,
+                    would_revoke=False)
+
+    def test_mfe_track_predicate(self):
+        """只有 mfe<0.5 ∧ depth<0 的行进组; mfe/depth 缺失行不进 (不猜)。"""
+        rows = [self._row(1, 0.3, -1.0, -50.0),      # 进组
+                self._row(2, 0.7, -1.0, -50.0),      # mfe 超阈
+                self._row(3, 0.3, +0.5, -50.0),      # 非水下
+                self._row(4, None, -1.0, -50.0),     # mfe 缺失
+                self._row(5, 0.3, None, -50.0),      # depth 缺失
+                self._row(6, 0.3, -1.0, -50.0, held=False)]  # 未持夜
+        trig = sp.mfe_trigger_rows(rows)
+        assert [r["trade_id"] for r in trig] == [1]
+
+    def test_mfe_track_dedup_earliest_night(self):
+        """同 trade_id 多夜取最早 (病灶③同型纪律)。"""
+        rows = [self._row(7, 0.2, -1.0, -10.0, arm="2026-10-21"),
+                self._row(7, 0.2, -1.0, -99.0, arm="2026-10-19")]
+        trig = sp.mfe_trigger_rows(rows)
+        assert len(trig) == 1 and trig[0]["arm_date"] == "2026-10-19"
+
+    def test_mfe_track_verdict_form_b19(self):
+        """判据形态复用 B19 (n≥8 ∧ ΣΔ>0 ∧ 误杀≤1); 与深度轨 verdict 互不影响。"""
+        assert sp._verdict(8, +100.0, 1) == "GRADUATION_LINE_HIT"
+        assert sp._verdict(8, +100.0, 2) == "GATE_NOT_WORTH"
+        assert sp._verdict(7, +100.0, 0) == "KEEP_SAMPLING"
+
+    def test_mfe_gate_pct_pinned(self):
+        """0.5% 阈值钉死 (10-17 尸检刀尖注记: 改阈值=改判据=重新裁决)。"""
+        assert sp.MFE_GATE_PCT == 0.5

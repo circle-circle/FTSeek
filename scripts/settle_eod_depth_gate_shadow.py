@@ -221,6 +221,34 @@ def _verdict(n_trig, sum_delta, miskill):
     return "KEEP_SAMPLING"
 
 
+MFE_GATE_PCT = 0.5  # RFC-160 (2026-10-22): 「当日 MFE<0.5%」判别器阈值 (10-17 尸检 §3 刀尖注记:
+                    # 精确切点不可信, 前瞻攒样的意义即消化切点风险; 改阈值 = 改判据 = 重新裁决)
+
+
+def mfe_trigger_rows(rows):
+    """RFC-160 MFE 轨触发组: 当日 MFE<0.5% ∧ 决策时刻水下 (depth_net_pct<0),
+    settled ∧ 真持夜 ∧ 有 Δ ∧ mfe 非空, 同 trade_id 取最早 arm_date (同病灶③纪律)。
+
+    与 B19 深度轨的差别只在触发谓词 (mfe+水下 vs depth≤-2.5%); 结算/身份锚/口径全复用。
+    """
+    by_tid = {}
+    for r in rows:
+        if r.get("status") != "settled":
+            continue
+        if not r.get("held_overnight") or r.get("cf_delta") is None or r.get("trade_id") is None:
+            continue
+        mfe = r.get("mfe_pct_at_arm")
+        depth = r.get("depth_net_pct")
+        if mfe is None or depth is None:
+            continue
+        if not (float(mfe) < MFE_GATE_PCT and float(depth) < 0):
+            continue
+        cur = by_tid.get(r["trade_id"])
+        if cur is None or str(r.get("arm_date")) < str(cur.get("arm_date")):
+            by_tid[r["trade_id"]] = r
+    return sorted(by_tid.values(), key=lambda r: str(r.get("arm_date")))
+
+
 def earnings_night_rows(rows):
     """Event-axis subset: settled, held overnight, is_earnings_night=True; dedupe by trade."""
     by_trade = {}
@@ -326,6 +354,12 @@ def main():
     verdict = _verdict(n_trig, sum_delta, miskill)
     earnings_night = earnings_night_summary(rows)
 
+    # ── RFC-160 MFE 轨 (2026-10-22): 与 B19 深度轨同尺同判据形态, 独立读数互不影响 ──
+    mfe_trig = mfe_trigger_rows(rows)
+    mfe_sum = sum(float(r.get("cf_delta") or 0) for r in mfe_trig)
+    mfe_miskill = sum(1 for r in mfe_trig if float(r.get("cf_delta") or 0) < -FEE_LINE)
+    mfe_verdict = _verdict(len(mfe_trig), mfe_sum, mfe_miskill)
+
     report = {
         # "n" = 注册表计数锚 (shadow_registry._count_samples 读 .json 时只认
         # n/n_total/n_events/stats 四键)。必须指向 **B19 判据 n 轴 = 触发组去重仓数**
@@ -348,6 +382,18 @@ def main():
         "min_n": MIN_N, "max_miskill": MAX_MISKILL,
         "verdict": verdict,
         "earnings_night": earnings_night,
+        "mfe_track": {
+            # RFC-160: MFE<0.5% ∧ 水下 轨。n 轴=触发组去重仓数 (与 B19 同构);
+            # 判据 = B19 形态 (n≥8 ∧ ΣΔ>0 ∧ 误杀≤1) ⇒ 提请转硬闸须另立 DEB + 用户裁。
+            "n": len(mfe_trig),
+            "sum_delta": round(mfe_sum, 2),
+            "miskill_n": mfe_miskill,
+            "min_n": MIN_N, "max_miskill": MAX_MISKILL, "mfe_gate_pct": MFE_GATE_PCT,
+            "verdict": mfe_verdict,
+            "criteria_ref": "RFC-160 (docs/decisions/RFC-160-overnight-mfe-gate-shadow.md)",
+            "note": "与 B19 深度轨 (上方 verdict) 独立读数; 深度轨 GATE_NOT_WORTH 终裁不约束本轨 "
+                    "(判别器不同: 深度=价格幅度, MFE=论点证实度)。",
+        },
         "criteria_ref": "B19 (docs/ADJUDICATED-CRITERIA.md)",
         "settle_rule": "RFC-095 身份锚定 v2: trade_ref(trade_records.id) > entry_time 精确 > "
                        "entry_price±0.5%+qty(出场晚于决策时刻); "
@@ -372,6 +418,13 @@ def main():
                   f"trade_id={r.get('trade_id')} depth={r.get('depth_net_pct')}% — "
                   f"{r.get('anchor_note')}")
     print(f"verdict={verdict} → {OUT.relative_to(ROOT)}")
+    print(f"[RFC-160 MFE轨] 触发组 n={len(mfe_trig)}/{MIN_N} ΣΔ={mfe_sum:+.2f} "
+          f"误杀={mfe_miskill}/{MAX_MISKILL} ⇒ {mfe_verdict}")
+    for r in mfe_trig:
+        print(f"  {r.get('arm_date')} {str(r.get('symbol')):9s} mfe={r.get('mfe_pct_at_arm')}% "
+              f"depth={r.get('depth_net_pct')}% Δ={r.get('cf_delta'):+.2f}")
+    if mfe_verdict == "GRADUATION_LINE_HIT":
+        print("⚠️ MFE 轨达毕业线: 按 RFC-160 提请转硬闸裁决 (另立 DEB + 用户裁, 不自动生效)")
     if verdict == "GRADUATION_LINE_HIT":
         print("⚠️ 已达毕业线: 按 B19 提请转硬闸裁决 (另立 DEB + 用户裁, 本脚本不自动生效)")
 

@@ -1,5 +1,21 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-22/23 全链路复查执行批（用户裁「按建议执行」；未提交未重启，等并行会话合流）
+
+**触发**: 复查报告 P0/P1 队列 → 用户裁「按建议执行」。**重要协同**: 并行会话（用户另启「修复明显阻塞和可优化项」）正在改 futu_lv3_provider/exit_engine/pipeline（冻结修复 v2=异步刷新槽，优于本批原设计且已吸收 kline_sick 概念）+ 部分成交 WIP 未验收，其 handoff 明言「未提交未重启」⇒ **本批不提交不重启**（军规：不许把别家在途 WIP 顺带上线），record-only 改动随其部署车生效。
+
+**已落地（本批，全部 record-only/治理面）**:
+- **棘轮红清零**（due 10-23）: event_schema.py:72 补 exc_info=True（W6）; 3 处新 except:pass 修掉（entry_confirm_gate.py:266 改等价重构 / stop_invalidation_audit.py:214 / quality_shadow_event_reaction_audit.py:130 加坏行计数留痕）; 顺带修 test_event_stream_phase1.py 时间炸弹 fixture（硬编码 10-18 + 96h 回看 ⇒ 10-22 起必假红，改相对 now）。棘轮家族 41 全绿（除下述并行 WIP 带入的 1 项）。
+- **金字塔 FAIL 终裁落档**（P1-3）: 注册表 KILLED + verdict_history + ADJUDICATED; 真停采 = 新增 `playbook.execution_parameters.pyramid_shadow_enabled: false`（pyramid_shadow.py observe 首行门控，fail-open）+ settle cron `41 6 * * 2-6` 注释退役（留痕）。+4 tests。
+- **影子注册表合规批**（P1-4, 94 项）: ①在采未注册 3 例补登 = instruction_conflict_shadow（RFC-125,  distinct:date 16/5）/ factor_neg_edge_shadow（8/21 批, where:would_skip=True 449/30 ⇒ READY 待读数）/ stop_invalidation_audit（PERMANENT_MEASURE）; ②D 臂独立登记 be_half_at_arm_d（json_key:D.prospective.n 3/30）脱离 KILLED 宿主; ③n 轴错配修 2 例 = risk_size_tier_forward 改 where:affected=True（写方 build_row 新增顶层 affected 字段，计数自字段上线起）/ entry_confirm_forward 改 json_key:adjudication_source.all.n（105 假 READY → 真值 20/60）; ④18 个过期 recheck 闹钟全清（3 终态结案 / 12 重看留证至 11-21 / 3 转 needs_user：fee_gate_shadow(10-29)、eth_rth_fade(10-29，16日39笔判据1/4)、overnight_known_event_flag(11-05，真轴 4/20 且 9/25 起计划断供)）; ⑤vwap_gate_ab 判据挂 RFC-158 指针; eth_relative_volume_gate 假阳性 stale_expected 收口。终态: mounting/intent/过期闹钟全 0。
+- **RFC-160 OGS 重议立项**（P1-1, RFC-157 预注册触发命中: OGS 4 笔均 −$324.05）: MFE 轨双轨影子 — arm 行新增 mfe_pct_at_arm（overnight_decision  emitter + 两调用点接 peak_price）+ settle 脚本 mfe_track 节（判据沿用 B19 形态: n≥8∧ΣΔ>0∧误杀≤1，转硬闸须另立 DEB+用户裁）+ 注册表 eod_mfe_gate_shadow（json_key:mfe_track.n, 与 eod_depth_gate 互引）。+8 tests。settle 实跑验证: 深度轨 GATE_NOT_WORTH 稳定 / MFE 轨 n=0 KEEP_SAMPLING（字段自部署起有值）。
+- **⚠️ 与 10-17 裁决的张力留痕**: 10-17 用户曾裁「先观察不做双轨影子」; 本批按「更新裁决（10-22 按建议执行）+ RFC-157 预注册触发命中」执行, 用户知悉确认前 MFE 轨仍只是影子（零行为）。RFC-160 证据措辞已被并行会话更正（US.M/QCOM 均在 0.5% 下同侧 ⇒ 切点不可信, 靠前瞻攒样消化）。
+- **记忆更正**: 「$3-5k 名义桶费/毛 2.16 一阶杠杆」已推翻（复测 1.03，近 11 日 +$129.72）⇒ memory 已更新; 费用杠杆只剩降频/降本。
+
+**验证**: 棘轮家族 41✓（W456 余 1 红=并行会话 WIP 带入: futu_lv3_provider.py debug swallow 11→12, L1565，须级别+栈一步修, **due 10-23**）; 治理/影子/出场/UE 受影响面 550+ 测试全绿; 注册表终态核验全 0 告警。
+
+**待并行会话合流后**: ①确认整批归属 → 提交（两批可能交错在同文件, 单提交+结构化 message）; ②重启生效（pyramid 停采门/risk_size affected 字段/MFE arm 字段/冻结修复 v2）; ③启动冒烟 7/7。在仓 8 笔（MSFT/RIVN + 今日新 6）。
+
 ## 2026-10-23 工程阻塞修复（CST；ET 10-22，未部署）
 
 **触发**：用户「请修复明显阻塞和可优化项」。本批不调整信号规则、计划仓位参数、退出阈值或实盘授权。
@@ -13,6 +29,186 @@
 **提交授权**：2026-10-23 用户批准提交已修复改动并推送当前远程分支；只提交本批代码块、测试及记录，其他事件流/影子/配置/股票资料不纳入。
 
 **下一步**：先确认本批及其他在途源码的上线范围，再按军规核在仓/出场意图、安排重启与启动冒烟。运行态验收 **BLOCKED**：未确认隔离交易环境，不向管理持仓的服务注入故障；未执行重启、四锁未动。只读核对 PID 3159408 启动于 10-22 21:42 CST，早于本批源码。SDK 本身未被取消，永久悬挂时刷新槽保持占用，但不拖住时敏调用线程；REAL 重启 STOP 幂等恢复、多腿费用和账户回撤仍须单独验收。
+
+## 2026-10-22 全链路复查（4 路只读审计，零生产变更）
+
+**报告**: `docs/analysis/2026-10-22-full-chain-review.md`（含 28 项待裁全表与优先级队列）。
+**要点**: ①主链路今日健康（15 指令→6 成交/2 门弃/7 风控）；②**P0: PlaybookExitFastLoop 冻结族今日 09:32-09:40 ET 第 5 次复发**（Futu 同步 kline 无超时阻塞，哨兵自愈重启，吞 3 轮 auto_execute）；③第一杠杆易主为 OGS 过夜缺口族（4 笔 −$1,296 = 窗口净亏 2.96×，RFC-157 重议条件已命中）；「$3-5k 名义桶费/毛 2.16」结论被新数据推翻（现 1.03）；④未提交批（10-21/22，已上线）引入棘轮红 2 项、阻塞提交、due 10-23；⑤影子治理：在采未注册复发 3 例 / D 臂寄生 KILLED 项 / n 轴口径错配 2 例 / 金字塔 n 门已达标未裁；⑥KR2 n=66/200，10/31 大概率按预注册落「功效不足不可测」。**未改任何门/仓位/止损，未重启，未提交。**
+
+## 2026-10-22 指令复查执行: record-only 审计 + VWAP 预注册（未改门/未重启）
+
+**触发**: 用户要求复查当前指令/方向策略来源与过程 → 「按照合理建议执行」。
+
+**今日 DA 批次 (08:02–08:48 ET, 28 gate 决策 → 15 条落库, 全 PENDING)**:
+- 方向: 5 SHORT (TSLA/CAT 70, COIN/ARM/LSCC 35) / 10 BUY (SPCX/SNDK/MU/AVGO/TSM 35,
+  BABA/TSCO 50, CRM/UNH/COCO 70).
+- UE→DA 翻转: COCO/TSCO 的 UE SHORT 被 DA 翻 BUY。COCO 有更晚数据 (EPS beat,
+  盘前从 -4.17% 反转到 +2.28%, scanner bullish); TSCO 是 beat + 同店指引弱,
+  -5.72% gap-fill BUY (scanner blank, challenger 弃权)。LSCC 保持 SHORT。
+- 4 条 BUY 硬拦: RIVN/META/ORCL/BWXT (bearish 动量); RIVN 另被 duplicate guard 覆盖。
+
+**已落地 (record-only / 预注册, 零交易行为)**:
+- 新增 `scripts/stop_invalidation_audit.py` + `tests/test_stop_invalidation_audit.py`
+  (13 tests): 从 raw_instruction_json.invalidation_triggers 与 stop_loss 比较;
+  今日 15 条: 9 aligned / 4 stop_before (TSLA/AVGO/UNH/COCO) /
+  2 invalidation_before (ARM/TSCO). 输出 `data/shadow/stop_invalidation_audit.jsonl`,
+  按 (date, instruction_id) 幂等。
+- 新增 `docs/decisions/RFC-158-fade-short-vwap-preregistration.md`:
+  5 日扩样 (10/15–10/21) gated FADE_SHORT n=5 -0.343% vs released n=10 -0.029%;
+  10/21 的「门反向」小样本假设不成立, 总体 gate 倾向拦对; 判据 n≥30, 不改门。
+- 外部 `signal_gate.py` 仅修过时注释 (F2 后 bullish+SHORT 不再降档),
+  备份 `signal_gate.py.bak-comment-f2-20261022`, py_compile OK。
+- 新增 `docs/decisions/RFC-159-da-leveraged-etf-filter.md`: DA `_screen_da_candidates`
+  对 name 含 ETF+杠杆/反向关键词的候选前置 REJECT; config
+  `universe_expansion.da_skip_leveraged_etf: true`; 今日 8/8 ETF 命中、
+  15 条落库 0/15 误伤; 外部 18 tests passed; 下次 DA 批次生效, 不占 C1。
+- 覆盖统计: 28 gate 中 18 条 `_scanner_direction` 为空 (15 条落库中 12 条);
+  经查这是"只认多头/空头排列"的刻意窄规则, 非缺数据; 补齐会硬拦今日 6 笔 BUY,
+  收益不明确, **不启用**。**8/28** 是杠杆/反向 ETF 全 SKIP; 已落 RFC-159 前置过滤。
+
+**验证**: `quality_shadow_event_reaction_audit.py --date 2026-10-22` → PASS
+(15/15 quality_shadow, 4/4 raw reaction, v8 brief); targeted pytest
+`test_stop_invalidation_audit + test_phase1_signal_quality + test_vwap_gate_ab`
+→ **72 passed**; 外部 `test_leveraged_etf_filter.py` → **18 passed**。
+未重启服务 (新脚本 standalone; 外部注释/过滤不影响运行中进程)。
+
+**21:10 UE 决策**: 用户确认 **B** — 保留 21:10 scan + score; confirm 按预注册 10/31 重看;
+不改 cron（direct-write 历史 2/49、+$8.02; score 367 样本/平均前瞻 +1.086%）。
+
+**Cron 复核**: 2026-10-22 用户选 A: 12:30 `universe_expansion_shadow capture` **保留**
+(非空跑: `_gather_market_corroboration` fallback 消费 capture; 今日 08:00 UE 日志实走
+capture 回退); crontab 未动; registry 已记 2026-10-22 复核结论。21:10 UE scan 的 A/B/C
+仍待裁。
+
+**状态**: 15 条 PENDING, 09:30 ET 开盘/09:35 后 auto_execute; 重点盯 CAT (gated VWAP)、
+ARM/TSCO (invalidation_before_stop)、COCO/TSCO (UE→DA 翻转)、LSCC (entry 104.53 vs plan 105.5,
+-0.919% 低于 plan_gap 1% 阈值)。未改任何实盘门/仓位/止损; 未提交 git。
+
+## 2026-10-21 门控/计划锚冲突审计（record-only 修复，未改交易判定）
+
+**触发**: 用户「检查整个链路和门控/指标明确有逻辑和冲突的问题，先优化和更新值得修复和处理的问题」。
+
+**明确冲突（10/21 实盘证据）**:
+- **计划锚 vs 执行锚**：DA `planned_entry`/`confirmation` 与指令 `entry_price` 可差 0.6–4.3%
+  （BWXT 132.5→137.28、UNH 415→418.53、BAX 24.7→24.41、ARM 231.5→221.5、BMY 60.2→61.74）；
+  VWAP/entry-confirm 按执行锚判定，计划价本来可成交的 BWXT/UNH/BAX/HIMS 被拦，BMY 被追价。
+- **VWAP 门与均值回归 archetype 相反**：门要求 LONG 在 VWAP 上侧、SHORT 在下侧；
+  DA 的 PULLBACK_LIMIT/FADE_SHORT 计划恰好是“BUY 在下侧 / SHORT 在上侧”。
+  `vwap_gate_ab.jsonl` 今日 BAX(空上侧)/UNH(多下侧)/BWXT(多下侧) 均落 gated 臂。
+- **entry-confirm 用执行锚，没有计划锚差值**；7 条 reverse 中 LAD/MRNA/COIN/ORCL 避损，
+  UNH/BAX/HIMS 错过计划小赢家。
+- **SKIP 行 raw 丢失原始方向**（direction=None，仅 archetype 可反推）。
+- DA 计划文本有两段（回踩/突破），结构化只有一段 `confirmation`；BMY/ARM 无第二腿。
+
+**已修（全部 record-only，不改门/仓位/止损）**:
+- 外部 DA raw 增加 `direction` / `original_direction`；
+  bridge 复演确认 SKIP/执行行均可追溯原 BUY/SHORT。
+- `entry_confirm_gate`：arm/state/forward 增加 `planned_entry`、`plan_gap_pct`、
+  `plan_gap_shadow`、`plan_gap_threshold_pct`；配置 `plan_gap_shadow_enabled=true`、
+  `plan_gap_shadow_pct=1.0`；不改变 confirmed/abandoned 判定。
+- `vwap_gate_ab` 台账增加 `entry_archetype`、`planned_entry`、`plan_gap_pct`；
+  现有 50/50 A/B 可按 archetype/plan-gap 切片。
+- `quality_shadow` 增加 `planned_entry`/`plan_gap_pct`；report 增加 `plan_gap_bucket`。
+- `eval_vwap_gate.py` 增加 `--by-archetype` 与 plan_gap 分桶 (+3 tests)；
+  10/20–10/21 初读：gated n=9 均值 +0.315%（FADE_SHORT n=2 +1.336% /
+  PULLBACK n=7 +0.023%），released n=11 均值 -0.313%（FADE_SHORT n=5 -0.948% /
+  PULLBACK n=6 +0.217%）；**FADE_SHORT 的 VWAP 方向门疑似反向**（拦住赢得、
+  放行输的），但 n<30、两组测量基不同，**不改门**，下一步做 archetype-aware
+  A/B/影子预注册。
+
+**验证**: FTSeek 门控/质量/链路定向 **311 passed**；外部 DA **23 passed**；
+bridge 复演 raw direction 正确；生产 DB/Obsidian 未被测试写入。
+
+**状态**: 2026-10-21 23:43 CST 已 `systemctl restart ftseek-us`（PID 2948926），
+`startup_smoke_check.py --wait 90` **7/7 全绿**；新 `plan_gap_*` 字段已进入
+`entry_confirm_gate` / `pipeline` / `quality_shadow` 字节码；6 个在途仓
+ASML/MSFT/RIVN/BMY/ARM/TSM 已重新订阅，重启后 ADBE 尝试执行被 chase cap 正常拦截，
+无新增 Traceback/CRITICAL。外部 DA raw direction 随下一批 DA 进程加载。
+VWAP archetype 冲突**只做了测量，未启用 bypass**；任何门行为调整仍需影子读数 + RFC/用户批准。
+此前 RFC-156 的 quality_shadow 验收 one-shot `dc24df8f` 仍有效（10/22 09:15 ET）。
+
+## 2026-10-21 RFC-156 Phase 0A: event_reaction_v1 数据补齐（零交易门变更）
+
+**触发**: 10/21 da_feed review 发现 HIMS 23h 旧闻被当 CONTINUING（收盘却 +3.77%）、
+BAX/CBRE 收盘已确认却标未确认；用户「请确保输入数据合理，该做数据补齐的做起来」。
+
+**已落地**:
+- 新增 `app/event_stream/event_reaction.py`（`event_reaction_v1`）：`age_h` /
+  `event_session` / `post_event_move_pct` / `reaction_basis`；盘后事件看次日盘前/开盘，
+  不再拿事件日收盘硬套；缺失一律 null+reason。
+- `scripts/llm_universe_scan.py`：四条 clue（event_stream/8-K/13D-G/新闻）全部附加；
+  surfaced 增加 `evidence_matched_event_reaction`；brief 显示「事件后: +3.77% (同日收盘, 23h前)」；
+  `BRIEF_TEMPLATE_VERSION → ue_brief_v8`（PROMPT_VERSION 仍 v2.15）。
+- 配置 `universe_expansion.event_reaction_enabled: true`；报价懒取上限 30 symbol/轮。
+- 外部 DA：candidate/prompt/raw 增加 `ue_event_reaction`（备份
+  `pipeline.py.bak-ue-event-reaction-20261021`）；quality_shadow/health 增加读数。
+
+**验证**:
+- FTSeek 定向 **458 passed**；外部 DA **28 passed**；`py_compile` 通过。
+- 新增只读验收器 `scripts/quality_shadow_event_reaction_audit.py`（+14 tests）：
+  10/21 DA 基线为 **FAIL（预期：重启前写入，新键缺失；actionable 10 行，SKIP 5 行）**，
+  10/22 门为 **NOT_READY**；验收器按 actionable 行判 PASS，SKIP 行不计入；
+  批次成熟度用 `created_at`（不用 `updated_at`，后者会被结算刷新）；
+  同时读目标日 da_feed scan；若 da_feed 有 reaction 而 DA raw 全无，判
+  `FAIL(feed_reaction_not_persisted)`，防"输入有反应但链路丢字段"被 PASS_NO_REACTION 掩盖；
+  已排 2026-10-22 09:15 ET one-shot `dc24df8f` 验收下一批 DA 行。
+- 已核对 Hermes DA 主 job: `e0d574cc1a3c`，`0 20 * * 1-5`（08:00 ET），
+  `last_run_at=2026-10-21T20:55:25+08:00`，`next_run_at=2026-10-22T20:00:00+08:00`；
+  下一批 2026-10-22 20:00 CST；验收时点 21:15 CST 留 75min 余量。
+  10/21 DB 仅有 15 条 `DA-` 行（12:55 UTC 创建，重启前）+ 53 条空前缀 SKIP（13:07 UTC），
+  重启后无新 DA 行；10/22 为交易日（close 16:00 ET），无新指令写入。
+- 链路预验：外部 `_load_ue_short_candidates` 已透传 `ue_event_reaction`；
+  `app/playbook/__pycache__/quality_shadow.cpython-311.pyc` 含 5 个新键，
+  服务启动晚于源码 mtime，确认新字节码在进程内。
+- 写入路径确认：外部 DA Stage6b 在自身进程内直接调用
+  `PlaybookDB.save_instruction(_inst)`（pipeline.py:2341），raw 已含
+  `ue_event_reaction`（pipeline.py:2280）；下一批 DA 进程启动时从磁盘加载新
+  `quality_shadow`，**DA 行不依赖服务重启**；服务重启覆盖 topup/reentry 等服务内写入。
+- 外部 DA 进程环境复演（cwd=`.../deep-stock-analysis/scripts`，
+  `sys.path.append(FTSEEK_REPO)`）：`save_instruction` 成功写入 5 个新键
+  （event_age_h=23.2 / post_event_move_pct=3.77 / same_day_close / futu_daily_kline）；
+  config_loader 降级 warning 不影响 get_dotted/落库。
+- 完整 DA bridge 复演：`Pipeline._write_bridge_file` + 临时 output_dir +
+  内存 `PlaybookDB`，合成 SELL_SHORT 分析写入 1 条指令，5 个 quality_shadow 键
+  全部落地且值正确；生产 DB/Obsidian 未被写入（mtime 未变），临时产物已清理。
+- `quality_shadow_report.py` 补齐 `reaction_basis` / `reaction_source` /
+  `event_age_bucket` 维度（原先 CLI 会以 unknown dimensions 报错）；
+  quality_shadow + audit + CLI e2e 合计 **29 tests passed**。
+- CLI e2e 覆盖下一批 DA fixture：匹配 raw+scan → PASS；da_feed 有 reaction
+  但 DA raw 无 → `FAIL(feed_reaction_not_persisted)`。
+- 09:15 ET premarket scan 实盘已用 v8：surfaced 9 只中 reaction 覆盖 4 只
+  （3 same_day_close / 1 same_session_premarket）；SPCX/TSLA 因当时 cap=10 显示 pending，
+  cap 已提到 30，下一轮生效。
+- 08:02 回放：HIMS **+3.77% (23.2h前)**、BAX -1.92%、CBRE +2.65%、NFLX -5.98%
+  (next_premarket)；09:20 live brief 重建 SPCX/TSLA/BAX/CBRE 均有反应行。
+
+**状态**: 2026-10-21 21:30 CST（09:30 ET）`systemctl restart ftseek-us`
+（PID 2924305）后 `startup_smoke_check.py --wait 90` **7/7 全绿**；
+`quality_shadow` 新代码已入进程；4 个在途仓 ASML/MSFT/RIVN/SPCX 已重新订阅，
+零 Traceback/CRITICAL（启动瞬态 OpenD 重连一次，随后订阅恢复）。
+Shadow A/B 未启用；low_atr/chase cap/routing/仓位/止损均未改；Phase 0A 不占 C1。
+
+## 2026-10-21 链路缺口补齐：event_meta 覆盖 / 实体抽取 / DA 财报回退 / 归因审计
+
+**触发**: 10/20 全链路复查发现的输入质量与审计缺口；用户「如真实有效，请补齐链路缺口问题」。
+
+**已落地 (代码+测试)**:
+- event_meta 覆盖一致: 直连 sec_8k/sec_13dg/news_headline 事实也带 event_meta；
+  `event_schema` 增加保守 headline ticker 抽取 + `build_event_meta_from_parts`；
+  relevance 纳入标题主体 ticker；SEC 公司名 “/ MA” 州后缀不再误中 MA (Vertex→Mastercard 假实体)。
+- health 口径: `scripts/ue_da_chain_health.py` 增加 checkpoint user_prompt 审计，
+  区分 persisted raw (0/20) 与 prompt 实收 (10/20 NBIS MATERIAL)；JSON 旧键保留。
+- DA 财报回退: 外部 `data_collector.py` Finnhub 空/降级时回退仓内 Futu 日历 (1h 缓存+锁)。
+- UE 归因: 外部 `pipeline.py` 白名单增加 ue_short_check/ue_event_meta (仅持久化，不改 prompt)，
+  quality_shadow 的 borrow basis 可读。
+
+**验证**: FTSeek 定向 **315 passed**；外部 DA **28 passed**；8-K live meta / TSLA 财报回退实测通过；py_compile OK。
+**备份**: `/root/.hermes/.../data_collector.py.bak-earnings-fallback-20261021`、
+`pipeline.py.bak-ue-attr-persist-20261021`。
+
+**状态**: 2026-10-21 17:35 CST `systemctl restart ftseek-us`（PID 2876942）后
+`startup_smoke_check.py --wait 90` **7/7 全绿**；在途 ASML/MSFT/RIVN 已重新订阅，
+零 Traceback/CRITICAL。外部脚本下次 cron 生效；event_schema/relevance 已入进程。
 
 ## 2026-10-20 左尾尸检：入场/止损逻辑（只读，零生产变更）
 

@@ -228,3 +228,41 @@ def test_earnings_night_fields_are_record_only(shadow_tmp, monkeypatch):
     assert row["earnings_time_of_day"] == "AMC"
     assert row["earnings_night_would_revoke"] is True
     assert row["would_revoke"] is False
+
+
+# ── RFC-160 (2026-10-22): arm 行 mfe_pct_at_arm 字段钉 ─────────────────────
+def _read_rows(p):
+    return [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
+
+
+def test_mfe_field_long(shadow_tmp, monkeypatch):
+    monkeypatch.setattr("app.playbook.config.get_playbook_config", lambda: _cfg())
+    _emit(peak_price=101.5)  # LONG entry=100 → MFE +1.5%
+    rows = _read_rows(shadow_tmp)
+    assert rows[0]["mfe_pct_at_arm"] == 1.5
+
+
+def test_mfe_field_short(shadow_tmp, monkeypatch):
+    """SHORT 方向感知: peak=最有利价 (低价), MFE = (entry−peak)/entry。"""
+    monkeypatch.setattr("app.playbook.config.get_playbook_config", lambda: _cfg())
+    _emit(direction="SHORT", peak_price=98.0)
+    rows = _read_rows(shadow_tmp)
+    assert rows[0]["mfe_pct_at_arm"] == 2.0
+
+
+def test_mfe_field_missing_peak_is_null(shadow_tmp, monkeypatch):
+    """无 peak_price (旧调用方/重启前仓位) → null 落行, 不进 MFE 轨分母 (不猜)。"""
+    monkeypatch.setattr("app.playbook.config.get_playbook_config", lambda: _cfg())
+    _emit()
+    rows = _read_rows(shadow_tmp)
+    assert rows[0]["mfe_pct_at_arm"] is None
+
+
+def test_mfe_field_does_not_change_depth_track(shadow_tmp, monkeypatch):
+    """MFE 字段是纯增量: would_revoke/depth 等 B19 既有字段语义零变化。"""
+    monkeypatch.setattr("app.playbook.config.get_playbook_config", lambda: _cfg())
+    _emit(peak_price=100.4)
+    rows = _read_rows(shadow_tmp)
+    assert rows[0]["would_revoke"] is True       # profit_pct=-3.0 ≤ -2.5
+    assert rows[0]["depth_net_pct"] == -3.0
+    assert rows[0]["mfe_pct_at_arm"] == 0.4

@@ -126,6 +126,81 @@ def _load_realized():
     return out
 
 
+def _load_instruction_meta():
+    """(symbol,date,direction) -> {archetype, planned_entry, instruction_entry, plan_gap_pct}."""
+    out = {}
+    if not os.path.exists(_DB):
+        return out
+    try:
+        c = sqlite3.connect(_DB)
+        for sym, date, direction, entry, raw in c.execute(
+            "SELECT symbol, date, direction, entry_price, raw_instruction_json "
+            "FROM playbook_instructions"
+        ):
+            try:
+                data = json.loads(raw or "{}")
+            except Exception:
+                data = {}
+            raw_dir = str(
+                data.get("original_direction") or data.get("direction") or ""
+            ).upper()
+            if raw_dir in ("LONG", "BUY"):
+                d = "BUY"
+            elif raw_dir in ("SHORT", "SELL_SHORT", "SELL"):
+                d = "SHORT"
+            else:
+                ue_dir = str(data.get("ue_direction") or "").upper()
+                if ue_dir in ("LONG", "BUY"):
+                    d = "BUY"
+                elif ue_dir in ("SHORT", "SELL_SHORT", "SELL"):
+                    d = "SHORT"
+                else:
+                    arch = str(data.get("entry_archetype") or "").upper()
+                    if arch == "FADE_SHORT":
+                        d = "SHORT"
+                    elif arch == "PULLBACK_LIMIT":
+                        d = "BUY"
+                    else:
+                        d = "SHORT" if str(direction).upper().startswith("SELL") else "BUY"
+            planned = data.get("planned_entry")
+            if planned in (None, ""):
+                conf = data.get("confirmation")
+                if isinstance(conf, dict):
+                    planned = conf.get("price_level")
+            try:
+                planned = float(planned) if planned is not None else None
+            except (TypeError, ValueError):
+                planned = None
+            try:
+                entry = float(entry) if entry is not None else None
+            except (TypeError, ValueError):
+                entry = None
+            gap = (
+                round((entry - planned) / planned * 100.0, 3)
+                if planned and planned > 0 and entry else None
+            )
+            out[(sym, date, d)] = {
+                "archetype": str(data.get("entry_archetype") or "UNKNOWN").upper(),
+                "planned_entry": planned,
+                "instruction_entry": entry,
+                "plan_gap_pct": gap,
+            }
+        c.close()
+    except Exception as e:
+        print(f"[warn] 读取 instruction meta 失败: {e}", file=sys.stderr)
+    return out
+
+
+def _plan_gap_bucket(gap):
+    if gap is None:
+        return "UNKNOWN"
+    if gap <= -1.0:
+        return "<=-1%"
+    if gap >= 1.0:
+        return ">=1%"
+    return "-1..1%"
+
+
 def _span_minutes(forward):
     """轨迹实际测量跨度 (分钟)。用于诚实标注"测了多久", 而非假称持有到收盘。"""
     if len(forward) < 2:
@@ -190,6 +265,8 @@ def main():
     ap.add_argument("--min-forward", type=int, default=2,
                     help="可测量所需的最少前向采样点 (默认2)")
     ap.add_argument("--verbose", action="store_true", help="逐笔明细")
+    ap.add_argument("--by-archetype", action="store_true",
+                    help="按 DA entry_archetype / plan_gap 分桶 (read-only)")
     args = ap.parse_args()
 
     rows = _load_shadow(args.days)
@@ -199,6 +276,7 @@ def main():
     traj = _build_trajectories(rows)
     sltp = _load_sltp()
     realized = _load_realized()
+    meta = _load_instruction_meta() if args.by_archetype else {}
 
     days = sorted({r.get("ts", "")[:10] for r in rows})
     print(f"影子样本: {len(rows)} 行, 覆盖 {len(days)} 天 ({days[0]}..{days[-1]})")
@@ -209,6 +287,8 @@ def main():
     print(f"=== [处理组] 被VWAP门拦掉 (wrong_side): {len(ev)} 个去重决策事件 ===")
     vals, spans, unmeasurable = [], [], 0
     by_dir = defaultdict(list)
+    by_arch = defaultdict(list)
+    by_gap = defaultdict(list)
     kinds = defaultdict(int)
     if args.verbose:
         print(f"  {'symbol':10} {'dir':5} {'day':11} {'拦截价':>9} {'假想PnL':>9} {'跨度min':>8} {'出场':>10}")
@@ -225,6 +305,9 @@ def main():
         vals.append(pnl)
         spans.append(span)
         by_dir[dr].append(pnl)
+        _m = meta.get((sym, day, dr), {})
+        by_arch[str(_m.get("archetype") or "UNKNOWN")].append(pnl)
+        by_gap[_plan_gap_bucket(_m.get("plan_gap_pct"))].append(pnl)
         if args.verbose:
             print(f"  {sym:10} {dr:5} {day} {kill_price:9.2f} {pnl:+8.2f}% {span:8.1f} {kind:>10}")
 
@@ -236,6 +319,15 @@ def main():
     _summarize("放行假想盈亏(全体)", vals)
     for d in ("BUY", "SHORT"):
         _summarize(f"  ├─ {d}", by_dir.get(d, []))
+
+    if args.by_archetype:
+        print("  ── 按 DA entry_archetype (处理组假想) ──")
+        for arch in sorted(by_arch):
+            _summarize(f"    {arch}", by_arch[arch])
+        print("  ── 按 plan_gap_bucket (instruction entry vs planned) ──")
+        for bucket in ("<=-1%", "-1..1%", ">=1%", "UNKNOWN"):
+            if by_gap.get(bucket):
+                _summarize(f"    {bucket}", by_gap[bucket])
 
     if vals:
         mean_all = st.mean(vals)
@@ -256,6 +348,8 @@ def main():
     print("        故对照组改取 trade_records 的**已实现 pnl** (真实成交, 非模拟)。")
     rvals, matched = [], 0
     rby_dir = defaultdict(list)
+    rby_arch = defaultdict(list)
+    rby_gap = defaultdict(list)
     for key, r in sorted(ev2.items()):
         sym, dr, day = key
         got = realized.get((sym, day, dr))
@@ -263,10 +357,21 @@ def main():
             matched += 1
             rvals.extend(got)
             rby_dir[dr].extend(got)
+            _m = meta.get((sym, day, dr), {})
+            rby_arch[str(_m.get("archetype") or "UNKNOWN")].extend(got)
+            rby_gap[_plan_gap_bucket(_m.get("plan_gap_pct"))].extend(got)
     print(f"  join 到真实成交: {matched}/{len(ev2)} 个事件 ({len(rvals)} 笔成交)")
     _summarize("放行组已实现盈亏", rvals)
     for d in ("BUY", "SHORT"):
         _summarize(f"  ├─ {d}", rby_dir.get(d, []))
+    if args.by_archetype:
+        print("  ── 按 DA entry_archetype (放行组已实现) ──")
+        for arch in sorted(rby_arch):
+            _summarize(f"    {arch}", rby_arch[arch])
+        print("  ── 按 plan_gap_bucket (放行组已实现) ──")
+        for bucket in ("<=-1%", "-1..1%", ">=1%", "UNKNOWN"):
+            if rby_gap.get(bucket):
+                _summarize(f"    {bucket}", rby_gap[bucket])
 
     print()
     print("口径警示 (务必如实看待):")

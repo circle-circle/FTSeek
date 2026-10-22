@@ -123,6 +123,20 @@ def build_quality_shadow(inst: Dict[str, Any]) -> Dict[str, Any]:
     short_check = raw.get("short_check") if isinstance(raw.get("short_check"), dict) else {}
     origin_short = origin.get("short_check") if isinstance(origin.get("short_check"), dict) else {}
     ue_short = raw.get("ue_short_check") if isinstance(raw.get("ue_short_check"), dict) else {}
+    ue_reaction = raw.get("ue_event_reaction") if isinstance(
+        raw.get("ue_event_reaction"), dict) else {}
+    planned_entry = raw.get("planned_entry")
+    if planned_entry in (None, ""):
+        confirmation = raw.get("confirmation")
+        if isinstance(confirmation, dict):
+            planned_entry = confirmation.get("price_level")
+    planned_entry = _as_float(planned_entry)
+    instruction_entry = _as_float(inst.get("entry_price"))
+    plan_gap_pct = (
+        round((instruction_entry - planned_entry) / planned_entry * 100.0, 3)
+        if (planned_entry and planned_entry > 0 and instruction_entry)
+        else None
+    )
     borrow_basis = str(
         short_check.get("borrow_data_basis")
         or origin_short.get("borrow_data_basis")
@@ -173,7 +187,14 @@ def build_quality_shadow(inst: Dict[str, Any]) -> Dict[str, Any]:
         "critique_weakest_link": str(critique.get("weakest_link") or "")[:200] or None,
         "debate_outcome": str(raw.get("debate_outcome") or "")[:200] or None,
         "entry_archetype": archetype,
+        "planned_entry": planned_entry,
+        "plan_gap_pct": plan_gap_pct,
         "borrow_data_basis": borrow_basis or None,
+        "event_age_h": _as_float(ue_reaction.get("age_h")),
+        "post_event_move_pct": _as_float(ue_reaction.get("post_event_move_pct")),
+        "reaction_basis": str(ue_reaction.get("reaction_basis") or "") or None,
+        "reaction_source": str(ue_reaction.get("source") or "") or None,
+        "reaction_reason": str(ue_reaction.get("reason") or "") or None,
         "would_downgrade_high_score_long": downgrade,
         "would_prefer_medium_pullback": prefer_pullback,
         "would_require_market_confirmation": require_confirmation,

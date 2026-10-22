@@ -40,7 +40,36 @@ DIMENSIONS = [
     "info_channel", "debate_outcome", "entry_archetype", "event_family",
     "would_downgrade_high_score_long", "would_prefer_medium_pullback",
     "would_require_market_confirmation",
+    # RFC-156 event_reaction_v1 队列维度 (2026-10-21)
+    "reaction_basis", "reaction_source", "event_age_bucket",
+    # 2026-10-21 计划锚 vs 执行锚冲突审计
+    "plan_gap_bucket",
 ]
+
+
+def _dim_value(tags: Dict[str, Any], dim: str) -> str:
+    if dim == "event_age_bucket":
+        age = _f(tags.get("event_age_h"))
+        if age is None:
+            return "UNKNOWN"
+        if age <= 6:
+            return "<=6h"
+        if age <= 12:
+            return "6-12h"
+        if age <= 24:
+            return "12-24h"
+        return ">24h"
+    if dim == "plan_gap_bucket":
+        gap = _f(tags.get("plan_gap_pct"))
+        if gap is None:
+            return "UNKNOWN"
+        if gap <= -1.0:
+            return "<=-1%"
+        if gap >= 1.0:
+            return ">=1%"
+        return "-1..1%"
+    value = tags.get(dim)
+    return str(value) if value is not None else "UNKNOWN"
 
 
 def _json_obj(value: Any) -> Dict[str, Any]:
@@ -159,8 +188,7 @@ def report(db_path: Path, group: List[str], days: Optional[int], min_n: int) -> 
         tags = _tags(row)
         if not tags:
             continue
-        key = tuple(str(tags.get(dim) if tags.get(dim) is not None else "UNKNOWN")
-                    for dim in group)
+        key = tuple(_dim_value(tags, dim) for dim in group)
         bucket = buckets.setdefault(key, {
             "group": key,
             "fwd": [],

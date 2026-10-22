@@ -140,6 +140,9 @@ def stubbed_brief(monkeypatch, tmp_path):
         "universe_expansion.input_prescreen": False,
     }
     monkeypatch.setattr(ue, "_cfg", lambda k, d=None: cfg.get(k, d))
+    # 本文件钉 P2.1a 的"正文零漂移"; event_reaction_v1 的行由
+    # tests/test_event_reaction.py + 生产 live 验证覆盖, 此处关掉以保持夹具逐字。
+    monkeypatch.setattr(ue, "_build_reaction_ctx", lambda: None)
 
     monkeypatch.setattr(ue, "_gather_news", lambda hours: [
         {"title": "Fed 释放降息信号", "symbols": '["SPY","QQQ"]',

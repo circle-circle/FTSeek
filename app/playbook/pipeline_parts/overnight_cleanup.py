@@ -234,7 +234,8 @@ def _force_close_orphaned_sim_positions(
                                           _rpnl_net if _rpnl_net is not None else _rpnl,
                                           track=_eod_track,
                                           trade_id=r["id"],
-                                          earnings_guard=getattr(scheduler, "earnings_risk_guard", None))  # RFC-095 身份锚
+                                          earnings_guard=getattr(scheduler, "earnings_risk_guard", None),  # RFC-095 身份锚
+                                          peak_price=_meta.get("peak_price"))  # RFC-160 MFE 轨
                             except Exception as _edg_err:
                                 # R5: 打点内层已全量收口, 本层只兜 import 级故障 — 必须留痕,
                                 #   否则「影子零样本」与「打点链路断了」不可区分 (2026-09-09 棘轮清剿)

@@ -113,7 +113,9 @@ class TestCitationStates:
                 got = ue._classify_evidence_citation(ev, sym, index)
                 assert got["state"] in ue.CITATION_STATES, got
                 assert set(got) == {"state", "evidence_id", "matched_symbols",
-                                    "matched_source", "matched_event_meta"}
+                                    "matched_source", "matched_event_meta",
+                                    "matched_event_reaction",
+                                    "matched_event_reaction_entry"}
 
     def test_cross_line_quote_is_conservative_not_entity_linked(self):
         """跨行拼引: 池化匹配过阈但定位不到单条事实 ⇒ 保守落传导假设且 evidence_id=None。
