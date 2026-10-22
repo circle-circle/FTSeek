@@ -2356,6 +2356,11 @@ universe_expansion:
   #   排列价跌破MA5="短期偏多", 择时闸按设计不判冲突) — 诚实边界。
   #   回滚: 各自改 false (①恢复 8/3 只取 SHORT 语义; ②直写通道恢复无动量闸)。
   da_candidate_feed_long: true
+  # 2026-10-22 [RFC-159]: DA 侧杠杆/反向 ETF 前置过滤.
+  #   10/22 28 条 gate 中 8 条是 "2倍做空/做多 ... ETF", 全部缺 9 维数据 SKIP;
+  #   ext_entry 已用 name 含 ETF 过滤 (6/6, 0 误伤). 本键只过滤带杠杆/反向关键词的
+  #   ETF, 不碰 SPY/QQQ 等宽基 ETF; 回滚 false. 不占 C1.
+  da_skip_leveraged_etf: true
   # 2026-10-15 审计: 本键唯一调用链 (llm_universe_scan inject) 已于 10-06 随 UE
   #   fresh-event 改造下 cron ⇒ 键 dormant (手动跑 inject 仍生效; RFC-117 §5「生产门」
   #   表述已失真, 现役生产面无此闸)。保留不删: 手动路径仍读。
