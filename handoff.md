@@ -1,5 +1,12 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-23 futu 通道影子退役批（用户裁「同意」，已提交推送+热重载生效）
+
+- **iv_hv**: KILLED 结案（9/21 NO_RESIDUAL 判据未达；采集实际 9/21 已停、产物 9/19 冻结 32,007 行）; `iv_collect_enabled=false` 重新钉回 config（10-18 死键清理批曾丢失该键——死键判定漏了这个读者，留痕缺口已补）。
+- **top_movers**: SUPERSEDED 维持 + COLLECTION_RETIRED；`movers_shadow_enabled=false`；理由链：10-03「继续采」唯一依据 = KR3 ③轴覆盖瓶颈，KR3 于 10-15 证伪结题 ⇒ 理由失效。**实证热重载生效**：01:39:39 采集器日志「停采 futu_channel_top_movers」。
+- **保留不动**: capital_flow（生产资金背离门原料，停采=断料）、ofi_baseline（OFI 自身 IC 测量欠账，11-21 复看）。
+- 提交 `6c35fc117` 已推送。零交易行为变更，无需重启。注册表 94 项 0 告警；needs_user 仅剩 fee_gate_shadow（建议已呈，待用户确认）。
+
 ## 2026-10-23 影子退役批（用户三裁，已提交推送）
 
 - **eth_rth_fade 判失败退役**（用户裁）: 样本门过（16 RTH 日/39 笔）但判据 3/4 未过（净/笔 −$15.17 / 胜率 54% / 留一口 −$34.94）⇒ FAIL。注册表 KILLED + verdict + ADJUDICATED 回写；cron `10 4 * * 2-6` 注释退役；消费方（htb_borrow_fee_sensitivity/shadow_board）只读历史不断料；数据 39 笔留档。
