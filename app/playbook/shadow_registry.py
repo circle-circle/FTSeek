@@ -132,7 +132,9 @@ class ShadowItem:
 ADJUDICATED: dict[str, dict] = {
     "futu_channel_top_movers": {
         # 2026-10-03 闹钟到期, 用户确认执行 9/21b 建议③ (并入 kr3 轴, 不新增门/影子)。
-        "read_at": "2026-10-03", "recheck_after": "", "needs_user": False,
+        # 〔2026-10-23 用户裁「退役」: KR3 10-15 证伪结题 ⇒ 采集理由失效, 已停采
+        #   (movers_shadow_enabled=false); 横截面 IC 读数留档。〕
+        "read_at": "2026-10-23", "recheck_after": "", "needs_user": False,
         "note": "榜内横截面 IC=-0.44/t=-13 (榜首续跌) 与笔级 top10 +$15.20/笔 符号相反 ⇒ 用途待裁 "
                 "(RFC-092 §8.2/§9.1)。用途三条路 (排除/反向池/并入 kr3) 均需另立预注册。"
                 "2026-09-21 用户裁: 9/30 窗满后一次裁, 在此之前维持现状 (榜单继续做参考层输入)。"
@@ -337,9 +339,9 @@ ADJUDICATED: dict[str, dict] = {
         "note": "T+1 mean -0.051% 未越 ±0.15% ⇒ KEEP_SAMPLING (判据字典 B14)。",
     },
     "futu_channel_iv_hv": {
-        # 〔2026-10-22 重看: live n=317/30; 09-21 verdict=NO_RESIDUAL (MDE±52 不可分辨) 结论不变 —
-        #   MDE 数学不随增量翻案; 维持观测。〕
-        "read_at": "2026-10-22", "recheck_after": "2026-11-21", "needs_user": False,
+        # 〔2026-10-23 用户裁「退役」结案: NO_RESIDUAL 判据未达 + 采集 9/21 已停 ⇒
+        #   终态, 不再重看; 重开=新预注册。〕
+        "read_at": "2026-10-23", "recheck_after": "", "needs_user": False,
         "note": "三桶无残存效应 (medium +35.74 但 MDE±52 不可分辨; high 无效应) ⇒ NO_RESIDUAL (RFC-092 §8.1)。",
     },
     "futu_channel_ofi_baseline": {
@@ -978,7 +980,13 @@ REGISTRY: list[ShadowItem] = [
                                       "不新增门/影子/反向池, 笔级追高假设归 "
                                       "kr3_direction_runup_gate 轴; 本项仅保留特有横截面 IC "
                                       "作解读佐证。采集开关继续 true (9/21 用户裁继续采, "
-                                      "RFC-092 §9.1/§10.3 与 config 注释), 停采须另行裁决。"}],
+                                      "RFC-092 §9.1/§10.3 与 config 注释), 停采须另行裁决。"},
+                         {"date": "2026-10-23", "verdict": "COLLECTION_RETIRED (用户裁「退役」)",
+                          "evidence": "10-15 KR3 两腿证伪结题 ⇒ 10-03 并入 kr3 轴的采集理由 "
+                                      "(③轴覆盖瓶颈) 随之失效; 榜内横截面 IC=-0.44/t=-13 读数留档 "
+                                      "(作反向证据史)。停采=movers_shadow_enabled=false (热重载生效); "
+                                      "数据保留不删, 重开=新预注册。"}],
+        collection_retired=True,
         notes="盘中每轮(300s节流)1行快照, ~78行/交易日; min_n=540≈7个交易日; "
               "可量口径二: scripts/top_movers_trade_join.py (榜单 × 已成交笔, 用于评估'冷却'类用法); "
               "**同轴声明 (RFC-092b §9)**: 本榜'追高排除/冷却'用法与 kr3 测同一批笔 (rank≤10 的 11 笔中 10 笔落在 "
@@ -988,7 +996,7 @@ REGISTRY: list[ShadowItem] = [
     ShadowItem(
         id="futu_channel_iv_hv",
         name="IV/HV 前瞻波动率影子",
-        status=ShadowStatus.OBSERVING,
+        status=ShadowStatus.KILLED,
         description="通道 D (8/29 新增, 用户裁'4也做'): get_option_underlying_his_volatility "
                     "股票级 IV (前瞻) + HV 250 日序列, 无需期权合约。用途: 影子攒样验证 "
                     "IV/HV 在已落地 atr_pct vol_buckets 上有无桶内残存效应 (前瞻补后视)。"
@@ -1017,7 +1025,14 @@ REGISTRY: list[ShadowItem] = [
                                       "(INSUFFICIENT_N) | medium n=41 HI +$4.66 / LO -$31.08 → pooled 差 "
                                       "+$35.74 但 **日聚类 t=2.029 且 MDE±52.4 > 效应 ⇒ 不可分辨** | "
                                       "high n=269 差 +$4.68 t=-0.026 MDE±23.8 ⇒ NO_RESIDUAL | extreme n=0。"
-                                      "任何桶均未达'桶内增量显著' ⇒ 判据未达; 计数锚改指 latest.json。"}],
+                                      "任何桶均未达'桶内增量显著' ⇒ 判据未达; 计数锚改指 latest.json。"},
+                         {"date": "2026-10-23", "verdict": "RETIRED (用户裁「退役」)",
+                          "evidence": "9/21 NO_RESIDUAL 判据未达后, 「10/21 重看裁决」一直欠账 "
+                                      "(10-22 全链路复查 R5 曾把闹钟延到 11-21); 今日用户直接裁退役 ⇒ "
+                                      "结案。采集实际自 9/21 已停 (产物最后写入 9/19, 32,007 行留档); "
+                                      "本批把配置键 iv_collect_enabled=false 重新钉回 unified_config "
+                                      "(该键曾在 10-18 死键清理批中丢失, 属留痕缺口补钉)。"}],
+        collection_retired=True,  # 实际 9/21 已停 (产物 9/19 冻结); 本批补钉配置键+终态
         notes="🔒 2026-09-21 停采 (用户裁'无效就停'): futu_channels.iv_collect_enabled=false — 已注册的假设"
               " (桶内残存效应) 结论为无残存效应, 且产物除本条目 eval 外无任何消费者 ⇒ 继续采只是继续长文件。"
               " 数据保留 (32,007 行) 不删; 登记状态仍 OBSERVING (终态留给 10/21 重看裁决)。"

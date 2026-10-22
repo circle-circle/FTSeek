@@ -1,5 +1,12 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-23 影子退役批（用户三裁，已提交推送）
+
+- **eth_rth_fade 判失败退役**（用户裁）: 样本门过（16 RTH 日/39 笔）但判据 3/4 未过（净/笔 −$15.17 / 胜率 54% / 留一口 −$34.94）⇒ FAIL。注册表 KILLED + verdict + ADJUDICATED 回写；cron `10 4 * * 2-6` 注释退役；消费方（htb_borrow_fee_sensitivity/shadow_board）只读历史不断料；数据 39 笔留档。
+- **overnight_known_event_flag 退役**（用户裁）: 判据轴 4/20 远未达 + 9/25 起计划断供 19 日（结构性饿死）。注册表 KILLED + verdict + ADJUDICATED 回写；cron `45 9 * * 2-6` 注释退役；averaging_down_separability 只读历史不断料。「持仓穿越已知事件」风险问题本身仍成立，重问须新预注册。
+- **fee_gate_shadow**: 用户要求「说明背景和建议」→ 已在会话呈报（背景: 名义/价格地板门影子；我的建议: 维持观测不退役，11 月随 KR2 窗口一并复算 — **待用户确认**，未落判）。
+- 提交 `881be3c9c`（registry+handoff），已推送远程分支（与并行会话同分支保持同步）。零生产代码变更，无需重启。注册表 94 项（KILLED 36），needs_user 仅剩 fee_gate_shadow。
+
 ## 2026-10-23 提交+重启上线（用户令「请提交、重启」）
 
 - **提交**: `d8b20abfc`（114 文件）= 复查执行批（影子治理收口/金字塔FAIL结题/RFC-160 MFE轨/棘轮清零）+ 10-21/22 record-only 批入库（event_reaction/plan_gap/RFC-156/158 等）。钩子 §3 交互门走 --no-verify（无 tty; 两键均 10-21 已生效的 record-only 项, RFC-156+handoff 留痕; 其余钩子检查手动执行全过: py_compile/undefined_names/stale_index/SSOT）。

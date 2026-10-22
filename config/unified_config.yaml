@@ -3488,7 +3488,12 @@ futu_channels:
   # premarket_rank=全市场盘前涨跌榜入 premarket_enrichment (20只池→全市场);
   # movers_shadow=盘中异动榜影子采集 (先攒样不进门禁)。独立回滚: 置 false+重启。
   premarket_rank_enabled: true
-  movers_shadow_enabled: true
+  # 2026-10-23 用户裁「退役」: KR3 已于 10-15 两腿证伪结题 ⇒ 9/21「继续采」的唯一理由
+  #   (③轴覆盖瓶颈) 已失效; 榜内 IC=-0.44/t=-13 的读数留档, 数据保留不删, 重开=新预注册。
+  movers_shadow_enabled: false
+  # 2026-10-23 用户裁「退役」: iv_hv 通道 9/21 已判 NO_RESIDUAL (三桶无残存效应, MDE±52 不可分辨),
+  #   其后采集无任何裁决价值 ⇒ 停采; 数据保留不删, 重开=新预注册。
+  iv_collect_enabled: false
   # 2026-09-21 决定**继续采** (差点误停成 false, 记此为戒): 用户 9/21 已裁"继续"并把处置
   #   改判③ (同轴并入既有追高族, 不新增硬门)。而 ③ 的**唯一瓶颈就是覆盖**: join 上 130/864 笔,
   #   榜窗仅 18 会话 —— 入场时刻有没有榜观测, 只能靠**持续在线采集**才有; 停采等于把 ③ 卡死。
