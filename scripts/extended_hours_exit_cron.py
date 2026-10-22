@@ -23,6 +23,7 @@ except Exception as _dotenv_err:
 from scripts.extended_hours_market_session import get_extended_hours_session
 from scripts.orphan_ext_order_watch import scan as scan_orphan_orders
 from scripts.exit_closekey_health import scan as scan_closekey_health
+from scripts.rth_zero_fill_autorelease import scan as scan_rth_zero_fill
 
 LOCK_FILE = ROOT / "logs" / "extended_hours_exit_cron.lock"
 NEXT_OPEN_START_MINUTES = 570
@@ -110,8 +111,18 @@ def run_once(dry=False, timeout_s=240, now=None):
     except Exception as _exc:      # 探针故障不阻塞退出链
         closekey_health = {"ok": False, "error": f"{type(_exc).__name__}: {_exc}"[:200]}
 
+    # RTH 零成交卡死意图自愈 (RFC-157, INCIDENT-003): 盘中被撤的 RTH 腿有终态
+    #   零成交 + 仓位仍在 ⇒ intent 永久 HELD (resume 不补腿) ⇒ blocked_exits 冻结
+    #   规则链。ETH 侧已有同类出口, 本步补 RTH 侧。判据/上限见模块 docstring;
+    #   故障只降级不阻塞退出链 (退出链优先, 与上面两只哨兵同向)。
+    try:
+        rth_zero_fill = scan_rth_zero_fill(dry=dry)
+    except Exception as _exc:
+        rth_zero_fill = {"ok": False, "error": f"{type(_exc).__name__}: {_exc}"[:200]}
+
     # 单一出口: 守卫字段在此一次性挂上, 后续任何分支都带着它返回。
-    result = {"ok": True, "orphan": orphan, "closekey_health": closekey_health}
+    result = {"ok": True, "orphan": orphan, "closekey_health": closekey_health,
+              "rth_zero_fill": rth_zero_fill}
 
     session = get_exit_cron_session(now)
     command = collector_command(session)
