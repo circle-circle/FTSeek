@@ -197,42 +197,103 @@ def _bar_cache_path(symbol: str, day: str) -> Path:
     return BAR_DIR / f"{symbol.replace('.', '_')}_{day}.json"
 
 
-def fetch_bars(ctx, symbol: str, day: str, refresh: bool = False) -> list[dict] | None:
-    """返回 [{t: aware ET, o,h,l,c}], 按时间升序; 无数据返回 None."""
+def expected_last_hhmm(day: str) -> str:
+    """该交易日 1min bar 应覆盖到的末根时刻 (ET, "HH:MM").
+
+    提前收盘日 (13:00 ET) → "12:55", 常规 → "15:55"。日历不可用 → 兜底 "15:55"
+    (收严: 宁可把残 bar 当缺失重拉, 也不把半日当完整)。
+    """
+    try:
+        from datetime import date as _date
+        from app.utils.holiday_calendar import get_us_close_minutes_et
+        close = int(get_us_close_minutes_et(_date.fromisoformat(str(day))))
+        return "%02d:%02d" % ((close - 5) // 60, (close - 5) % 60)
+    except Exception:
+        return "15:55"
+
+
+def bars_truncated(raw, day: str) -> bool:
+    """raw=[[ts,o,h,l,c],…] 是否残缺 (盘中拉取/半日落盘). 空列表也算残缺。
+
+    2026-10-23 (RFC-161): 盘中拉取会把半日 bar 落盘并被后续「缓存=完整」路径复用
+    (数据面实测 17 个: 如 US_SPY_2026-08-21.json 106 根止于 11:16) ⇒ 用 11:16 价当
+    收盘价 = 静默错值。残 bar 一律视同缺失, 由调用方重拉。
+    """
+    if not raw:
+        return True
+    try:
+        if not isinstance(raw[0], (list, tuple)):
+            return True
+        if len(raw) < 30:
+            return True
+        return str(raw[-1][0])[11:16] < expected_last_hhmm(day)
+    except Exception:
+        return True
+
+
+def fetch_bars_with_status(ctx, symbol: str, day: str, refresh: bool = False):
+    """返回 (status, bars); status ∈ {cache, fetched, empty, error}。
+
+    与 fetch_bars 的唯一差别是**区分「无数据」与「拉取失败」**: 额度耗尽/网络/OpenD
+    不可用都是 error, 而不是「这只票没有 bar」。需要据此判「排除样本 vs 继续等」的
+    消费方 (赢家隔夜结算器 no_bar 判定) 必须用本函数, 否则一次额度耗尽就会把真样本
+    永久踢出判据。缓存命中但残缺 (bars_truncated) 视同未命中, 走重拉。
+    """
     cp = _bar_cache_path(symbol, day)
     if cp.exists() and not refresh:
         try:
             raw = json.loads(cp.read_text())
-            return [{"t": ET.localize(datetime.strptime(b[0], "%Y-%m-%d %H:%M:%S")),
-                     "o": b[1], "h": b[2], "l": b[3], "c": b[4]} for b in raw]
+            if not bars_truncated(raw, day):
+                return "cache", [{"t": ET.localize(datetime.strptime(b[0], "%Y-%m-%d %H:%M:%S")),
+                                  "o": b[1], "h": b[2], "l": b[3], "c": b[4]} for b in raw]
         except Exception:
             pass
     from futu import KLType, RET_OK, AuType
     data = None
+    last_ret = None
     for attempt in (1, 2):  # 空结果重试一次 (区分限流失败 vs 休市合法空)
         # 2026-07-28 (DEB-bar-ruler F2): autype=NONE — 回放的 entry/exit 是原始成交价,
         #   缺省 QFQ 前复权在分红股跨除息日会错位 ~0.3-0.5%
         ret, data, _ = ctx.request_history_kline(
             symbol, ktype=KLType.K_1M, start=day, end=day, max_count=1000,
             autype=AuType.NONE)
+        last_ret = ret
         if ret == RET_OK and data is not None and len(data) > 0:
             break
         if attempt == 1:
             time.sleep(3.0)
-    if data is None or len(data) == 0:
+    if last_ret != RET_OK or data is None:
         time.sleep(1.2)  # kline 配额保护 (≤25次/30s)
-        return None
+        return "error", None
+    if len(data) == 0:
+        time.sleep(1.2)
+        return "empty", None
     bars = []
     for _, row in data.iterrows():
         t = str(row.get("time_key", ""))[:19]
         bars.append([t, float(row["open"]), float(row["high"]),
                      float(row["low"]), float(row["close"])])
     bars.sort(key=lambda b: b[0])
+    if bars_truncated(bars, day):
+        # 拉到了但非全 RTH (半日市/盘中中断/停牌): 不写缓存污染后续「缓存=完整」路径
+        time.sleep(1.2)
+        return "truncated", [{"t": ET.localize(datetime.strptime(b[0], "%Y-%m-%d %H:%M:%S")),
+                              "o": b[1], "h": b[2], "l": b[3], "c": b[4]} for b in bars]
     cp.parent.mkdir(parents=True, exist_ok=True)
     cp.write_text(json.dumps(bars))
     time.sleep(1.2)  # kline 配额保护 (≤25次/30s)
-    return [{"t": ET.localize(datetime.strptime(b[0], "%Y-%m-%d %H:%M:%S")),
-             "o": b[1], "h": b[2], "l": b[3], "c": b[4]} for b in bars]
+    return "fetched", [{"t": ET.localize(datetime.strptime(b[0], "%Y-%m-%d %H:%M:%S")),
+                        "o": b[1], "h": b[2], "l": b[3], "c": b[4]} for b in bars]
+
+
+def fetch_bars(ctx, symbol: str, day: str, refresh: bool = False) -> list[dict] | None:
+    """返回 [{t: aware ET, o,h,l,c}], 按时间升序; 无数据/拉取失败返回 None。
+
+    2026-10-23 (RFC-161): 委托 fetch_bars_with_status — 缓存残缺自动重拉 (修半日
+    bar 污染), 拉到的残日不落盘。返回口径 (有/无) 未变, 既有调用方无需改。
+    """
+    _status, bars = fetch_bars_with_status(ctx, symbol, day, refresh=refresh)
+    return bars
 
 
 def collect_bars(trades: list[dict], refresh: bool = False,

@@ -20,8 +20,22 @@ breakeven/trail 收紧更新) — 真实赢家仓 arm 时刻生效 SL 更紧, �
 持夜"的 SL_touch 读数因此偏少 (初始 SL 口径), 判据侧知悉。
 
 数据源: data/replay_bars/{SYM}_{date}.json (position_path_collector 盘后落).
-次日交易日 = holiday_calendar.nth_trading_day_after; bar 缺失 → 保留
-unsettled 待补算 (静默死亡族纪律: 每次运行打印未结算积压数)。
+次日交易日 = holiday_calendar.nth_trading_day_after。
+
+RFC-161 (2026-10-23, 用户裁「要」): 采集器只采平仓笔的 entry_day/exit_day, 从不采
+T+1 ⇒ 凡 PRE_CLOSE 盈利仓, 其 arm 次日 bar 系统性缺失 (9/4 META 卡 12 天、10/19 PEP
+卡 3 天都是这个缺口), 结算器原先纯读缓存 ⇒ 结构性积压 + 静默漏算。现改为
+**fetch-on-miss**: 缺/残 bar 时直接补拉 (幂等落缓存) 再结算。四条护栏:
+  1. 只在该 bar 日已收盘 (ET) 后补拉 — 盘中拉到的半日 bar 一旦落盘会被当完整 EOD;
+     落盘前校验全 RTH (末根≥收盘-5min, 提前收盘日按 13:00 算), 残日不写缓存。
+  2. 区分「拉取失败」与「无数据」 — 额度耗尽/网络/OpenD 断连一律保持 pending,
+     绝不判 no_bar (额度问题 ≠ 该标的没有 bar, 误判会把真样本永久踢出判据)。
+  3. no_bar 只在「已收盘 + 交易日 + 拉取成功但无/残」连续 N 个周期后成立,
+     留 bar_no_bar_reason + bar_no_bar_since, 可 --reset-settled 重开; 不入 B16 分母。
+  4. 结算行记 settle_lag_days — 迟到补算与次日结算混在一张表里会看不出「批量回填」
+     (n 突增读起来像新证据, 实为旧 arm)。
+
+bar 缺失/不可得 → 保留 unsettled 待补算 (静默死亡族纪律: 每次运行打印未结算积压数)。
 
 用法: venv/bin/python scripts/settle_winner_overnight_shadow.py [--days N]
 
@@ -34,14 +48,20 @@ n≥20 在积压清空前不可信)。回滚: 告警分支独立于结算, 无�
 import argparse
 import logging
 import json
+import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "scripts"))  # fetch-on-miss 复用 exit_replay_backtest (SSOT)
 BAR_DIR = ROOT / "data" / "replay_bars"
 SHADOW = ROOT / "data" / "shadow" / "winner_overnight_shadow.jsonl"
 OUT = ROOT / "data" / "shadow" / "winner_overnight_shadow_latest.json"
+
+# 连续 N 个结算周期拿不到「全 RTH」bar → 标 no_bar 排除 (可 --reset-settled 重开)。
+# 取 2 而非 1: 单周期失败可能是当日数据源延迟到账, 一次就排除等于把真样本当不存在。
+NO_BAR_AFTER = 2
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +81,24 @@ def next_trading_day(d: str):
     return nd.isoformat() if nd else None
 
 
+def _bars_truncated(bars, day: str) -> bool:
+    """残缺判据 — 复用 exit_replay_backtest.bars_truncated (SSOT: 含提前收盘日 13:00)。"""
+    try:
+        import exit_replay_backtest as _erb
+        return bool(_erb.bars_truncated(bars, day))
+    except Exception as e:  # SSOT 不可用 → 收严兜底 (比误把半日当完整便宜)
+        logger.warning("残缺判据加载失败 (回退 15:55 兜底): %s", e)
+        return (not bars) or len(bars) < 30 or str(bars[-1][0])[11:16] < "15:55"
+
+
 def load_1m(symbol: str, day: str):
-    """1min bars: list of [ts, o, h, l, c]; None 表示缺失."""
+    """1min bars: list of [ts, o, h, l, c]; None 表示缺失或非全 RTH。
+
+    RFC-161 (2026-10-23): 加完整性判据 — 末根必须到该日收盘前 5min (提前收盘日按
+    13:00)。缘起: 盘中拉取会把半日 bar 落盘 (数据面实测 17 个: US_SPY_2026-08-21.json
+    106 根止于 11:16), 旧判据 len>=30 会把它当完整 EOD ⇒ 用 11:16 价结算 = 静默错值,
+    比缺 bar 更坏 (缺了会告警, 错了不响)。残 bar 视同缺失 → 走 ensure_bars 补拉。
+    """
     p = BAR_DIR / f"{symbol.replace('.', '_')}_{day}.json"
     if not p.exists():
         return None
@@ -71,7 +107,85 @@ def load_1m(symbol: str, day: str):
         bars = data.get("bars", []) if isinstance(data, dict) else data
     except Exception:
         return None
-    return bars if len(bars) >= 30 else None
+    if _bars_truncated(bars, day):
+        if bars:
+            logger.warning("replay bar 残缺 (半日/截断) 视同缺失: %s %s (%d 根, 末根 %s)",
+                           symbol, day, len(bars), str(bars[-1][0])[11:16])
+        return None
+    return bars
+
+
+def _fetch_bars(symbol: str, day: str):
+    """外部补拉 1min bar (Futu OpenD)。返回 (bars|None, status)。
+
+    status 由 exit_replay_backtest.fetch_bars_with_status 给出: fetched / empty /
+    truncated / error — 关键是把「拉取失败」(额度/网络) 与「无数据」分开。
+    """
+    try:
+        import exit_replay_backtest as _erb
+        from futu import OpenQuoteContext
+    except Exception as e:
+        logger.error("补拉依赖加载失败 %s %s: %s", symbol, day, e, exc_info=True)
+        return None, "error"
+    ctx = None
+    try:
+        ctx = OpenQuoteContext(host=os.getenv("FUTU_OPEND_HOST", "127.0.0.1"),
+                               port=int(os.getenv("FUTU_OPEND_PORT", "11111")))
+        status, got = _erb.fetch_bars_with_status(ctx, symbol, day, refresh=True)
+    except Exception as e:
+        logger.error("补拉 bar 异常 %s %s: %s", symbol, day, e, exc_info=True)
+        return None, "error"
+    finally:
+        try:
+            if ctx is not None:
+                ctx.close()
+        except Exception as e:
+            logger.warning("补拉后 ctx 关闭异常 (不影响结果): %s", e)
+    if not got:
+        return None, status
+    if status == "truncated":
+        # 拉到了但不覆盖全 RTH (半日中断/长期停牌) → 不可按 EOD 结算, 也不能当「无数据」
+        logger.warning("补拉到的 bar 非全 RTH, 不用于结算: %s %s (%d 根, 末根 %s)",
+                       symbol, day, len(got), got[-1]["t"].strftime("%H:%M"))
+        return None, "truncated"
+    bars = [[b["t"].strftime("%Y-%m-%d %H:%M:%S"), b["o"], b["h"], b["l"], b["c"]]
+            for b in got]  # 统一成 load_1m 的 [[ts,o,h,l,c],…] 形态 (重放侧按索引取)
+    logger.info("补拉 bar 成功: %s %s (%d 根, status=%s)", symbol, day, len(bars), status)
+    return bars, status
+
+
+def ensure_bars(symbol: str, day: str):
+    """缓存优先 + fetch-on-miss。返回 (bars|None, status)。
+
+    status:
+      cache           缓存已有全 RTH bar
+      fetched         补拉成功
+      too_early       bar 日尚未收盘 (ET) → 保持 pending。绝不盘中补拉: 盘中拉到的
+                      半日 bar 一旦落盘会被后续当成完整 EOD。
+      not_trading_day 该日休市 → 保持 pending (next_trading_day 理论上不会给这种日)
+      empty           已收盘交易日, 拉取成功但 0 行 (停牌/退市/新上市前) → 累计 miss
+      truncated       已收盘交易日, 拉到了但不覆盖全 RTH (半日中断/长期停牌) → 累计 miss
+      error           额度/网络/OpenD 不可用 → 保持 pending, **不累计** (见模块 docstring)
+    """
+    bars = load_1m(symbol, day)
+    if bars:
+        return bars, "cache"
+    from datetime import date as _date
+    from app.utils.timezone import now_et
+    from app.utils.holiday_calendar import get_us_close_minutes_et, is_trading_day_str
+    try:
+        d = _date.fromisoformat(str(day))
+        now = now_et()
+        close_min = int(get_us_close_minutes_et(d))
+        if now.date() < d or (now.date() == d and
+                              (now.hour * 60 + now.minute) < close_min + 5):
+            return None, "too_early"
+        if not is_trading_day_str("US", day):
+            return None, "not_trading_day"
+    except Exception as e:
+        logger.warning("bar 日/交易日历判定异常 %s %s: %s", symbol, day, e)
+        return None, "error"
+    return _fetch_bars(symbol, day)
 
 
 def _replay_fixed_sl(bars, direction, sl):
@@ -172,10 +286,10 @@ def settle_row(row):
     sym = row["symbol"]
     nxt = next_trading_day(row["arm_date"])
     if not nxt:
-        return False, {}
-    bars = load_1m(sym, nxt)
+        return False, {"_bar_status": "bad_arm_date"}
+    bars, bar_status = ensure_bars(sym, nxt)
     if not bars:
-        return False, {}
+        return False, {"_bar_status": bar_status}
     entry = float(row["entry_price"])
     init_sl = float(row.get("stop_loss_at_arm") or 0)
     q = float(row.get("quantity") or 0)
@@ -196,6 +310,12 @@ def settle_row(row):
         fact_price, tag, caliber = old_price, old_tag, "init_sl_legacy"
     delta = round((fact_price - ap) * q * sign, 2)
 
+    try:
+        from datetime import date as _d
+        from app.utils.timezone import now_et
+        lag_days = (now_et().date() - _d.fromisoformat(nxt)).days
+    except Exception:
+        lag_days = None
     return True, {
         "settle_date": nxt,
         "settle_outcome": tag,
@@ -204,12 +324,42 @@ def settle_row(row):
         "sl_caliber": caliber,
         "overnight_delta_init_sl": old_delta,
         "settle_outcome_init_sl": old_tag,
+        # RFC-161: 迟到补算 (lag>0) 与次日准点结算分开留痕 — 否则批量回填让 n 突增
+        # 会被读成「新证据」, 实际全是旧 arm; bar_source 记 bar 是缓存命中还是补拉。
+        "settle_lag_days": lag_days,
+        "bar_source": bar_status,
         "settled": True,
     }
 
 
 def _pending_arms(rows: list[dict]) -> list[dict]:
-    return [r for r in rows if not r.get("settled") and r.get("type") == "arm"]
+    """未结算 arm 行。no_bar 排除行不算 pending (否则会永久占着积压告警)。"""
+    return [r for r in rows
+            if not r.get("settled") and r.get("type") == "arm" and not r.get("bar_no_bar")]
+
+
+def _record_bar_miss(row: dict, status, no_bar_after: int = NO_BAR_AFTER) -> bool:
+    """记一次「拿不到全 RTH bar」; 达阈值 → 标 no_bar 排除。返回本次是否新转 no_bar。
+
+    只累计 empty/truncated (= 该 bar 日已收盘、是交易日、拉取成功但无全 RTH 数据);
+    too_early/not_trading_day 是等待, error 是额度/网络/OpenD 失败 —— 把 error 当
+    「该标的没有 bar」会把真样本永久踢出 B16 分母, 且理由留成「停牌」, 事后极难发现。
+    """
+    if status not in ("empty", "truncated"):
+        return False
+    n = int(row.get("bar_miss_n") or 0) + 1
+    row["bar_miss_n"] = n
+    row["bar_miss_last_status"] = status
+    if row.get("bar_no_bar") or n < int(no_bar_after):
+        return False
+    row["bar_no_bar"] = True
+    row["bar_no_bar_reason"] = "%s x%d (已收盘交易日但无全 RTH bar; 非额度/网络失败)" % (status, n)
+    try:
+        from app.utils.timezone import now_et
+        row["bar_no_bar_since"] = now_et().date().isoformat()
+    except Exception:
+        row["bar_no_bar_since"] = None
+    return True
 
 
 def _stale_pending(rows: list[dict], alert_days: int, today=None) -> list[dict]:
@@ -253,9 +403,12 @@ def _push_stale_alert(stale: list[dict], pending_n: int, alert_days: int) -> boo
         ok = hub.push(PushMessage(
             title=f"⚠️ 赢家隔夜影子积压 {len(stale)} 条 (>{alert_days} 天未结算)",
             body="\n".join(lines) + (
-                f"\n未结算总数 {pending_n}; 结算器每日 06:25 运行, bar 缺失会无限重试。"
-                "修复: 补拉对应次日 1min bar (scripts/exit_replay_backtest.fetch_bars) "
-                "或落档 DEB 注销损坏行。B16 判据 (n≥20) 在积压清空前不可信。"),
+                f"\n未结算总数 {pending_n}; 结算器每日 06:25 运行。\n"
+                "RFC-161 起缺 bar 会自动补拉 (仅在该 bar 日收盘后), 连续 2 个周期仍拿不到"
+                "全 RTH bar 才转 no_bar 排除。若本条持续出现, 说明补拉也失败 (查 quota / "
+                "OpenD / 停牌), 或标的已退市 — 需人工补拉 "
+                "scripts/exit_replay_backtest.fetch_bars 或落档 DEB 注销。"
+                "B16 判据 (n≥20) 在积压清空前不可信。"),
             level=Level.HIGH,
             category=Category.HEALTH,
             dedup_key="winner_overnight_pending_stale",
@@ -290,23 +443,30 @@ def main(argv=None) -> int:
     rows = [json.loads(l) for l in SHADOW.open() if l.strip()]
     if args.reset_settled:
         _SETTLE_KEYS = ("settle_date", "settle_outcome", "settle_price", "overnight_delta",
-                        "sl_caliber", "overnight_delta_init_sl", "settle_outcome_init_sl")
+                        "sl_caliber", "overnight_delta_init_sl", "settle_outcome_init_sl",
+                        "settle_lag_days", "bar_source",
+                        # no_bar 排除是可重开的 (RFC-161) — 重放时一并清零, 否则被排除
+                        # 的行永远回不到样本池
+                        "bar_no_bar", "bar_no_bar_reason", "bar_no_bar_since",
+                        "bar_miss_n", "bar_miss_last_status")
         n_reset = 0
         for r in rows:
-            if r.get("type") == "arm" and r.get("settled"):
+            if r.get("type") == "arm" and (r.get("settled") or r.get("bar_no_bar")):
                 r["settled"] = False
                 for k in _SETTLE_KEYS:
                     r.pop(k, None)
                 n_reset += 1
-        print(f"[--reset-settled] 清除 {n_reset} 笔结算字段, 全量重放")
-    pending = [r for r in rows if not r.get("settled") and r.get("type") == "arm"]
+        print(f"[--reset-settled] 清除 {n_reset} 笔结算/no_bar 标记, 全量重放")
+    pending = [r for r in rows
+               if not r.get("settled") and r.get("type") == "arm" and not r.get("bar_no_bar")]
     if args.days > 0:
         from datetime import date, timedelta
         cut = (date.today() - timedelta(days=args.days)).isoformat()
         pending = [r for r in pending if r.get("arm_date", "") >= cut]
     n_set = 0
+    n_no_bar = 0
     for r in rows:
-        if r.get("settled") or r.get("type") != "arm":
+        if r.get("settled") or r.get("type") != "arm" or r.get("bar_no_bar"):
             continue
         if args.days > 0 and r.get("arm_date", "") < cut:
             continue
@@ -314,6 +474,19 @@ def main(argv=None) -> int:
         if ok:
             r.update(fields)
             n_set += 1
+            continue
+        status = str(fields.get("_bar_status") or "unknown")
+        if _record_bar_miss(r, status):
+            n_no_bar += 1
+            print(f"[winner_overnight] ⚠️ {r.get('symbol')} arm_date={r.get('arm_date')} "
+                  f"标 no_bar 排除: {r.get('bar_no_bar_reason')} "
+                  f"— 不入 B16 分母, --reset-settled 可重开")
+        elif status not in ("empty", "truncated"):
+            _p = BAR_DIR / f"{str(r.get('symbol', '?')).replace('.', '_')}_*"
+            print(f"[winner_overnight] bar 未就绪 {r.get('symbol')} "
+                  f"arm_date={r.get('arm_date')} status={status} "
+                  f"(需 {_p.name.replace('*', str(next_trading_day(r.get('arm_date', '')) or '?'))}) "
+                  f"→ 保持 pending (不累计 no_bar)")
     _atomic_write(SHADOW, "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
     settled = [r for r in rows if r.get("settled")]
     # B16 判据样本 = 盈利臂 (docstring 口径注记); 亏损臂仅对照
@@ -321,11 +494,21 @@ def main(argv=None) -> int:
     losers = [r for r in settled if float(r.get("arm_profit_pct", 0) or 0) <= 0]
     tot = sum(r.get("overnight_delta", 0) for r in winners)
     wins = sum(1 for r in winners if r.get("overnight_delta", 0) > 0)
+    no_bar_rows = [r for r in rows if r.get("type") == "arm"
+                   and not r.get("settled") and r.get("bar_no_bar")]
+    from collections import Counter as _Counter
+    lag_hist = _Counter(str(r.get("settle_lag_days")) for r in settled
+                        if r.get("settle_lag_days") is not None)
     summary = {
         "settled_n": len(settled),
         "winner_n": len(winners),
         "loser_n": len(losers),
-        "pending_n": len([r for r in rows if not r.get("settled")]),
+        # pending_n = 仍在等 bar 的真样本; no_bar_n = 已证明拿不到全 RTH bar 的排除行
+        # (两者都不进分母, 但只有 pending 会触发积压告警 — 排除行不该天天刷告警)
+        "pending_n": len([r for r in rows if not r.get("settled") and not r.get("bar_no_bar")]),
+        "no_bar_n": len(no_bar_rows),
+        "late_settled_n": sum(1 for r in settled if (r.get("settle_lag_days") or 0) > 0),
+        "settle_lag_hist": dict(sorted(lag_hist.items())),
         "sum_overnight_delta": round(tot, 2),
         "win_rate": round(wins / len(winners), 3) if winners else None,
         "by_outcome": {},
@@ -334,8 +517,11 @@ def main(argv=None) -> int:
     summary["by_outcome"] = dict(Counter(r.get("settle_outcome") for r in winners))
     _atomic_write(OUT, json.dumps(summary, ensure_ascii=False, indent=1))
     print(f"本次结算 {n_set} 笔 | 盈利臂 {len(winners)} (B16样本) / 亏损臂 {len(losers)} (对照) "
-          f"| 未结算积压 {summary['pending_n']} | 盈利臂合计delta {tot:+.2f} | 胜率 {summary['win_rate']}")
-    print(f"by_outcome(盈利臂): {summary['by_outcome']}")
+          f"| 未结算积压 {summary['pending_n']} | no_bar 排除 {summary['no_bar_n']} "
+          f"| 盈利臂合计delta {tot:+.2f} | 胜率 {summary['win_rate']}")
+    if n_no_bar:
+        print(f"[winner_overnight] 本轮 {n_no_bar} 条转 no_bar 排除 (不入 B16 分母, 可 --reset-settled 重开)")
+    print(f"by_outcome(盈利臂): {summary['by_outcome']} | 结算滞后分布(天): {summary['settle_lag_hist']}")
     stale = _stale_pending(rows, args.pending_alert_days)
     if stale:
         push_ok = _push_stale_alert(stale, summary["pending_n"], args.pending_alert_days)

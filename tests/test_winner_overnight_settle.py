@@ -12,14 +12,26 @@
 """
 import importlib.util
 import json
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
+
+import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 _spec = importlib.util.spec_from_file_location(
     "settle_wos", REPO / "scripts" / "settle_winner_overnight_shadow.py")
 sw = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(sw)
+
+
+@pytest.fixture(autouse=True)
+def _stub_external_bar_fetch(monkeypatch):
+    """RFC-161 挡板: 结算器现在会 fetch-on-miss。
+
+    既有用例 mock 的是 `load_1m`, 一旦它返回 None 就会走到真补拉 (实测直连 OpenD)。
+    测试与外部世界之间必须有挡板 — 默认挡成「空」, 需要验证补拉语义的用例自行覆盖。
+    """
+    monkeypatch.setattr(sw, "_fetch_bars", lambda symbol, day: (None, "empty"))
 
 
 def _mk_bars(o=100.0, h=None, l=None, c=101.0, n=35):
@@ -297,3 +309,205 @@ class TestW8EraFaithfulEffSl:
         settled = json.loads(shadow.read_text(encoding="utf-8"))
         assert settled["overnight_delta"] != 99.9  # 旧值被重放覆盖
         assert settled["sl_caliber"] == "effective_sl"
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  RFC-161 (2026-10-23): fetch-on-miss + 完整性判据 + 三因分离 + 迟到留痕
+# ═══════════════════════════════════════════════════════════════════
+
+def _full_bars(day: str = "2026-09-03", n: int = 390):
+    """生成该日 09:31 起的 n 根 1min bar (n=390 → 末根 16:00, 全 RTH)."""
+    from datetime import datetime as _dt, timedelta as _td
+    t0 = _dt.fromisoformat("%s 09:31:00" % day)
+    return [[(t0 + _td(minutes=i)).strftime("%Y-%m-%d %H:%M:%S"), 100.0, 100.5, 99.5, 100.2]
+            for i in range(n)]
+
+
+class TestW9BarCompleteness:
+    """W9a: 半日 bar 不得当完整 EOD (静默错值通道)。"""
+
+    def test_partial_cache_treated_as_missing(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(sw, "BAR_DIR", tmp_path)
+        day, p = "2026-08-21", tmp_path / "US_SPY_2026-08-21.json"
+        p.write_text(json.dumps(_full_bars(day, 106)))          # 实测残档形态: 止于 11:16
+        assert sw.load_1m("US.SPY", day) is None
+        p.write_text(json.dumps(_full_bars(day)))
+        assert len(sw.load_1m("US.SPY", day)) == 390            # 全 RTH 才认
+
+    def test_early_close_day_is_complete_at_1259(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(sw, "BAR_DIR", tmp_path)
+        day = "2026-11-27"                                      # NYSE 提前收盘 13:00 ET
+        (tmp_path / ("US_SPY_%s.json" % day)).write_text(json.dumps(_full_bars(day, 210)))
+        assert len(sw.load_1m("US.SPY", day)) == 210            # 半日市不算残缺
+
+    def test_short_file_still_rejected(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(sw, "BAR_DIR", tmp_path)
+        day = "2026-08-11"
+        (tmp_path / ("US_CMG_%s.json" % day)).write_text(json.dumps(_full_bars(day, 29)))
+        assert sw.load_1m("US.CMG", day) is None
+
+
+class TestW9FetchOnMiss:
+    """W9b: 只在该 bar 日收盘后补拉; 三因分离 (等待/无数据/失败)。"""
+
+    def test_no_fetch_before_bar_day_closes(self, monkeypatch):
+        called = []
+        monkeypatch.setattr(sw, "load_1m", lambda s, d: None)
+        monkeypatch.setattr(sw, "_fetch_bars",
+                            lambda s, d: called.append((s, d)) or (_full_bars(), "fetched"))
+        future = (date.today() + timedelta(days=3)).isoformat()
+        bars, status = sw.ensure_bars("US.UNH", future)
+        assert (bars, status) == (None, "too_early") and called == []  # 盘中不拉, 更不落半日档
+
+    def test_fetch_used_when_day_closed(self, monkeypatch):
+        import app.utils.holiday_calendar as hc
+        monkeypatch.setattr(hc, "is_trading_day_str", lambda *a, **k: True)
+        monkeypatch.setattr(sw, "load_1m", lambda s, d: None)
+        monkeypatch.setattr(sw, "_fetch_bars", lambda s, d: (_full_bars("2026-10-15"), "fetched"))
+        bars, status = sw.ensure_bars("US.UNH", "2026-10-15")
+        assert status == "fetched" and len(bars) == 390
+
+    def test_cache_hit_never_fetches(self, monkeypatch):
+        called = []
+        monkeypatch.setattr(sw, "load_1m", lambda s, d: _full_bars())
+        monkeypatch.setattr(sw, "_fetch_bars", lambda s, d: called.append(1) or (None, "error"))
+        bars, status = sw.ensure_bars("US.UNH", "2026-10-15")
+        assert status == "cache" and len(bars) == 390 and called == []
+
+    def test_holiday_day_stays_pending(self, monkeypatch):
+        import app.utils.holiday_calendar as hc
+        called = []
+        monkeypatch.setattr(hc, "is_trading_day_str", lambda *a, **k: False)
+        monkeypatch.setattr(sw, "load_1m", lambda s, d: None)
+        monkeypatch.setattr(sw, "_fetch_bars", lambda s, d: called.append(1) or (None, "empty"))
+        bars, status = sw.ensure_bars("US.UNH", "2026-10-15")
+        assert (bars, status) == (None, "not_trading_day") and called == []
+
+
+class TestW9NoBarAndLag:
+    """W9c: no_bar 只在「已收盘+交易日+拉取成功但无全 RTH」连续 2 周期后成立;
+    额度/网络失败永不累计; 迟到结算留 settle_lag_days。"""
+
+    def _setup(self, monkeypatch, tmp_path, arm_date="2026-10-15", nxt="2026-10-16"):
+        shadow = tmp_path / "wos.jsonl"
+        out = tmp_path / "wos_latest.json"
+        shadow.write_text(json.dumps(_arm_row(arm_date=arm_date)) + "\n", encoding="utf-8")
+        monkeypatch.setattr(sw, "SHADOW", shadow)
+        monkeypatch.setattr(sw, "OUT", out)
+        monkeypatch.setattr(sw, "next_trading_day", lambda d: nxt)
+        monkeypatch.setattr(sw, "load_1m", lambda s, d: None)
+        alerted = []
+        monkeypatch.setattr(sw, "_push_stale_alert",
+                            lambda stale, pending_n, days: alerted.append(len(stale)) or True)
+        return shadow, out, alerted
+
+    def test_no_bar_after_two_empty_cycles(self, monkeypatch, tmp_path):
+        shadow, out, alerted = self._setup(monkeypatch, tmp_path)
+        monkeypatch.setattr(sw, "_fetch_bars", lambda s, d: (None, "empty"))
+        assert sw.main(argv=[]) == 1                       # 第 1 周期: 仍 pending → 积压告警
+        row = json.loads(shadow.read_text(encoding="utf-8"))
+        assert row.get("bar_miss_n") == 1 and not row.get("bar_no_bar")
+        assert sw.main(argv=[]) == 0                       # 第 2 周期: 转 no_bar, 不再告警
+        row = json.loads(shadow.read_text(encoding="utf-8"))
+        assert row["bar_no_bar"] is True and "empty x2" in row["bar_no_bar_reason"]
+        summary = json.loads(out.read_text(encoding="utf-8"))
+        assert summary["no_bar_n"] == 1 and summary["pending_n"] == 0
+        assert summary["winner_n"] == 0                     # 排除行不进 B16 分母
+        assert len(alerted) == 1
+
+    def test_quota_error_never_becomes_no_bar(self, monkeypatch, tmp_path):
+        shadow, out, _ = self._setup(monkeypatch, tmp_path)
+        monkeypatch.setattr(sw, "_fetch_bars", lambda s, d: (None, "error"))
+        for _ in range(3):
+            assert sw.main(argv=[]) == 1                    # 持续待补, 持续告警 (对 cron 可见)
+        row = json.loads(shadow.read_text(encoding="utf-8"))
+        assert not row.get("bar_no_bar") and row.get("bar_miss_n") is None
+        summary = json.loads(out.read_text(encoding="utf-8"))
+        assert summary["no_bar_n"] == 0 and summary["pending_n"] == 1
+
+    def test_truncated_after_fetch_also_counts(self, monkeypatch, tmp_path):
+        shadow, _, _ = self._setup(monkeypatch, tmp_path)
+        monkeypatch.setattr(sw, "_fetch_bars", lambda s, d: (None, "truncated"))
+        sw.main(argv=[])
+        sw.main(argv=[])
+        row = json.loads(shadow.read_text(encoding="utf-8"))
+        assert row["bar_no_bar"] is True and "truncated x2" in row["bar_no_bar_reason"]
+
+    def test_reset_settled_reopens_no_bar(self, monkeypatch, tmp_path):
+        shadow = tmp_path / "wos.jsonl"
+        out = tmp_path / "wos_latest.json"
+        row = _arm_row(arm_date="2026-10-15", bar_no_bar=True, bar_no_bar_reason="empty x2",
+                       bar_miss_n=2)
+        shadow.write_text(json.dumps(row) + "\n", encoding="utf-8")
+        monkeypatch.setattr(sw, "SHADOW", shadow)
+        monkeypatch.setattr(sw, "OUT", out)
+        monkeypatch.setattr(sw, "next_trading_day", lambda d: "2026-10-16")
+        monkeypatch.setattr(sw, "load_1m", lambda s, d: _full_bars("2026-10-16"))
+        rc = sw.main(argv=["--reset-settled"])
+        assert rc == 0
+        got = json.loads(shadow.read_text(encoding="utf-8"))
+        assert "bar_no_bar" not in got and got["settled"] is True   # 重开后正常结算
+
+    def test_late_settle_records_lag_and_bar_source(self, monkeypatch):
+        monkeypatch.setattr(sw, "next_trading_day", lambda d: "2026-10-15")
+        monkeypatch.setattr(sw, "load_1m", lambda s, d: _mk_bars())
+        ok, f = sw.settle_row(_arm_row(stop_loss_at_arm=95.0))
+        assert ok and f["settle_lag_days"] >= 1 and f["bar_source"] == "cache"
+        assert f["settle_date"] == "2026-10-15"
+
+
+class TestW9FetchStatusSeparation:
+    """W9d: exit_replay_backtest 层 — 「额度/网络失败」≠「无数据」, 残缓存自动重拉。"""
+
+    @staticmethod
+    def _erb():
+        import sys
+        if str(REPO / "scripts") not in sys.path:
+            sys.path.insert(0, str(REPO / "scripts"))
+        import exit_replay_backtest
+        return exit_replay_backtest
+
+    def test_limit_failure_is_error_not_empty(self, monkeypatch, tmp_path):
+        import pandas as pd
+        erb = self._erb()
+        monkeypatch.setattr(erb, "BAR_DIR", tmp_path)
+        monkeypatch.setattr(erb.time, "sleep", lambda *_: None)
+
+        class FlakyCtx:  # RET_OK 但 data=None = 限流/额度耗尽的实测形态
+            def request_history_kline(self, *a, **k):
+                return 0, None, ""
+
+        status, bars = erb.fetch_bars_with_status(FlakyCtx(), "US.KO", "2026-10-15")
+        assert (status, bars) == ("error", None)
+
+    def test_legal_empty_is_empty(self, monkeypatch, tmp_path):
+        import pandas as pd
+        erb = self._erb()
+        monkeypatch.setattr(erb, "BAR_DIR", tmp_path)
+        monkeypatch.setattr(erb.time, "sleep", lambda *_: None)
+
+        class EmptyCtx:  # 休市日/停牌: ret=OK + 0 行
+            def request_history_kline(self, *a, **k):
+                return 0, pd.DataFrame(), ""
+
+        status, bars = erb.fetch_bars_with_status(EmptyCtx(), "US.KO", "2026-10-15")
+        assert (status, bars) == ("empty", None)
+
+    def test_truncated_cache_is_refetched_and_repaired(self, monkeypatch, tmp_path):
+        import pandas as pd
+        erb = self._erb()
+        monkeypatch.setattr(erb, "BAR_DIR", tmp_path)
+        monkeypatch.setattr(erb.time, "sleep", lambda *_: None)
+        day = "2026-08-21"
+        p = tmp_path / ("US_SPY_%s.json" % day)
+        p.write_text(json.dumps(_full_bars(day, 106)))
+        rows = [{"time_key": b[0], "open": 100.0, "high": 100.5, "low": 99.5, "close": 100.2}
+                for b in _full_bars(day)]
+
+        class FullCtx:
+            def request_history_kline(self, *a, **k):
+                return 0, pd.DataFrame(rows), ""
+
+        status, bars = erb.fetch_bars_with_status(FullCtx(), "US.SPY", day)
+        assert status == "fetched" and len(bars) == 390
+        assert len(json.loads(p.read_text())) == 390   # 残档被修成全天版
