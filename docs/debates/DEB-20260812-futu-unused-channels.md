@@ -299,3 +299,23 @@ market_val 均 = 4.45e12, 与真实市值一致 → 单位就是 USD。14e9 阈�
 残留 0; 回填成功率 87/97; 2-14B 中盘恢复放行。
 方向性影响: 闸同时保护空头侧 (微盘做空借券难/波动毒), 盘前榜新增的
 BCARU -15.44% 等真实中盘空头供给得以保留。
+
+### 6.5 OFI 接收时间与断档诊断（2026-10-23，record-only）
+
+用户要求更新 OFI baseline 采集器，并裁「基于合理且有效的方案执行」；本批仅补时间遥测，不新增方向假设、不改交易门、频率、采集池或 IC 判据。
+
+- SDK 契约：`venv/lib/python3.11/site-packages/futu/quote/open_quote_context.py:429` 的 `update_time` 是整份快照更新时间，美股口径为 ET；没有 bid/ask 各自源时间，不能声称盘口已验证新鲜，也不能将稀疏快照等同连续 OFI。
+- `scripts/futu_channel_shadow_collect.py::_collect_ofi_baseline` 在 SDK 返回后立即记录 `ingested_at_utc`（带 UTC 偏移的 ISO-8601，微秒表示精度，不承诺时钟绝对准确度）；同批共享接收时刻，`ts_et` 从该时刻派生；`request_duration_ms` 用单调时钟计毫秒，不受墙钟调整影响。
+- `snapshot_update_time_et` 原样记录源字段；`snapshot_age_sec` 为接收减源快照时间（秒，缺失/无效为 null）；`snapshot_time_status` 为 MISSING / INVALID / FUTURE / STALE / RECENT，RECENT **不等于盘口新鲜**。
+- 诊断口径固定为采集间隔的两倍（现 300s → `timing_threshold_sec=600`）：源快照年龄 >600s 标 STALE，未来超过 2s 标 FUTURE；这是采集质量标签，不是收益阈值或交易闸。缺失时间绝不以接收时间冒充。
+- `sample_gap_sec` 为同标的两次成功落库快照的接收间隔（秒）；仅同 ET 日且两次 `collection_phase=TRADING` 比较，>600s 标 GAP；首次、跨日/跨相位、盘后、时钟倒退、坏前态分别标 FIRST_SAMPLE / SESSION_RESET / OFF_SESSION / CLOCK_ROLLBACK / INVALID_PREVIOUS。断档在恢复取到该标的时识别，不冒充停机期间的实时看门狗；换池回归也可能产生 GAP，不推断故障根因。
+- 上次接收时间按标的保存在既有 `.futu_channel_shadow_state.json::ofi_last_ingested`，仅成功写完快照后推进，失败请求不覆盖；原调度器保存状态后可跨模块重载/重启续查，旧状态无键则 FIRST_SAMPLE。
+- 消费方：`scripts/futu_channel_shadow_eval.py::ofi_timing_quality` 汇总状态及字段基数；动态时间/年龄/耗时/间隔按标的 n≥10 且 distinct<2 标 WARNING，避免把同批多标的同时间当塌缩；枚举、相位及阈值允许正常恒定。历史行单列 legacy，不倒填时间、不冒充通过质量检查。
+- 只读核验命令：`PYTHONPATH=. ./venv/bin/python scripts/futu_channel_shadow_eval.py --ofi-quality-only`；不调用行情、不回补价格、不写评估文件，普通评估附带同一质量摘要但不改变旧 IC 算法。旧算法的全天归一化前视问题仍待单独修复，本批不据其声称盘中预测有效。
+- 配置事实纠偏：`playbook.intraday_reentry.enabled=false`，因此「资金流原料正服务生产背离门」不是当前执行事实；存在读方代码不等于消费链正在启用。本批不据此停采、不改该总闸。
+
+只读历史核验：上述 `--ofi-quality-only` 实跑退出码 0，45,530 行全部为 legacy、timed_rows=0、坏行=0，输出 NO_TIMING_DATA / UNVERIFIED_NO_BOOK_TIMESTAMP；这是未部署时的旧数据事实，不是新采集验收。
+
+验证：`tests/test_futu_channel_collect_gate.py` 追加 31 条契约测试（接收时刻在 API 返回后捕获、UTC 微秒/ET 夏令时与冬令时、源时间 MISSING/INVALID/FUTURE/STALE 及 2s/600s 边界、gap 全状态、跨重启 3600s 断档、失败轮不推进、NaN/Inf 过滤、quality legacy 单列与基数口径、CLI 零 socket/零输出写入），全套 36 passed（2.03s）。顺带修正该文件一条既有断言：其「全开时四路都调」仍假设 top_movers/iv_hv 在采，与 `6c35fc117` 退役批冲突；现改为桩掉登记闸、只验证按开关过闸，注册表语义仍由前三例单独覆盖。
+独立审查（Kimi-K3）复现上述时间、状态、只读与 legacy 声明，无阻塞项；低严重度留痕：写入循环无局部异常回滚、同轮后续通道异常会跳过状态保存（方向为假 GAP）、DST 歧义墙钟可偏 1h（交易时段不可达）。
+部署状态：已提交推送，**未重启**——新字段需重启后进入运行态，真实 OpenD 的 `update_time` 行为与新增行尚未运行态核验。

@@ -929,7 +929,11 @@ REGISTRY: list[ShadowItem] = [
         # eval 与通道B联动=裁点手动触发 (同 futu_channel_capital_flow, 2026-09-01 定性)
         eval_on_demand=True,
         notes="count_mode=distinct:ts_et — 按快照时刻去重计数 (每轮采集多标的共享同一 ts); "
-              "8/21-8/28 已攒 428 快照 / 7817 行",
+              "8/21-8/28 已攒 428 快照 / 7817 行。"
+              "2026-10-23 时间质量补测 (DEB-20260812 §6.5): 接收后 UTC 微秒戳/请求耗时/"
+              "ET 快照源时间与年龄/同标的断档标签，仅 record-only；"
+              "futu_channel_shadow_eval.py --ofi-quality-only 汇总状态与按标的基数，"
+              "历史行单列 legacy；SDK 无盘口侧源时间，RECENT 不等于盘口新鲜。",
         count_mode="distinct:ts_et",
     ),
     ShadowItem(

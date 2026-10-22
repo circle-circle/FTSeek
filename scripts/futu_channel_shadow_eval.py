@@ -19,7 +19,7 @@ import json
 import math
 import sys
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -133,6 +133,54 @@ def spearman(xs, ys):
     if vx == 0 or vy == 0:
         return None, n
     return cov / (vx * vy), n
+
+
+def ofi_timing_quality():
+    """Read UTC microsecond ingestion, ET snapshot time, second ages/gaps and millisecond latency."""
+    fields = ("ingested_at_utc", "snapshot_update_time_et", "snapshot_age_sec",
+              "request_duration_ms", "sample_gap_sec", "snapshot_time_status",
+              "sample_gap_status", "timing_threshold_sec", "collection_phase")
+    dynamic_fields = set(fields[:5])
+    values = defaultdict(lambda: defaultdict(Counter))
+    time_statuses, gap_statuses = Counter(), Counter()
+    total = legacy = malformed = 0
+    if OFI_PATH.exists():
+        with OFI_PATH.open(encoding="utf-8") as f:
+            for line in f:
+                try:
+                    row = json.loads(line)
+                    if not isinstance(row, dict) or not row.get("symbol"):
+                        raise ValueError("OFI row must identify a symbol")
+                except (ValueError, TypeError):
+                    malformed += 1
+                    continue
+                total += 1
+                if not row.get("ingested_at_utc"):
+                    legacy += 1
+                    continue
+                for field in fields:
+                    if row.get(field) is not None:
+                        values[str(row["symbol"])][field][str(row[field])] += 1
+                time_statuses[str(row.get("snapshot_time_status", "MISSING"))] += 1
+                gap_statuses[str(row.get("sample_gap_status", "MISSING"))] += 1
+    cardinality, warnings = {}, []
+    for symbol, by_field in sorted(values.items()):
+        cardinality[symbol] = {}
+        for field in fields:
+            counts = by_field[field]
+            n, distinct = sum(counts.values()), len(counts)
+            warning = field in dynamic_fields and n >= 10 and distinct < 2
+            cardinality[symbol][field] = {"n": n, "distinct": distinct,
+                                           "warning": warning}
+            if warning:
+                warnings.append(f"{symbol}.{field}:constant")
+    return {"rows": total, "timed_rows": total - legacy, "legacy_rows": legacy,
+            "malformed_rows": malformed,
+            "status": "AVAILABLE" if total > legacy else "NO_TIMING_DATA",
+            "book_freshness": "UNVERIFIED_NO_BOOK_TIMESTAMP",
+            "snapshot_time_counts": dict(time_statuses),
+            "sample_gap_counts": dict(gap_statuses),
+            "field_cardinality": cardinality, "warnings": warnings}
 
 
 def load_ofi():
@@ -413,7 +461,12 @@ def eval_derivative(window_days):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--window", type=int, default=8)
+    ap.add_argument("--ofi-quality-only", action="store_true",
+                    help="Read-only timing diagnostics; no API calls or output file writes")
     args = ap.parse_args()
+    if args.ofi_quality_only:
+        print(json.dumps(ofi_timing_quality(), ensure_ascii=False, indent=1))
+        return
 
     print("=" * 60)
     print("富途通道影子评估 (DEB-20260812 §五 预注册判据)")
@@ -425,7 +478,8 @@ def main():
 
     out = {"generated_at": datetime.now().isoformat(),
            "prereg_source": "DEB-20260812 §五",
-           "capital_flow": b, "derivative_unusual": a}
+           "capital_flow": b, "derivative_unusual": a,
+           "ofi_timing_quality": ofi_timing_quality()}
     OUT_PATH.write_text(json.dumps(out, ensure_ascii=False, indent=1))
     print(f"\n结果落盘: {OUT_PATH}")
 

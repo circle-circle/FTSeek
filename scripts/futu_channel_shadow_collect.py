@@ -21,10 +21,11 @@
 """
 import json
 import logging
+import math
 import os
 import socket
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -196,19 +197,73 @@ _IV_OUT = _BASE / "data" / "futu_iv_hv_shadow.jsonl"
 _MOVERS_OUT = _BASE / "data" / "futu_top_movers_shadow.jsonl"
 
 
-def _collect_ofi_baseline(ctx, symbols: List[str]) -> int:
+def _ofi_timing(row, ingested_at: datetime, previous: Dict,
+                phase: str, interval_sec: int) -> Dict:
+    from app.utils.timezone import ET, _localize
+
+    update_time = row.get("update_time")
+    raw_time = str(update_time) if update_time is not None else None
+    age_sec = None
+    time_status = "MISSING"
+    if raw_time:
+        try:
+            source_at = _localize(datetime.strptime(raw_time, "%Y-%m-%d %H:%M:%S"), ET)
+            age_sec = (ingested_at - source_at).total_seconds()
+            if age_sec < -2:
+                time_status = "FUTURE"
+            elif age_sec > 2 * interval_sec:
+                time_status = "STALE"
+            else:
+                time_status = "RECENT"
+        except (TypeError, ValueError, OverflowError):
+            time_status = "INVALID"
+
+    gap_sec = None
+    gap_status = "FIRST_SAMPLE"
+    if phase != "TRADING":
+        gap_status = "OFF_SESSION"
+    elif previous:
+        try:
+            previous_at = datetime.fromisoformat(previous["ingested_at_utc"])
+            if previous_at.tzinfo is None:
+                raise ValueError("ingestion timestamp must have a UTC offset")
+            if (previous_at.astimezone(ET).date() != ingested_at.astimezone(ET).date()
+                    or previous["phase"] != "TRADING"):
+                gap_status = "SESSION_RESET"
+            else:
+                gap_sec = (ingested_at - previous_at).total_seconds()
+                gap_status = ("CLOCK_ROLLBACK" if gap_sec < 0 else
+                              "GAP" if gap_sec > 2 * interval_sec else "OK")
+        except (KeyError, TypeError, ValueError, OverflowError):
+            gap_status = "INVALID_PREVIOUS"
+
+    # Snapshot update_time does not establish the freshness of either book side.
+    return {
+        "ingested_at_utc": ingested_at.isoformat(timespec="microseconds"),
+        "snapshot_update_time_et": raw_time,
+        "snapshot_age_sec": age_sec,
+        "snapshot_time_status": time_status,
+        "sample_gap_sec": gap_sec,
+        "sample_gap_status": gap_status,
+        "timing_threshold_sec": 2 * interval_sec,
+    }
+
+
+def _collect_ofi_baseline(ctx, symbols: List[str], state: Dict, phase: str) -> int:
     """通道 C: OFI 基线快照 (DEB-20260818 P2 重排, 2026-08-21 接入).
 
     Cont-Kukanov-Stoikov (2014) 增量定义需要连续时点的 bid1/ask1 量,
-    本采集按轮存 level-1 快照 {bid1, bid1_qty, ask1, ask1_qty, last},
-    增量 ΔOFI 在评估侧 (futu_channel_shadow_eval) 对相邻快照计算.
-    数据源: get_market_snapshot 批量 HTTP 免订阅 (实测闭市也有盘口) —
-    get_order_book 需 ORDER_BOOK 订阅 (SDK 10.3 时代 8/5 即被拒, 非新变化);
-    snapshot 批量方案复用 spread_depth_capture.py 已验证设计 (Qoder 第5轮勘误).
-    用途: capital_flow 增量 IC 的 OFI 基线口径
-    (预注册纪律'禁裸边际'的解法). 独立开关可单独回滚.
+    本采集按轮存 level-1 快照, 增量 ΔOFI 在评估侧对相邻快照计算.
+    数据源: get_market_snapshot 批量 HTTP 免订阅 (试测闭市也有盘口) —
+    get_order_book 需 ORDER_BOOK 订阅 (SDK 10.3 时代即被拒, 非新变化).
+    用途: capital_flow 增量 IC 的 OFI 基线口径 (预注册纪律'禁裸边际'的解法).
+    @ts_et / ingested_at_utc 是采集接收时刻, 不是交易所盘口事件时间;
+    update_time 只代表整份快照更新时间, 无 bid/ask 各自源时间 (DEB-20260812 §6.5).
+    独立开关可单独回滚.
     """
     from futu import RET_OK
+    from app.utils.timezone import ET
+
     try:
         from app.core.config_container import get_config
         if not bool(get_config().get_dotted(
@@ -217,38 +272,60 @@ def _collect_ofi_baseline(ctx, symbols: List[str]) -> int:
     except Exception:
         logger.warning("_collect_ofi_baseline: config read failed", exc_info=True)
     rows = []
-    from datetime import timezone
-    from app.utils.timezone import ET
-    now_et = datetime.now(timezone.utc).astimezone(ET)
-    ts_et = now_et.strftime("%Y-%m-%d %H:%M:%S")
+    previous_by_symbol = state.get("ofi_last_ingested", {})
+    if not isinstance(previous_by_symbol, dict):
+        logger.warning("_collect_ofi_baseline: invalid ingestion state")
+        previous_by_symbol = {}
+    interval_sec = _interval_sec()
+    phase = phase.upper()
     try:
+        started_ns = time.monotonic_ns()
         ret, data = ctx.get_market_snapshot(symbols[:400])
+        ingested_at = datetime.now(timezone.utc)
+        duration_ms = (time.monotonic_ns() - started_ns) / 1_000_000
         if ret != RET_OK or data is None or not len(data):
             return 0
+        ts_et = ingested_at.astimezone(ET).strftime("%Y-%m-%d %H:%M:%S")
         for _, row in data.iterrows():
             try:
                 bid1 = float(row.get("bid_price", 0) or 0)
                 ask1 = float(row.get("ask_price", 0) or 0)
                 bid1_qty = float(row.get("bid_vol", 0) or 0)
                 ask1_qty = float(row.get("ask_vol", 0) or 0)
+                last = float(row.get("last_price", 0) or 0)
+                if not all(math.isfinite(v) for v in (bid1, ask1, bid1_qty, ask1_qty, last)):
+                    logger.warning("_collect_ofi_baseline: non-finite snapshot for %s", row.get("code"))
+                    continue
                 if bid1 <= 0 or ask1 <= 0:
                     continue
+                symbol = str(row.get("code", ""))
+                if symbol not in symbols:
+                    continue
                 rows.append({
-                    "symbol": str(row.get("code", "")), "ts_et": ts_et,
+                    "symbol": symbol, "ts_et": ts_et,
                     "bid1": bid1, "bid1_qty": bid1_qty,
-                    "ask1": ask1, "ask1_qty": ask1_qty,
-                    "last": float(row.get("last_price", 0) or 0),
+                    "ask1": ask1, "ask1_qty": ask1_qty, "last": last,
+                    "request_duration_ms": duration_ms,
+                    "collection_phase": phase,
+                    **_ofi_timing(row, ingested_at, previous_by_symbol.get(symbol, {}),
+                                  phase, interval_sec),
                 })
             except Exception:
                 logger.warning("_collect_ofi_baseline: row parse failed", exc_info=True)
                 continue
-    except Exception as e:
-        logger.warning(f"[futu通道影子] ofi_baseline snapshot 异常: {e}")
+    except Exception:
+        logger.warning("[futu通道影子] ofi_baseline snapshot 异常", exc_info=True)
     if rows:
         _OFI_OUT.parent.mkdir(parents=True, exist_ok=True)
         with _OFI_OUT.open("a", encoding="utf-8") as f:
             for r in rows:
-                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+                f.write(json.dumps(r, ensure_ascii=False, allow_nan=False) + "\n")
+        current = {s: p for s, p in previous_by_symbol.items()
+                   if isinstance(p, dict) and p.get("date_et") == ts_et[:10]}
+        current.update({r["symbol"]: {"ingested_at_utc": r["ingested_at_utc"],
+                                       "date_et": ts_et[:10], "phase": phase}
+                        for r in rows})
+        state["ofi_last_ingested"] = current
     return len(rows)
 
 
@@ -409,7 +486,7 @@ def run_collect(scheduler=None, phase: str = "TRADING") -> None:
                                      "futu_channels.capital_flow_collect_enabled") else 0)
         # 2026-08-21: 通道 C OFI 基线 (DEB-20260818 P2 重排, capital_flow 增量
         # IC 的 OFI 基线口径解法). 独立开关 futu_channels.ofi_collect_enabled.
-        n_ofi = (_collect_ofi_baseline(ctx, symbols)
+        n_ofi = (_collect_ofi_baseline(ctx, symbols, st, phase)
                  if _collector_gate("futu_channel_ofi_baseline",
                                     "futu_channels.ofi_collect_enabled") else 0)
         # 2026-08-29: 通道 D IV/HV 日序列 (用户裁"4也做"). 日级数据仅盘后
