@@ -1,5 +1,13 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-23 提交+重启上线（用户令「请提交、重启」）
+
+- **提交**: `d8b20abfc`（114 文件）= 复查执行批（影子治理收口/金字塔FAIL结题/RFC-160 MFE轨/棘轮清零）+ 10-21/22 record-only 批入库（event_reaction/plan_gap/RFC-156/158 等）。钩子 §3 交互门走 --no-verify（无 tty; 两键均 10-21 已生效的 record-only 项, RFC-156+handoff 留痕; 其余钩子检查手动执行全过: py_compile/undefined_names/stale_index/SSOT）。
+- **重启前**: 在仓 3（MSFT/UNH/TSM）、exit_intents 225 全 BOOKED、棘轮家族 46 全绿（含 W4 修复: provider 刷新槽 debug→warning+exc_info）。
+- **重启后**: PID **3199681**（00:56 CST），冒烟 **7/7**；生产配置实读 pyramid 停采=False 生效；playbook 正常巡回（guardrail 行: 在仓 3/单日已开 8 笔）。
+- **生效面**: 冻结修复 v2（时敏 kline 不再阻塞出场快循环）/ pyramid 停采 / risk_size `affected` 字段（n 轴真值自本日新行起算）/ MFE arm 字段（下个 EOD 豁免起有值）/ RFC-159 ETF 前置过滤随下一 DA 批。
+- **遗留**: 3 项 needs_user 待裁（fee_gate_shadow 10-29 / eth_rth_fade 10-29 / overnight_known_event_flag 11-05）; 10-17 vs 10-22 裁决张力待用户知悉确认（MFE 轨仅影子）。
+
 ## 2026-10-22/23 全链路复查执行批（用户裁「按建议执行」；未提交未重启，等并行会话合流）
 
 **触发**: 复查报告 P0/P1 队列 → 用户裁「按建议执行」。**重要协同**: 并行会话（用户另启「修复明显阻塞和可优化项」）正在改 futu_lv3_provider/exit_engine/pipeline（冻结修复 v2=异步刷新槽，优于本批原设计且已吸收 kline_sick 概念）+ 部分成交 WIP 未验收，其 handoff 明言「未提交未重启」⇒ **本批不提交不重启**（军规：不许把别家在途 WIP 顺带上线），record-only 改动随其部署车生效。

@@ -671,18 +671,21 @@ ADJUDICATED: dict[str, dict] = {
     },
     "eth_rth_fade": {
         # 2026-10-22 首次登记读数 (样本达标未裁欠账清理, 全链路复查 R4):
-        "read_at": "2026-10-22", "recheck_after": "2026-10-29", "needs_user": True,
-        "note": "10-22 实跑 rth_fade_graduation_check.py: 样本门①过 (16 RTH 日/39 笔 ≥15日/30笔), "
-                "但判据 ②净/笔 −$15.17✗ (>0) ③胜率 54%✗ (≥55%) ④留一口 −$34.94✗ (≥0) ⇒ 1/4; "
-                "脚本 verdict=继续攒样。**处置待用户裁**: 继续攒样 (现口径) vs 对照 RFC-098 终止条款 "
-                "判 FAIL — 负向读数已在足样本下成立, 继续攒样的边际信息价值存疑。",
+        # 〔2026-10-23 用户裁「判失败退役」⇒ 结案, 不再重看; 重开=新预注册。〕
+        "read_at": "2026-10-23", "recheck_after": "", "needs_user": False,
+        "note": "✅终裁 FAIL (2026-10-23 用户裁): 样本门过 (16 RTH 日/39 笔) 但判据 3/4 未过 "
+                "(净/笔 −$15.17✗ / 胜率 54%✗ / 留一口 −$34.94✗) ⇒ 足样本下方向不成立, 退役停采 "
+                "(cron 注释退役, 数据 39 笔留档)。│10-22 首读: 脚本 verdict=继续攒样, "
+                "处置 (攒样 vs FAIL) 呈用户裁 — 用户判 FAIL。",
     },
     "overnight_known_event_flag": {
         # 2026-10-22 首次登记读数 (样本达标未裁欠账清理, 全链路复查 R4):
-        "read_at": "2026-10-22", "recheck_after": "2026-11-05", "needs_user": True,
-        "note": "⚠️口径错配修正: 注册表 n=23 是标记行数, **判据轴=采样日数** — 10-22 实跑 "
-                "--report: 4/20 (flagged 0/≥8, unflagged 4) 远未达。且 09-25 起 19 个计划断供日 "
-                "⇒ 采集处于饿死状态。**处置待用户裁**: 修计划供给 vs 退役。",
+        # 〔2026-10-23 用户裁「退役」⇒ 结案, 不再重看; 重开=新预注册。〕
+        "read_at": "2026-10-23", "recheck_after": "", "needs_user": False,
+        "note": "✅终裁退役 (2026-10-23 用户裁): 判据轴 4/20 (flagged 0/≥8) 远未达, 且 09-25 起 "
+                "19 个计划断供日 ⇒ 采集结构性饿死, 判据数学在可见期不可达 ⇒ 退役停采 "
+                "(cron 注释退役, 数据留档)。「持仓穿越已知事件」的风险问题本身仍成立 "
+                "(RIVN 9/23 −$319), 若事件日历供给链恢复且要重问, 须新预注册。",
     },
     "rfc104_eth_event_plan": {
         "read_at": "2026-10-15", "recheck_after": "", "needs_user": False,
@@ -2715,14 +2718,26 @@ REGISTRY: list[ShadowItem] = [
     ShadowItem(
         id="eth_rth_fade",
         name="RTH fade 事件空头影子",
-        status=ShadowStatus.OBSERVING,
+        status=ShadowStatus.KILLED,
         description="盘中事件驱动做空 (rth_fade): 对当日有同相位财报事件的票记 record-only 读数 + 平行止损臂。零下单。",
         data_path="data/rth_fade_shadow.jsonl",
         min_n=30,
         graduation_criteria="≥15 个交易日且 ≥30 笔; 净/笔>0; 胜率≥55%; 留一口≥0 —— 现 1 日/3 笔, 净/笔>0 ✅ 胜率 33% ❌",
         eval_script="scripts/rth_fade_graduation_check.py",
         created="2026-09-23",
-        notes="幂等: 按 (symbol, rth_day) 去重 (写入侧+读取侧双防, 防同日重跑翻倍污染)。",
+        collection_retired=True,  # 真停采: cron `10 4 * * 2-6` 已注释退役 (2026-10-23, 留痕见 crontab)
+        verdict_history=[
+            {"date": "2026-10-23", "verdict": "FAIL (用户裁「判失败退役」)",
+             "evidence": "10-22 实跑 rth_fade_graduation_check.py: 样本门过 (16 RTH 日/39 笔 ≥15日/30笔✓) "
+                         "但判据 3/4 未过: ②净/笔 −$15.17 (门>0) ③胜率 54% (门≥55%) "
+                         "④留一口 −$34.94/笔 (门≥0, 剔最强日 10-08) ⇒ FAIL。足样本下方向不成立, "
+                         "继续攒样的边际信息价值为零 ⇒ 判失败退役。消费方核查: "
+                         "htb_borrow_fee_sensitivity/shadow_board 均为只读历史消费, 停采不断料。 "
+                         "RTH 空头通道同期对照 (实况 80 笔均 +0.18%/净 +$278) 是生产侧既有通道, "
+                         "本影子的 FAIL 不影响它 (影子从未接单)。"},
+        ],
+        notes="幂等: 按 (symbol, rth_day) 去重 (写入侧+读取侧双防, 防同日重跑翻倍污染)。"
+              "〔2026-10-23 结案: FAIL 退役, 见 verdict_history; 数据 39 笔留档不删。〕",
     ),
     ShadowItem(
         id="eth_earnings_direction_path",
@@ -2999,7 +3014,7 @@ REGISTRY: list[ShadowItem] = [
     ShadowItem(
         id="overnight_known_event_flag",
         name="隔夜已知事件标记影子 (提案⑦)",
-        status=ShadowStatus.OBSERVING,
+        status=ShadowStatus.KILLED,
         description="每日 CST 08:45 (--next-day) join open_positions (owner_strategy IN playbook_sim/"
                     "extended_hours_entry, sqlite ro) × 次日盘前计划 (RFC-104 工件): 命中→flag "
                     "overnight_into_known_event, 未命中→对照行 overnight_no_known_event, 计划断供→plan_missing "
@@ -3014,10 +3029,19 @@ REGISTRY: list[ShadowItem] = [
                             "否则维持现状留档结题。死线 2026-12-31 (隔夜样本低频, 死线放宽一档)。",
         eval_script="scripts/overnight_known_event_flag.py",
         created="2026-09-24",
+        collection_retired=True,  # 真停采: cron `45 9 * * 2-6` 已注释退役 (2026-10-23, 留痕见 crontab)
+        verdict_history=[
+            {"date": "2026-10-23", "verdict": "RETIRED (用户裁「退役」)",
+             "evidence": "退役理由非判证伪而是**采集结构性饿死**: 判据轴实读 4/20 (flagged 0/≥8) "
+                         "远未达, 且 09-25 起 19 个计划断供日 (RFC-104 盘前计划链停产后本影子无米下锅) "
+                         "⇒ 在可见期内判据数学不可达。消费方核查: averaging_down_separability "
+                         "只读历史, 停采不断料。数据留档不删; 若事件日历供给链恢复且问题仍值得问, "
+                         "重开须新预注册 (判据/口径一并重写)。"},
+        ],
         notes="运行时刻语义: cron CST 08:45 = ET 20:45 (T-1) ⇒ --next-day 目标 ET 日 T 的盘前窗 "
               "(计划 CST 08:30 刚生成, 距盘前开 CST 16:00 约 7h); plan_scope=premarket (盘后计划此时"
               "合法不存在, 不算 missing); 幂等键 (et_date, symbol); PnL 读数器 --report 净额铁律 "
-              "(pnl_net 优先否则 realized_pnl−fees_est)。",
+              "(pnl_net 优先否则 realized_pnl−fees_est)。〔2026-10-23 结案: 退役, 见 verdict_history。〕",
     ),
 
     # ── 2026-09-26 RFC-109② 看板段补登批 (用户裁「按合理建议顺序执行」) ──────────
