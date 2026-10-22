@@ -2943,3 +2943,45 @@ or_low_ttl5：limit_fill **5** / market_fallback **21** / ttl_exceeds_hold 0（c
 | E151 | `grep -o "与 2026-09-09 预注册逐字一致" scripts/settle_eod_depth_gate_shadow.py \| head -1` | 含 `与 2026-09-09 预注册逐字一致`（机械判定非人裁）|
 | E152 | `./venv/bin/python -c "import json; rows=[json.loads(l) for l in open('data/shadow/eod_depth_gate_shadow.jsonl',errors='replace') if l.strip()]; [print(r['symbol'],r['arm_date'],r['cf_delta'],r['would_revoke']) for r in rows if (r.get('symbol'),str(r.get('arm_date'))) in [('US.SNDK','2026-10-09'),('US.AMD','2026-10-12')]]"` | 含 `169.79 True` `165.24 True`（冻结结算行）|
 | E153 | `./venv/bin/python -c "import sqlite3; c=sqlite3.connect('file:data/ftseek_us.db?mode=ro',uri=True); t,n=c.execute(\"SELECT ROUND(SUM(COALESCE(pnl_net,realized_pnl)),2), COUNT(*) FROM trade_records WHERE exit_reason='OVERNIGHT_GAP_STOP' AND substr(exit_time,1,10) IN ('2026-10-12','2026-10-13')\").fetchone(); print(t,n)"` | 含 `-650.52 2`（不可变历史行）|
+
+## 43. 工程阻塞修复与实盘边界（2026-10-23 CST / 10-22 ET，未部署）
+
+用户授权「请修复明显阻塞和可优化项」。本批限工程正确性，不调整信号规则、计划仓位参数、退出阈值、四锁或探针授权；修复阶段未重启共享服务、未修改生产数据库。2026-10-23 用户追加授权提交并推送本批修复，授权不含部署。
+
+### 43.1 出场行情阻塞
+
+`FutuLV3Provider.get_kline(latency_sensitive=True)` 只读缓存；首次连接、SDK 请求和重连均由最多一个 daemon worker 承担。缓存锁与刷新槽非阻塞，槽忙不排队。`_track_bar_peak_trough` 与高 ATR 停滞影子均使用该路径，不再通过 TypeError 回退同步调用；NONE/HFQ 历史 K 线不再写入 QFQ push ring。
+
+验收：`PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. ./venv/bin/python -m pytest -q -p no:cacheprovider tests/test_futu_kline_sick_gate.py tests/test_futu_kline_cache_caliber.py` → **40 passed**。真实 Event 悬挂覆盖首次连接、首次 SDK、多标的并发、冷却恢复、锁释放及复权隔离，测试线程均放行并 join；无真实 Futu 调用。
+
+边界：这不是取消 SDK。永久悬挂时刷新槽保持占用，后续时敏调用降级为缓存/None；不能据此宣称行情恢复或整个退出链已具备统一网络截止时间。
+
+### 43.2 REAL 报价校验
+
+`check_quote_health(require_exchange_quote=True)` 要求有限正价、有效双边盘口、非代理/降级源及有效交易所时间；复用 `_source_time` 的 naive ET 约定，不接受本地接收时间或缓存的 quote_age_ms 冒充源时间。REAL 即使关闭可选健康门也执行该校验，超龄仍使用既有阈值；SIM 默认语义不变，平仓链不受入场门限制。
+
+验收：`OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 PYTHONDONTWRITEBYTECODE=1 ./venv/bin/python -B -m pytest -q -p no:cacheprovider tests/playbook/test_m2_c2_live_quote_gate.py` → **43 passed**。用例封锁 socket/Futu 与生产 SQLite，覆盖退化盘口、NaN/Inf、缺失/未来/过期源时戳、关闭开关、ET 边界及 SIM 回归。
+
+### 43.3 独立复核与未验收项
+
+独立审查确认上述两项实现与测试契约一致，无致命问题；审查未重跑测试，不把审读计作运行证据。指出的 300s/60s TTL 注释漂移已纠正；永久悬挂退化边界见 §43.1。
+
+部分成交收口已按 §43.4 完成隔离验证。REAL 重启后的保护单恢复、多腿费用归集及账户回撤对账不因本批自动达标。
+
+运行态验收 **BLOCKED**：未确认隔离交易环境，且源码含其他未提交 WIP；不向管理持仓的生产服务注入故障。离线回归不是应用运行验收，上线前须确认整批归属、核在途出场并按军规重启后执行启动冒烟。只读核对 MainPID=3159408、启动 10-22 21:42 CST，早于本批源码修改。
+
+证据更正：0.4715% 与 0.4744% 均低于 0.5%，不存在「0.5% 位于二者之间」的分离；窄深度人群的节省额不能归给「任何水下」谓词。本批仅记录纠错，不修改实验阈值、样本门或历史裁决；工作区 RFC-160 与 OGS 尸检的对应追加说明留待其原始影子批次提交，不将未验证的影子接线带入本提交。
+
+### 43.4 部分成交收口与独立合并回归
+
+- `PlaybookDB.observe_execution_order` 在既有 metadata 保存 attempt 绑定的订单身份、请求量、成交高水位、最终快照量价与取消截止时刻；单位为股、USD/股、epoch 秒。只有合法终态的同一快照累计数量/VWAP可以授权 BOOKED，不新增列，不拼接旧均价与新数量。
+- 执行器不再以非零成交价绕过确认；市价部分成交撤余后复查，限价仍等原 TTL。撤单 ACK 不算终态，未知/倒退/缺价缺量保持锁定，曾有正成交不得按后续零快照解锁。同标的未决指令防重复领取，不扩展到无恢复通路的 LEGACY_LOCKED。
+- 恢复器复查 FILLED_UNBOOKED，执行/恢复共享线程锁与文件锁；新建活仓必须有券商持仓存在、方向一致且数量足够，但不把整仓数量/成本当成本单成交量价。已有同订单收据逐项核对，旧 BOOKED 历史行不自动重写；遗留 P3 先排除由 B1 接管的未决单，再按本单终态恢复。
+- 独立审查发现遗留分支将 SDK 数值订单 ID 与字符串直接比较，已改两侧字符串化并加入 int64 用例；重复调用不重复 INSERT。REAL 未决用现有 HALT 状态与 hub 明示人工接管，同一原因不重复报警；这不等于 REAL 重启保护单已自动恢复。
+- 作者四文件回归 **111 passed**；独立执行者随后运行以下合并命令，**194 passed in 21.73s，退出码 0，无失败/跳过**。代码/测试 scoped `git diff --check` 通过，不将其他 WIP 的格式问题算入本批。
+
+```bash
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 PYTHONDONTWRITEBYTECODE=1 ./venv/bin/python -B -m pytest -q -p no:cacheprovider tests/test_futu_kline_sick_gate.py tests/test_futu_kline_cache_caliber.py tests/playbook/test_m2_c2_live_quote_gate.py tests/playbook/test_exit_compensation.py tests/playbook/test_m2_b1_execution_state.py tests/test_entry_archetype_routing.py tests/test_position_sync_backfill_clock.py
+```
+
+测试边界：SDK/行情替身、socket/Futu 禁出站及临时 SQLite；不访问生产券商/数据库，不推送。此命令是隔离回归证据，不是应用运行态或实盘准入证明。

@@ -10,6 +10,12 @@ import pytest
 from app.core.position_sync import USPositionSync
 from app.execution.dual_broker import DualBrokerAdapter
 from app.playbook.db import PlaybookDB
+from tests.playbook.test_exit_compensation import compensation_case
+
+
+@pytest.fixture(autouse=True)
+def sealed_execution_state(compensation_case):
+    return compensation_case
 
 
 def _new_db(conn=None):
@@ -185,6 +191,11 @@ def test_submitted_partial_missing_price_and_bookkeeping_states():
     # Missing price / bookkeeping failures remain non-retryable until backfill succeeds.
     assert db.mark_execution_filled_unbooked(iid, attempt, "FILLED_NO_PRICE")
     assert db.mark_execution_filled_unbooked(iid, attempt, "BOOKKEEPING_FAILED")
+    assert not db.mark_execution_booked(iid, attempt, 101.25)
+    assert db.observe_execution_order(iid, attempt, "OID-2", "real", {
+        "order_id": "OID-2", "code": "US.B1", "qty": 10,
+        "order_status": "CANCELLED_PART", "dealt_qty": 2, "dealt_avg_price": 101.25,
+    })["confirmed"]
     assert db.mark_execution_booked(iid, attempt, 101.25, "2026-09-10T10:00:00", "holding")
     row = _row(conn, iid)
     assert row["execution_state"] == "BOOKED"
@@ -212,8 +223,9 @@ def test_position_sync_conservative_reconciliation(tmp_path):
     sync = USPositionSync.__new__(USPositionSync)
     sync._backfill_playbook_trade_record = MagicMock(return_value=True)
     ctx = MagicMock()
-    ctx.order_list_query.return_value = (0, pd.DataFrame([{
-        "order_status": "FILLED_ALL", "dealt_qty": 10, "dealt_avg_price": 100.0,
+    ctx.order_list_query.side_effect = lambda order_id, **kwargs: (0, pd.DataFrame([{
+        "order_id": order_id, "code": "US.SUBMITTED" if order_id == "OID-S" else "US.UNBOOKED",
+        "qty": 10, "order_status": "FILLED_ALL", "dealt_qty": 10, "dealt_avg_price": 100.0,
     }]))
     positions = {"US.UNBOOKED": {"qty": 10, "cost": 100.0, "direction": "LONG"}}
     with patch("app.core.position_sync._get_db_path", return_value=str(path)):
@@ -223,10 +235,11 @@ def test_position_sync_conservative_reconciliation(tmp_path):
     check.row_factory = sqlite3.Row
     submitted = _row(check, submitted_id)
     unbooked = _row(check, unbooked_id)
-    assert submitted["execution_state"] == "FILLED_UNBOOKED"
+    assert submitted["execution_state"] == "BOOKED"
     assert submitted["broker_order_status"] == "FILLED_ALL"
     assert unbooked["execution_state"] == "BOOKED"
-    sync._backfill_playbook_trade_record.assert_called_once()
+    assert sync._backfill_playbook_trade_record.call_count == 2
+    assert ctx.order_list_query.call_count == 2
     check.close()
 
 
@@ -244,7 +257,7 @@ def test_position_sync_recovers_missing_order_id_by_attempt_remark(tmp_path):
     sync._backfill_playbook_trade_record = MagicMock(return_value=True)
     ctx = MagicMock()
     ctx.order_list_query.return_value = (0, pd.DataFrame([{
-        "order_id": "OID-R", "remark": f"pb_{iid}_sim_{attempt}",
+        "order_id": "OID-R", "remark": f"pb_{iid}_sim_{attempt}", "code": "US.REMARK", "qty": 4,
         "order_status": "FILLED_ALL", "dealt_qty": 4, "dealt_avg_price": 99.5,
     }]))
     positions = {"US.REMARK": {"qty": 4, "cost": 99.5, "direction": "LONG"}}
@@ -258,7 +271,7 @@ def test_position_sync_recovers_missing_order_id_by_attempt_remark(tmp_path):
     assert row["execution_state"] == "BOOKED"
     assert row["broker_order_id"] == "OID-R"
     assert row["execution_price"] == 99.5
-    ctx.order_list_query.assert_called_once_with(trd_env="SIMULATE")
+    ctx.order_list_query.assert_called_once_with(trd_env="SIMULATE", refresh_cache=True)
     check.close()
 
 
@@ -340,3 +353,14 @@ def test_dual_broker_keeps_order_id_when_fill_query_raises():
     assert result["submit_state"] == "ACCEPTED"
     assert result["futu_order_id"] == "OID-3"
     assert result["filled_price"] == 0.0
+
+
+def test_order_status_query_refreshes_broker_identity_and_cumulative_receipt():
+    adapter, ctx = _adapter_with_ctx((0, None))
+    ctx.order_list_query.return_value = (0, pd.DataFrame([{
+        'order_id': 'OID-Q', 'code': 'US.B1', 'qty': 10,
+        'order_status': 'CANCELLED_PART', 'dealt_qty': 4, 'dealt_avg_price': 101.5,
+    }]))
+    result = adapter.query_order_status('OID-Q', 'sim')
+    assert result['success'] and result['dealt_qty'] == 4 and result['dealt_avg_price'] == 101.5
+    ctx.order_list_query.assert_called_once_with(order_id='OID-Q', trd_env='SIMULATE', refresh_cache=True)

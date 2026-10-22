@@ -1828,7 +1828,7 @@ class PlaybookService:
         try:
             from app.playbook.config import get_playbook_config as _get_pb_cfg_gate
             _gate_cfg = _get_pb_cfg_gate()
-            if _gate_cfg.get("pretrade_quote_gate_enabled", True):
+            if _is_live or _gate_cfg.get("pretrade_quote_gate_enabled", True):
                 _g_bid = float((_arr_ctx or {}).get("lv3_bid") or (_arr_ctx or {}).get("bid") or 0)
                 _g_ask = float((_arr_ctx or {}).get("lv3_ask") or (_arr_ctx or {}).get("ask") or 0)
                 if _is_live and (_g_bid <= 0 or _g_ask <= 0):
@@ -1838,13 +1838,13 @@ class PlaybookService:
                     return {"success": False,
                             "message": f"{_mode_label} {symbol} 实盘 bid/ask 缺失 (C2 fail-close)",
                             "c2_quote_health": True}
-                if _arr_ctx and _g_bid > 0 and _g_ask > 0:
+                if _arr_ctx and (_is_live or (_g_bid > 0 and _g_ask > 0)):
                     from app.risk.data_health_guard import check_quote_health
                     _gate_quote = {
+                        **_arr_ctx,
                         "bid": _g_bid,
                         "ask": _g_ask,
                         "price": float(_arr_ctx.get("price", 0) or _arr_ctx.get("last", 0) or 0),
-                        "timestamp": _arr_ctx.get("timestamp"),
                     }
                     # DEB-ruler §7.5-A (2026-08-04): push 报价路径无真盘口, 兜底 bid=ask=last
                     # (futu_lv3_provider.py:426-431/791-795) → 真盘口恒有 ask>bid, 故
@@ -1853,8 +1853,9 @@ class PlaybookService:
                     _q_ok, _q_reason = check_quote_health(
                         _gate_quote,
                         max_age_seconds=float(_gate_cfg.get("pretrade_max_quote_age_sec", 60.0)),
-                        max_spread_pct=(1.0 if _book_degenerate
+                        max_spread_pct=(1.0 if _book_degenerate and not _is_live
                                         else float(_gate_cfg.get("pretrade_max_spread_pct", 0.05))),
+                        require_exchange_quote=_is_live,
                     )
                     if not _q_ok:
                         logger.warning(f"[playbook] {_mode_label} {symbol} 报价健康门拒绝下单: {_q_reason}")
@@ -1934,6 +1935,12 @@ class PlaybookService:
             logger.warning(f"[playbook] {_mode_label} {symbol} 指令 {instruction_id} 已被抢占, 跳过 (防重复下单)")
             return {"success": False, "message": "指令已被执行或正在执行 (幂等抢占)"}
         _order.client_order_id = f"pb_{instruction_id}_{target_env}_{_attempt}"
+        # Preserve actual submitted size so recovery cannot infer it from an inconsistent snapshot.
+        if self.db.observe_execution_order(instruction_id, _attempt, "", target_env, {
+                'order_id': '', 'code': symbol, 'qty': _order.quantity,
+                'order_status': 'SUBMITTING', 'dealt_qty': None, 'dealt_avg_price': None,
+        }, requested_qty=_order.quantity) is None:
+            return {"success": False, "message": "提交前订单身份持久化冲突，未下单"}
 
         try:
             _dual = get_dual_broker()
@@ -1942,12 +1949,20 @@ class PlaybookService:
             logger.error(f"[playbook] {_mode_label} 下单异常且受理结果不确定 {symbol}: {_e}")
             self.db.mark_execution_unknown(
                 instruction_id, _attempt, broker_env=target_env, broker_order_status="SUBMIT_EXCEPTION")
+            self._halt_unresolved_live_entry(target_env, symbol, "", "SUBMIT_EXCEPTION")
             return {"success": False, "message": f"{_mode_label} 下单异常(状态不确定，已锁定): {_e}"}
 
         _submit_state = str(_result.get("submit_state") or
                             ("ACCEPTED" if _result.get("success") else "UNKNOWN"))
         _futu_id = str(_result.get("futu_order_id") or "")
-        if _submit_state == "DEFINITIVE_REJECT":
+        _broker_status = str(_result.get("broker_order_status") or "ACCEPTED")
+        try:
+            _submit_has_fill = float(_result.get("filled_qty") or 0) > 0
+        except (TypeError, ValueError):
+            _submit_has_fill = False
+        _submit_has_fill = _submit_has_fill or _broker_status.rsplit('.', 1)[-1] in (
+            'FILLED_ALL', 'FILLED_PART', 'CANCELLED_PART')
+        if _submit_state == "DEFINITIVE_REJECT" and not _submit_has_fill:
             self.db.unlock_execution_if_zero_fill_terminal(
                 instruction_id, _attempt, "DEFINITIVE_REJECT", dealt_qty=0)
             logger.error(f"[playbook] {_mode_label} 下单明确拒绝 {symbol}: {_result.get('error')}")
@@ -1956,138 +1971,64 @@ class PlaybookService:
             self.db.mark_execution_unknown(
                 instruction_id, _attempt, broker_order_id=_futu_id, broker_env=target_env,
                 broker_order_status=_submit_state or "UNKNOWN")
+            self._halt_unresolved_live_entry(target_env, symbol, _futu_id, _submit_state)
+            if _submit_has_fill:
+                # Even an inconsistent submit response cannot erase positive evidence.
+                self.db.observe_execution_order(instruction_id, _attempt, _futu_id, target_env, {
+                    'order_id': _futu_id, 'code': symbol, 'qty': _order.quantity,
+                    'order_status': _broker_status, 'dealt_qty': _result.get('filled_qty'),
+                    'dealt_avg_price': _result.get('filled_price'),
+                }, requested_qty=_order.quantity)
             logger.error(f"[playbook] {_mode_label} 下单结果不确定 {symbol}: {_result.get('error')}")
             return {"success": False, "message": f"{_mode_label} 下单结果不确定，指令保持锁定"}
 
         # 一拿到 order id 就先持久化，成交查询/进程崩溃均不能丢失 broker 身份。
-        _broker_status = str(_result.get("broker_order_status") or "ACCEPTED")
         if not self.db.mark_execution_submitted(
                 instruction_id, _attempt, _futu_id, target_env, _broker_status):
             logger.critical(f"[playbook] {symbol} order id 持久化 CAS 失败: {_futu_id} attempt={_attempt}")
+            self._halt_unresolved_live_entry(target_env, symbol, _futu_id, "submitted CAS conflict")
             return {"success": False, "message": "订单已受理但状态持久化冲突，指令保持锁定"}
-        # [DEB-20260901 选项1② · ADR-035] 路由限价单: TTL 内等待成交, 到期撤单放弃
-        #   (绝不市价追)。成交真相源与市价路径确认窗同源 (order_list_query.dealt_*)。
-        #   proceed=True → _fill>0, 下方兜底链自然空转; 终态失败 → 记 skip 返回。
-        # 2026-06-27 辩论DEB-20260627: _fill=0时不fallback到entry_price
-        # ponytail: 1次查询, 失败则warning+拒绝(不sleep阻塞批量路径)
-        if _route:
-            _rt = self._handle_routed_fill_wait(
-                _futu_id, target_env, _route, instruction_id, symbol,
-                int(position_size) if position_size else 1, _mode_label, direction,
-                execution_attempt=_attempt)
-            if not _rt.get("proceed"):
-                return _rt["result"]
-            _fill = _rt["fill_price"]
-            _confirm_dqty = _rt["dealt_qty"]
-            _entry_price_source = _rt["price_source"]
-        else:
-            _fill = _result.get("filled_price", 0) or 0
-            _confirm_dqty = 0.0  # 2026-07-27: 确认窗带回的真成交量 (未走确认分支时为 0)
-            _entry_price_source = "broker_deal" if _fill > 0 else "unknown"
-        if not _fill or _fill <= 0:
-            _fill = self._query_filled_price_for_order(_futu_id, target_env)
-            if _fill > 0:
-                _entry_price_source = "broker_deal_retry"
-        if not _fill or _fill <= 0:
-            # 2026-07-19 (DEB-round3 GHOST-RC1 根因修复): quote 兜底前先确认订单真成交.
-            #   根因: 旧逻辑 fill=0 时无条件假设"已成交"用报价记账, 实际订单可能 FAILED/
-            #   CANCELLED/TIMEOUT → 虚假仓位 → 退出 broker_no_position → BROKER_GHOST_CLOSE
-            #   (7/6 六连实证: position_sync 证实 broker 无持仓且无今日成交记录).
-            #   真相源与 close 路径一致: order_list_query.order_status (2026-07-07 修复确立).
-            #   查询异常 → 降级维持旧兜底 (宁可记不错杀, 与 2026-06-29 辩论一致).
-            # 2026-07-21 (GHOST-RC1 时序修复): 确认窗 5s→30s (对齐平仓侧轮询先例).
-            #   根因: SUBMITTED 是等待态而非失败态; 实证 EOG(7/20)/TTE/UBER(7/21) 均在
-            #   拒记后 9~29s 内成交 → 5s 窗误判 → 真仓无账走降级补录 (假归因 50/0.5).
-            #   仅 fill=0 的模糊单进等待, 正常成交不受影响. 回滚: 配置改回 5.
-            try:
+        # Persist submit-time evidence; only a complete FILLED_ALL receipt permits the fast path.
+        _initial = {
+            "order_id": _futu_id, "code": symbol, "qty": _order.quantity,
+            "order_status": _broker_status, "dealt_qty": _result.get("filled_qty"),
+            "dealt_avg_price": _result.get("filled_price"),
+        }
+        try:
+            if _route:
+                _rt = self._handle_routed_fill_wait(
+                    _futu_id, target_env, _route, instruction_id, symbol,
+                    _order.quantity, _mode_label, direction, execution_attempt=_attempt,
+                    initial_snapshot=_initial)
+                if not _rt.get("proceed"):
+                    return _rt["result"]
+                _fill, _confirm_dqty = _rt["fill_price"], _rt["dealt_qty"]
+                _ostatus = _rt["status"]
+                _entry_price_source = _rt["price_source"]
+            else:
                 from app.playbook.config import get_playbook_config as _gpc_cw
-                _confirm_wait = float(_gpc_cw().get("entry_confirm_max_wait_s", 30.0))
-                _confirmed, _ostatus, _confirm_davg, _confirm_dqty = self._confirm_order_filled(
-                    _futu_id, target_env, max_wait_s=_confirm_wait)
-            except Exception as _cf_err:
-                logger.warning(f"[playbook] {_mode_label} {symbol} 订单状态确认异常 (保持锁定): {_cf_err}")
-                _confirmed, _ostatus, _confirm_davg, _confirm_dqty = False, "QUERY_ERROR", 0.0, 0.0
-            if not _confirmed:
-                _unlocked = self.db.unlock_execution_if_zero_fill_terminal(
-                    instruction_id, _attempt, _ostatus, dealt_qty=_confirm_dqty)
-                if not _unlocked:
-                    self.db.mark_execution_unknown(
-                        instruction_id, _attempt, broker_order_id=_futu_id, broker_env=target_env,
-                        broker_order_status=_ostatus or "CONFIRM_TIMEOUT")
-                logger.error(
-                    f"[playbook] {_mode_label} {symbol} 订单 {_futu_id} 未确认成交 "
-                    f"(status={_ostatus}, retryable={_unlocked})"
-                )
-                return {"success": False, "message":
-                        f"{_mode_label} {symbol} 订单未确认成交 (status={_ostatus})"}
-            # 2026-07-27 (DEB-entry-fill 复核翻案): 确认循环已带回 dealt_avg_price 真成交均价 —
-            #   优先用它记账 (broker_deal_confirm), quote 兜底降为真正的极端后备。
-            #   旧链路: 下单瞬间取价必为 0 (sim 异步成交) → 确认后直接跳 quote_fallback 记 ask
-            #   假价 (近一周 broker_deal 占比≈0, SOLS +$13 记成 -$0.96 实证)。回滚: 删本块。
-            if _confirm_davg and _confirm_davg > 0:
-                _fill = _confirm_davg
+                _confirmed, _ostatus, _fill, _confirm_dqty = self._confirm_order_filled(
+                    _futu_id, target_env,
+                    max_wait_s=float(_gpc_cw().get("entry_confirm_max_wait_s", 30.0)),
+                    instruction_id=instruction_id, execution_attempt=_attempt,
+                    requested_qty=_order.quantity, initial_snapshot=_initial)
+                if not _confirmed:
+                    _unlocked = self.db.unlock_execution_if_zero_fill_terminal(
+                        instruction_id, _attempt, _ostatus, dealt_qty=_confirm_dqty)
+                    if not _unlocked:
+                        self._halt_unresolved_live_entry(target_env, symbol, _futu_id, _ostatus)
+                    return {"success": False, "message":
+                            f"{_mode_label} {symbol} 订单未确认成交 (status={_ostatus})"}
                 _entry_price_source = "broker_deal_confirm"
-                logger.info(
-                    f"[playbook] {_mode_label} {symbol} 确认窗内取得真成交均价 ${_fill:.4f} "
-                    f"(src=broker_deal_confirm, 订单 {_futu_id})"
-                )
-            # 2026-06-29: 最后兜底 — broker确认FILLED_ALL但avg_price=0时, 用实时报价记账
-            # 根因: sim账户偶发 avg_price=0 但订单已成交 → 拒绝记账 → 孤儿仓 → position_sync用8%覆盖SL
-            # 2026-07-21 更正: "avg_price=0"真根因是 dual_broker fallback 字段名笔误 (当日已修复为
-            #   dealt_avg_price, sim 真实成交均价可正常获取); 本 bid/ask 兜底保留作极端后备, 触发应罕见.
-            # 2026-07-16 P2 修复: 用 bid/ask 替代 last price (BUY→ask, SHORT→bid),
-            #   更接近实际成交价. last price 可能是上一笔成交, 偏离当前 bid-ask.
-            # 2026-07-27: 加 _fill<=0 守卫 — 旧版无条件执行会把上面刚取得的真价覆盖回 ask 假价。
-            if not _fill or _fill <= 0:
-                try:
-                    # D3(b): 同 arrival price 走私有单例, 不再每单新建 router
-                    _ctx = _private_router_quote(symbol)
-                    if _ctx and _ctx.get("price", 0) > 0:
-                        _cur = float(_ctx["price"])
-                        _bid = float(_ctx.get("lv3_bid") or _ctx.get("bid") or 0)
-                        _ask = float(_ctx.get("lv3_ask") or _ctx.get("ask") or 0)
-                        # BUY 成交在 ask 侧, SHORT 成交在 bid 侧
-                        if mos_direction == "SHORT" and _bid > 0:
-                            _fill = _bid
-                        elif mos_direction != "SHORT" and _ask > 0:
-                            _fill = _ask
-                        else:
-                            _fill = _cur
-                        _entry_price_source = "quote_fallback"
-                        logger.warning(
-                            f"[playbook] {_mode_label} {symbol} 成交价=0, 用bid/ask${_fill:.2f}兜底记账 "
-                            f"(订单 {_futu_id} 已确认成交) src=quote_fallback dir={mos_direction}"
-                        )
-                except Exception:
-                    pass
-        if not _fill or _fill <= 0:
-            logger.error(f"[playbook] {_mode_label} {symbol} 订单 {_futu_id} 已可能成交但缺成交价, 保持锁定待补账")
-            self.db.mark_execution_filled_unbooked(
-                instruction_id, _attempt, broker_order_status="FILLED_NO_PRICE")
-            return {"success": False, "message": f"{_mode_label} {symbol} 成交价缺失，已锁定待对账"}
+        except Exception as _cf_err:
+            logger.exception(f"[playbook] {symbol} 成交确认失败，保留锁及已观察成交: {_cf_err}")
+            self._halt_unresolved_live_entry(target_env, symbol, _futu_id, str(_cf_err))
+            return {"success": False, "message": "成交确认失败，已锁定待对账"}
 
-        _observed_qty = float(_result.get("filled_qty", 0) or 0) or float(_confirm_dqty or 0)
-        _requested_qty = float(int(position_size) if position_size else 1)
-        _fill_status = "FILLED_PART" if 0 < _observed_qty < _requested_qty else "FILLED"
-        if not self.db.mark_execution_filled_unbooked(instruction_id, _attempt, _fill_status):
-            logger.critical(f"[playbook] {symbol} 成交状态 CAS 失败 attempt={_attempt}, 严禁继续簿记/重下")
+        if not self.db.mark_execution_filled_unbooked(instruction_id, _attempt, _ostatus):
+            self._halt_unresolved_live_entry(target_env, symbol, _futu_id, "fill CAS conflict")
             return {"success": False, "message": "成交状态持久化冲突，已停止本次簿记"}
-        # 部分成交处理 (P0 2026-07-19): 用真实成交量记账, 消除幽灵仓.
-        #   broker 返回 filled_qty=0 时 (SIM avg_price=0 / 查询未命中) 回退下单量.
-        # 2026-07-27 (同款时序修复): _result.filled_qty 也是下单瞬间取的 (sim 异步必 0) —
-        #   优先用确认窗带回的 dealt_qty 真值, 部分成交不再被回退成全量记账。
-        _req_qty = int(position_size) if position_size else 1
-        _filled_qty = float(_result.get("filled_qty", 0) or 0)
-        if _filled_qty <= 0 and _confirm_dqty and _confirm_dqty > 0:
-            _filled_qty = float(_confirm_dqty)
-        if 0 < _filled_qty < _req_qty:
-            _effective_qty = int(_filled_qty)
-            logger.warning(
-                f"[playbook] {_mode_label} {symbol} 部分成交: 下单 {_req_qty} 实际 {_effective_qty}, "
-                f"按实际成交量记账 (futu_id={_futu_id})"
-            )
-        else:
-            _effective_qty = _req_qty
+        _effective_qty = int(_confirm_dqty)
         _now_iso = now_et().isoformat()
         _order_id = f"{_mode_label}_{_uuid.uuid4().hex[:8]}"
 
@@ -2376,6 +2317,7 @@ class PlaybookService:
             # B1-lite: broker 曾有成交且本地簿记失败，无论补偿平仓结果如何均不可重下。
             self.db.mark_execution_filled_unbooked(
                 instruction_id, _attempt, broker_order_status="BOOKKEEPING_FAILED")
+            self._halt_unresolved_live_entry(target_env, symbol, _futu_id, "BOOKKEEPING_FAILED")
             return {"success": False, "message": f"{_mode_label} trade_record 写入失败，已锁定待对账: {_tre}"}
 
         # 注册 ManualHoldRegistry (防 auto pipeline 干扰)
@@ -2413,6 +2355,7 @@ class PlaybookService:
             _bk_failed = str(_bk_err)
             self.db.mark_execution_filled_unbooked(
                 instruction_id, _attempt, broker_order_status="BOOKKEEPING_FAILED")
+            self._halt_unresolved_live_entry(target_env, symbol, _futu_id, "BOOKKEEPING_FAILED")
             logger.critical(
                 f"🚨 [playbook] {_mode_label} 成交簿记失败 {symbol} (仓位已成交, 严禁重下): "
                 f"instruction={instruction_id} fill={_fill} qty={_effective_qty} "
@@ -2602,248 +2545,112 @@ class PlaybookService:
         except Exception as _rt_err:
             logger.warning(f"[archetype路由] 影子遥测落盘失败: {_rt_err}")
 
+    @staticmethod
+    def _halt_unresolved_live_entry(target_env, symbol, order_id, reason):
+        """An unresolved REAL entry is not fully protected; hand off explicitly."""
+        if target_env != "real":
+            return
+        from app.playbook.live_arm_gate import halt_live_new_positions, read_live_arm_halt
+        halt_reason = f"Unresolved LIVE entry {symbol} {order_id}: {reason}"
+        prior = read_live_arm_halt()
+        if isinstance(prior, dict) and prior.get("halted") and prior.get("reason") == halt_reason:
+            return
+        halt_live_new_positions(halt_reason)
+        logger.critical("HALT_NEW_LIVE unresolved entry %s order=%s: %s; manual takeover required",
+                        symbol, order_id, reason)
+        try:
+            from app.push import get_push_hub
+            from app.push.message import Level
+            get_push_hub().push_text(
+                f"[LIVE ENTRY UNRESOLVED] {symbol} order={order_id} {reason} — "
+                "HALT_NEW_LIVE，未确认完整保护，请人工接管",
+                level=Level.HIGH)
+        except Exception:
+            logger.exception("LIVE unresolved entry hub alert failed")
+
     def _handle_routed_fill_wait(self, futu_order_id: str, target_env: str,
                                   route: Dict, instruction_id: int, symbol: str,
                                   req_qty: int, mode_label: str,
                                   direction: str = "BUY",
-                                  execution_attempt: int = None) -> Dict[str, Any]:
-        """[DEB-20260901 选项1② · ADR-035] 路由限价单 TTL 等待 → 成交或撤单放弃。
-
-        语义 (绝不降级市价, 消除"低吸变追高"的机制性根因):
-          - TTL 内 FILLED_ALL      → proceed, 按 dealt_avg_price 真价记账。
-          - TTL 到期部分成交       → 撤余单, 按已成交量记账 (与市价路径部分成交同口径)。
-          - TTL 到期零成交         → 撤单 + 竞态复查 → skip_reason=archetype_ttl_expired 终态。
-          - 等待中 FAILED/CANCELLED/REJECTED → skip_reason=archetype_order_dead 终态。
-        真相源 = order_list_query.order_status/dealt_qty (与 _confirm_order_filled、
-        close_position 平仓侧同源)。阻塞上限 = route.ttl_seconds (默认 300s,
-        与 auto_execute 5 分钟节拍同量级; 退出监控有独立快循环不受牵连)。
-        """
-        from futu import RET_OK
-        from app.execution.dual_broker import get_dual_broker
-        _dual = get_dual_broker()
-        ctx, acc_id, trd_env, lock = _dual._ctx_and_acc(target_env)
-        _ttl = float(route.get("ttl_seconds", 300.0))
-        _limit_px = float(route.get("limit_price", 0))
-        _arch = route.get("archetype", "")
-        _deadline = time.time() + _ttl
-        _last_status = "UNKNOWN"
+                                  execution_attempt: int = None,
+                                  initial_snapshot=None) -> Dict[str, Any]:
+        """Keep the limit TTL unchanged; cancellation ACK never permits booking."""
         if execution_attempt is None:
-            try:
-                execution_attempt = int(
-                    (self._find_instruction_by_id(instruction_id) or {}).get("execution_attempt") or 0)
-            except Exception:
-                execution_attempt = 0
-
-        def _skip_terminal(reason: str, message: str, extra: Dict = None,
-                           dealt_qty: float = 0.0) -> Dict[str, Any]:
-            """仅明确零成交终态可 CAS 解锁并落终态 skip。"""
-            _canonical = next((s for s in (
-                "CANCELLED_PART", "CANCELLED_ALL", "CANCELLED", "REJECTED", "FAILED",
-                "DELETED", "DISABLED", "TIMEOUT") if s in str(_last_status).upper()), "")
-            try:
-                _unlocked = self.db.unlock_execution_if_zero_fill_terminal(
-                    instruction_id, execution_attempt, _canonical, dealt_qty=dealt_qty)
-            except Exception as _rel_err:
-                _unlocked = False
-                logger.warning(f"[archetype路由] {symbol} 安全解锁失败: {_rel_err}")
-            if _unlocked:
-                try:
-                    self.db.update_instruction_tracking(instruction_id, {"skip_reason": reason})
-                except Exception as _sk_err:
-                    logger.warning(f"[archetype路由] {symbol} skip_reason 落库失败: {_sk_err}")
-            else:
-                self.db.mark_execution_unknown(
-                    instruction_id, execution_attempt, broker_order_id=str(futu_order_id),
-                    broker_env=target_env, broker_order_status=_last_status or "UNKNOWN")
-                reason = "archetype_order_unconfirmed"
-                message = f"{mode_label} {symbol} 订单终态/零成交未确认，保持锁定"
-            _row = {"date": (inst_date or ""), "type": reason, "inst_id": instruction_id,
-                    "symbol": symbol, "direction": ("SHORT" if str(direction).upper() in ("SHORT", "SELL_SHORT")
-                                                     else "LONG"),
-                    "entry_archetype": _arch, "limit_price": _limit_px,
-                    "ttl_seconds": _ttl, "futu_order_id": str(futu_order_id),
-                    "order_status": _last_status}
-            if extra:
-                _row.update(extra)
-            self._append_routed_shadow(_row)
-            logger.info(f"[archetype路由] {symbol} {_arch} 限价@{_limit_px} 终态={reason} "
-                        f"(status={_last_status}, ttl={_ttl:.0f}s, futu={futu_order_id})")
-            _res = {"success": False, "message": message}
-            if reason == "archetype_ttl_expired":
-                _res["ttl_expired"] = True
-            return {"proceed": False, "result": _res}
-
-        # 指令日期 (遥测用; 取不到留空)
-        inst_date = ""
-        try:
-            _inst_row = self._find_instruction_by_id(instruction_id)
-            inst_date = str((_inst_row or {}).get("date", "") or "")
-        except Exception:
-            pass
-
-        def _query_once():
-            """→ (status, dealt_qty, dealt_avg_price); 查询异常返回 (None, 0, 0)。"""
-            try:
-                with lock:
-                    ret_od, od_data = ctx.order_list_query(
-                        order_id=str(futu_order_id), trd_env=trd_env)
-                if ret_od == RET_OK and od_data is not None and not od_data.empty:
-                    _r = od_data.iloc[0]
-                    _dq = float(_r.get("dealt_qty", 0) or 0)
-                    try:
-                        _da = float(_r.get("dealt_avg_price", 0) or 0)
-                    except Exception:
-                        _da = 0.0
-                    return str(_r.get("order_status", "")), _dq, _da
-            except Exception as _q_err:
-                logger.debug(f"[archetype路由] {symbol} 订单查询异常: {_q_err}")
-            return None, 0.0, 0.0
-
-        # ── TTL 窗口轮询 (2s 间隔, 对 broker API 温和) ──
-        while time.time() < _deadline:
-            _status, _dealt, _davg = _query_once()
-            if _status is not None:
-                _last_status = _status
-                if "FILLED_ALL" in _status:
-                    _fill_px = _davg if _davg > 0 else _limit_px
-                    logger.info(f"[archetype路由] {symbol} {_arch} 限价@{_limit_px} 全部成交 "
-                                f"@{_fill_px} qty={_dealt} (futu={futu_order_id})")
-                    self._append_routed_shadow(
-                        {"date": inst_date, "type": "routed_fill", "inst_id": instruction_id,
-                         "symbol": symbol, "entry_archetype": _arch, "limit_price": _limit_px,
-                         "fill_price": _fill_px, "filled_qty": _dealt, "ttl_seconds": _ttl,
-                         "wait_seconds": round(_ttl - max(0.0, _deadline - time.time()), 1),
-                         "futu_order_id": str(futu_order_id)})
-                    return {"proceed": True, "fill_price": _fill_px,
-                            "dealt_qty": _dealt, "price_source": "routed_limit_deal"}
-                if any(_k in _status for _k in
-                       ("FAILED", "CANCELLED", "DELETED", "REJECTED", "TIMEOUT")):
-                    # DEB-20260903 #91: 终态前检查部分成交 — CANCELLED_PART 等终态可能
-                    # 已有 dealt_qty>0, 直接 skip 会丢弃已成交部分 → broker 有真实持仓
-                    # 但无 trade_records 行 (孤儿仓, 无 SL 守护)
-                    if _dealt > 0:
-                        _fill_px = _davg if _davg > 0 else _limit_px
-                        logger.warning(
-                            f"[archetype路由] {symbol} 终态 {_status} 但已部分成交 "
-                            f"{_dealt}/{req_qty} @{_fill_px} — 按已成交量记账")
-                        self._append_routed_shadow(
-                            {"date": inst_date, "type": "routed_fill", "inst_id": instruction_id,
-                             "symbol": symbol, "entry_archetype": _arch, "limit_price": _limit_px,
-                             "fill_price": _fill_px, "filled_qty": _dealt, "ttl_seconds": _ttl,
-                             "wait_seconds": round(_ttl - max(0.0, _deadline - time.time()), 1),
-                             "partial": True, "terminal_status": _status,
-                             "futu_order_id": str(futu_order_id)})
-                        return {"proceed": True, "fill_price": _fill_px,
-                                "dealt_qty": _dealt, "price_source": "routed_limit_deal"}
-                    return _skip_terminal(
-                        "archetype_order_dead",
-                        f"{mode_label} {symbol} 路由限价单被拒/已撤 (status={_status}), 放弃不追单")
-            time.sleep(2.0)
-
-        # ── TTL 到期: 撤单 + 竞态复查 ──
-        _status, _dealt, _davg = _query_once()
-        if _status is not None:
-            _last_status = _status
-        if _dealt >= req_qty or "FILLED_ALL" in (_last_status or ""):
-            # 到期瞬间恰好全成 — 无需撤单
-            _fill_px = _davg if _davg > 0 else _limit_px
-            self._append_routed_shadow(
-                {"date": inst_date, "type": "routed_fill", "inst_id": instruction_id,
-                 "symbol": symbol, "entry_archetype": _arch, "limit_price": _limit_px,
-                 "fill_price": _fill_px, "filled_qty": _dealt, "ttl_seconds": _ttl,
-                 "wait_seconds": _ttl, "futu_order_id": str(futu_order_id)})
-            return {"proceed": True, "fill_price": _fill_px,
-                    "dealt_qty": _dealt, "price_source": "routed_limit_deal"}
-
-        _cancel_res = _dual.cancel_order(str(futu_order_id), target_env)
-        _cancel_ok = bool(_cancel_res.get("success"))
-        if not _cancel_ok:
-            logger.warning(f"[archetype路由] {symbol} 撤单失败: {_cancel_res.get('error')}")
-        time.sleep(2.0)  # 等撤单传播, 随后竞态复查
-
-        # 竞态复查: 撤单请求与成交之间可能交叉 — 复查到成交则按成交记账
-        _status2, _dealt2, _davg2 = _query_once()
-        if _status2 is not None:
-            _last_status = _status2
-
-        # DEB-20260904 #181a: 撤单未确认时若订单仍在途 (非终态), 不得 skip_terminal —
-        # 订单可能随后成交形成孤儿仓. 终止集合与 #184 同口径: 只认终态.
-        _terminal_frag = ("FILLED_ALL", "CANCELLED_ALL", "CANCELLED_PART", "FAILED", "DELETED", "DISABLED", "REJECTED")
-        _still_live = (not _cancel_ok) and _status2 and not any(_f in _status2 for _f in _terminal_frag)
-        if _still_live:
-            logger.error(
-                f"[archetype路由] {symbol} 撤单失败且订单仍在途 (status={_status2}), "
-                f"不置 terminal-skip — 保留待下轮复查, 防孤儿仓"
-            )
-            return {"proceed": False, "result": {
-                "success": False, "cancel_unconfirmed": True,
-                "message": f"撤单未确认 status={_status2} (订单仍在途, 未置 terminal-skip)"}}
-
-        _fin_dealt = max(_dealt, _dealt2)
-        if _fin_dealt > 0:
-            # DEB-20260904 #181b: 双均价均为 0 时用 _limit_px 兜底入账 —
-            # 旧逻辑 (要求 _davg2>0 or _davg>0) 会把真实成交掉进 skip_terminal 成孤儿仓
-            _fill_px = _davg2 if _davg2 > 0 else (_davg if _davg > 0 else _limit_px)
-            logger.info(f"[archetype路由] {symbol} TTL 到期部分成交 {_fin_dealt}/{req_qty}, "
-                        f"撤余单后按已成交量记账 @{_fill_px}")
-            self._append_routed_shadow(
-                {"date": inst_date, "type": "routed_fill", "inst_id": instruction_id,
-                 "symbol": symbol, "entry_archetype": _arch, "limit_price": _limit_px,
-                 "fill_price": _fill_px, "filled_qty": _fin_dealt, "ttl_seconds": _ttl,
-                 "wait_seconds": _ttl, "partial": True,
-                 "futu_order_id": str(futu_order_id)})
-            return {"proceed": True, "fill_price": _fill_px,
-                    "dealt_qty": _fin_dealt, "price_source": "routed_limit_deal"}
-
-        return _skip_terminal(
-            "archetype_ttl_expired",
-            f"{mode_label} {symbol} 路由限价@{_limit_px} {_ttl:.0f}s 未成交, 已撤单放弃 (绝不市价追)")
+            execution_attempt = int(
+                (self._find_instruction_by_id(instruction_id) or {}).get("execution_attempt") or 0)
+        ttl = float(route.get("ttl_seconds", 300.0))
+        deadline = time.time() + ttl
+        confirmed, status, price, qty = self._confirm_order_filled(
+            futu_order_id, target_env, max_wait_s=ttl,
+            instruction_id=instruction_id, execution_attempt=execution_attempt,
+            requested_qty=req_qty, initial_snapshot=initial_snapshot,
+            cancel_after=deadline)
+        if confirmed:
+            self._append_routed_shadow({
+                "type": "routed_fill", "inst_id": instruction_id, "symbol": symbol,
+                "entry_archetype": route.get("archetype"), "limit_price": route.get("limit_price"),
+                "fill_price": price, "filled_qty": qty, "ttl_seconds": ttl,
+                "terminal_status": status, "futu_order_id": futu_order_id})
+            return {"proceed": True, "fill_price": price, "dealt_qty": qty,
+                    "status": status, "price_source": "routed_limit_deal"}
+        unlocked = self.db.unlock_execution_if_zero_fill_terminal(
+            instruction_id, execution_attempt, status, dealt_qty=qty)
+        if unlocked:
+            expired = time.time() >= deadline
+            reason = "archetype_ttl_expired" if expired else "archetype_order_dead"
+            self.db.update_instruction_tracking(instruction_id, {"skip_reason": reason})
+        else:
+            expired = False
+            reason = "archetype_order_unconfirmed"
+            self._halt_unresolved_live_entry(target_env, symbol, futu_order_id, status)
+        self._append_routed_shadow({"type": reason, "inst_id": instruction_id,
+                                    "symbol": symbol, "order_status": status,
+                                    "futu_order_id": futu_order_id})
+        return {"proceed": False, "result": {
+            "success": False, "ttl_expired": expired, "cancel_unconfirmed": not unlocked,
+            "message": f"{mode_label} {symbol} {reason} (status={status})"}}
 
     def _confirm_order_filled(self, futu_order_id: str, target_env: str,
-                              max_wait_s: float = 5.0) -> tuple:
-        """确认订单是否真实成交 → (confirmed, status, dealt_avg_price, dealt_qty).
-    
-        2026-07-19 (DEB-round3 GHOST-RC1): 入场侧成交确认, 与 dual_broker.close_position
-        的平仓侧验证共用同一真相源 — order_list_query.order_status (FILLED_ALL)。
-        2026-07-27 (DEB-entry-fill 复核翻案): 确认循环拿到的行里本就有 dealt_avg_price
-        真成交均价, 旧版只返 bool 把价丢了 → 调用方被迫走 quote_fallback 记 ask 假价
-        (近一周 broker_deal 占比≈ 0, 多头入场价系统性记高+保本锚错, SOLS 实证杀单)。
-        本修复就地带回真价: 零新挂点/零额外 API。
-    
-        判定:
-          FILLED_ALL / FILLED_PART / dealt_qty>0 → (True, status, dealt_avg_price, dealt_qty)
-          FAILED / CANCELLED / DELETED / REJECTED / TIMEOUT → (False, status, 0.0, 0.0) 不可恢复
-          超时仍非 FILLED → (False, status, 0.0, 0.0) (宁可拒记不记假仓)
-        """
-        from futu import RET_OK
+                              max_wait_s: float = 5.0, *, instruction_id: int,
+                              execution_attempt: int, requested_qty=None,
+                              initial_snapshot=None, cancel_after=None) -> tuple:
+        """Require terminal cumulative quantity/VWAP after cancellation; ACK and quotes cannot prove a fill."""
         from app.execution.dual_broker import get_dual_broker
         dual = get_dual_broker()
-        ctx, acc_id, trd_env, lock = dual._ctx_and_acc(target_env)
-        _deadline = time.time() + max_wait_s
-        _last_status = "UNKNOWN"
-        while time.time() < _deadline:
-            try:
-                with lock:
-                    ret_od, od_data = ctx.order_list_query(
-                        order_id=str(futu_order_id), trd_env=trd_env)
-                if ret_od == RET_OK and od_data is not None and not od_data.empty:
-                    _row = od_data.iloc[0]
-                    _status = str(_row.get("order_status", ""))
-                    _last_status = _status
-                    _dealt = float(_row.get("dealt_qty", 0) or 0)
-                    if "FILLED_ALL" in _status or "FILLED_PART" in _status or _dealt > 0:
-                        try:
-                            _davg = float(_row.get("dealt_avg_price", 0) or 0)
-                        except Exception:
-                            _davg = 0.0
-                        return True, _status, _davg, _dealt
-                    if any(_k in _status for _k in
-                           ("FAILED", "CANCELLED", "DELETED", "REJECTED", "TIMEOUT")):
-                        return False, _status, 0.0, 0.0
-            except Exception as _od_err:
-                logger.debug(f"[playbook] order_list_query 确认异常 {futu_order_id}: {_od_err}")
-            time.sleep(0.5)
-        return False, _last_status, 0.0, 0.0
+        deadline = time.time() + max_wait_s
+        snapshot = initial_snapshot
+        cancelled = False
+        last = {}
+        while True:
+            if snapshot is None:
+                snapshot = dual.query_order_status(futu_order_id, target_env)
+            if isinstance(snapshot, dict) and snapshot.get("success", True):
+                observed = self.db.observe_execution_order(
+                    instruction_id, execution_attempt, futu_order_id, target_env,
+                    snapshot, requested_qty=requested_qty, cancel_after=cancel_after)
+                if observed is None:
+                    return False, "IDENTITY_OR_CAS_CONFLICT", 0.0, last.get("observed_qty", 0.0)
+                last = observed
+                if last["confirmed"]:
+                    return True, last["status"], last["price"], last["dealt_qty"]
+                if last["zero_terminal"]:
+                    return False, last["status"], 0.0, 0.0
+            snapshot = None
+            now = time.time()
+            # Even a failed cancel is not a terminal status. Always refresh.
+            partial = last.get("observed_qty", 0) > 0 or last.get("status") == "FILLED_PART"
+            if not cancelled and not last.get("terminal") and (
+                    (cancel_after is None and partial)
+                    or (cancel_after is not None and now >= cancel_after)):
+                try:
+                    dual.cancel_order(str(futu_order_id), target_env)
+                except Exception:
+                    logger.exception("Entry remainder cancellation failed %s", futu_order_id)
+                cancelled = True
+                continue
+            if now >= deadline:
+                return False, "UNCONFIRMED:" + last.get("status", "QUERY_ERROR"), 0.0, last.get("observed_qty", 0.0)
+            time.sleep(min(2.0 if cancel_after is not None else 0.5, max(0.0, deadline - now)))
 
     def skip_instruction(
         self,

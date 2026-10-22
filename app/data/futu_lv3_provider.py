@@ -224,6 +224,10 @@ def _push_exchange_stamp(row: Dict[str, Any]) -> str:
     return str(row.get("update_time", "") or "")
 
 
+# 2026-10-22 (P0 冻结族): K 线生病窗时长 — 时敏调用方在窗内跳过 HTTP 兜底。
+_KLINE_SICK_WINDOW_SEC = 120.0
+
+
 class FutuLV3Provider:
     """
     富途 LV3 美股实时行情提供商
@@ -312,6 +316,8 @@ class FutuLV3Provider:
         # P0 修复: K线数据持久化缓存 + TTL，避免重复请求消耗配额
         self._kline_data_cache: dict = {}       # symbol -> {"data": [...], "ts": time.time()}
         self._kline_cache_lock = threading.Lock()
+        self._kline_refresh_lock = threading.Lock()  # 每 provider 最多一个后台刷新, 不排队
+        self._kline_sick_until = 0.0
         self._kline_cache_ttl = 60              # M6 (2026-06-03): 300→60s, K线缓存缩短到1分钟 (技术指标滞后从5min降到1min)
         # B4: 逐笔缓存 TTL = 300s, 对齐 ticker_analyzer.MEDIUM_WINDOW (中窗口 ~250 笔 ≈ 5min)。
         #   依据: analyze_tickers 的头注明确写了"Push 数据没有 Unix 时间戳, 用最近 N 笔近似"
@@ -1325,6 +1331,31 @@ class FutuLV3Provider:
                     del self._kline_symbol_cooldown[s]
             return True
 
+    def kline_sick(self) -> bool:
+        """K 线失败后 120s 内不启动后台刷新; 普通调用仍可探测恢复。"""
+        return time.time() < self._kline_sick_until
+
+    def _refresh_kline_async(self, symbol: str, ktype: str, count: int, autype: str):
+        """非阻塞抢占一个刷新槽; SDK 卡住时不再创建线程或排队。"""
+        if self.kline_sick() or not self._kline_refresh_lock.acquire(blocking=False):
+            return
+
+        def refresh():
+            try:
+                if not self.kline_sick():
+                    self.get_kline(symbol, ktype=ktype, count=count, autype=autype)
+            except Exception:
+                self._kline_sick_until = time.time() + _KLINE_SICK_WINDOW_SEC
+                logger.debug("[FutuLV3] %s K 线后台刷新异常", symbol, exc_info=True)
+            finally:
+                self._kline_refresh_lock.release()
+
+        try:
+            threading.Thread(target=refresh, name="FutuKlineRefresh", daemon=True).start()
+        except Exception:
+            self._kline_refresh_lock.release()
+            logger.warning("[FutuLV3] %s K 线后台刷新启动失败", symbol, exc_info=True)
+
     def _acquire_daily_kline_quota(self, symbol_key: str, max_wait: float = 10.0) -> bool:
         """日K配额门闸 (2026-08-27 ret=-1根因修): 复用 _wait_kline_quota 的全局60/30s窗口+单标的冷却.
 
@@ -1341,14 +1372,18 @@ class FutuLV3Provider:
                 return False
             time.sleep(0.5)
 
-    def _get_cached_kline(self, symbol: str) -> Optional[list]:
+    def _get_cached_kline(self, symbol: str, *, blocking: bool = True) -> Optional[list]:
         """从持久化缓存获取K线数据 (不消耗配额)"""
         futu_sym = self._to_futu_symbol(symbol)
         now = time.time()
-        with self._kline_cache_lock:
+        if not self._kline_cache_lock.acquire(blocking=blocking):
+            return None
+        try:
             entry = self._kline_data_cache.get(futu_sym)
             if entry and (now - entry["ts"]) < self._kline_cache_ttl:
                 return entry["data"]
+        finally:
+            self._kline_cache_lock.release()
         return None
 
     def _set_cached_kline(self, symbol: str, data: list):
@@ -1358,20 +1393,23 @@ class FutuLV3Provider:
             self._kline_data_cache[futu_sym] = {"data": data, "ts": time.time()}
 
     def get_kline(self, symbol: str, ktype: str = "K_1M", count: int = 100,
-                  autype: str = "QFQ") -> Optional[List[Dict]]:
+                  autype: str = "QFQ", latency_sensitive: bool = False) -> Optional[List[Dict]]:
         """
         获取 K 线数据 (P0 修复 - 2026-05-06)
-        
+
         三级降级:
-          1. 持久化缓存 (300s TTL, 不消耗配额)
+          1. 持久化缓存 (60s TTL, 不消耗配额)
           2. Push 缓存 (由 PushKlineHandler 累积 K 线列表，实时更新)
           3. HTTP 请求 (配额允许时)
 
         2026-07-28 (DEB-bar-ruler F2): autype 显式化 — 缺省 QFQ (前复权, 与旧隐式行为
         一致, 技术指标消费方零变化); bar 遥测等与原始成交价对比的消费方传 "NONE"。
         注: NONE 请求与 QFQ 缓存分 key 存储, 避免口径串缓存。
+
+        latency_sensitive=True 只读缓存并尝试单 worker 后台刷新, 不在调用线程连接或请求 SDK。
         """
-        if not self._ensure_connected():
+        if not latency_sensitive and not self._ensure_connected():
+            self._kline_sick_until = time.time() + _KLINE_SICK_WINDOW_SEC
             return None
 
         futu_symbol = self._to_futu_symbol(symbol)
@@ -1381,21 +1419,29 @@ class FutuLV3Provider:
         _cache_sym = f"{symbol}|{autype}|{ktype}"
 
         # ① 优先读持久化缓存 (60s TTL) — 按口径+周期 key
-        cached = self._get_cached_kline(_cache_sym)
+        cached = self._get_cached_kline(_cache_sym, blocking=not latency_sensitive)
         if cached and len(cached) >= min(count, 10):
             return cached[-count:]
 
-        # ② 读 Push 缓存 (由 Handler 实时更新) — **仅 K_1M 可用**: Handler 按订阅
-        # 累积 1 分钟 bar 且行内不带周期字段, 其它 ktype 复用会把 1M 序列当
-        # 日线/15M 返回 (2026-10-17 审计修复)。
+        # ② Push ring 仅含 QFQ 的 1M bar, 不得供其它周期/复权使用。
+        push_data = None
         if autype == "QFQ" and ktype == "K_1M":
-            with self._push_kline_cache_lock:
-                if futu_symbol in self._push_kline_cache:
-                    push_data = self._push_kline_cache[futu_symbol]
-                    if len(push_data) >= min(count, 10):
-                        # 同时写入持久化缓存
-                        self._set_cached_kline(_cache_sym, push_data[-count:])
-                        return push_data[-count:]
+            if self._push_kline_cache_lock.acquire(blocking=not latency_sensitive):
+                try:
+                    push_data = self._push_kline_cache.get(futu_symbol)
+                    if push_data:
+                        push_data = push_data[-count:]
+                finally:
+                    self._push_kline_cache_lock.release()
+                if push_data and len(push_data) >= min(count, 10):
+                    if not latency_sensitive:
+                        self._set_cached_kline(_cache_sym, push_data)
+                    return push_data
+
+        # 首次连接/SDK 请求也移出时敏线程; 生病或刷新槽忙时不排队。
+        if latency_sensitive:
+            self._refresh_kline_async(symbol, ktype, count, autype)
+            return cached[-count:] if cached else push_data
 
         # ③ 配额允许才发 HTTP 请求
         if not self._wait_kline_quota(symbol):
@@ -1485,15 +1531,16 @@ class FutuLV3Provider:
                 if not klines:
                     logger.warning(f"[FutuLV3] {symbol} history kline 无当日数据 (today={today_et}, ktype={ktype}), 返回 None")
                     return None
-                # 更新缓存: push ring buffer 只收 K_1M (其它周期写入会污染 1M 序列),
-                # 持久化缓存按 symbol|autype|ktype 分 key。
-                if ktype == "K_1M":
+                # Push ring 只收 QFQ K_1M; 持久化缓存按 symbol|autype|ktype 分 key。
+                if autype == "QFQ" and ktype == "K_1M":
                     with self._push_kline_cache_lock:
                         self._push_kline_cache[futu_symbol] = klines
                 self._set_cached_kline(_cache_sym, klines)
+                self._kline_sick_until = 0.0  # 2026-10-22: 成功即出生病窗
                 return klines
             else:
                 logger.warning(f"[FutuLV3] {symbol} K 线获取失败: ret={ret} msg={_err}")
+                self._kline_sick_until = time.time() + _KLINE_SICK_WINDOW_SEC
                 # ── P0 (2026-06-04): K 线失败触发重连 — 检测 Push 断连 ──
                 # 根因: K_1M Push 订阅可能在盘中断连(Disconnect), 历史 K 线请求也失败
                 # 修复: 连续失败时触发 force_reconnect 恢复 Push 订阅
@@ -1514,6 +1561,7 @@ class FutuLV3Provider:
                 return self._get_cached_kline(_cache_sym)  # 降级返回缓存
 
         except Exception as e:
+            self._kline_sick_until = time.time() + _KLINE_SICK_WINDOW_SEC  # 2026-10-22 冻结族
             logger.debug(f"[FutuLV3] {symbol} K 线异常: {e}")
             return self._get_cached_kline(_cache_sym)  # 降级返回缓存
 

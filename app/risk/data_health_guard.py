@@ -15,7 +15,9 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -25,6 +27,8 @@ def check_quote_health(
     quote: Optional[Dict[str, Any]],
     max_age_seconds: float = 60.0,
     max_spread_pct: float = 0.02,
+    *,
+    require_exchange_quote: bool = False,
 ) -> Tuple[bool, str]:
     """
     检查报价是否健康。
@@ -45,6 +49,21 @@ def check_quote_health(
     bid = float(quote.get("bid", 0) or 0)
     ask = float(quote.get("ask", 0) or 0)
     price = float(quote.get("price", 0) or quote.get("last", 0) or 0)
+
+    if require_exchange_quote:
+        if not all(math.isfinite(value) and value > 0 for value in (bid, ask, price)):
+            return False, "实盘报价必须为有限正数"
+        if quote.get("book_is_proxy") or bid >= ask:
+            return False, "实盘必须使用有效双边盘口，拒绝代理、锁定或交叉盘口"
+        source = str(quote.get("data_source") or quote.get("source") or "").lower()
+        if source in DEGRADED_QUOTE_SOURCES:
+            return False, f"降级数据源 ({source})"
+        from app.playbook.candidate_eligibility import _source_time
+        _, exchange_age = _source_time(quote, datetime.now(timezone.utc))
+        if exchange_age is None or not math.isfinite(exchange_age) or exchange_age < 0:
+            return False, "交易所报价时间缺失、无效或在未来"
+        if exchange_age > max_age_seconds:
+            return False, f"交易所报价过期 (age={exchange_age:.0f}s > {max_age_seconds:.0f}s)"
 
     if bid <= 0 or ask <= 0:
         return False, f"bid/ask 缺失 (bid={bid}, ask={ask})"

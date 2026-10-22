@@ -276,7 +276,8 @@ class USPositionSync:
     def _backfill_playbook_trade_record(self, symbol: str, direction: str, qty: int,
                                         entry: float, sl: float, tp: float,
                                         trace_id: str, futu_order_id: str = "",
-                                        broker_env: str = "sim") -> bool:
+                                        broker_env: str = "sim", order_evidence=None,
+                                        broker_position=None) -> bool:
         """统一管线 #4 (2026-07-20): 恢复仓位标 playbook_sim 时补录未平 PLAYBOOK_SIM trade_record.
 
         场景: playbook 下单后 GHOST-RC1 拒绝记账但订单实际成交 → trade_records 无记录 →
@@ -285,20 +286,99 @@ class USPositionSync:
         幂等: 已有未平 PLAYBOOK 记录则跳过. 失败仅告警不中断同步 (可用
         scripts/adopt_position_to_playbook.py 人工收编).
         """
+        # Keep unresolved entries on B1; legacy P3 needs an order receipt, not an aggregate position.
+        if order_evidence is None:
+            from app.playbook.playbook_service import (
+                PlaybookService, _try_acquire_cross_process_symbol_lock,
+                _release_cross_process_symbol_lock,
+            )
+            lock = PlaybookService._get_symbol_order_lock(symbol)
+            if not lock.acquire(blocking=False):
+                return False
+            xproc = None
+            try:
+                xproc, _ = _try_acquire_cross_process_symbol_lock(symbol)
+                if xproc is None:
+                    return False
+                PlaybookService._halt_unresolved_live_entry(
+                    broker_env, symbol, futu_order_id, 'legacy entry/STOP recovery unverified')
+                conn = safe_sqlite_connect(_get_db_path(), timeout=5)
+                try:
+                    pending = conn.execute(
+                        "SELECT 1 FROM playbook_instructions WHERE symbol=? AND execution_state "
+                        "IN ('UNKNOWN','SUBMITTED','FILLED_UNBOOKED') LIMIT 1", (symbol,),
+                    ).fetchone()
+                finally:
+                    conn.close()
+                if pending or not futu_order_id:
+                    return False
+                from app.execution.dual_broker import get_dual_broker
+                snapshot = get_dual_broker().query_order_status(futu_order_id, broker_env)
+                import math
+                status = str(snapshot.get('order_status') or '').rsplit('.', 1)[-1]
+                dealt = float(snapshot.get('dealt_qty'))
+                total = float(snapshot.get('qty'))
+                price = float(snapshot.get('dealt_avg_price'))
+                if not (snapshot.get('success') and str(snapshot.get('order_id')) == str(futu_order_id)
+                        and snapshot.get('code') == symbol
+                        and status in ('FILLED_ALL', 'CANCELLED_PART', 'CANCELLED_ALL', 'CANCELLED',
+                                       'FAILED', 'DELETED', 'DISABLED', 'REJECTED', 'EXPIRED', 'TIMEOUT')
+                        and all(math.isfinite(v) for v in (dealt, total, price))
+                        and dealt.is_integer() and total.is_integer() and 0 < dealt <= total
+                        and price > 0 and (status != 'FILLED_ALL' or dealt == total)):
+                    return False
+                return self._backfill_playbook_trade_record(
+                    symbol, direction, int(dealt), price, sl, tp, trace_id, futu_order_id, broker_env,
+                    order_evidence={'confirmed': True, 'order_id': futu_order_id,
+                                    'dealt_qty': dealt, 'price': price},
+                    broker_position={'qty': qty, 'direction': direction})
+            except Exception:
+                logger.exception('[US Sync] legacy order receipt unavailable %s', futu_order_id)
+                return False
+            finally:
+                _release_cross_process_symbol_lock(xproc)
+                lock.release()
+        if not (order_evidence and order_evidence.get('confirmed')
+                and order_evidence.get('order_id') == str(futu_order_id)
+                and order_evidence.get('dealt_qty') == qty
+                and order_evidence.get('price') == entry):
+            logger.warning('[US Sync] refusing position-only entry backfill %s order=%s', symbol, futu_order_id)
+            return False
         try:
             db_path = _get_db_path()
             _source = "PLAYBOOK_LIVE" if broker_env == "real" else "PLAYBOOK_SIM"
             conn = safe_sqlite_connect(db_path, timeout=5)
             try:
                 existing = conn.execute(
-                    "SELECT id FROM trade_records WHERE symbol=? AND source_type=? "
-                    "AND (exit_price=0 OR exit_price IS NULL OR exit_time='' OR exit_time IS NULL) "
-                    "LIMIT 1", (symbol, _source)
+                    "SELECT symbol, direction, quantity, entry_price FROM trade_records "
+                    "WHERE futu_order_id=? AND source_type=?", (str(futu_order_id), _source)
+                ).fetchall()
+                if existing:
+                    import math
+                    matches = (len(existing) == 1 and existing[0][0] == symbol
+                               and existing[0][1] == direction and float(existing[0][2]) == qty
+                               and math.isclose(float(existing[0][3]), entry, rel_tol=1e-9, abs_tol=1e-6))
+                    if not matches:
+                        logger.critical('[US Sync] entry receipt conflicts with existing trade order=%s', futu_order_id)
+                    return matches
+                conflict = conn.execute(
+                    "SELECT 1 FROM trade_records WHERE symbol=? AND "
+                    "(exit_price=0 OR exit_price IS NULL OR exit_time='' OR exit_time IS NULL) LIMIT 1",
+                    (symbol,),
                 ).fetchone()
+                if conflict:
+                    logger.critical('[US Sync] different open order exists for %s; manual reconciliation required', symbol)
+                    return False
             finally:
                 conn.close()
-            if existing:
-                return True
+            # Prevent resurrecting closed entries without using aggregate quantity/price as order evidence.
+            import math
+            held = float((broker_position or {}).get('qty') or 0)
+            if (not broker_position or broker_position.get('direction') != direction
+                    or not math.isfinite(held) or held < qty):
+                logger.warning('[US Sync] terminal entry has no consistent broker position %s order=%s',
+                               symbol, futu_order_id)
+                return False
             # 时钟病灶变种4拆弹 (2026-09-20): 原 datetime.now().astimezone() = 服务器 CST,
             # 导致 trade_records.entry_time 混入 +08:00 (id 1320/1511/1513/1536, 更早的
             # naive 形态 id 1092/1094/1095 且 trade_date 跨日错位)。下游约定 entry_time
@@ -310,28 +390,6 @@ class USPositionSync:
             except Exception:  # pragma: no cover - now_et 不可用时的 ET 兜底
                 from zoneinfo import ZoneInfo
                 now_iso = datetime.now(ZoneInfo("America/New_York")).isoformat()
-            # ③ 防重 (2026-09-16): 同 symbol+direction+price 且入场时间差<60s 的 open 记录已存在则跳过
-            # (防 playbook 簿记失败后 P3 补录与 playbook 重试写入产生重复行, 如 1511/1512)
-            try:
-                dup_conn = safe_sqlite_connect(db_path, timeout=5)
-                try:
-                    dup = dup_conn.execute(
-                        "SELECT id FROM trade_records WHERE symbol=? AND direction=? "
-                        "AND ABS(entry_price - ?) < 0.01 "
-                        "AND (exit_price=0 OR exit_price IS NULL OR exit_time='' OR exit_time IS NULL) "
-                        "AND ABS(julianday(entry_time) - julianday(?)) * 86400 < 60 "
-                        "LIMIT 1",
-                        (symbol, direction, entry, now_iso)
-                    ).fetchone()
-                finally:
-                    dup_conn.close()
-            except Exception:
-                dup = None
-            if dup:
-                logger.info(
-                    f"[US Sync·P3] {symbol} 同方向同价格 open 记录已存在 (id={dup[0]}), 跳过补录"
-                )
-                return True
             # atr 从 SL 距离反推 (playbook 退出用 %-drawdown, atr 仅诊断用途)
             atr_guess = abs(entry - sl) / 2.0 if (entry and sl) else 0.0
             record = {
@@ -386,7 +444,12 @@ class USPositionSync:
 
     def _reconcile_playbook_execution_states(self, ctx, trd_env, broker_env: str,
                                              futu_positions: Dict, limit: int = 25) -> None:
-        """B1-lite 未决订单对账；只有 broker 明确零成交终态才解锁。"""
+        """Use locked terminal order receipts, not aggregate positions; REAL STOP recovery remains unverified."""
+        from app.playbook.db import PlaybookDB
+        from app.playbook.playbook_service import (
+            PlaybookService, _try_acquire_cross_process_symbol_lock,
+            _release_cross_process_symbol_lock,
+        )
         db_path = _get_db_path()
         if not os.path.exists(db_path):
             return
@@ -394,102 +457,92 @@ class USPositionSync:
         conn.row_factory = sqlite3.Row
         try:
             rows = conn.execute(
-                "SELECT id, symbol, direction, stop_loss, take_profit, execution_price, "
-                "execution_time, execution_state, execution_attempt, broker_order_id, broker_env "
-                "FROM playbook_instructions WHERE execution_state IN "
+                "SELECT id, symbol FROM playbook_instructions WHERE execution_state IN "
                 "('UNKNOWN','SUBMITTED','FILLED_UNBOOKED') ORDER BY updated_at, id LIMIT ?",
                 (int(limit),),
             ).fetchall()
-            from app.playbook.db import PlaybookDB
             pdb = PlaybookDB(conn=conn)
-            for row in rows:
-                env = str(row["broker_env"] or broker_env).lower()
-                if env != broker_env:
+            for candidate in rows:
+                lock = PlaybookService._get_symbol_order_lock(candidate['symbol'])
+                if not lock.acquire(blocking=False):
                     continue
-                instruction_id = int(row["id"])
-                state = str(row["execution_state"] or "")
-                order_id = str(row["broker_order_id"] or "")
-                attempt = int(row["execution_attempt"] or 0)
-                dealt_qty = 0.0
-                dealt_avg_price = 0.0
-
-                if state in ("UNKNOWN", "SUBMITTED"):
-                    try:
-                        if order_id:
-                            ret, data = ctx.order_list_query(order_id=order_id, trd_env=trd_env)
-                        else:
-                            ret, data = ctx.order_list_query(trd_env=trd_env)
-                            if ret == 0 and data is not None and not data.empty:
-                                if "remark" not in data:
-                                    data = data.iloc[0:0]
-                                else:
-                                    remark = f"pb_{instruction_id}_{env}_{attempt}"
-                                    data = data[data["remark"].astype(str) == remark]
-                        if ret != 0 or data is None or data.empty:
-                            logger.warning(
-                                f"[US Sync·B1] 未找到未决订单 instruction={instruction_id} "
-                                f"attempt={attempt}, 保持锁定"
-                            )
-                            continue
-                        broker_row = data.iloc[-1]
-                        discovered_id = str(broker_row.get("order_id", "") or order_id)
-                        status = str(broker_row.get("order_status", "") or "UNKNOWN")
-                        dealt_qty = float(broker_row.get("dealt_qty", 0) or 0)
-                        dealt_avg_price = float(broker_row.get("dealt_avg_price", 0) or 0)
-                        if not discovered_id or not pdb.mark_execution_submitted(
-                                instruction_id, attempt, discovered_id, env, status):
-                            logger.critical(
-                                f"[US Sync·B1] broker order 身份持久化失败 instruction={instruction_id} "
-                                f"attempt={attempt} order_id={discovered_id}, 保持锁定"
-                            )
-                            continue
-                        order_id = discovered_id
-                        if dealt_qty > 0 or "FILLED_ALL" in status or "FILLED_PART" in status:
-                            if not pdb.mark_execution_filled_unbooked(
-                                    instruction_id, attempt, status):
-                                continue
-                            state = "FILLED_UNBOOKED"
-                        else:
-                            pdb.unlock_execution_if_zero_fill_terminal(
-                                instruction_id, attempt, status, dealt_qty=dealt_qty)
-                            continue
-                    except Exception as exc:
-                        logger.exception(
-                            f"[US Sync·B1] order 查询失败 instruction={instruction_id} "
-                            f"order_id={order_id}: {exc}"
-                        )
+                xproc = None
+                try:
+                    xproc, _ = _try_acquire_cross_process_symbol_lock(candidate['symbol'])
+                    if xproc is None:
                         continue
-
-                if state != "FILLED_UNBOOKED":
-                    continue
-                pos = futu_positions.get(str(row["symbol"]))
-                if not pos:
-                    continue
-                entry = float(
-                    dealt_avg_price or row["execution_price"] or pos.get("cost", 0) or 0
-                )
-                if entry <= 0:
-                    continue
-                qty = int(dealt_qty or pos.get("qty") or 0)
-                if qty <= 0:
-                    continue
-                ok = self._backfill_playbook_trade_record(
-                    symbol=str(row["symbol"]), direction=str(pos.get("direction") or row["direction"]),
-                    qty=qty, entry=entry,
-                    sl=float(row["stop_loss"] or 0), tp=float(row["take_profit"] or 0),
-                    trace_id=f"playbook-reconcile-{instruction_id}-{attempt}",
-                    futu_order_id=order_id, broker_env=env,
-                )
-                if ok:
-                    pdb.mark_execution_booked(
-                        instruction_id, attempt, execution_price=entry,
-                        execution_time=row["execution_time"] or datetime.now(timezone.utc).isoformat(),
-                        outcome="holding",
-                    )
-        except sqlite3.OperationalError as exc:
-            logger.warning(f"[US Sync·B1] execution state 对账跳过: {exc}", exc_info=True)
-        except Exception as exc:
-            logger.exception(f"[US Sync·B1] execution state 对账失败: {exc}")
+                    row = conn.execute(
+                        "SELECT * FROM playbook_instructions WHERE id=? AND execution_state IN "
+                        "('UNKNOWN','SUBMITTED','FILLED_UNBOOKED')", (candidate['id'],),
+                    ).fetchone()
+                    if not row:
+                        continue
+                    env = str(row['broker_env'] or broker_env).lower()
+                    if env != broker_env:
+                        continue
+                    iid, attempt = int(row['id']), int(row['execution_attempt'] or 0)
+                    order_id = str(row['broker_order_id'] or '')
+                    PlaybookService._halt_unresolved_live_entry(
+                        env, row['symbol'], order_id, 'restart entry/STOP recovery unverified')
+                    for query_index in range(2):
+                        kwargs = {'trd_env': trd_env, 'refresh_cache': True}
+                        if order_id:
+                            kwargs['order_id'] = order_id
+                        ret, data = ctx.order_list_query(**kwargs)
+                        if ret != 0 or data is None or data.empty:
+                            break
+                        if not order_id:
+                            if 'remark' not in data:
+                                break
+                            remark = f'pb_{iid}_{env}_{attempt}'
+                            data = data[data['remark'].astype(str) == remark]
+                        if len(data) != 1:
+                            break
+                        snapshot = data.iloc[0].to_dict()
+                        discovered = str(snapshot.get('order_id') or '')
+                        observation = pdb.observe_execution_order(
+                            iid, attempt, order_id or discovered, env, snapshot)
+                        if observation is None:
+                            break
+                        order_id = discovered
+                        if observation['confirmed']:
+                            ok = self._backfill_playbook_trade_record(
+                                symbol=row['symbol'], direction=(
+                                    'SHORT' if row['direction'] in ('SHORT', 'SELL_SHORT') else 'LONG'),
+                                qty=int(observation['dealt_qty']), entry=observation['price'],
+                                sl=float(row['stop_loss'] or 0), tp=float(row['take_profit'] or 0),
+                                trace_id=f'playbook-reconcile-{iid}-{attempt}',
+                                futu_order_id=order_id, broker_env=env,
+                                order_evidence=observation,
+                                broker_position=futu_positions.get(row['symbol']))
+                            if ok:
+                                from app.utils.timezone import now_et
+                                pdb.mark_execution_booked(
+                                    iid, attempt, execution_price=observation['price'],
+                                    execution_time=row['execution_time'] or now_et().isoformat(),
+                                    outcome='holding')
+                            break
+                        if observation['zero_terminal']:
+                            pdb.unlock_execution_if_zero_fill_terminal(
+                                iid, attempt, observation['status'], dealt_qty=0)
+                            break
+                        # New limit entries persist the original TTL; never cancel early.
+                        cancel_after = observation.get('cancel_after')
+                        due = (time.time() >= cancel_after if cancel_after is not None else
+                               str(snapshot.get('order_type') or '').rsplit('.', 1)[-1] == 'MARKET'
+                               and observation['observed_qty'] > 0)
+                        if query_index or observation['terminal'] or not due:
+                            break
+                        from app.execution.dual_broker import get_dual_broker
+                        get_dual_broker().cancel_order(order_id, env)
+                        # ACK (including failure) is followed by a refreshed identity query.
+                except Exception:
+                    logger.exception('[US Sync] unresolved entry reconciliation failed %s', candidate['id'])
+                finally:
+                    _release_cross_process_symbol_lock(xproc)
+                    lock.release()
+        except Exception:
+            logger.exception('[US Sync] execution state reconciliation failed')
         finally:
             conn.close()
 

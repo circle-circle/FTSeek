@@ -2458,7 +2458,7 @@ def _track_bar_peak_trough(meta, data_router, symbol, entry_time_str, direction=
     本函数用 1min K线 high/low 做并行测量 (仅落 metadata, **不参与任何退出决策**).
     周度对比 bar 版 vs quote 版差距, 再决定是否切换决策输入
     (切换=显式行为变更, 需开新 config_version 窗口, 另行批准).
-    K线来源: futu LV3 get_kline (300s 持久缓存 + push 缓存, 基本不额外耗配额).
+    K线来源: futu LV3 get_kline (60s 缓存, 缺失时由单 worker 后台刷新).
     已知噪声: 入场分钟的 bar 含入场前 tick, 峰谷可能微量高估 (可接受, 判分时知晓).
 
     方向语义 (与 quote 版 peak_price/trough_price 对齐):
@@ -2488,10 +2488,10 @@ def _track_bar_peak_trough(meta, data_router, symbol, entry_time_str, direction=
         #   count 小于范围总数(~780)会拿到纯 T-1 bar → 入场后过滤恒空 → 采集失效.
         # 2026-07-28 (F2): autype=NONE — 本尺子与原始成交价对比, 不得用前复权 bar
         #   (除息日附近会错位 ~0.3-0.5%)。技术指标侧仍用缺省 QFQ, 互不影响。
-        try:
-            bars = _futu.get_kline(symbol, ktype="K_1M", count=800, autype="NONE") or []
-        except TypeError:  # 旧签名兼容 (provider 未重载时不阻断采集)
-            bars = _futu.get_kline(symbol, ktype="K_1M", count=800) or []
+        # 缺缓存时后台刷新; 不兼容签名由外层降级, 不回退同步/QFQ。
+        bars = _futu.get_kline(
+            symbol, ktype="K_1M", count=800, autype="NONE", latency_sensitive=True,
+        ) or []
         if not bars:
             return False
         highs, lows = [], []

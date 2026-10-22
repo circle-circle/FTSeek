@@ -43,15 +43,16 @@ def compensation_case(monkeypatch, tmp_path):
     monkeypatch.setattr(futu, "OpenSecTradeContext", forbidden)
     monkeypatch.setattr(futu, "OpenQuoteContext", forbidden)
     from app.playbook import market_regime
+    from app.risk import data_health_guard  # Load real quote validator before risk stubs.
 
     def module(name, **attributes):
         replacement = ModuleType(name)
         replacement.__dict__.update(attributes)
         monkeypatch.setitem(sys.modules, name, replacement)
 
-    push_hub = SimpleNamespace(push_text=lambda text, level=None: None)
+    push_hub = SimpleNamespace(push_text=MagicMock(), push=MagicMock())
     module("app.push", get_push_hub=lambda: push_hub,
-           trade_entry=forbidden, trade_exit=forbidden)
+           trade_entry=lambda **kwargs: kwargs, trade_exit=forbidden)
     config = {
         "playbook.execute_mode": "futu_simulate",
         "risk.playbook_vix_gate_enabled": False,
@@ -91,12 +92,12 @@ def compensation_case(monkeypatch, tmp_path):
     module("app.risk.pdt_guard", get_pdt_guard=lambda: SimpleNamespace(
         check_trade_permission=lambda: (True, "sealed", "NORMAL")))
     module("app.coordinator.manual_hold_registry", manual_hold_registry=SimpleNamespace(
-        is_auto_blocked=lambda symbol, target_env=None: False, register=forbidden))
+        is_auto_blocked=lambda symbol, target_env=None: False, register=MagicMock()))
     module("app.playbook.admission", evaluate=lambda inst: {"verdict": "PASS"},
            apply=lambda inst: (inst, {"verdict": "PASS"}))
     monkeypatch.setattr(market_regime, "MarketRegimeGate", lambda: SimpleNamespace(
         assess=lambda: SimpleNamespace(regime="NORMAL", vix=20)))
-    module("app.data.market_data_router", get_market_data_router=lambda: SimpleNamespace(
+    module("app.data.market_data_router", MarketDataRouter=MagicMock(), get_market_data_router=lambda: SimpleNamespace(
         get_full_market_context=lambda symbol: {"price": 100}, get_vix_or_none=lambda: 20))
 
     state = SimpleNamespace(failure="constructor", saved=[], violations=violations)
@@ -124,9 +125,16 @@ def compensation_case(monkeypatch, tmp_path):
 
         def save_trade(self, record, **kwargs):
             state.saved.append(record)
-            raise sqlite3.OperationalError("injected save_trade failure")
+            if state.failure == "save_trade":
+                raise sqlite3.OperationalError("injected save_trade failure")
+            with sqlite3.connect(state.trade_path) as trades:
+                keys = ('source_type', 'symbol', 'direction', 'quantity', 'entry_price',
+                        'futu_order_id', 'exit_price', 'exit_time')
+                return trades.execute(
+                    'INSERT INTO trade_records (' + ','.join(keys) + ') VALUES (?,?,?,?,?,?,?,?)',
+                    tuple(record[k] for k in keys)).lastrowid
 
-        upsert_position_simple = staticmethod(forbidden)
+        upsert_position_simple = staticmethod(lambda **kwargs: None)
 
     module("app.storage.trade_store", TradeStore=FailingTradeStore)
 
@@ -137,13 +145,29 @@ def compensation_case(monkeypatch, tmp_path):
     from app.core import db_utils, paths
 
     monkeypatch.setattr(service_module, "now_et", lambda: datetime.fromisoformat("2026-09-10T10:00:00-04:00"))
-    monkeypatch.setattr(service_module, "_private_router_quote", lambda symbol: {"price": 100})
+    monkeypatch.setattr(service_module, "_SYMBOL_LOCK_DIR", tmp_path / "symbol-locks")
+    monkeypatch.setattr(service_module, "_PORTFOLIO_GUARDRAIL_AUDIT_PATH", tmp_path / "portfolio.jsonl")
+    from datetime import timezone
+    import time
+    monkeypatch.setattr(service_module, "_private_router_quote", lambda symbol: {
+        "price": 100, "bid": 99.99, "ask": 100.01, "is_proxy": False,
+        "update_time": datetime.now(timezone.utc).isoformat(), "timestamp": time.time(),
+    })
+    state.halt_state = {}
+    def persist_halt(reason):
+        state.halt_state = {"halted": True, "reason": reason}
+        return dict(state.halt_state)
+    halt = MagicMock(side_effect=persist_halt)
+    monkeypatch.setattr("app.playbook.live_arm_gate.halt_live_new_positions", halt)
+    monkeypatch.setattr("app.playbook.live_arm_gate.read_live_arm_halt", lambda: dict(state.halt_state))
+    state.halt, state.push_hub = halt, push_hub
     monkeypatch.setattr("app.playbook.config.get_playbook_config", lambda: {
         "symbol_daily_loss_gate_enabled": False,
         "duplicate_position_guard_enabled": False,
         "pretrade_quote_gate_enabled": False,
         "entry_freshness_gate_enabled": False,
         "gap_dive_halve_enabled": False,
+        "entry_confirm_max_wait_s": 0,
     })
     monkeypatch.setattr(pipeline, "_check_graduation_gate", lambda: {"graduated": True})
     monkeypatch.setattr(
@@ -162,7 +186,8 @@ def compensation_case(monkeypatch, tmp_path):
     monkeypatch.setattr(paths, "get_trade_records_db_for_arm", lambda target_env: trade_path)
     source = sqlite3.connect(trade_path)
     source.execute("CREATE TABLE voting_predictions (decision_id TEXT, model_votes TEXT, predicted_strength REAL, predicted_confidence REAL)")
-    source.execute("CREATE TABLE trade_records (id INTEGER PRIMARY KEY, source_type TEXT, exit_time TEXT)")
+    source.execute("CREATE TABLE trade_records (id INTEGER PRIMARY KEY, source_type TEXT, exit_time TEXT, "
+                   "symbol TEXT, direction TEXT, quantity REAL, entry_price REAL, futu_order_id TEXT, exit_price REAL)")
     source.commit()
     source.close()
     conn = sqlite3.connect(":memory:")
@@ -236,6 +261,7 @@ def test_compensation_carries_original_source_and_entry_identity(compensation_ca
     case = compensation_case
     case.failure = failure
     monkeypatch.setenv("AUTO_TRADE_ACCOUNT", target_env)
+    case.broker.submit_order.return_value["filled_qty"] = 1 if target_env == "real" else 10
     response = case.service.execute_instruction(
         case.iid, acknowledge_risk=True, target_env=target_env
     )
@@ -266,7 +292,12 @@ def test_compensation_carries_original_source_and_entry_identity(compensation_ca
 
 def test_partial_entry_compensates_only_observed_owned_quantity(compensation_case):
     case = compensation_case
-    case.broker.submit_order.return_value["filled_qty"] = 4
+    case.broker.submit_order.return_value.update(filled_qty=4, broker_order_status="FILLED_PART")
+    case.broker.cancel_order = MagicMock(return_value={"success": True})
+    case.broker.query_order_status = MagicMock(return_value={
+        "success": True, "order_id": "ENTRY-17", "code": "US.COMP", "qty": 10,
+        "order_status": "CANCELLED_PART", "dealt_qty": 4, "dealt_avg_price": 100.25,
+    })
     case.broker.close_position.return_value = {
         "success": True, "order_filled": True, "dealt_qty": 4,
         "exit_intent_id": "compensation-partial-entry", "filled_price": 99,
@@ -313,3 +344,338 @@ def test_compensation_boundary_failure_never_releases_entry(compensation_case, f
     case.broker.close_position.assert_called_once()
     assert case.book.call_count == (failing_boundary == "book")
     assert_m2_locked(case)
+
+
+def _entry_snapshot(status="CANCELLED_PART", qty=4, price=100.25, **extra):
+    return {"success": True, "order_id": "ENTRY-17", "code": "US.COMP", "qty": 10,
+            "order_status": status, "dealt_qty": qty, "dealt_avg_price": price, **extra}
+
+
+def _partial_entry(case, snapshot):
+    case.failure = None
+    case.broker.submit_order.return_value.update(filled_qty=4, broker_order_status="FILLED_PART")
+    case.broker.cancel_order = MagicMock(return_value={"success": True})
+    case.broker.query_order_status = MagicMock(return_value=snapshot)
+    return case.service.execute_instruction(case.iid, acknowledge_risk=True)
+
+
+def _entry_row(case):
+    return case.conn.execute("SELECT * FROM playbook_instructions WHERE id=?", (case.iid,)).fetchone()
+
+
+@pytest.mark.parametrize("status,qty,price", [
+    ("CANCELLED_PART", 4, 100.25), ("FILLED_ALL", 10, 101.75),
+])
+def test_entry_terminal_receipt_replaces_submit_partial(compensation_case, status, qty, price):
+    case = compensation_case
+    response = _partial_entry(case, _entry_snapshot(status, qty, price))
+    assert response["success"] is True
+    assert case.saved[0]["quantity"] == qty
+    assert case.saved[0]["entry_price"] == price
+    assert _entry_row(case)["execution_state"] == "BOOKED"
+    case.broker.cancel_order.assert_called_once_with("ENTRY-17", "sim")
+    case.broker.query_order_status.assert_called_once_with("ENTRY-17", "sim")
+    case.broker.close_position.assert_not_called()
+    assert not case.service.execute_instruction(case.iid, acknowledge_risk=True)["success"]
+    assert len(case.saved) == 1
+
+
+@pytest.mark.parametrize("snapshot", [
+    _entry_snapshot("FILLED_PART"),  # successful cancel ACK, still in flight
+    {"success": False}, {},
+    _entry_snapshot("CANCELLED_ALL", 0),
+    _entry_snapshot("CANCELLED_PART", 2),  # regressive cumulative quantity
+    _entry_snapshot("CANCELLED_PART", 4, 0),
+    _entry_snapshot("FILLED_ALL", 10, None),
+    _entry_snapshot("FILLED_ALL", 11),
+    _entry_snapshot("CANCELLED_PART", 4.5),
+    _entry_snapshot("CANCELLED_PART", float("nan")),
+    _entry_snapshot("CANCELLED_PART", 4, float("inf")),
+    _entry_snapshot("FILLED_ALL", None),
+    _entry_snapshot(order_id="WRONG"),
+    _entry_snapshot(code="US.OTHER"),
+])
+def test_unresolved_partial_never_books_or_releases(compensation_case, snapshot):
+    import json
+    case = compensation_case
+    assert _partial_entry(case, snapshot)["success"] is False
+    row = _entry_row(case)
+    evidence = json.loads(row["metadata_json"])["entry_fill"]
+    assert row["execution_state"] == "FILLED_UNBOOKED"
+    assert evidence["observed_qty"] >= 4  # shares, not notional or requested quantity
+    assert not case.db.unlock_execution_if_zero_fill_terminal(case.iid, 1, "CANCELLED_ALL", 0)
+    assert case.db.try_claim_execution(case.iid) is None
+    assert case.saved == []
+    case.broker.close_position.assert_not_called()
+
+
+def test_query_exception_keeps_positive_evidence(compensation_case):
+    import json
+    case = compensation_case
+    case.broker.query_order_status = MagicMock(side_effect=TimeoutError("sealed timeout"))
+    case.broker.cancel_order = MagicMock(return_value={"success": False})
+    case.broker.submit_order.return_value.update(filled_qty=4, broker_order_status="FILLED_PART")
+    assert not case.service.execute_instruction(case.iid, acknowledge_risk=True)["success"]
+    assert json.loads(_entry_row(case)["metadata_json"])["entry_fill"]["observed_qty"] == 4
+    assert _entry_row(case)["execution_state"] == "FILLED_UNBOOKED"
+
+
+def test_same_symbol_new_instruction_blocked_until_zero_terminal(compensation_case):
+    case = compensation_case
+    assert not _partial_entry(case, _entry_snapshot("FILLED_PART"))["success"]
+    other = case.db.save_instruction({
+        "date": "2026-09-11", "symbol": "US.COMP", "direction": "BUY",
+        "entry_price": 100, "stop_loss": 95, "position_size": 10,
+    })
+    assert other != case.iid
+    assert case.db.try_claim_execution(other) is None
+
+
+def test_order_observation_cas_and_metadata_units(compensation_case):
+    import json
+    case = compensation_case
+    attempt = case.db.try_claim_execution(case.iid)
+    assert case.db.observe_execution_order(case.iid, attempt + 1, "ENTRY-17", "sim", _entry_snapshot()) is None
+    first = case.db.observe_execution_order(
+        case.iid, attempt, "ENTRY-17", "sim", _entry_snapshot("FILLED_PART", 4, 100.25))
+    assert first["requested_qty"] == 10  # shares
+    assert first["observed_qty"] == 4  # cumulative shares
+    assert first["price"] == 100.25  # USD/share, not 401 USD notional
+    assert first["confirmed"] is False
+    assert not case.db.mark_execution_booked(case.iid, attempt, 100.25)
+    assert case.db.observe_execution_order(case.iid, attempt, "OTHER", "sim", _entry_snapshot()) is None
+    case.db.observe_execution_order(case.iid, attempt, "ENTRY-17", "sim", _entry_snapshot("CANCELLED_ALL", 0))
+    assert json.loads(_entry_row(case)["metadata_json"])["entry_fill"]["observed_qty"] == 4
+    assert not case.db.unlock_execution_if_zero_fill_terminal(case.iid, attempt, "CANCELLED_ALL", 0)
+    case.db.observe_execution_order(case.iid, attempt, "ENTRY-17", "sim", _entry_snapshot("FILLED_ALL", 10, 101.75))
+    assert case.db.mark_execution_booked(case.iid, attempt, 101.75)
+    assert not case.db.mark_execution_booked(case.iid, attempt, 101.75)
+    assert case.db.observe_execution_order(case.iid, attempt, "ENTRY-17", "sim", _entry_snapshot()) is None
+
+
+@pytest.fixture
+def entry_recovery_case(compensation_case, monkeypatch):
+    from app.core import position_sync
+    from app.playbook.db import PlaybookDB
+    case = compensation_case
+    path = case.trade_path.with_name("recovery.sqlite")
+    with sqlite3.connect(case.trade_path) as trades:
+        schema = trades.execute("SELECT sql FROM sqlite_master WHERE name='trade_records'").fetchone()[0]
+    conn = sqlite3.connect(path)
+    case.conn.backup(conn)
+    conn.execute(schema)
+    conn.commit()
+    conn.row_factory = sqlite3.Row
+    case.conn, case.db, case.trade_path = conn, PlaybookDB(conn=conn), path
+    case.service.db = case.db
+    case.failure = None
+    monkeypatch.setattr(position_sync, "_get_db_path", lambda: str(path))
+    case.sync = position_sync.USPositionSync.__new__(position_sync.USPositionSync)
+    case.ctx = MagicMock()
+    yield case
+    conn.close()
+
+
+def _reconcile(case, snapshot, position=None):
+    import pandas as pd
+    case.ctx.order_list_query.return_value = (0, pd.DataFrame([snapshot]))
+    # Deliberately unrelated aggregate: must never become this order's quantity/cost.
+    case.sync._reconcile_playbook_execution_states(
+        case.ctx, "SIMULATE", "sim", {"US.COMP": position if position is not None else {
+            "qty": 900, "cost": 9, "direction": "LONG"}})
+
+
+def test_recovery_rechecks_unbooked_and_uses_only_order_receipt(entry_recovery_case):
+    case = entry_recovery_case
+    attempt = case.db.try_claim_execution(case.iid)
+    case.db.mark_execution_submitted(case.iid, attempt, "ENTRY-17", "sim")
+    _reconcile(case, _entry_snapshot("FILLED_PART"))
+    assert _entry_row(case)["execution_state"] == "FILLED_UNBOOKED"
+    assert case.saved == []
+    _reconcile(case, _entry_snapshot("CANCELLED_ALL", 0))
+    assert _entry_row(case)["execution_state"] == "FILLED_UNBOOKED"
+    _reconcile(case, _entry_snapshot("CANCELLED_PART", 4, 100.25))
+    assert _entry_row(case)["execution_state"] == "BOOKED"
+    assert [(r["quantity"], r["entry_price"], r["direction"]) for r in case.saved] == [(4, 100.25, "LONG")]
+    _reconcile(case, _entry_snapshot("FILLED_ALL", 10, 105))
+    assert len(case.saved) == 1  # existing BOOKED history is untouched
+    assert all(call.kwargs["refresh_cache"] is True for call in case.ctx.order_list_query.call_args_list)
+
+
+@pytest.mark.parametrize("qty,price,order_id,books", [
+    (4, 100.25, "ENTRY-17", True), (3, 100.25, "ENTRY-17", False),
+    (4, 100.5, "ENTRY-17", False), (4, 100.25, "OLD", False),
+])
+def test_recovery_existing_trade_requires_same_identity_and_receipt(entry_recovery_case, qty, price, order_id, books):
+    case = entry_recovery_case
+    attempt = case.db.try_claim_execution(case.iid)
+    case.db.mark_execution_submitted(case.iid, attempt, "ENTRY-17", "sim")
+    case.conn.execute("INSERT INTO trade_records(source_type,symbol,direction,quantity,entry_price,futu_order_id,exit_price,exit_time) "
+                      "VALUES('PLAYBOOK_SIM','US.COMP','LONG',?,?,?,0,'')", (qty, price, order_id))
+    case.conn.commit()
+    _reconcile(case, _entry_snapshot())
+    assert (_entry_row(case)["execution_state"] == "BOOKED") is books
+    assert case.saved == []
+    assert case.conn.execute("SELECT COUNT(*) FROM trade_records").fetchone()[0] == 1
+
+
+def test_recovery_cannot_overlap_service_symbol_critical_section(entry_recovery_case):
+    case = entry_recovery_case
+    def cancel(*args):
+        _reconcile(case, _entry_snapshot())
+        case.ctx.order_list_query.assert_not_called()
+        return {"success": True}
+    case.broker.submit_order.return_value.update(filled_qty=4, broker_order_status="FILLED_PART")
+    case.broker.cancel_order = MagicMock(side_effect=cancel)
+    case.broker.query_order_status = MagicMock(return_value=_entry_snapshot())
+    assert case.service.execute_instruction(case.iid, acknowledge_risk=True)["success"]
+    _reconcile(case, _entry_snapshot())
+    assert len(case.saved) == 1
+
+
+def test_unresolved_real_fill_halts_and_alerts_without_claiming_stop(compensation_case, monkeypatch):
+    case = compensation_case
+    monkeypatch.setenv("AUTO_TRADE_ACCOUNT", "real")
+    case.broker.submit_order.return_value.update(filled_qty=1, broker_order_status="FILLED_PART")
+    case.broker.cancel_order = MagicMock(return_value={"success": True})
+    snapshot = _entry_snapshot("FILLED_PART", 1)
+    snapshot["qty"] = 1
+    case.broker.query_order_status = MagicMock(return_value=snapshot)
+    case.broker.place_protective_stop = MagicMock()
+    response = case.service.execute_instruction(case.iid, acknowledge_risk=True, target_env="real")
+    assert response["success"] is False
+    case.halt.assert_called_once()
+    assert "HALT_NEW_LIVE" in case.push_hub.push_text.call_args.args[0]
+    case.broker.place_protective_stop.assert_not_called()
+    assert _entry_row(case)["execution_state"] == "FILLED_UNBOOKED"
+
+
+def test_verified_real_full_fill_preserves_protective_stop_path(compensation_case, monkeypatch):
+    case = compensation_case
+    case.failure = None
+    monkeypatch.setenv("AUTO_TRADE_ACCOUNT", "real")
+    case.broker.submit_order.return_value["filled_qty"] = 1
+    case.broker.place_protective_stop = MagicMock(return_value={"success": True, "futu_order_id": "STOP-17"})
+    receipt = MagicMock()
+    monkeypatch.setattr(case.service, "_record_live_stop_receipt", receipt)
+    response = case.service.execute_instruction(case.iid, acknowledge_risk=True, target_env="real")
+    assert response["success"] is True
+    case.broker.place_protective_stop.assert_called_once_with("US.COMP", 1, "LONG", 95.0, target_env="real")
+    receipt.assert_called_once()
+    case.halt.assert_not_called()
+
+
+@pytest.mark.parametrize('position', [{}, {'qty': 2, 'direction': 'LONG'}, {'qty': 10, 'direction': 'SHORT'}])
+def test_recovery_does_not_invent_open_trade_after_broker_close(entry_recovery_case, position):
+    case = entry_recovery_case
+    attempt = case.db.try_claim_execution(case.iid)
+    case.db.mark_execution_submitted(case.iid, attempt, 'ENTRY-17', 'sim')
+    _reconcile(case, _entry_snapshot(), position=position)
+    assert _entry_row(case)['execution_state'] == 'FILLED_UNBOOKED'
+    assert case.saved == []
+
+
+def test_p3_legacy_recovery_queries_order_instead_of_copying_account_position(entry_recovery_case):
+    case = entry_recovery_case
+    case.broker.query_order_status = MagicMock(return_value=_entry_snapshot())
+    assert case.sync._backfill_playbook_trade_record(
+        'US.COMP', 'LONG', 900, 9, 95, 110, 'legacy', 'ENTRY-17', 'sim')
+    assert case.saved[0]['quantity'] == 4
+    assert case.saved[0]['entry_price'] == 100.25
+    case.broker.query_order_status.assert_called_once_with('ENTRY-17', 'sim')
+
+
+def test_p3_legacy_numeric_broker_order_id_matches_string_identity(entry_recovery_case):
+    from numpy import int64
+    case = entry_recovery_case
+    case.broker.query_order_status = MagicMock(return_value=_entry_snapshot(order_id=int64(123)))
+    for _ in range(2):
+        assert case.sync._backfill_playbook_trade_record(
+            'US.COMP', 'LONG', 900, 9, 95, 110, 'legacy-numeric', '123', 'sim')
+    assert len(case.saved) == 1
+    assert case.saved[0]['futu_order_id'] == '123'
+    assert case.saved[0]['quantity'] == 4
+    assert case.saved[0]['entry_price'] == 100.25
+
+
+def test_p3_unresolved_instruction_defers_to_b1(entry_recovery_case):
+    case = entry_recovery_case
+    case.db.try_claim_execution(case.iid)
+    case.broker.query_order_status = MagicMock(return_value=_entry_snapshot())
+    assert not case.sync._backfill_playbook_trade_record(
+        'US.COMP', 'LONG', 900, 9, 95, 110, 'legacy', 'ENTRY-17', 'sim')
+    case.broker.query_order_status.assert_not_called()
+    assert case.saved == []
+
+
+def test_dotted_class_share_keeps_exact_broker_identity(compensation_case):
+    case = compensation_case
+    case.conn.execute("UPDATE playbook_instructions SET symbol='US.BRK.B' WHERE id=?", (case.iid,))
+    case.conn.commit()
+    attempt = case.db.try_claim_execution(case.iid)
+    snapshot = _entry_snapshot(code='US.BRK.B')
+    assert case.db.observe_execution_order(case.iid, attempt, 'ENTRY-17', 'sim', snapshot)['confirmed']
+    assert case.db.observe_execution_order(case.iid, attempt, 'ENTRY-17', 'sim',
+                                           _entry_snapshot(code='US.BRK-B')) is None
+
+
+def test_observation_metadata_cas_remerges_concurrent_annotation(compensation_case, monkeypatch):
+    import json
+    case = compensation_case
+    attempt = case.db.try_claim_execution(case.iid)
+    raced = []
+    class RacingConnection:
+        def execute(self, sql, args=()):
+            if 'SET execution_state=?, broker_order_id=?' in sql and not raced:
+                raced.append(True)
+                case.conn.execute("UPDATE playbook_instructions SET metadata_json=? WHERE id=?",
+                                  (json.dumps({'other_writer': 'keep'}), case.iid))
+                case.conn.commit()
+            return case.conn.execute(sql, args)
+        def commit(self):
+            case.conn.commit()
+    monkeypatch.setattr(case.db, '_conn', lambda: RacingConnection())
+    observation = case.db.observe_execution_order(case.iid, attempt, 'ENTRY-17', 'sim', _entry_snapshot())
+    assert observation['confirmed']
+    meta = json.loads(_entry_row(case)['metadata_json'])
+    assert meta['other_writer'] == 'keep'
+    assert meta['entry_fill']['observed_qty'] == 4
+
+
+@pytest.mark.parametrize('qty', [None, '', float('nan'), -1])
+def test_missing_or_invalid_zero_evidence_does_not_unlock(compensation_case, qty):
+    case = compensation_case
+    attempt = case.db.try_claim_execution(case.iid)
+    assert not case.db.unlock_execution_if_zero_fill_terminal(case.iid, attempt, 'CANCELLED_ALL', qty)
+    assert _entry_row(case)['execution_state'] == 'UNKNOWN'
+
+
+@pytest.mark.parametrize('submit_state', ['UNKNOWN', 'DEFINITIVE_REJECT'])
+def test_uncertain_submit_without_id_retains_positive_quantity(compensation_case, submit_state):
+    import json
+    case = compensation_case
+    case.broker.submit_order.return_value.update(
+        submit_state=submit_state, futu_order_id='', filled_qty=4, broker_order_status='FILLED_PART')
+    assert not case.service.execute_instruction(case.iid, acknowledge_risk=True)['success']
+    evidence = json.loads(_entry_row(case)['metadata_json'])['entry_fill']
+    assert evidence['observed_qty'] == 4 and not evidence['confirmed']
+    assert _entry_row(case)['execution_state'] == 'FILLED_UNBOOKED'
+    assert not case.db.unlock_execution_if_zero_fill_terminal(case.iid, 1, 'CANCELLED_ALL', 0)
+    discovered = case.db.observe_execution_order(case.iid, 1, 'ENTRY-17', 'sim', _entry_snapshot(qty=2))
+    assert discovered['observed_qty'] == 4 and not discovered['confirmed']
+
+
+def test_unresolved_live_alert_only_on_halt_transition_or_reason_change(compensation_case):
+    case = compensation_case
+    notify = case.service._halt_unresolved_live_entry
+    notify('real', 'US.COMP', 'ENTRY-17', 'unconfirmed')
+    notify('real', 'US.COMP', 'ENTRY-17', 'unconfirmed')
+    assert case.halt.call_count == 1
+    assert case.push_hub.push_text.call_count == 1
+    notify('real', 'US.COMP', 'ENTRY-17', 'query_failed')
+    assert case.halt.call_count == 2
+    assert case.push_hub.push_text.call_count == 2
+    case.halt_state['halted'] = False  # Simulated manual clear, not a production mutation.
+    notify('real', 'US.COMP', 'ENTRY-17', 'query_failed')
+    assert case.halt.call_count == 3
+    assert case.push_hub.push_text.call_count == 3

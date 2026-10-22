@@ -881,10 +881,10 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
                     from app.data.market_data_router import get_market_data_router as _get_rtr
                     _futu = getattr(_get_rtr(), "futu", None)
                     if _futu is not None and hasattr(_futu, "get_kline"):
-                        try:
-                            _sbars = _futu.get_kline(_symbol, ktype="K_1M", count=400, autype="NONE") or []
-                        except TypeError:
-                            _sbars = _futu.get_kline(_symbol, ktype="K_1M", count=400) or []
+                        _sbars = _futu.get_kline(
+                            _symbol, ktype="K_1M", count=400, autype="NONE",
+                            latency_sensitive=True,
+                        ) or []
                         _today = _shadow_now_et().strftime("%Y-%m-%d")
                         _rows = []
                         for _b in _sbars:

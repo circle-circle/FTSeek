@@ -11,6 +11,20 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import app.core.position_sync as ps
+import pytest
+from app.storage.trade_store import TradeStore as RealTradeStore
+from tests.playbook.test_exit_compensation import compensation_case
+
+
+@pytest.fixture(autouse=True)
+def sealed_backfill(compensation_case, monkeypatch):
+    import sys
+    monkeypatch.setattr(sys.modules['app.storage.trade_store'], 'TradeStore', RealTradeStore)
+
+
+def _receipt():
+    return {'confirmed': True, 'order_id': 'CLOCK-1', 'dealt_qty': 100, 'price': 50.0}
+
 
 ET = ZoneInfo("America/New_York")
 
@@ -27,6 +41,8 @@ def _backfill(tmp_path, monkeypatch, symbol="US.TEST"):
         inst, symbol=symbol, direction="LONG", qty=100,
         entry=50.0, sl=48.0, tp=55.0,
         trace_id=f"test-{symbol}", broker_env="sim",
+        futu_order_id='CLOCK-1', order_evidence=_receipt(),
+        broker_position={'qty': 100, 'direction': 'LONG'},
     )
     assert ok is True, "补录应成功 (失败会吞异常仅告警)"
     conn = sqlite3.connect(db_path)
@@ -60,6 +76,8 @@ def test_backfill_remains_idempotent(tmp_path, monkeypatch):
     again = ps.USPositionSync._backfill_playbook_trade_record(
         inst, symbol="US.DUP", direction="LONG", qty=100,
         entry=50.0, sl=48.0, tp=55.0, trace_id="dup-2", broker_env="sim",
+        futu_order_id='CLOCK-1', order_evidence=_receipt(),
+        broker_position={'qty': 100, 'direction': 'LONG'},
     )
     assert again is True
     conn = sqlite3.connect(db_path)

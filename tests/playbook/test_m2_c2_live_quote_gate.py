@@ -2,9 +2,13 @@
 
 import inspect
 import json
+import socket
 import sqlite3
+import sqlite3.dbapi2
 import threading
 import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -25,8 +29,38 @@ def db():
 
 
 @pytest.fixture
-def svc(db, monkeypatch, tmp_path):
-    # These upstream state queries are not the quote-gate contract under test.
+def sealed_io(monkeypatch, tmp_path):
+    violations = []
+    connect = sqlite3.connect
+
+    def forbidden(*args, **kwargs):
+        violations.append((args, kwargs))
+        raise AssertionError("quote test attempted external I/O")
+
+    def sandbox_connect(path, *args, **kwargs):
+        raw = str(path).removeprefix("file:").split("?", 1)[0]
+        if raw != ":memory:" and not Path(raw).resolve().is_relative_to(tmp_path):
+            return forbidden(path, *args, **kwargs)
+        return connect(path, *args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", sandbox_connect)
+    monkeypatch.setattr(sqlite3.dbapi2, "connect", sandbox_connect)
+    monkeypatch.setattr(socket.socket, "connect", forbidden)
+    monkeypatch.setattr(socket.socket, "connect_ex", forbidden)
+    monkeypatch.setattr(socket, "create_connection", forbidden)
+    import futu
+    monkeypatch.setattr(futu, "OpenQuoteContext", forbidden)
+    monkeypatch.setattr(futu, "OpenSecTradeContext", forbidden)
+    yield
+    assert not violations
+
+
+@pytest.fixture
+def svc(db, monkeypatch, tmp_path, sealed_io):
+    monkeypatch.setattr(
+        "app.risk.pdt_guard.get_pdt_guard",
+        lambda: SimpleNamespace(check_trade_permission=lambda: (True, "test", "NORMAL")),
+    )
     monkeypatch.setattr(
         "app.coordinator.manual_hold_registry.manual_hold_registry.is_auto_blocked",
         lambda symbol, target_env=None: False,
@@ -160,7 +194,11 @@ def _config(monkeypatch, **overrides):
 
 
 def _fresh_quote(_symbol):
-    return {"bid": 100.0, "ask": 100.1, "price": 100.05, "timestamp": time.time()}
+    return {
+        "bid": 100.0, "ask": 100.1, "price": 100.05,
+        "timestamp": time.time(), "update_time": datetime.now(timezone.utc).isoformat(),
+        "data_source": "futu_lv3", "book_is_proxy": False,
+    }
 
 
 def _assert_not_claimed(svc, iid):
@@ -191,7 +229,7 @@ class TestLiveFailClose:
         assert not captured
         _assert_not_claimed(svc, iid)
 
-    def test_live_last_price_is_a_valid_basic_quote(self, svc, db, monkeypatch):
+    def test_live_last_price_alone_cannot_bypass_book_check(self, svc, db, monkeypatch):
         _live_prereqs(monkeypatch)
         _config(
             monkeypatch,
@@ -205,10 +243,11 @@ class TestLiveFailClose:
             "app.playbook.playbook_service._private_router_quote",
             return_value={"last": 100.0},
         ):
-            _call_inner(svc, iid, "real")
+            result = _call_inner(svc, iid, "real")
 
-        assert captured.get("called") is True
-        assert captured["target_env"] == "real"
+        assert result.get("c2_quote_health") is True
+        assert not captured
+        _assert_not_claimed(svc, iid)
 
     def test_enabled_health_gate_requires_bid_and_ask(self, svc, db, monkeypatch):
         _live_prereqs(monkeypatch)
@@ -226,7 +265,7 @@ class TestLiveFailClose:
         assert not captured
         _assert_not_claimed(svc, iid)
 
-    def test_disabled_health_gate_skips_missing_book(self, svc, db, monkeypatch):
+    def test_disabled_health_gate_still_rejects_live_missing_book(self, svc, db, monkeypatch):
         _live_prereqs(monkeypatch)
         _config(
             monkeypatch,
@@ -240,9 +279,57 @@ class TestLiveFailClose:
             "app.playbook.playbook_service._private_router_quote",
             return_value={"price": 100.0},
         ):
-            _call_inner(svc, iid, "real")
+            result = _call_inner(svc, iid, "real")
 
-        assert captured.get("called") is True
+        assert result.get("c2_quote_health") is True
+        assert not captured
+        _assert_not_claimed(svc, iid)
+
+    @pytest.mark.parametrize("overrides", [
+        {"bid": 100.0, "ask": 100.0},
+        {"bid": 100.2, "ask": 100.1},
+        {"book_is_proxy": True},
+        {"bid": float("nan")},
+        {"ask": float("inf")},
+        {"price": float("nan")},
+        {"update_time": None, "quote_age_ms": 1},
+        {"update_time": "invalid", "quote_age_ms": 1},
+        {"data_source": "finnhub"},
+    ])
+    def test_live_rejects_unverifiable_quotes_with_flags_disabled(
+        self, svc, db, monkeypatch, overrides,
+    ):
+        _live_prereqs(monkeypatch)
+        _config(monkeypatch, pretrade_quote_gate_enabled=False, entry_freshness_gate_enabled=False)
+        iid = _save_inst(db)
+        dual, captured = _mk_dual()
+        quote = {**_fresh_quote("US.TEST_C2"), **overrides}
+        with patch("app.execution.dual_broker.get_dual_broker", return_value=dual), patch(
+            "app.playbook.playbook_service._private_router_quote", return_value=quote,
+        ):
+            result = _call_inner(svc, iid, "real")
+        assert result["success"] is False
+        assert not captured
+        _assert_not_claimed(svc, iid)
+
+    @pytest.mark.parametrize("offset_seconds", [-61, 30])
+    def test_live_uses_exchange_clock_not_fresh_local_receipt(
+        self, svc, db, monkeypatch, offset_seconds,
+    ):
+        _live_prereqs(monkeypatch)
+        _config(monkeypatch, pretrade_quote_gate_enabled=False, entry_freshness_gate_enabled=False)
+        iid = _save_inst(db)
+        dual, captured = _mk_dual()
+        quote = _fresh_quote("US.TEST_C2")
+        quote["update_time"] = (datetime.now(timezone.utc) + timedelta(seconds=offset_seconds)).isoformat()
+        quote["quote_age_ms"] = 0
+        with patch("app.execution.dual_broker.get_dual_broker", return_value=dual), patch(
+            "app.playbook.playbook_service._private_router_quote", return_value=quote,
+        ):
+            result = _call_inner(svc, iid, "real")
+        assert result["success"] is False
+        assert not captured
+        _assert_not_claimed(svc, iid)
 
     def test_live_health_failure_is_rejected(self, svc, db, monkeypatch):
         _live_prereqs(monkeypatch)
@@ -370,6 +457,17 @@ class TestLiveFailClose:
 
 
 class TestSimulationUnchanged:
+    def test_sim_proxy_with_disabled_gates_still_reaches_broker(self, svc, db, monkeypatch):
+        _config(monkeypatch, pretrade_quote_gate_enabled=False, entry_freshness_gate_enabled=False)
+        iid = _save_inst(db)
+        dual, captured = _mk_dual()
+        quote = {"bid": 100.0, "ask": 100.0, "price": 100.0, "book_is_proxy": True}
+        with patch("app.execution.dual_broker.get_dual_broker", return_value=dual), patch(
+            "app.playbook.playbook_service._private_router_quote", return_value=quote,
+        ):
+            _call_inner(svc, iid, "sim")
+        assert captured["target_env"] == "sim"
+
     def test_sim_without_quote_remains_fail_open(self, svc, db):
         iid = _save_inst(db)
         dual, captured = _mk_dual()
@@ -493,3 +591,19 @@ def test_c2_gate_precedes_execution_claim_and_is_absent_from_exit_monitor():
     assert entry_source.index("LIVE_ENTRY_NO_QUOTE") < entry_source.index("try_claim_execution")
     assert "LIVE_ENTRY_NO_QUOTE" not in exit_source
     assert "c2_quote_health" not in exit_source
+
+
+@pytest.mark.parametrize("age_seconds, expected", [(0, True), (59, True), (60, True), (61, False), (-1, False)])
+@pytest.mark.parametrize("naive_et", [False, True])
+def test_exchange_quote_age_boundary_and_et_contract(monkeypatch, age_seconds, expected, naive_et):
+    from zoneinfo import ZoneInfo
+    from app.risk import data_health_guard
+
+    now = datetime(2026, 10, 22, 15, 0, tzinfo=timezone.utc)
+    stamp = now - timedelta(seconds=age_seconds)
+    if naive_et:
+        stamp = stamp.astimezone(ZoneInfo("America/New_York")).replace(tzinfo=None)
+    quote = {**_fresh_quote("US.TEST_C2"), "update_time": stamp.isoformat()}
+    monkeypatch.setattr(data_health_guard, "datetime", SimpleNamespace(now=lambda tz: now))
+    actual, _ = data_health_guard.check_quote_health(quote, require_exchange_quote=True)
+    assert actual is expected

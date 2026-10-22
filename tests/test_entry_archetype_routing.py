@@ -22,6 +22,7 @@ from futu import RET_OK
 from app.playbook.db import PlaybookDB
 from app.playbook.playbook_service import PlaybookService
 from app.playbook.entry_routing import resolve_route, routing_enabled, parse_raw_semantics
+from tests.playbook.test_exit_compensation import compensation_case
 
 _ROUTE_CFG = {"entry_archetype_routing_enabled": True, "entry_archetype_ttl_seconds": 300}
 _PB_RAW = {"entry_archetype": "PULLBACK_LIMIT",
@@ -29,37 +30,20 @@ _PB_RAW = {"entry_archetype": "PULLBACK_LIMIT",
            "chase_cap_price": None}
 
 
-@pytest.fixture
-def db():
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    pdb = PlaybookDB(conn=conn)
-    pdb.ensure_tables()
-    yield pdb
-    conn.close()
+@pytest.fixture(autouse=True)
+def sealed_routing(compensation_case):
+    # Reuse the socket/Futu/SQLite hard boundary, including swallowed attempts.
+    return compensation_case
 
 
 @pytest.fixture
-def svc(db, monkeypatch, tmp_path):
-    # Routing tests do not measure these upstream state/market-data providers.
-    monkeypatch.setattr(
-        "app.coordinator.manual_hold_registry.manual_hold_registry.is_auto_blocked",
-        lambda symbol: False,
-    )
-    monkeypatch.setattr(
-        "app.risk.symbol_day_loss.is_symbol_day_loss_exceeded",
-        lambda symbol: (False, 0.0),
-    )
-    main_db = tmp_path / "routing-positions.sqlite"
-    conn = sqlite3.connect(main_db)
-    try:
-        conn.execute("CREATE TABLE open_positions (symbol TEXT, size REAL, owner_strategy TEXT)")
-        conn.commit()
-    finally:
-        conn.close()
-    monkeypatch.setattr("app.core.db_utils.get_main_db", lambda: main_db)
-    monkeypatch.setattr("app.playbook.playbook_service._private_router_quote", lambda symbol: None)
-    return PlaybookService(playbook_db=db)
+def db(sealed_routing):
+    return sealed_routing.db
+
+
+@pytest.fixture
+def svc(sealed_routing):
+    return sealed_routing.service
 
 
 def _save_inst(db, **kwargs):
@@ -96,13 +80,14 @@ def _mk_dual(order_rows, submit_result=None):
 
     _rows = list(order_rows)
 
-    def _olq(order_id=None, trd_env=None):
-        if not _rows:
-            return RET_OK, pd.DataFrame([{"order_status": "SUBMITTED", "dealt_qty": 0,
-                                           "dealt_avg_price": 0}])
-        row = _rows.pop(0) if len(_rows) > 1 else _rows[0]
-        return RET_OK, pd.DataFrame([row])
+    def _olq(order_id=None, trd_env=None, refresh_cache=False):
+        row = (_rows.pop(0) if len(_rows) > 1 else _rows[0]) if _rows else {
+            "order_status": "SUBMITTED", "dealt_qty": 0, "dealt_avg_price": 0}
+        return RET_OK, pd.DataFrame([{
+            "order_id": order_id or "F1", "code": "US.TEST_ARCH", "qty": 40, **row}])
     ctx.order_list_query.side_effect = _olq
+    dual.query_order_status.side_effect = lambda order_id, env: {
+        "success": True, **_olq(order_id, env, True)[1].iloc[0].to_dict()}
     ctx.modify_order.return_value = (RET_OK, None)
     dual.cancel_order.return_value = {"success": True, "error": ""}
     return dual, captured
@@ -265,7 +250,8 @@ class TestOrderConstruction:
         iid = _save_inst(db)
         dual, captured = _mk_dual(
             [], submit_result={"success": True, "futu_order_id": "F2",
-                               "filled_price": 145.0, "filled_qty": 40, "error": ""})
+                               "filled_price": 145.0, "filled_qty": 40, "error": "",
+                               "broker_order_status": "FILLED_ALL"})
         with patch("app.execution.dual_broker.get_dual_broker", return_value=dual), \
              patch("app.data.market_data_router.MarketDataRouter") as _mdr, \
              patch.object(db, "mark_execution_filled_unbooked", return_value=False) as mark_unbooked:
@@ -276,7 +262,7 @@ class TestOrderConstruction:
         order = captured["order"]
         assert order.order_type == OrderType.MARKET
         assert order.price == 0.0
-        mark_unbooked.assert_called_once_with(iid, 1, "FILLED")
+        mark_unbooked.assert_called_once_with(iid, 1, "FILLED_ALL")
         assert result == {"success": False, "message": "成交状态持久化冲突，已停止本次簿记"}
 
 
@@ -339,11 +325,11 @@ class TestFillWaitStateMachine:
                 "F1", "sim", route, iid, sym, 40, "futu_simulate", "BUY", attempt)
         assert rt["proceed"] is False
         row = svc._find_instruction_by_id(iid)
-        assert row["execution_state"] == "UNKNOWN"
+        assert row["execution_state"] == "SUBMITTED"
         assert row["executed"] == 1
         assert not row["skip_reason"]
 
-    def test_partial_at_deadline_books_dealt_cancels_rest(self, svc, db):
+    def test_partial_at_deadline_ack_without_terminal_stays_locked(self, svc, db):
         iid = _save_inst(db)
         route, iid, sym = _wait_kwargs(svc, db, iid, ttl=1)
         dual, _ = _mk_dual([
@@ -354,8 +340,9 @@ class TestFillWaitStateMachine:
         db.try_claim_execution(iid)
         with patch("app.execution.dual_broker.get_dual_broker", return_value=dual):
             rt = svc._handle_routed_fill_wait("F1", "sim", route, iid, sym, 40, "futu_simulate", "BUY")
-        assert rt["proceed"] is True
-        assert rt["dealt_qty"] == 30  # 按已成交量, 不追余量
+        assert rt["proceed"] is False
+        assert rt["result"]["cancel_unconfirmed"] is True
+        assert svc._find_instruction_by_id(iid)["execution_state"] == "FILLED_UNBOOKED"
         dual.cancel_order.assert_called_once()
 
     def test_race_fill_after_cancel_proceeds(self, svc, db):
@@ -371,6 +358,33 @@ class TestFillWaitStateMachine:
         with patch("app.execution.dual_broker.get_dual_broker", return_value=dual):
             rt = svc._handle_routed_fill_wait("F1", "sim", route, iid, sym, 40, "futu_simulate", "BUY")
         assert rt["proceed"] is True and rt["dealt_qty"] == 40
+
+    def test_limit_partial_waits_full_ttl_then_requires_cancel_terminal(self, svc, db, monkeypatch):
+        from types import SimpleNamespace
+        from app.playbook import playbook_service
+        clock = [1000.0]
+        monkeypatch.setattr(playbook_service, 'time', SimpleNamespace(
+            time=lambda: clock[0], sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds)))
+        iid = _save_inst(db)
+        attempt = db.try_claim_execution(iid)
+        route, _, sym = _wait_kwargs(svc, db, iid, ttl=6)
+        dual, _ = _mk_dual([])
+        partial = {'success': True, 'order_id': 'F1', 'code': sym, 'qty': 40,
+                   'order_status': 'FILLED_PART', 'dealt_qty': 30, 'dealt_avg_price': 140.5}
+        dual.query_order_status.side_effect = lambda *args: {
+            **partial, 'order_status': 'CANCELLED_PART' if dual.cancel_order.called else 'FILLED_PART'}
+        def cancel(*args):
+            assert clock[0] >= 1006.0
+            return {'success': False}  # Failed ACK does not override a terminal receipt either.
+        dual.cancel_order.side_effect = cancel
+        with patch('app.execution.dual_broker.get_dual_broker', return_value=dual):
+            rt = svc._handle_routed_fill_wait('F1', 'sim', route, iid, sym, 40,
+                                              'futu_simulate', execution_attempt=attempt,
+                                              initial_snapshot=partial)
+        assert rt['proceed'] and rt['dealt_qty'] == 30
+        assert rt['fill_price'] == 140.5
+        assert clock[0] == 1006.0
+        dual.cancel_order.assert_called_once()
 
     def test_order_dead_status_terminal(self, svc, db):
         iid = _save_inst(db)

@@ -921,13 +921,19 @@ class PlaybookDB:
         """
         conn = self._conn()
         now = now_utc().isoformat()
+        # Durable same-symbol in-flight guard, independent of the optional position gate.
+        pending_guard = (
+            " AND NOT EXISTS (SELECT 1 FROM playbook_instructions other "
+            "WHERE other.symbol=playbook_instructions.symbol AND other.id<>playbook_instructions.id "
+            "AND other.execution_state IN ('UNKNOWN','SUBMITTED','FILLED_UNBOOKED')) "
+        )
         try:
             row = conn.execute(
                 "UPDATE playbook_instructions SET executed = 1, execution_state = 'UNKNOWN', "
                 "execution_attempt = COALESCE(execution_attempt, 0) + 1, "
                 "broker_order_id = NULL, broker_env = NULL, broker_order_status = NULL, updated_at = ? "
                 "WHERE id = ? AND execution_state = 'PENDING' AND COALESCE(executed, 0) = 0 "
-                "RETURNING execution_attempt",
+                + pending_guard + "RETURNING execution_attempt",
                 (now, instruction_id),
             ).fetchone()
         except sqlite3.OperationalError as exc:
@@ -938,7 +944,8 @@ class PlaybookDB:
                 "UPDATE playbook_instructions SET executed = 1, execution_state = 'UNKNOWN', "
                 "execution_attempt = COALESCE(execution_attempt, 0) + 1, "
                 "broker_order_id = NULL, broker_env = NULL, broker_order_status = NULL, updated_at = ? "
-                "WHERE id = ? AND execution_state = 'PENDING' AND COALESCE(executed, 0) = 0",
+                "WHERE id = ? AND execution_state = 'PENDING' AND COALESCE(executed, 0) = 0"
+                + pending_guard,
                 (now, instruction_id),
             )
             row = (conn.execute(
@@ -946,6 +953,97 @@ class PlaybookDB:
             ).fetchone() if cur.rowcount == 1 else None)
         conn.commit()
         return int(row[0]) if row is not None else None
+
+    def observe_execution_order(self, instruction_id: int, attempt: int,
+                                order_id: str, env: str, snapshot: Dict,
+                                requested_qty=None, cancel_after=None,
+                                _cas_retries: int = 2) -> Optional[Dict]:
+        """Preserve fill high-water marks by CAS (shares, USD/share); callers lock through trade INSERT."""
+        import math
+
+        def number(value):
+            try:
+                value = float(value)
+                return value if math.isfinite(value) else None
+            except (TypeError, ValueError):
+                return None
+
+        conn = self._conn()
+        row = conn.execute(
+            "SELECT execution_state, broker_order_id, broker_env, metadata_json, symbol, broker_order_status "
+            "FROM playbook_instructions WHERE id=? AND execution_attempt=?",
+            (instruction_id, attempt),
+        ).fetchone()
+        if (not row or row[0] not in ('UNKNOWN', 'SUBMITTED', 'FILLED_UNBOOKED')
+                or row[5] == 'FILL_EVIDENCE_PERSIST_FAILED'):
+            return None
+        if (str(snapshot.get('order_id') or '') != str(order_id)
+                or str(snapshot.get('code') or '') != row[4]
+                or row[1] not in (None, '', str(order_id)) or row[2] not in (None, '', env)):
+            return None
+        try:
+            meta = json.loads(row[3] or '{}')
+            prior = meta.get('entry_fill', {})
+            if prior.get('attempt') != attempt:
+                prior = {}
+        except (TypeError, ValueError, AttributeError):
+            return None
+        if not isinstance(meta, dict) or not isinstance(prior, dict):
+            return None
+        status = str(snapshot.get('order_status') or 'UNKNOWN').upper().rsplit('.', 1)[-1]
+        qty = number(snapshot.get('qty'))
+        dealt = number(snapshot.get('dealt_qty'))
+        price = number(snapshot.get('dealt_avg_price'))
+        requested = number(prior.get('requested_qty', requested_qty))
+        if requested is None:
+            requested = qty
+        high = max(float(prior.get('observed_qty') or 0), dealt or 0)
+        terminal = status in {
+            'FILLED_ALL', 'CANCELLED_ALL', 'CANCELLED_PART', 'CANCELLED',
+            'FAILED', 'DELETED', 'DISABLED', 'REJECTED', 'EXPIRED', 'TIMEOUT',
+        }
+        legal = (qty is not None and qty > 0 and qty.is_integer()
+                 and qty == requested and dealt is not None and dealt >= 0
+                 and dealt.is_integer() and dealt <= qty and dealt >= high
+                 and (status != 'FILLED_ALL' or dealt == qty)
+                 and (status != 'CANCELLED_PART' or dealt > 0))
+        confirmed = bool(order_id and terminal and legal and dealt > 0 and price is not None and price > 0)
+        evidence = high > 0 or status in ('FILLED_ALL', 'FILLED_PART', 'CANCELLED_PART')
+        zero_terminal = bool(order_id and terminal and legal and dealt == 0 and high == 0
+                             and row[0] != 'FILLED_UNBOOKED')
+        observation = {
+            'attempt': attempt, 'order_id': str(order_id), 'requested_qty': requested,
+            'observed_qty': high, 'status': status, 'confirmed': confirmed,
+            'terminal': terminal, 'zero_terminal': zero_terminal,
+            # Never combine a newer quantity with an older snapshot's VWAP.
+            'price': price if legal and price is not None and price > 0 else None,
+            'dealt_qty': dealt if legal else None,
+            'cancel_after': prior.get('cancel_after') if prior.get('cancel_after') is not None else cancel_after,
+        }
+        meta['entry_fill'] = observation
+        state = ('FILLED_UNBOOKED' if evidence or row[0] == 'FILLED_UNBOOKED'
+                 else 'SUBMITTED' if order_id else 'UNKNOWN')
+        cur = conn.execute(
+            "UPDATE playbook_instructions SET execution_state=?, broker_order_id=?, broker_env=?, "
+            "broker_order_status=?, metadata_json=?, updated_at=? "
+            "WHERE id=? AND execution_attempt=? AND execution_state=? AND metadata_json IS ? "
+            "AND broker_order_id IS ? AND broker_env IS ?",
+            (state, str(order_id), env, status, json.dumps(meta), now_utc().isoformat(),
+             instruction_id, attempt, row[0], row[3], row[1], row[2]),
+        )
+        conn.commit()
+        if cur.rowcount == 1:
+            return observation
+        # Re-merge under CAS so concurrent annotations cannot erase newly observed fills.
+        if _cas_retries:
+            return self.observe_execution_order(
+                instruction_id, attempt, order_id, env, snapshot, requested_qty,
+                cancel_after, _cas_retries=_cas_retries - 1)
+        if evidence:
+            self.mark_execution_filled_unbooked(instruction_id, attempt, 'FILL_EVIDENCE_PERSIST_FAILED')
+            logger.critical('Entry fill evidence CAS exhausted id=%s attempt=%s; manual reconciliation required',
+                            instruction_id, attempt)
+        return None
 
     def mark_execution_submitted(self, instruction_id: int, attempt: int,
                                  broker_order_id: str, broker_env: str,
@@ -1012,7 +1110,10 @@ class PlaybookDB:
             "execution_price=COALESCE(?, execution_price), "
             "execution_time=COALESCE(?, execution_time), outcome=COALESCE(?, outcome), "
             "skip_reason='', updated_at=? WHERE id=? AND execution_attempt=? "
-            "AND execution_state='FILLED_UNBOOKED'",
+            "AND execution_state='FILLED_UNBOOKED' "
+            "AND json_extract(metadata_json, '$.entry_fill.confirmed')=1 "
+            "AND json_extract(metadata_json, '$.entry_fill.attempt')=execution_attempt "
+            "AND json_extract(metadata_json, '$.entry_fill.order_id')=broker_order_id",
             (execution_price, execution_time, outcome, now_utc().isoformat(), instruction_id, attempt),
         )
         conn.commit()
@@ -1020,7 +1121,7 @@ class PlaybookDB:
 
     def unlock_execution_if_zero_fill_terminal(self, instruction_id: int, attempt: int,
                                                broker_order_status: str,
-                                               dealt_qty: float = 0.0) -> bool:
+                                               dealt_qty: Optional[float] = None) -> bool:
         """仅 broker 明确零成交终态时 CAS 解锁为 PENDING。"""
         terminal = {
             "DEFINITIVE_REJECT", "FAILED", "CANCELLED", "CANCELLED_ALL",
@@ -1028,7 +1129,11 @@ class PlaybookDB:
         }
         raw_status = str(broker_order_status or "").upper().strip()
         status = raw_status.rsplit(".", 1)[-1]
-        if "PART" in status or status not in terminal or float(dealt_qty or 0) != 0.0:
+        try:
+            zero = dealt_qty is not None and float(dealt_qty) == 0.0
+        except (TypeError, ValueError):
+            zero = False
+        if "PART" in status or status not in terminal or not zero:
             return False
         conn = self._conn()
         cur = conn.execute(
