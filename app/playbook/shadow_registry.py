@@ -296,11 +296,12 @@ ADJUDICATED: dict[str, dict] = {
                 "出处: DEB-20261009-event-to-trade-pipeline §28.11 + docs/OKR-2026-10.md KR1 回写行。",
     },
     "ext_entry_earnings_criterion_shadow": {
-        "read_at": "2026-10-15", "recheck_after": "2026-10-31", "needs_user": False,
-        "note": "在采未注册(禁止态)补登。在采健康 (10-15 07:55 仍写, 5765 行/16 ET日, "
-                "legacy_blocked_new_pass=493)。判据②读数面=10 月财报季裁决「修口径放回多少票」, "
-                "故重看窗=10-31 (财报季末/OKR 结算窗)。出处: RFC-097 §预注册判据 "
-                "(docs/decisions/RFC-097-earnings-criterion-anchor-and-entry-band.md)。",
+        "read_at": "2026-10-23", "recheck_after": "2026-10-31", "needs_user": False,
+        "note": "2026-10-23 429 治理: 生产 cron 置 EXT_EARNINGS_CRITERION_SHADOW=false ⇒ 逐票 "
+                "company_earnings 归零 (今日 581 次 429 的风暴源), 台账冻结 21450 行, 登记 stale_expected。"
+                "生产判定 (calendar_actual) 零变更。恢复/替代见 DEB-20261023 §2-§3 (富途日历 eps_actual "
+                "为主源候选; beat_rank 已降为 P2 交叉校验) — 用户裁「不跑影子」⇒ 提案停档不并跑。"
+                "出处: RFC-097 §预注册判据 docs/decisions/RFC-097-earnings-criterion-anchor-and-entry-band.md。",
     },
     "entry_anchor_dual": {
         # 〔2026-10-22 重看: live n=2178/300; 预注册第一腿「影子期≥10 交易日」已自满 (~10-20)。
@@ -4085,7 +4086,13 @@ REGISTRY: list[ShadowItem] = [
                             "(会被上游闸波动稀释)。",
         eval_script="scripts/ext_earnings_criterion_eval.py",
         eval_on_demand=True,
-        no_adjudication_reason="SAMPLE_GATE: EXT 成交自 2026-09-23 仅 5 笔 <20; 台账读数已建, 待 n≥20 再裁; 判据②需人工交叉验证.",
+        # 2026-10-23 429 治理 (用户裁「按建议执行」): 生产 cron 已置 EXT_EARNINGS_CRITERION_SHADOW=false
+        # ⇒ 写方停 (逐票 company_earnings 是 429 风暴源), 本项进入**预期停采**态。
+        # 不设此字段则 ~11-07 起 check_mounting 会报「产出超龄 疑似断流」= 假红。
+        # 恢复方式二选一: A2 (legacy 臂加 (票,日) 文件缓存 + ≤50次/分令牌桶) 或 B (surprise 主源迁富途,
+        # 见 docs/debates/DEB-20261023-earnings-429-and-futu-primary-surprise.md)。
+        stale_expected=True,
+        no_adjudication_reason="SAMPLE_GATE: EXT 成交自 2026-09-23 仅 5 笔 <20; 台账读数已建, 待 n≥20 再裁; 判据②需人工交叉验证. [2026-10-23 起写方暂停(429治理), 台账冻结于 21450 行]",
         created="2026-09-22",
         notes="2026-10-15 读数: 5765 行 / 16 ET日 / 2026-09-22~10-14; legacy_blocked_new_pass "
               "True=493。write-only 无代码消费方 (唯一读数=人工 + RFC-097 一次性实证脚本 "
