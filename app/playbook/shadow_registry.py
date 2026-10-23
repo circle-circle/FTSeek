@@ -2267,8 +2267,8 @@ REGISTRY: list[ShadowItem] = [
     # ── 2026-09-11 断头传感器修复批 (用户裁「做」): 两个有写者无读者/无登记的影子补全判分侧 ──
     ShadowItem(
         id="premarket_invalidation",
-        name="盘前失效评估影子 (B 规则; A/C 2026-09-11 退役)",
-        status=ShadowStatus.OBSERVING,
+        name="盘前失效评估影子 (B 规则; A/C 2026-09-11 退役; ⛔判据结题 2026-10-23, 采集保留)",
+        status=ShadowStatus.KILLED,
         description="每日 09:35-09:59 ET 对当日可执行指令按涨跌幅 (vs snapshot 昨收) 打标, "
                     "record-only。8/11-9/10 攒 310 行零结算 (无结算器无台账 = 8/28 静默零产出"
                     "同款), 9/11 补 settle_premarket_invalidation.py 判分侧。同日 DEB-20260911 "
@@ -2300,7 +2300,15 @@ REGISTRY: list[ShadowItem] = [
               "⏳**2026-10-23 可达性标注 (RFC-162, 不改判据)**: B_long_knife 实读 flagged 20 / "
               "**executed 6** (门 20) — 51 个采集日只出了 6 笔执行, 按此速率判据 n 轴数学上不可达; "
               "同时 误杀率 0.667 (>40% 门) 且滚动窗反向 (2 笔 +8.44) ⇒ 当前既不过线也攒不动。"
-              "处置建议留待用户裁: 改反事实口径 (用 flagged 未执行行的 open→close 路径) 或结题。",
+              "处置建议留待用户裁: 改反事实口径 (用 flagged 未执行行的 open→close 路径) 或结题。"
+              "⛔**2026-10-23 判据面结题 (用户裁「按建议」)**: 51 采集日只 6 笔 executed (门 20)、"
+              "误杀 0.667 (>40% 门)、滚动窗反向 ⇒ n 轴数学不可达且方向已反证; A/C 已于 9-11 退役 "
+              "⇒ 整条影子关闭判据面 (status=KILLED), 不再提请转正。**采集不停**: 本 jsonl 是两个活守卫"
+              "的数据源 — data_freshness_watchdog (50h 阈值) 与 daily_invariant_check W7 (chg 分母口径) "
+              "⇒ config_key 保持 true, tagged 行继续落盘 (纯观测, 无判据)。结算 cron (2 6 * * 2-6) "
+              "已注释退休: 判据关闭后 latest.json 无读者, 留 cron 即僵尸环。**重开条件**: (a) 恢复 cron 行 "
+              "(备份见 /root/.hermes/cache/scratch/crontab_*.txt 与本批 before 副本) (b) 新预注册反事实"
+              "口径 — 不得直接复活旧判据。",
         count_mode="where_nonempty:would_invalidate",
         intent="long_knife_gate",
         cross_ref=("short_chase_ban_shadow",),
@@ -2671,8 +2679,8 @@ REGISTRY: list[ShadowItem] = [
     ),
     ShadowItem(
         id="eth_exit_quote_age",
-        name="延长时段退出「报价龄」测量判据 (B22)",
-        status=ShadowStatus.OBSERVING,
+        name="延长时段退出「报价龄」测量判据 (B22) (⛔判据结题 2026-10-23)",
+        status=ShadowStatus.KILLED,
         description="B22: 测延长时段出场时的报价陈旧度是否造成成交劣化 (决策价 vs 实际成交价"
                     "偏离 / exit_slippage_bps)。样本 = 两条 ETH 退出影子 jsonl 中**执行类** "
                     "action 行 ∧ quote_age_seconds 非空 (该字段 9/18 起采集, 语义=futu 快照 "
@@ -2713,6 +2721,18 @@ REGISTRY: list[ShadowItem] = [
                          "现有 1 例)。处置: 保持 OBSERVING, 待办 = settle 报告补落 per-bucket 劣化 bps "
                          "(只印不判); 落地后本项大概率按「1 例不可分辨」结题。⚠️ 结论以持仓级为准读, "
                          "行级 101 不等于 101 笔决策 (RFC-162 行/持仓双轨)。"},
+            {"date": "2026-10-23",
+             "verdict": "KILLED (判据分支②结题: 不加报价龄门; 同日二读 — 上一条「不可裁」成立, 补判定后结题)",
+             "evidence": "按预注册逐条落判: 分支①要求**两条件同时**成立 — (a) 龄>120s 执行 ≥1 ✅ "
+                         "(实测 1 例, 持仓级亦 1) (b) 该组成交劣化较 ≤30s 组中位差 >20bps ⇒ **n=1 不可判**, "
+                         "且 settle 产物无 exit_slippage_bps (决策价↔实际成交价配对未落盘) ⇒ 分支①不成立; "
+                         "落分支②「维持现状 (不加龄门)」, 判据留档为反证。前提读数: n 轴已达标 "
+                         "(行级 101 / 持仓级 28 ≥20), 分桶 {>120s: 1, <=30s: 86}; 历史龄>120s 的 586 行 "
+                         "100% 是 hold_no_stop (亏损侧按 9-17 裁决本不执行) ⇒ 超龄与「执行」天然少交集。"
+                         "**结题 = 关判据面, 不停采集** (settle 循环仍服务 B21 与两条退出影子)。"
+                         "**复议条件**: 龄>120s 的执行累计 ≥5 例时重开 (届时先补 slippage 配对读数, "
+                         "再按原判据重裁; 改判据=重裁)。⚠️ 结论以持仓级为准读, 行级 101 ≠ 101 笔决策 "
+                         "(RFC-162 行/持仓双轨)。"},
         ],
         intent="eth_exit_semantics",
         cross_ref=("eth_exit_forgone_upside",),

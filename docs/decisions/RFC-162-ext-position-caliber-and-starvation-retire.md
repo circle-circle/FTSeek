@@ -86,7 +86,32 @@
 
 回归复跑：`test_rfc139_review_fixes` + `test_criteria_spec` + `test_eth_patient_maker_shadow` + 控制环路/看板/判据可见性 + 本批 9 例 = **69 passed**。
 
-## 8. 回滚
+## 9. 第二批（同日, 用户裁「按建议」）
+
+| # | 动作 | 依据 | 边界 |
+|---|---|---|---|
+| 1 | **B22 `eth_exit_quote_age` 判据结题** (status=KILLED) | 预注册分支①要求「龄>120s 执行≥1 ∧ 该组劣化比 ≤30s 组中位差 >20bps」两条**同时**成立。实测第一条 1 例、第二条 n=1 不可判且无 slippage 配对 ⇒ ①不成立 ⇒ 落分支②「维持现状, 不加龄门」 | 只关判据面, **不停采集** (settle 循环仍服务 B21 与两条退出影子); 复议条件=龄>120s 执行累计 ≥5 例 |
+| 2 | **B 规则 (`premarket_invalidation`) 判据结题** (status=KILLED) | 51 采集日只 6 笔 executed (门 20)、误杀 0.667 (>40%)、滚动窗反向 ⇒ n 轴不可达且方向已反证; A/C 已于 9-11 退役 | **采集不停** — 该 jsonl 是 `data_freshness_watchdog` (50h) 与 `daily_invariant_check` W7 (chg 分母) 的活数据源 ⇒ `playbook.premarket_invalidation_observe` 保持 true |
+| 3 | 结算 cron `2 6 * * 2-6` 注释退休 | 判据关闭后 `premarket_invalidation_report_latest.json` 无读者, 留环即僵尸 | 备份 `crontab_before_b_retire.txt`; 重开=恢复行 + 新预注册反事实口径 |
+
+**「判据退役 ≠ 采集退役」的落地差异**：⑤⑥ 停采（无守卫依赖），B 规则停判据、留采集（两守卫依赖）。同批同类别处理，但采集面**逐条按下游消费者裁**，不做「退役就一起停」的批量动作。
+
+### 9.1 盘前/盘后执行失败 20% 归因（只读诊断，未改代码）
+
+台账 `extended_hours_entry_executions.jsonl`：**30 尝试 / 24 成交 / 6 失败 (20%)**
+
+| 归因 | n | 明细 |
+|---|---|---|
+| `buy_not_filled_timeout` | 2 | US.NOK 9-17 盘前，限价未触 |
+| `buy_not_filled_CANCELLED_ALL` | 1 | US.TXN 10-21 盘后（与 RFC-157「盘后市价/延长单被撤」同族） |
+| `error` 字段**整条缺失** | 2 | US.PENG 10-06 盘后 / 10-07 盘前 — 台账无 error 码 ⇒ **不可归因**（可观测性缺口） |
+| `executor_exception: order_list_query 频率太高 (10/30s)` | 1 | US.IBM 10-21，**entry 台账仅 1 次，exit 台账 0 次** |
+
+**自纠**：上一轮我把限频列为「疑似与常驻 exit cron 抢 OpenD 额度」。全量台账核对后：**限频只撞过 1 次且只出现在 entry 侧**，exit 侧 0 次 ⇒ 证据不足，该假设**下调**为偶发。日志已轮转（`grep` 全 logs = 0 命中），频率无法从日志复原。
+
+**真正的缺口是那 2 条无 error 码的失败**——它们既不能归因也不能触发告警。建议下一批（零交易行为）：失败行补 `error/reason/ret` 明细 + 一条「失败且无 error 码」的不变量。**不做**限频自动重试：那会把「未成交」变成「成交」，属交易行为变更，须单独裁。
+
+## 10. 回滚
 
 - 代码/注册表：`git revert` 本提交（新增键对旧读者无害；退役条目恢复 OBSERVING 即可）。
 - cron：`crontab /root/.hermes/cache/scratch/crontab_before_rfc162.txt` 或删 4 行行首 `# [退役 2026-10-23 RFC-162] `。
