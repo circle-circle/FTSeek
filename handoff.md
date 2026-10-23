@@ -2,6 +2,7 @@
 
 ## 2026-10-23 回归红点清理（全量 7744 passed / 0 failed）
 
+- **RFC**: `docs/decisions/RFC-164-regression-redpoint-cleanup.md`（已实施；回滚 `3294d1516`）。
 - **触发**: 全量回归 17 个既有红点（本批 diff 之外），按建议分组清理。
 - **修复**:
   - W9 词典↔注册表: `premarket_invalidation` / `eth_relative_volume_gate` 补终态措辞，保留真轴读数；9 例清零。
