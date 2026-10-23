@@ -4,7 +4,7 @@
 
 - **用户要求**: 「针对异常问题按照建议做修复，确保方案和建议能真正合理且能从根源上解决问题」。
 - **范围**: 纯可靠性/可观测性/数据真值；**未改交易门、仓位、止损止盈、频率**。行为口径项列入 DEB §5 待裁。
-- **提交**: 主仓 `5e5b851ca`（根因修复）+ `4dbf1890a`（统一 admission）+ `bd9b1c54f`/`30c743be8`（重启与回填）+ `5fa45bf2b`/`d19d241bc`（margin/audit 标签）；外部 `/root` 仓库 `b0d5726`（DA skill + 线上 carrier；无 remote，未推送）。
+- **提交**: 主仓 `5e5b851ca`（根因修复）+ `4dbf1890a`（统一 admission）+ `bd9b1c54f`/`30c743be8`（重启与回填）+ `5fa45bf2b`/`d19d241bc`（margin/audit 标签）+ `77f98e25d`（timeout 143 finalize）；外部 `/root` 仓库 `b0d5726`（DA skill + 线上 carrier；无 remote，未推送）。
 - **载体**: `ops/hermes/da_main_carrier.py` 与 `/root/.hermes/scripts/da_main_carrier.py` 已逐字节同步。
 - **修复**:
   - carrier：preflight fail-soft（pullback/watchlist/日历超时不再打死批次）；启动 `running` + 60s heartbeat；stderr 实时落盘；0857 ET deadline；超时/rc=124/rc≠0 → `pipeline --mode finalize`；bridge/DB 真值对账（10/12 类 JSON 假失败不再误报）；单例锁；watchlist 空转 scanner-only。
