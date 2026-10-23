@@ -1,5 +1,45 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-23 DA 输入/输出真值直接修复（已提交/未重启主服务）
+
+- **用户要求**：直接修复明确存在的问题，不带错误输入/输出判断。本批改事实层与反馈层，不改 gate/仓位/止损/止盈/频率。
+- **输入**：① `llm_synth` 在 Prompt 前调用 `prev_close_reconcile`，默认 apply；10/22 的 8/28 昨收修正（原始值留 `prev_close_raw`），回滚 `DA_PREV_CLOSE_BAR_RECONCILE=off`；② 研报改读 `publish_time` 渲染 ET 日期、>7 天标龄，并与新闻同 `news_id`/URL 去重；10/22 原 100 条无日期、51 条同稿；回滚 `DA_SOURCE_TRUTH_FIX=0`。
+- **输出**：③ `_merge_debate_results` 以规范状态为准，PARTIAL_AGREE 不再因 `agreed=true` 获一致度加成；10/22 五份冲突（BWXT/CAT/ORCL/TSLA/UNH）归 PARTIAL，规范 AGREE 仅 2；回滚 `DA_DEBATE_STATE_FIX=0`。未改 signal_gate/adapter（读已归一布尔）。
+- **反馈**：④ `strategy_memory.get_strategy_hint` 改真实 30 日窗口+净额+A10，不再用全史 pattern 伪装；实测 30 日 36 组/162 笔/净 +$63.55 vs 旧 31 组/513 笔；`LESSON_TRUTH_START=2026-10-23` 隔离修复前假 lesson。⑤ `feedback_loop` 按 `exit_time` 归属、净额、完整母体算“全胜”；10/22 由旧 7 笔/毛 $249 变 11 笔/净 $622.19（10胜1负）；回滚 `DA_FEEDBACK_NET_EXIT=0`（仅净额/退出日）。
+- **Prompt/执行契约（批次 1）**：移除“至少2批”强制；明确只写1个可执行首批、confirmation 是研究锚不是限价单、执行按当前锚；保留 chase_cap 与 legacy 第2批机检。新 `PROMPT_HASH=c7444d67ce58`；回滚=恢复本批前 llm_synth.py。
+- **验证**：外部 skill 全套 **113 passed**；repo 审计+尾部 **16 passed**；`py_compile` 通过；真实 10/22 审计 rc=0。新增 `test_prompt_source_truth/debate_state/memory_and_feedback_truth/prev_close_reconcile`；未运行 T04/T07/T09/T11/T12。
+- **隔离**：未触碰 `data_collector.py`/`pipeline.py`/`signal_gate.py` 的其他会话未提交 WIP；未重启主服务；本批已提交。外部 DA 脚本下一次 cron 新进程加载；记忆/复盘按各自 cron 生效。
+- **风险**：这是多项事实修正，不是已证收益；下一次 DA 应只观察、不改门，记录 SKIP/方向/score 与 5 日表现，异常按开关/文件恢复逐项回滚。
+- **下一步**：观察下一 DA 批；再决定是否做固定输入回放/确认龄/回放保真的下一批。
+
+最后更新：2026-10-23（本条）
+
+## 2026-10-23 DA 契约 P1：只读审计 + prev_close 影子（shadow 阶段记录；已被上条 apply 批次取代）
+
+- **用户要求**：复查并确认信息准确性与链路合理性，“可以做优化”。本批只做只读检测与 record-only 影子；**未切 apply、未改 Prompt/记忆/门/仓位/退出**。
+- **新增只读工具**：`scripts/da_chain_contract_audit.py` + `tests/test_da_chain_contract_audit.py`（14 passed）。`PYTHONPATH=. ./venv/bin/python scripts/da_chain_contract_audit.py --date 2026-10-22`；DB 全 `mode=ro`，默认只打印，`--out` 才写报告，不 import 生产模块。
+- **10/22 实测**：价格 19 ok / 8 prev_close 错配 / 1 快照超时；研报 100 条渲染无日期、21 条 >7 天、51 条跨栏目同稿；裁决 9 ANALYST_SKIP / 13 PARTIAL / 4 ABSTAIN / 2 AGREE，5 份 PARTIAL+agreed=true；12 条可执行指令全匹配、8 笔成交、7 笔计划/成交 RR 差 >0.05、4 笔 TP 被几何门关闭；记忆展示 31 组/513 笔 vs 真实 30 日 160 笔，28 组计数不符、31 组毛净不符、9 笔旧时代行。
+- **prev_close 影子（独立模块，未接线）**：新增外部 `scripts/prev_close_reconcile.py`，默认 shadow 只加 provenance，`apply` 才在守卫全过时替换并重算 effective_chg_pct。**未改 `data_collector.py`**：该文件已有另一会话未提交的财报回退 WIP，不能叠加送进下一 DA 进程。`tests/test_prev_close_reconcile.py` 6 passed（skill 全套 89 passed）。
+- **apply 预览（未启用）**：10/22 的 8 份变化均与 pre_change_rate 推导一致；TSCO 32.91→32.69、SNDK 1365.38→1378.22 等。仅数据事实，不是模型行为/收益证据。
+- **附带修尺子**：`scripts/tail_attribution_report.py` 补 A10 谓词（data_quality/排除 POSITION_SYNC/MANUAL），`tests/test_tail_attribution_caliber.py` 2 passed；重跑仍 n=685 / net −$456.65（本窗全 clean，读数不变）。
+- **状态**：未运行 T04/T07/T08/T09/T11/T12；未冻结评估夹具；未改 `strategy_memory`/Prompt/阈值；未重启、未提交。文档/测试/外部影子均有落档。
+- **下一步**：用户确认是否将“昨收修正”作为下一批单变量 apply；批准后先做固定输入 Prompt 行差异 + ≥5 交易日双跑，再切开关。记忆/来源/裁决输入修正各自另批。
+
+最后更新：2026-10-23（本条）
+
+## 2026-10-23 DA 执行契约与实施建议（仅文档，独立审查完成）
+
+- **用户要求**：生成 DA 全链路执行契约，并给出最合理的方案与建议；本轮不实施交易行为。
+- **文档**：`docs/specs/da-execution-contract-20261023.md`（draft）；复查及审查分歧记录追加于 `docs/debates/DEB-20260907-prompt-contract-role-boundary-review.md` §十五。
+- **推荐 B**：DA 保留方向、证据、计划价格与既有禁追约束；Playbook 统一执行；原计划／评估／提交／成交／退出分阶段留真值。不启用多腿／archetype 限价／失效自动平仓，不改门／仓位／退出。
+- **实施顺序建议**：先 P1 夹具与 record-only 审计、P2 反馈真值离线重算；输入修正 P3、裁决消费 P4 逐变量单独批准；P5 修复回放保真度，不凭未过门变体调整策略。各批当前均未开工。
+- **关键口径**：当前 DA 记忆回灌与旧链 `us.json` 迁移不是一回事；现役记忆存在全史毛统计／伪30日窗口。10/06–10/22 DA n=80，名义加权净 −2.25bps／逐笔等权 −3.22bps；契约只提主估计量澄清建议，不擅改 OKR。
+- **审查修订**：补 ANALYST_SKIP、明确状态匹配优先级；拆开 T01 检测／修正边界；将冻结身份及取数哈希列为 P1→T10 前置。配置与统计独立复核一致；未采“全部 PARTIAL 都因字符串获加成”的扩大推论。
+- **状态**：仅新增契约、追加 DEB 和本条进度；未改代码／配置／DB／生产 Prompt，未重启、未提交。文档结构／引用／diff 检查完成；目标测试 T01–T12 尚未实施或运行。
+- **下一步**：用户确定 P1/P2 实施授权、后续行为批次边界与 OKR 主估计量澄清。
+
+最后更新：2026-10-23（本条）
+
 ## 2026-10-23 用户三裁落地 + 侧通道现状确认（未提交；10:54 已重启加载记忆）
 
 - **用户三裁**: ① DEB-20261023 的 A/B/C/D 前提被现状取代；② RFC-163 暂不立项；③ OKR-2026-11 批准。

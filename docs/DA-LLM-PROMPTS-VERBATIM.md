@@ -1,5 +1,10 @@
 # DA 决策脑 LLM Prompt 全文（逐字抽取，供外部模型评审）
 
+> ⚠️ **历史快照，非现役契约（2026-10-23 标注）**：本文抽取于 2026-09-05（skill v0.74.1），
+> 之后 Prompt 已多次变更；最近一次为 2026-10-23 单批执行契约对齐（移除“必须至少 2 批”、
+> 明确 confirmation 为研究锚、执行按单一首批/当前锚），当前 `PROMPT_HASH=c7444d67ce58`。
+> 现役 Prompt 以 `/root/.hermes/skills/deep-stock-analysis/scripts/llm_synth.py` 为准；本文仅作历史对照。
+
 > 来源：`/root/.hermes/skills/deep-stock-analysis/scripts/llm_synth.py`（skill 版本 v0.74.1）
 > 抽取时间：2026-09-05。**以下为生产环境逐字原文，未删改、未摘要。**
 > 行号：SYSTEM_PROMPT = L145-217 · USER_PROMPT_TEMPLATE = L896-1024 ·

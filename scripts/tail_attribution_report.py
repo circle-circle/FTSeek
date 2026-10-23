@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """只读尾部归因报告: 最差 N 笔的画像 + 候选事前过滤器的误杀代价.
 
-口径: PLAYBOOK_SIM, trade_date>=2026-07-01, exit_price>0, 净额非空, A9 剔除首跑批.
+口径: PLAYBOOK_SIM, trade_date>=2026-07-01, exit_price>0, 净额非空, A9 剔除首跑批,
+并按 A10 SSOT 只取 data_quality in ('clean','real')、排除 POSITION_SYNC/MANUAL
+(见 app/core/db_utils.ERA_CLEAN_PERFORMANCE_WHERE; 本脚本不 import db_utils 以避开
+其全局 connect hook, 谓词字面量由 tests/test_tail_attribution_caliber.py 对齐).
 零行为变更; 不写生产库; 产物 data/tail_attribution_latest.json.
 """
 from __future__ import annotations
@@ -30,7 +33,9 @@ def _load(db: str) -> list[dict]:
            from trade_records
            where source_type='PLAYBOOK_SIM' and trade_date>='2026-07-01' and exit_price>0
              and coalesce(pnl_net, realized_pnl) is not null
-             and coalesce(json_extract(metadata_json, '$.exclusion_reason'), '') = ''"""
+             and coalesce(json_extract(metadata_json, '$.exclusion_reason'), '') = ''
+             and coalesce(data_quality, '') in ('clean','real')
+             and coalesce(source_type, '') not in ('POSITION_SYNC','MANUAL')"""
     ):
         m = json.loads(r["metadata_json"] or "{}")
         d = dict(r)
