@@ -1,5 +1,15 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-23 RFC-164 合并 main + 重启（冒烟 7/7）
+
+- **合并**: RFC-164 随附提交 `55466e218`；`main`/`origin/main` 由 `27cdc0123` 快进到 `55466e218`，当前分支同点。
+- **重启前**: 在仓 2 笔（MSFT/TSM）；`playbook_exits` 226 条全 BOOKED；主仓 `app/`/`scripts/`/`config/` 无 WIP。
+- **重启后**: PID **3342793**，`active`；启动冒烟 **7/7**；在仓仍 2 笔；重启段无 Traceback/CRITICAL/ERROR。
+- **边界**: 仅红点清理与 RFC 文档；未改门/仓位/止损止盈/频率。外部 `/root` 仓库无 remote，未推送。
+- **下一步**: 继续按 OKR-2026-11 观察下一 DA 批；外部 skill 改动由下一次 DA cron 新进程加载。
+
+最后更新：2026-10-23（本条）
+
 ## 2026-10-23 回归红点清理（全量 7744 passed / 0 failed）
 
 - **RFC**: `docs/decisions/RFC-164-regression-redpoint-cleanup.md`（已实施；回滚 `3294d1516`）。
