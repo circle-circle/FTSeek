@@ -14,7 +14,7 @@
   - FTSeek：同日 bridge mtime 变化允许刷新 adapter；push `--wait-da`（死线 09:27）+ `sync=True`；audit 以 publish_time/规范状态为准（去掉假红）。
 - **运维**: crontab 两行 push 已加 `--wait-da`，备份 `data/crontab.backup.20261023_da_wait_fix.txt`（回滚=删 flag）。
 - **验证**: 外部 skill **124 passed**；主仓定向 **117 passed**（含 execution_admission 4）；`tests/playbook` **1218 passed**；finalize 副本集成 31 analyses→15 bridge candidates；真实 10/23 批次 31 只、15 条指令、无分析异常。
-- **重启**: `systemctl restart ftseek-us`；PID **3426219**，`active`；启动冒烟 **7/7**；在仓仍 2 笔（MSFT/TSM）；非 BOOKED 出场 0；重启段无 Traceback/CRITICAL/ERROR。
+- **重启**: 两轮 `systemctl restart ftseek-us`（21:38 加载 carrier/pipeline/FTSeek 安全修复；21:50 加载统一 admission）。当前 PID **3429103**，`active`；两轮启动冒烟均 **7/7**；在仓 4 笔（MSFT/TSM/TMUS/ACN，均为重启前已有/已成交）；非 BOOKED 出场 0；重启段无 Traceback/CRITICAL/ERROR。
 - **执行口径（用户裁「统一 admission」）**: `auto_execute` 在真实 re-price/尺寸后、chase_cap 前对 DA 行再跑同一 `admission.evaluate`；命中 REJECT 用 `mark_instruction_guardrail_skip` 置 SKIP 并落 `exec_gate_audit`。新增 `playbook.admission.enforce_at_execution=true`（false 回滚）；阈值不变。10/23 实测 14 条在仓 DA 行按实际尺寸均 PASS；BABA 仍为 generate 侧 admission SKIP。WARN conf=0.35、confidence_sizing=false、watchlist extras 无上限、源失败是否入 prompt/质量门、重跑 stale 行撤回语义仍待裁。
 - **下一步**: 观察下一 DA 批（新 carrier/pipeline 生效）并核对 running/heartbeat/stderr/deadline/artifacts；就 DEB §5 四项逐项裁决，批准后再按一次一变量实施。
 
