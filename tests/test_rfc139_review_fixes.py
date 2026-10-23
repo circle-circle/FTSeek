@@ -62,8 +62,16 @@ class TestP1CountModeSameAxis:
         assert item.current_n == len(wp), (
             f"current_n={item.current_n} != would_pass 真轴 {len(wp)} — count_mode 未按判据轴计数")
         if len(wp) < item.min_n:
-            assert item.status.value == "OBSERVING", (
-                f"真轴 {len(wp)}/{item.min_n} 未达门却 status={item.status.value} — 假达标复发")
+            # 2026-10-23 RFC-162: 退役态豁免 — KILLED/SUPERSEDED 不是「READY」, 语义上不构成
+            # 本守卫要抓的假达标。收窄为「未退役者必须停在 OBSERVING」, 并新增反向不变量:
+            # 已退役者的状态只能是终态 (防「退役了却还挂在观测面」)。
+            if item.collection_retired:
+                assert item.status.value in ("KILLED", "SUPERSEDED"), (
+                    f"已退役 (collection_retired=True) 却 status={item.status.value} — "
+                    f"退役态只能是 KILLED/SUPERSEDED")
+            else:
+                assert item.status.value == "OBSERVING", (
+                    f"真轴 {len(wp)}/{item.min_n} 未达门却 status={item.status.value} — 假达标复发")
 
 
 # ── P1b: spec.sample_gates 接线成消费面 (死门变活) ─────────────────────────

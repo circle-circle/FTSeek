@@ -75,7 +75,10 @@ SPECS: Dict[str, CriteriaSpec] = {
         sample_gates={"trading_days_min": 15, "would_pass_n_min": 30, "deadline": "2026-11-30"},
         eval_script="scripts/eth_relative_volume_gate_shadow.py",
         verdict_artifact=None,
-        known_gap="eval_script 是采集器不是结算器 — 无 verdict 产物; 达门后须先补结算脚本再呈裁 (NO_SETTLER)",
+        known_gap="eval_script 是采集器不是结算器 — 无 verdict 产物; 达门后须先补结算脚本再呈裁 (NO_SETTLER)。"
+                  "⛔2026-10-23 已退役 (RFC-162): 上游 RFC-104 计划层 10-15 关停 ⇒ 真轴 "
+                  "would_pass_relative=True 恒为 0/30 (数学不可达); 采集 cron 已注释, 数据留档。"
+                  "**本 spec 仅作历史判据留档, 不得据它提请转正**; 重开须复供计划层 + 新预注册。",
     ),
 }
 

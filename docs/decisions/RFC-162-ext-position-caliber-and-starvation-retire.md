@@ -72,7 +72,21 @@
 | 注册表 | 94 条：OBSERVING 49 / KILLED 39 / SUPERSEDED 4 / GRADUATED 2；⑤⑥ `retired=True`；`refresh_counts()` 正常产出 |
 | crontab | ⑤⑥ 4 行已注释（`grep '^[^#]*eth_(relative_volume_gate|patient_maker)'` = 0），其余行逐字未动 |
 
-## 6. 回滚
+## 7. 排查补记 (落地后自查, 2026-10-23)
+
+用户要求「请排查」后逐项核对，发现 2 处需要收口、1 处口径边界：
+
+| # | 发现 | 处置 |
+|---|---|---|
+| 1 | `tests/test_rfc139_review_fixes.py::test_eth_real_axis_not_falsely_ready` 断言「真轴未达门 ⇒ status 必须 OBSERVING」，与退役冲突 → **1 failed** | 收窄为「未退役者必须 OBSERVING」，并新增反向不变量「collection_retired=True ⇒ 状态必须 KILLED/SUPERSEDED」。守卫强度不降 (假 READY 仍被拦)，并堵住「退役了还挂观测面」 |
+| 2 | `app/review/criteria_spec.py` 仍把 ⑤ 登记为在役判据（含 eval_script/sample_gates/死线 11-30），评审面可能据它提请转正 = 判据 SSOT 与注册表状态脱钩 | known_gap 追加退役说明 + 「不得据它提请转正」。⑥ 本无 spec 条目，不改 |
+| 3 | 持仓级去重键只能用 `(源, 交易日, 标的)`（settle 台账未持久化 signal_id/entry_time）⇒ **同日同标的多仓位会被合并**，持仓级 n 是**下限** | 实测影响面：源 jsonl 210 组 → 按 signal_id 216 组，**6 组多仓，约 2.8%**。方向是保守低估（不会虚增样本），本批不改；如要精确，后续把 `signal_id` 写入 settle 记录后切换键 |
+
+其余核对（全部通过）：`extended_hours_settle_latest.json` 全仓唯一读方是 `shadow_registry`（无 dashboard/模板消费者），新增的字符串键 `position_axis_note` 不会破结构；crontab 与改前文件 diff **仅 4 行**（行首加注释，其余逐字未动）；⑤⑥ 无数据侧下游消费者（唯一外部引用是 `criteria_spec` 与两份测试，均已核对）；`tests/scripts/test_eth_patient_maker_shadow.py` 测的是脚本本体，脚本未删 → 照常通过。
+
+回归复跑：`test_rfc139_review_fixes` + `test_criteria_spec` + `test_eth_patient_maker_shadow` + 控制环路/看板/判据可见性 + 本批 9 例 = **69 passed**。
+
+## 8. 回滚
 
 - 代码/注册表：`git revert` 本提交（新增键对旧读者无害；退役条目恢复 OBSERVING 即可）。
 - cron：`crontab /root/.hermes/cache/scratch/crontab_before_rfc162.txt` 或删 4 行行首 `# [退役 2026-10-23 RFC-162] `。
