@@ -1,5 +1,14 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-23 13:14 重启 ftseek-us（冒烟 7/7）
+
+- **重启前**: 在仓 2 笔（MSFT/TSM）；`data/playbook_exits.db` 226 条 exit_intents 全 BOOKED；主仓 `app/`/`scripts/`/`config/` 无 WIP。
+- **重启后**: `systemctl restart ftseek-us`；PID **3330476**，`active`；`startup_smoke_check.py --wait 90` **7/7**；在仓仍 2 笔；重启段无 Traceback/CRITICAL/ERROR。
+- **生效面**: 主仓 app/scripts 无源码变更，本次重启只刷新进程；外部 DA skill 的真值/单批契约改动由下一次 DA cron 新进程加载。未改门/仓位/退出。
+- **状态**: 主仓文档已推送；外部 `/root` 仓库仍无 remote，本地提交 78a3dca/f51791d。
+
+最后更新：2026-10-23（本条）
+
 ## 2026-10-23 并行会话收口提交（外部仓库本地提交，无 remote）
 
 - **外部 /root 仓库**: `78a3dca`（DA 输入/输出真值 + 单批执行契约，11 文件）与 `f51791d`（并行会话收口：财报回退/UE 归因/推送读数/治理文档，11 文件）已本地提交。**该仓库无 remote，未推送**；未触碰未跟踪的 home 文件、备份与 references。
