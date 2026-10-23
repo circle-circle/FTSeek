@@ -10,7 +10,7 @@
 1. `AGENT.md` — 运维/架构规矩 + 军规（权威）
 2. `handoff.md` 头部条目 + 各条 `下一步` — 进度队列（唯一 SSOT）
 3. `docs/specs/multi-agent-collaboration-charter.md` — 协作宪章
-4. `docs/OKR-2026-10.md` — 当前阶段约束
+4. `docs/OKR-2026-11.md` — 当前阶段约束（2026-11-01 起，已批准；10/31 前仍按 `docs/OKR-2026-10.md`）
 5. 相关 DEB / RFC — 议题状态
 
 术语与口径先查 `GLOSSARY.md` 与宪章「数据口径九律」。

@@ -1,5 +1,43 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-23 用户三裁落地 + 侧通道现状确认（未提交；10:54 已重启加载记忆）
+
+- **用户三裁**: ① DEB-20261023 的 A/B/C/D 前提被现状取代；② RFC-163 暂不立项；③ OKR-2026-11 批准。
+- **现状核实（用户指出，已用 DB/配置核实）**:
+  - **UE 直接产出已断**: `playbook_instructions` 最后 UE 指令 **2026-10-05**（3 条），最后 UE 成交 **2026-10-05**；21:10 `llm_universe_scan.py scan` 仍在跑，但 2026-10-18 RFC-148 后仅观察/confirm/次日 DA 供料，不再当日写库。
+  - **intraday 已关**: `playbook.intraday_reentry.enabled=false`（2026-09-17 用户裁决关闭），最后成交 **2026-09-15**，10 月零成交。
+- **关闭后前瞻基线（2026-10-06→10-22，A9 干净）**: n=96，毛 +16.28bps，费 -10.40bps，净 **+5.88bps**，死单率 15.6%；其中 DA 80 笔 **-2.25bps**、EXT 16 笔 +53.19bps（10-21 两笔 +$249，尾部集中，不可放大）。
+- **文书更新**:
+  - `docs/OKR-2026-11.md`（由 draft 改名并批准）: 主 KR 改为 **DA-only 净 bps/笔 >0**，n≥120；整体含 EXT 作第二读数；KR3 改为“侧通道已关闭确认 + EXT 仅观察 + RFC-160 n≥8”。
+  - `docs/debates/DEB-20261023-ue-intraday-side-channel-adjudication.md`: 状态改“已关闭（现状确认）”，A/B/C/D 不再裁决；§11 记录现状与前瞻基线；§5.3 尾部归因保留。
+  - `docs/decisions/RFC-163-entry-slippage-shadow-preregistration.md`: 状态改 `rejected`（暂不立项），未加代码/cron/字段。
+- **状态**: 零代码/配置/仓位/退出变更；**已重启（2026-10-23 10:54，PID 3306025，启动冒烟 7/7）**；未提交。RFC-160 MFE 轨仍是唯一在跑的尾部实验（n=0/8，2 笔触发仓 TSM/MSFT 待平）。
+- **重启记录**: 重启前核在仓 2（MSFT/TSM）、非 BOOKED 出场 0、`app/`/`config/` 零 WIP；`systemctl restart ftseek-us` 后启动冒烟 7/7；重启后无 Traceback/CRITICAL，在仓仍为 2，非 BOOKED 出场仍为 0。
+- **文档一致性**: `AGENT.md` / `AGENTS.md` 指针已切到 OKR-2026-11（11/01 起）；`docs/OKR-2026-10.md` 顶部加 11/01 指针；RFC-163 / DEB 加“未立项/已关闭”横幅；handoff 旧条已标注裁决结果。
+- **记忆一致性**: `data/strategy_memory.db` 最新至 10-22、无 UE/intraday 旧事实；`~/.hermes/ftseek/memory/us.json` 已用 `scripts/migrate_us_memory_current_era.py` 迁移到现役口径（备份 `us.json.bak.docs-sync-20261023_104851` 与 `...104940`（两次运行）；旧 2026-05 字段移入 `legacy_2026_05`；`tagged_lessons` 旧 50 条移 legacy、当前清空；`historical_lessons` 换为 10-12~10-22 的 20 条）。**已于 2026-10-23 10:54 重启加载**（PID 3306025）；`get_context_for_prompt()` 实测返回现役 10 条规则 + 20 条近期教训；启动流程未覆盖文件（last_updated 10:49:40）。该文件只喂已冻结的旧盘前计划链，不在 Playbook 下单路径。
+- **下一步**: 11/01 起按 OKR-2026-11 计分；每周批量裁决；RFC-160 到 n≥8 后裁决；11/07 前完成 94 项注册表盘点。
+
+最后更新：2026-10-23（本条）
+
+## 2026-10-23 盈利加速草案 + 尾部归因（未提交/未重启）
+
+- **触发**: 用户要求战略参谋巡查全项目并落地“有收益和效果”的方向。
+- **交付（全部为文书/只读脚本，零交易行为变更）**:
+  - `docs/decisions/RFC-163-entry-slippage-shadow-preregistration.md` — 入场逆向滑点影子预注册（只申请 record-only，不申请 live；10bps 冻结；含 5–10bps 反证据）。（2026-10-23 用户裁暂不立项，见上条）
+  - `docs/debates/DEB-20261023-ue-intraday-side-channel-adjudication.md` — UE/intraday 去留呈裁；**推荐 A 维持 + 尾部归因**；已披露与 9/5「不要终止开仓」令的冲突。（2026-10-23 已关闭：现状 = C，见上条）
+  - `docs/OKR-2026-11.md` — 11 月 OKR（利润目标优先；已由用户 2026-10-23 批准，见本批上条）。
+  - `scripts/tail_attribution_report.py` + `data/tail_attribution_latest.json` — 只读尾部归因，可复跑。
+- **A9 干净口径（表现类）**: n=685，毛 +$2,886.79（+8.74bps），费 -$3,343.37（-10.12bps），净 **-$456.65（-1.38bps）**；月度 7月 -794.97 / 8月 -241.77 / **9月 +139.74** / **10月 +440.35**。死单率 23.8% vs 盈亏平衡 23.0%。
+- **尾部归因结论**:
+  - 最差 20 笔：**19 LONG / 1 SHORT，全部 MFE<0.5%，MAE 4.05–6.71%**；11 笔 `OVERNIGHT_GAP_STOP` + 7 笔 `SL_INITIAL`；12 笔在开盘窗。
+  - 所有单一事前阻断过滤器均**未过误杀≤40%**：|gap|≥3% 60.8%、开盘窗 60.3%、UE/intraday 53.8%、滑点≥10bps 43.9%。
+  - 极端跳空轴已被 `gap_chase_gate`（B1）/ `extreme_gap_ban_shadow`（D1'）/ `gap_alignment` 覆盖；`gap_dive_halve` 已对 gap≤-3% BUY 减半。**不新增同轴门**。
+  - `other` 通道 +$756 主要来自 EXT/DEC 采纳仓，不是可复制策略，不得放大。
+  - 唯一直接针对隔夜尾部的既有实验 = **RFC-160 `eod_mfe_gate_shadow`**：`mfe_pct_at_arm` 自 10-22 起有值（TSM 0.225 / MSFT 0.0），当前 n=0/8，2 笔触发仓（TSM/MSFT）仍在仓，平仓后结算。
+- **滑点轴复核**: ≥10bps n=57 净 -$2,314.56，但 5–10bps 反而是最佳带（+$1,423，t=+2.32）；中位 -$1.29；亏损集中 10 笔尾损；102 行缺字段。**未达 live 门证据强度**。
+- **状态**: 未改代码/配置/仓位/退出；未重启；未提交。**三项已于同日裁决**（DEB 现状=C 已关闭 / RFC-163 暂不立项 / OKR-2026-11 已批准），见本批上条。
+- **下一步**: 用户裁决 → 执行批（若选 B 改 config 乘数；若选影子加字段/结算 cron）→ 重启/热重载核验 → 20 日读数；同时让 RFC-160 MFE 轨攒到 n≥8 后按预注册裁决。
+
 ## 2026-10-23 OFI 接收时间与断档诊断（record-only，已提交推送，未重启）
 
 - 用户裁「基于合理且有效的方案执行」：OFI 在 SDK 返回后记录 UTC 微秒接收时间及单调时钟请求耗时；保留 ET 快照源更新时间，缺失/无效明确标记，不冒充盘口交易所时间。
