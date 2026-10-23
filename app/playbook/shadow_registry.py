@@ -2296,7 +2296,11 @@ REGISTRY: list[ShadowItem] = [
               "周检会报 READY_TO_EVALUATE), 而转正判据是**每规则 executed n≥20** — 通知不可"
               "直接读成「可裁决」, 以结算器 latest.json 的 per-rule verdict 为准。"
               "A 的假设「逆势追空差」去向: 并入 short_chase_ban_shadow (触发时刻相位) 单一"
-              "证据源重测, 快照行不得独立转正 (DEB-20260911 C8)。",
+              "证据源重测, 快照行不得独立转正 (DEB-20260911 C8)。"
+              "⏳**2026-10-23 可达性标注 (RFC-162, 不改判据)**: B_long_knife 实读 flagged 20 / "
+              "**executed 6** (门 20) — 51 个采集日只出了 6 笔执行, 按此速率判据 n 轴数学上不可达; "
+              "同时 误杀率 0.667 (>40% 门) 且滚动窗反向 (2 笔 +8.44) ⇒ 当前既不过线也攒不动。"
+              "处置建议留待用户裁: 改反事实口径 (用 flagged 未执行行的 open→close 路径) 或结题。",
         count_mode="where_nonempty:would_invalidate",
         intent="long_knife_gate",
         cross_ref=("short_chase_ban_shadow",),
@@ -2644,6 +2648,15 @@ REGISTRY: list[ShadowItem] = [
                          "口径重算需 n≥20 ⇒ **判据集合是否剔 tighten 须用户裁 (改判据=重裁, "
                          "本 agent 不擅自改)**。另 94 个 t0_close_ret_pct=0 行全是 tighten "
                          "(决策价=收盘价, 疑似无实际出场时点可结算), 亦属同一口径问题。"},
+            {"date": "2026-10-23", "verdict": "CONFIRMED_NOT_MET (行/持仓双轨复算, 结论不变; 但行级均值会骗人)",
+             "evidence": "RFC-162 双轨复算 (settle 10-22 窗口, 执行类已结算): **行级 n=350 均值 +0.600% "
+                         "正占比 31.8%** vs **持仓级 n=29 均值 −2.28% 正占比 31%** ⇒ 门② 行级看像已过线、"
+                         "持仓级仍 ✗, 门③ 两口径都 ✗。行级 +0.600% 的来源是 `premarket_exit:SL_TRAIL_LOCK` "
+                         "54 行 (+5.031%, 正占比 0.91) — 其中 **49 行 = US.ACN 2026-10-02 同一笔的逐分钟采样** "
+                         "(持仓级该组 n=6 均值 **−1.551%**/正占比 0.17) ⇒ 单笔大仓即可把均值翻转符号。"
+                         "结论: 维持「触线即出」不提案 (与 9/26 同向, 且这次是**双口径同向**)。"
+                         "纪律: 后续任何复裁禁止只看行级均值; 持仓级读数见 settle 报告 "
+                         "`ledger_by_position` / `b21_exec_settled_pos_n`。"},
         ],
         intent="eth_exit_semantics",
         cross_ref=("eth_exit_quote_age",),
@@ -2690,6 +2703,16 @@ REGISTRY: list[ShadowItem] = [
                          "⇒ 报价密度是**标的属性非时段属性** (9/25 活体探针: MU/AVGO/ORCL "
                          "快照龄<4s, MPC 12min/AEHL 21min; LV3 TICKER 盘前推昨收不含 ETH 成交, "
                          "快照 pre_price 即盘前权威源)。"},
+            {"date": "2026-10-23", "verdict": "STILL_NOT_DECIDABLE (n 轴已达标, 但劣化轴无落盘读数)",
+             "evidence": "实读 (settle 10-22 报告 + 源 jsonl 复算): 执行类带龄**行级 101** (门 20 ✓)、"
+                         "**持仓级 28** (同一持仓逐分钟多行, 行级膨胀 3.6×), 分桶 {>120s: 1, <=30s: 86}; "
+                         "⇒ 判据分支①第一半 (龄>120s 执行 ≥1) **首次成立** (9/26 时为 0)。但第二半 "
+                         "(该组成交劣化较 ≤30s 组中位差 >20bps) **算不出来**: settle 产物只落 "
+                         "t0/close/mfe/mae, 无 exit_slippage_bps; 决策价 vs 实际成交价的配对未落盘 "
+                         "⇒ 既不能加龄门 (缺劣化证据), 也不能结题 (分支②要求 >120s=0 或两组无差异, "
+                         "现有 1 例)。处置: 保持 OBSERVING, 待办 = settle 报告补落 per-bucket 劣化 bps "
+                         "(只印不判); 落地后本项大概率按「1 例不可分辨」结题。⚠️ 结论以持仓级为准读, "
+                         "行级 101 不等于 101 笔决策 (RFC-162 行/持仓双轨)。"},
         ],
         intent="eth_exit_semantics",
         cross_ref=("eth_exit_forgone_upside",),
@@ -2959,8 +2982,8 @@ REGISTRY: list[ShadowItem] = [
     #    docs/analysis/2026-09-24-eth-microstructure-shadow-preregistrations.md) ──
     ShadowItem(
         id="eth_relative_volume_gate",
-        name="事件相对量闸影子 (提案⑤)",
-        status=ShadowStatus.OBSERVING,
+        name="事件相对量闸影子 (提案⑤) (⛔已退役 2026-10-23)",
+        status=ShadowStatus.KILLED,
         description="对计划内事件票被**绝对量闸**拒绝的票-轮, 记录相对自身近 20 交易日"
                     "同时段周转中位的比值 (阈值 1.5 写死, 1.2/2.0 仅敏感性) + would_pass_relative"
                     " + cf_net_usd 反事实 (taker 语义含全费, 上界披露; 不可靠构造则 null+cf_basis 不硬算)。"
@@ -2981,8 +3004,21 @@ REGISTRY: list[ShadowItem] = [
                             "任一不满足 → 弃案停采留档。死线 2026-11-30 自动停采 (防僵尸影子)。",
         eval_script="scripts/eth_relative_volume_gate_shadow.py",
         created="2026-09-24",
-        stale_expected=True,  # 自门控 dormant (reconcile PASS<7 日不写产物) ⇒ 超龄是预期态,
-                              # 非断供 (2026-10-22 全链路复查 R7 假阳性收口)
+        collection_retired=True,  # cron 2 行已注释退役 (2026-10-23, 留痕见 crontab)
+        verdict_history=[
+            {"date": "2026-10-23", "verdict": "KILLED (输入断供, 判据轴数学不可达)",
+             "evidence": "退役理由非判证伪而是**上游断供**: 10-15 用户裁「RFC-104 阶段0 FAIL 关停」后 "
+                         "计划生成层 8 行 cron 全注释, data/loops/ext_entry_plan/ 计划文件停在 "
+                         "2026-10-14、reconcile_ledger.jsonl 停在 10-15 ⇒ 本影子 `_load_plan_symbols()` "
+                         "恒返回空集 → `continue` 静默零行 (日志 0 字节, 不打印 dormant)。"
+                         "判据轴实读 would_pass_relative=True **0/30** 且 53 行 ratio 全 null "
+                         "(median_basis=accumulating, history 0 日)。⚠️ 原注记「产物缺失=刻意 dormant」的前提 "
+                         "已失效: reconcile PASS 已 14 日 (≥7) ⇒ 门控放行, 缺产物是断供不是休眠。"
+                         "同批漏网: 提案⑦ 已于 2026-10-23 因同一断供退役, 本条为其下游。"
+                         "重开须先复供计划层并重新预注册 (改判据=重裁)。"},
+        ],
+        stale_expected=True,  # ⛔ 退役后停采 (2026-10-23); 旧注记「自门控 dormant ⇒ 超龄是预期态」已被
+                              # 上文 verdict 证伪 (门控早已放行, 缺产物=上游断供), 保留此行只为免动 schema
         notes="median basis=前向自积累 (延长时段量历史不可得 — carry 影子先例+本次探查双确认; "
               "禁 RTH 全天量冒充盘前量); turnover_approx=decision_price×ask_volume 为近似口径如实披露 "
               "(gate 真实 volume 未落拒绝台账), ratio 判据自参照故口径一致即可比; 反事实无排队/冲击建模=上界。"
@@ -3002,8 +3038,8 @@ REGISTRY: list[ShadowItem] = [
     ),
     ShadowItem(
         id="eth_patient_maker",
-        name="耐心挂单方入场影子 (提案⑥)",
-        status=ShadowStatus.OBSERVING,
+        name="耐心挂单方入场影子 (提案⑥) (⛔已退役 2026-10-23)",
+        status=ShadowStatus.KILLED,
         description="对计划内、除价差/深度外全闸通过的票-轮, 纸面模拟 maker 入场: 买入挂 bid+1tick/"
                     "卖出挂 ask−1tick, 撤单=窗尾或不利漂移>0.5% (写死), 成交判定=后续可观测价穿越挂单价"
                     "(乐观上界, 无排队建模, 行内披露); 记 fill_rate/成交后窗内逆行/spread_captured/net_econ。"
@@ -3019,6 +3055,16 @@ REGISTRY: list[ShadowItem] = [
                             "任一不满足 → 弃 maker 通道停采留档。死线 2026-11-30。",
         eval_script="scripts/eth_patient_maker_shadow.py",
         created="2026-09-24",
+        collection_retired=True,  # cron 2 行已注释退役 (2026-10-23, 留痕见 crontab)
+        verdict_history=[
+            {"date": "2026-10-23", "verdict": "KILLED (输入断供, 判据轴数学不可达)",
+             "evidence": "同⑤: 计划层 10-15 关停 (计划文件停在 10-14) ⇒ `_load_plan_symbols()` 恒空 ⇒ "
+                         "静默零行 (日志 0 字节)。实读 5 行 / 2 日 (10-06, 10-13), 其中 "
+                         "filled_sides>0 仅 1 行、net_econ 全 null ⇒ 判据三轴 (fill_rate≥40% / "
+                         "逆行<捕获价差 / 净经济>0) 一条都算不出来。死线 2026-11-30, 按 0.3 行/日 "
+                         "的产出速率不可达。原「刻意 dormant」注记前提同样失效 (reconcile PASS 14 日)。"
+                         "重开须复供 + 新预注册。"},
+        ],
         notes="数据面=pretrade_gate_rejects 的 spread_too_wide/insufficient_depth 行 quote{bid,ask,spread_pct}"
               " + executions 台账; 穿越即成交是乐观上界 (排队位置未建模) — 判据过上界仍须实弹复核。"
               "💤**n=0/产物缺失 = 刻意 dormant, 非断供非「触发不存在」(2026-09-26 RFC-109④-B 核实)**: "

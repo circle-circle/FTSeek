@@ -283,13 +283,44 @@ def settle_row(r, ctx):
     return settle
 
 
-def _aggregate(rows):
-    """聚合成时段收益台账."""
+# ── 判据 action 集合 (RFC-162 提到模块级便于契约测试; 语义与 9/26 逐字一致) ──
+EXEC_B21 = frozenset({"SL_BREAKEVEN", "SL_TRAIL_LOCK", "TAKE_PROFIT",
+                      "lock_in", "tighten", "breakeven_lock"})
+# B22 判据文另含 pre_close_flatten (与 B21 集合刻意不同, 差一个值 — 逐字照判据,
+# 不做"顺手统一"; 改集合 = 改判据 = 重裁)
+EXEC_B22 = EXEC_B21 | {"pre_close_flatten"}
+
+
+def _pos_n(rows, actions) -> int:
+    """独立持仓数 = distinct(源, 交易日, 标的) — RFC-162 持仓级 n 轴。
+
+    行级 n 是**逐分钟采样行数**, 同一持仓可出几十到上百行; 两口径可符号相反,
+    不能互相当作达标证据 (实测 B21 行级 350 / 持仓级 29)。
+    """
+    return len({(r.get("source") or r.get("_source"), r.get("trade_date"), r.get("symbol"))
+                for r in rows if str(r.get("action") or "") in actions})
+
+
+def _aggregate(rows, by_position: bool = False):
+    """聚合成时段收益台账.
+
+    RFC-162 (2026-10-23): `by_position=True` 把同一 (源, 交易日, 标的, action) 的多条
+    逐分钟采样**只计一次**。为什么必须并列披露: 源 jsonl 是**逐分钟**采样行, 行级 n 会把
+    单笔持仓放大两个数量级 (实测 25,797 行 = 137 个独立持仓日; 盘前 178× / 盘后 202×),
+    且单笔大仓 (US.ACN 10-02 一笔占 49 行) 能主导均值 —— 行级均值 +0.60% 与持仓级
+    −2.28% **符号相反**。本函数只加读数, 不改任何判据阈值/判决字段 (改 n 轴 = 重裁)。
+    """
     agg = {}
+    seen_pos = set()
     for r in rows:
         s = r.get("settle")
         if not s:
             continue
+        if by_position:
+            pk = (r.get("_source"), r.get("trade_date"), r.get("symbol"), r.get("action"))
+            if pk in seen_pos:
+                continue
+            seen_pos.add(pk)
         key = (r.get("_source"), r.get("action"))
         a = agg.setdefault(key, {"n": 0, "t0_close": [], "holdout_best": [], "flips": 0, "initial_losses": 0, "mfe": [], "capture": []})
         a["n"] += 1
@@ -314,6 +345,9 @@ def _aggregate(rows):
         caps = a["capture"]
         entry = {
             "n": n,
+            # 正收益占比 — 判据 (B21) 第三轴, 以前只落 n 与均值 ⇒ 每次裁决要临时重算,
+            # 且均值会被少数大赢家拉正 (RFC-162 补落盘, 只印不判)
+            "positive_share": round(sum(1 for v in a["t0_close"] if v > 0) / n, 3),
             # T+0 收盘均值 (当日兑现)
             "avg_t0_close_ret": round(sum(a["t0_close"]) / n, 3),
             # 最优持有尺度均值 (多时点里最好的那个 — 回答"该拿多久")
@@ -398,6 +432,9 @@ def main():
         rec["_source"] = rec.get("source")
         ledger_src.append(rec)
     ledger = _aggregate(ledger_src)
+    # RFC-162: 持仓级并列台账 (同一 源/日/标的/action 只计一次) — 行级是逐分钟采样,
+    # 两者可符号相反; 本块只印不判, 判据阈值/注册表状态不变。
+    ledger_pos = _aggregate(ledger_src, by_position=True)
 
     report = {
         "generated_at": datetime.utcnow().isoformat() + "Z",
@@ -408,6 +445,10 @@ def main():
         # 接口不可用而未结算的行数 (>0 说明台账本轮有缺口, 下轮重跑自动补)
         "api_unavailable": n_api_unavailable,
         "ledger": ledger,
+        # 持仓级并列读数 (RFC-162, 只印不判): n 是独立(源,日,标的)数, 不是分钟行数
+        "ledger_by_position": ledger_pos,
+        "position_axis_note": "行级 n = 逐分钟采样行 (同一持仓多行); 持仓级 n = 独立(源,交易日,标的)。"
+                              "判据 n 轴目前仍按行级 → 差异在 100x 量级时以持仓级为准读方向。",
     }
     # ── B21/B22 判据 n 轴计数锚 (2026-09-26 登记; 零行为变更, 纯只读统计) ──
     # 为什么放这里而不是让注册表数 jsonl 行数: 两条判据的 n 轴都是**执行类 action 子集**
@@ -415,13 +456,13 @@ def main():
     # hold_no_stop (亏损侧按 9-17 裁决本不执行) ⇒ count_mode=lines 会让 current_n
     # 立刻虚假达标迁 READY_TO_EVALUATE (gap_chase_gate 同型假象)。
     # 注册表用 count_mode="json_key:<本处键名>" 取轴, 见 shadow_registry._count_samples。
-    _EXEC_B21 = frozenset({"SL_BREAKEVEN", "SL_TRAIL_LOCK", "TAKE_PROFIT",
-                           "lock_in", "tighten", "breakeven_lock"})
-    # B22 判据文另含 pre_close_flatten (与 B21 集合刻意不同, 差一个值 — 逐字照判据,
-    # 不做"顺手统一"; 改集合 = 改判据 = 重裁)
-    _EXEC_B22 = _EXEC_B21 | {"pre_close_flatten"}
+    _EXEC_B21, _EXEC_B22 = EXEC_B21, EXEC_B22
     report["b21_exec_settled_n"] = sum(
         1 for _r in all_settled if str(_r.get("action") or "") in _EXEC_B21)
+    # RFC-162: 同一持仓的逐分钟行只算 1 笔 (真·决策数) — 与行级并列, 只印不判
+    report["b21_exec_settled_pos_n"] = _pos_n(all_settled, EXEC_B21)
+    report["b22_exec_aged_pos_n"] = _pos_n(
+        [r for r in rows if r.get("quote_age_seconds") is not None], EXEC_B22)
     report["b22_exec_aged_n"] = sum(
         1 for _r in rows
         if str(_r.get("action") or "") in _EXEC_B22
@@ -445,6 +486,12 @@ def main():
         print(f"[settle] 新结算 {n_new} 行, API不可用跳过 {n_api_unavailable} 行(下轮重跑补), "
               f"窗外跳过 {n_out_of_window} 行, 历史窗外排除 {historical_out_of_window} 行, "
               f"累计 {len(all_settled)}, 台账 → {REPORT}")
+        # RFC-162: 行级 vs 持仓级并列印一行, 防"行数看着达标"被当成样本够
+        _b21r = report["b21_exec_settled_n"]
+        _b21p = report["b21_exec_settled_pos_n"]
+        print(f"[settle] B21 执行类: 行级 n={_b21r} / 持仓级 n={_b21p} "
+              f"(膨胀 {(_b21r / _b21p):.1f}x)" if _b21p else
+              f"[settle] B21 执行类: 行级 n={_b21r} / 持仓级 n=0")
 
 
 if __name__ == "__main__":
