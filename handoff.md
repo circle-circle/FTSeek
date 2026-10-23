@@ -1,5 +1,14 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-23 并行会话收口提交（外部仓库本地提交，无 remote）
+
+- **外部 /root 仓库**: `78a3dca`（DA 输入/输出真值 + 单批执行契约，11 文件）与 `f51791d`（并行会话收口：财报回退/UE 归因/推送读数/治理文档，11 文件）已本地提交。**该仓库无 remote，未推送**；未触碰未跟踪的 home 文件、备份与 references。
+- **验证**: skill 全套 113 passed；`test_ops_scripts_sync` 3 passed/1 skipped；`test_earnings_calendar_source_order` 9 passed；`py_compile` 通过。`entry_delay_shadow_push.py` 与主仓 `ops/hermes/` 副本逐字节一致。
+- **主仓**: `f5106af13` 已推送 `origin/rfc-060-phase1-hotfixes`；本条目随附 10-22 盘后/复盘 Obsidian 产物提交。
+- **状态**: 未重启主服务；未改门/仓位/退出；外部仓库的 remote 待用户提供。
+
+最后更新：2026-10-23（本条）
+
 ## 2026-10-23 DA 输入/输出真值直接修复（已提交/未重启主服务）
 
 - **用户要求**：直接修复明确存在的问题，不带错误输入/输出判断。本批改事实层与反馈层，不改 gate/仓位/止损/止盈/频率。
