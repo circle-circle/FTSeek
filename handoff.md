@@ -1,5 +1,25 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-23 DA 链路根因修复 + 重启（冒烟 7/7）
+
+- **用户要求**: 「针对异常问题按照建议做修复，确保方案和建议能真正合理且能从根源上解决问题」。
+- **范围**: 纯可靠性/可观测性/数据真值；**未改交易门、仓位、止损止盈、频率**。行为口径项列入 DEB §5 待裁。
+- **提交**: 主仓 `5e5b851ca`（DEB-20261023-da-chain-hardening + carrier/FTSeek/审计/测试）；外部 `/root` 仓库 `b0d5726`（DA skill + 线上 carrier；无 remote，未推送）。
+- **载体**: `ops/hermes/da_main_carrier.py` 与 `/root/.hermes/scripts/da_main_carrier.py` 已逐字节同步。
+- **修复**:
+  - carrier：preflight fail-soft（pullback/watchlist/日历超时不再打死批次）；启动 `running` + 60s heartbeat；stderr 实时落盘；0857 ET deadline；超时/rc=124/rc≠0 → `pipeline --mode finalize`；bridge/DB 真值对账（10/12 类 JSON 假失败不再误报）；单例锁；watchlist 空转 scanner-only。
+  - pipeline：`--mode finalize` 从 checkpoint 收尾；IC 写失败 decision_id fallback `-noic`（防整份 bridge invalid + DA 行降优先级）；bridge 原子写；raw checkpoint 合并修正后 prev_close；ET 日期 zoneinfo；PROMPT_HASH/真值开关入 checkpoint 键。
+  - 性能：扫描 4 路并行保序（仍受 OpenD 4 连接限流）；pullback 4 路并行并恢复日志；今日 31 只端到端 49m14s，deadline 0857 留 7min 余量。
+  - 数据：Finnhub 429/5xx 有界退避 + 并发上限；news_v2 保留完整 publish_time；`_quality_effective/source_failed` additive 真值视图（不改门）。
+  - FTSeek：同日 bridge mtime 变化允许刷新 adapter；push `--wait-da`（死线 09:27）+ `sync=True`；audit 以 publish_time/规范状态为准（去掉假红）。
+- **运维**: crontab 两行 push 已加 `--wait-da`，备份 `data/crontab.backup.20261023_da_wait_fix.txt`（回滚=删 flag）。
+- **验证**: 外部 skill **124 passed**；主仓定向 **143 passed**；`tests/playbook` **1218 passed**；finalize 副本集成 31 analyses→15 bridge candidates；真实 10/23 批次 31 只、15 条指令、无分析异常。
+- **重启**: `systemctl restart ftseek-us`；PID **3426219**，`active`；启动冒烟 **7/7**；在仓仍 2 笔（MSFT/TSM）；非 BOOKED 出场 0；重启段无 Traceback/CRITICAL/ERROR。
+- **行为边界**: 今日 21:06 generate 将 BABA 以 `admission: NOTIONAL_TOO_SMALL(2185<2500)` 改为 SKIP，其余 14 条 DA 行未进入 generate（非 watchlist/未过 screener）仍可执行；这正是 DEB §5 待裁的“执行口径不统一”，本批**未擅自统一**。WARN conf=0.35、confidence_sizing=false、watchlist extras 无上限、源失败是否入 prompt/质量门、重跑 stale 行撤回语义均待裁。
+- **下一步**: 观察下一 DA 批（新 carrier/pipeline 生效）并核对 running/heartbeat/stderr/deadline/artifacts；就 DEB §5 五项逐项裁决，批准后再按一次一变量实施。
+
+最后更新：2026-10-23（本条）
+
 ## 2026-10-23 RFC-164 合并 main + 重启（冒烟 7/7）
 
 - **合并**: RFC-164 随附提交 `55466e218`；`main`/`origin/main` 由 `27cdc0123` 快进到 `55466e218`，当前分支同点。
