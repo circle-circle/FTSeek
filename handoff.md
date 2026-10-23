@@ -1,5 +1,20 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-23 全量回归结果（本批无副作用；17 个既有红点）
+
+- **主仓全量**: `pytest tests -q` → **7726 passed / 17 failed / 72 skipped**（628s）。测试后工作区无 tracked 改动；生产 DB mtime 未因测试变化（`ftseek_us.db` 仍为重启时 13:14:03）。
+- **本批定向**: repo 审计+尾部 **16 passed**；外部 DA skill **113 passed**；本批改动文件相关测试无失败。
+- **17 个失败均在本批 diff 之外**，归属既有/并行提交：
+  - W9 词典↔注册表矛盾（`premarket_invalidation` / `eth_relative_volume_gate` 注册表 KILLED、词典仍 AUTO_WATCH）：9 例；源头 `shadow_registry.py` RFC-162 批。
+  - 治理/卫生：`da_skip_leveraged_etf` 新增死键 1、`rth_zero_fill_autorelease.py` 读废弃 live 单库 1、cron prompt 内嵌 SQL 1。
+  - 数据依赖：`pe_below_industry` 在真实 DB 转为 positive 1（非代码路径）。
+  - 代码回归：`playbook_service.py` 私有报价 helper 调用点 1（hotfix 55e4331de）。
+  - 影子治理：`premarket_invalidation` 终态仍有生产消费者 1、`ue_quote_freshness` 测试期望日期过期 1。
+  - 日志棘轮：`settle_winner_overnight_shadow.py` 3 处 warning 缺 exc_info 1（RFC-161 批）。
+- **结论**: 本批（DA 契约/审计/真值/Prompt/记忆）无新增副作用；全量套件不是全绿，但红点属于另一批清理面。下一批建议单独立“回归红点清理”，不要与 DA 契约混改。
+
+最后更新：2026-10-23（本条）
+
 ## 2026-10-23 13:14 重启 ftseek-us（冒烟 7/7）
 
 - **重启前**: 在仓 2 笔（MSFT/TSM）；`data/playbook_exits.db` 226 条 exit_intents 全 BOOKED；主仓 `app/`/`scripts/`/`config/` 无 WIP。
