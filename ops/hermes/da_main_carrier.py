@@ -333,7 +333,7 @@ def main() -> int:
                 print(f"[DA-main] output snapshot write failed: {exc}")
 
         finished_at = now_et().isoformat()
-        if completed.returncode in (124, 137):
+        if completed.returncode in (124, 137, 143):
             finalized = _finalize(date)
             artifacts = _verify_artifacts(date)
             append_event({**base_event, "status": "pipeline_timeout_finalized",
