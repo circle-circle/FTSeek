@@ -398,7 +398,8 @@ def _da_margins(days: int) -> dict:
     except Exception:
         rows = []
     for row in rows:
-        if row.get("status") != "complete" or not row.get("finished_at"):
+        if row.get("status") not in ("complete", "complete_unparsed_stdout",
+                                     "pipeline_timeout_finalized") or not row.get("finished_at"):
             continue
         try:
             stamp = datetime.fromisoformat(str(row["finished_at"]))
