@@ -13,10 +13,10 @@
   - 数据：Finnhub 429/5xx 有界退避 + 并发上限；news_v2 保留完整 publish_time；`_quality_effective/source_failed` additive 真值视图（不改门）。
   - FTSeek：同日 bridge mtime 变化允许刷新 adapter；push `--wait-da`（死线 09:27）+ `sync=True`；audit 以 publish_time/规范状态为准（去掉假红）。
 - **运维**: crontab 两行 push 已加 `--wait-da`，备份 `data/crontab.backup.20261023_da_wait_fix.txt`（回滚=删 flag）。
-- **验证**: 外部 skill **124 passed**；主仓定向 **143 passed**；`tests/playbook` **1218 passed**；finalize 副本集成 31 analyses→15 bridge candidates；真实 10/23 批次 31 只、15 条指令、无分析异常。
+- **验证**: 外部 skill **124 passed**；主仓定向 **117 passed**（含 execution_admission 4）；`tests/playbook` **1218 passed**；finalize 副本集成 31 analyses→15 bridge candidates；真实 10/23 批次 31 只、15 条指令、无分析异常。
 - **重启**: `systemctl restart ftseek-us`；PID **3426219**，`active`；启动冒烟 **7/7**；在仓仍 2 笔（MSFT/TSM）；非 BOOKED 出场 0；重启段无 Traceback/CRITICAL/ERROR。
-- **行为边界**: 今日 21:06 generate 将 BABA 以 `admission: NOTIONAL_TOO_SMALL(2185<2500)` 改为 SKIP，其余 14 条 DA 行未进入 generate（非 watchlist/未过 screener）仍可执行；这正是 DEB §5 待裁的“执行口径不统一”，本批**未擅自统一**。WARN conf=0.35、confidence_sizing=false、watchlist extras 无上限、源失败是否入 prompt/质量门、重跑 stale 行撤回语义均待裁。
-- **下一步**: 观察下一 DA 批（新 carrier/pipeline 生效）并核对 running/heartbeat/stderr/deadline/artifacts；就 DEB §5 五项逐项裁决，批准后再按一次一变量实施。
+- **执行口径（用户裁「统一 admission」）**: `auto_execute` 在真实 re-price/尺寸后、chase_cap 前对 DA 行再跑同一 `admission.evaluate`；命中 REJECT 用 `mark_instruction_guardrail_skip` 置 SKIP 并落 `exec_gate_audit`。新增 `playbook.admission.enforce_at_execution=true`（false 回滚）；阈值不变。10/23 实测 14 条在仓 DA 行按实际尺寸均 PASS；BABA 仍为 generate 侧 admission SKIP。WARN conf=0.35、confidence_sizing=false、watchlist extras 无上限、源失败是否入 prompt/质量门、重跑 stale 行撤回语义仍待裁。
+- **下一步**: 观察下一 DA 批（新 carrier/pipeline 生效）并核对 running/heartbeat/stderr/deadline/artifacts；就 DEB §5 四项逐项裁决，批准后再按一次一变量实施。
 
 最后更新：2026-10-23（本条）
 

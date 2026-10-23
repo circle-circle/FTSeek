@@ -6,6 +6,45 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 
+def _admission_at_execution_enabled() -> bool:
+    """2026-10-23: apply the existing admission gate with actual order size.
+
+    The write-time gate is intentional precheck-only (estimated multiplier),
+    and run_playbook_generate only covers watchlist survivors. Without this
+    check a DA row outside that screen can reach submission without ever being
+    evaluated at its real notional. Config rollback: false.
+    """
+    try:
+        from app.core.config_container import get_config as _gc
+        return bool(_gc().get_dotted(
+            "playbook.admission.enforce_at_execution", True))
+    except Exception:
+        return True  # fail-safe: keep the fee/notional safety gate on
+
+
+def execution_admission_evaluate(inst: Dict[str, Any],
+                                 reprice_params: Optional[Dict[str, Any]] = None
+                                 ) -> Optional[Dict[str, Any]]:
+    """Evaluate DA instructions with re-priced entry/SL/TP and actual size.
+
+    Returns None for non-DA rows / disabled switch / evaluation error.
+    """
+    if not str(inst.get("decision_id") or "").startswith("DA-"):
+        return None
+    if not _admission_at_execution_enabled():
+        return None
+    payload = dict(inst)
+    if reprice_params:
+        for key in ("entry_price", "stop_loss", "take_profit", "position_size"):
+            if reprice_params.get(key) is not None:
+                payload[key] = reprice_params[key]
+    raw = inst.get("raw_instruction_json")
+    if isinstance(raw, dict):
+        payload["raw_instruction"] = raw
+    from app.playbook.admission import evaluate as _adm_eval
+    return _adm_eval(payload)
+
+
 def run_playbook_auto_execute(
     scheduler,
     *,
@@ -786,6 +825,51 @@ def run_playbook_auto_execute(
                         size=inst.get("position_size") or 0, notional=0.0)
                 except Exception as _atr_audit_err:
                     logger.warning(f"[playbook] ATR暂缓落痕失败 (仍跳过): {_atr_audit_err}")
+                skipped_count += 1
+                continue
+
+            # ── 2026-10-23 统一 admission（用户裁「统一 admission」）──
+            # 写入时 admission 只做估算预判；run_playbook_generate 只覆盖 watchlist。
+            # DA 行必须在真实 re-price/尺寸确定后过一次同一门，否则小名义额/低价
+            # 行可从旁路进入下单。阈值与 enforce 配置不变，只补齐执行时点。
+            try:
+                _exec_adm = execution_admission_evaluate(inst, _reprice_params)
+            except Exception as _exec_adm_err:
+                _exec_adm = None
+                logger.warning(
+                    f"[playbook] {inst.get('symbol')} execution admission 判定异常 "
+                    f"(fail-open): {_exec_adm_err}", exc_info=True)
+            if (_exec_adm
+                    and _exec_adm.get("verdict") == "REJECT"
+                    and _exec_adm.get("enforce")):
+                _exec_adm_reason = "admission: " + "; ".join(
+                    _exec_adm.get("reasons") or [])
+                _exec_adm_metrics = _exec_adm.get("metrics") or {}
+                try:
+                    db.mark_instruction_guardrail_skip(
+                        inst["id"], _exec_adm_reason)
+                except Exception as _exec_adm_mark_err:
+                    logger.warning(
+                        f"[playbook] {inst.get('symbol')} admission skip 落库失败 "
+                        f"(仍拦截): {_exec_adm_mark_err}", exc_info=True)
+                try:
+                    _emit_exec_gate_audit(
+                        inst, action="skipped_admission_execution",
+                        entry=float(_exec_adm_metrics.get("entry_price") or 0),
+                        size=float(_exec_adm_metrics.get("shares") or 0),
+                        notional=float(_exec_adm_metrics.get("notional") or 0),
+                        extra={"gate": "admission_execution",
+                               "reasons": _exec_adm.get("reasons") or [],
+                               "metrics": _exec_adm_metrics})
+                except Exception as _exec_adm_audit_err:
+                    logger.warning(
+                        f"[playbook] {inst.get('symbol')} admission 审计失败 "
+                        f"(不影响拦截): {_exec_adm_audit_err}", exc_info=True)
+                logger.info(
+                    f"[playbook] {inst.get('symbol')} DA 指令执行前 admission "
+                    f"REJECT: {_exec_adm_reason} "
+                    f"(notional={_exec_adm_metrics.get('notional')}, "
+                    f"fee_bps={_exec_adm_metrics.get('fee_bps')})")
                 skipped_count += 1
                 continue
 

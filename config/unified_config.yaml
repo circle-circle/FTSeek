@@ -1698,6 +1698,10 @@ playbook:
   admission:
     enabled: true
     enforce: true
+    # 2026-10-23: 用户裁「统一 admission」。写入时只做估算预判；run_generate 只覆盖
+    # watchlist。执行前用真实 re-price/尺寸再过同一 admission，补齐 DA 旁路；
+    # 阈值不变。回滚: false（热重载生效）。
+    enforce_at_execution: true
     min_notional_usd: 2500    # 2026-09-01 RFC-071: 3000→2500 — 6%帽≈$5,900 砍半≈$2,950 结构性穿地板
     #   (8/31实证: 4只高置信单100% BUY偏斜被砍半, 全部死于NOTIONAL_TOO_SMALL, 真实死因被掩盖).
     #   2500给砍半类残存路径(跨日翻转降仓)幸存带; 代价13.5-16bps往返, SIM采集期数据量优先可接受.

@@ -3,7 +3,7 @@
 - **状态**: 已实施（无交易门/仓位/止损止盈/频率变更）
 - **触发**: 用户 2026-10-23「针对异常问题按照建议做修复，确保方案和建议能真正合理且能从根源上解决问题」
 - **范围**: DA 载体、pipeline 契约、审计工具、数据源重试、bridge 重载、推送等待
-- **不包含**: DA/FTSeek 执行口径统一、confidence/admission 阈值调整、watchlist extras 上限（均需单独裁决）
+- **不包含**: confidence 阈值调整、watchlist extras 上限、源失败入 prompt/质量门、重跑 stale 撤回（均需单独裁决）；DA 执行前 admission 已按用户裁决实施
 
 ## 1. 实时证据（2026-10-23 批次）
 
@@ -45,6 +45,7 @@
 - `app/playbook/pipeline.py`：同日 bridge 被重跑/finalize 重写（mtime 变化）时允许刷新内存 adapter；未变化时保持 P0-2 一次加载语义。
 - `scripts/da_bridge_dingtalk_push.py`：`--wait-da` 等主链终态（死线 09:27 ET），`sync=True` 同步推送后再写 `pushed` 台账；crontab 两行已加 `--wait-da`，备份 `data/crontab.backup.20261023_da_wait_fix.txt`。
 - `scripts/da_chain_contract_audit.py`：research 渲染时间改认 `publish_time`；不再把 `PARTIAL_AGREE + challenger_agreed_raw=true` 当异常（规范状态才是裁决依据）。
+- **DA 执行前 admission（用户 2026-10-23 裁「统一 admission」）**：`auto_execute_flow` 在真实 re-price/尺寸确定后、chase_cap 之前，对 `decision_id LIKE 'DA-%'` 再跑同一 `admission.evaluate`；阈值与 `enforce` 不变。命中 REJECT 用 `mark_instruction_guardrail_skip` 置 SKIP，落 `exec_gate_audit`。新增配置 `playbook.admission.enforce_at_execution=true`（false 即回滚）。10/23 实测：14 条在仓 DA 行按实际尺寸均 PASS，BABA 已于 generate 被拦；本修复消除未来非 watchlist 小名义额旁路。
 
 ## 3. 验证
 
@@ -81,8 +82,7 @@ cd scripts && /opt/ftseek/FTSeek-US/venv/bin/python pipeline.py \
 
 ## 5. 待用户裁决（本批未改）
 
-1. **执行口径统一**：`run_playbook_generate` 只处理 watchlist；BABA 被 admission 拦下，其余 14 条 DA 行绕过同一实际尺寸复核。是否让所有 DA 指令在实际下单前统一过 admission/confidence 门？这会改变成交分布。
-2. **WARN/confidence 语义**：WARN 将 confidence 降到 0.35，但 `confidence_sizing_enabled=false` 且非 watchlist 不过 supply gate，实际接近标签。是否只用于排序、还是应参与资格/仓位？
-3. **watchlist extras 上限**：今日 19/31 来自 extras；并行化已释放时间，但 watchlist 扩容仍会线性推高时长。
-4. **源失败计入 prompt/质量门**：本批只做 additive 有效视图；是否让 `_quality` 本身计入 source failed，会改变数据充分性路由与供给。
-5. **重跑撤回语义 / 同日 stale 指令**：bridge union + DB UPSERT 不撤回已翻 SKIP 的旧行；需定义批次级对账规则。
+1. **WARN/confidence 语义**：WARN 将 confidence 降到 0.35，但 `confidence_sizing_enabled=false` 且非 watchlist 不过 supply gate，实际接近标签。是否只用于排序、还是应参与资格/仓位？
+2. **watchlist extras 上限**：今日 19/31 来自 extras；并行化已释放时间，但 watchlist 扩容仍会线性推高时长。
+3. **源失败计入 prompt/质量门**：本批只做 additive 有效视图；是否让 `_quality` 本身计入 source failed，会改变数据充分性路由与供给。
+4. **重跑撤回语义 / 同日 stale 指令**：bridge union + DB UPSERT 不撤回已翻 SKIP 的旧行；需定义批次级对账规则。
