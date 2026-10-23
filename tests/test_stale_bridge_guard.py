@@ -54,6 +54,7 @@ def fresh_bridge(monkeypatch):
     monkeypatch.setattr(pl, "_bridge_file_state", lambda _d: "ok")
     monkeypatch.setattr(pl, "_try_load_bridge", lambda: adapter)
     monkeypatch.setattr(pl, "_bridge_reloaded_date", None)
+    monkeypatch.setattr(pl, "_bridge_reloaded_mtime", None)
     return adapter
 
 
@@ -134,6 +135,20 @@ class TestStaleBridgeReload:
         _reload_bridge_if_landed(sched)
         assert sched.voting_coordinator is legacy
         assert not called
+
+    def test_s7_same_day_rewritten_bridge_refreshes(self, fresh_bridge, monkeypatch):
+        """S7: 同日 bridge 被重跑/finalize 重写 (mtime 变) → 刷新内存 adapter。"""
+        sched = MagicMock()
+        old = BridgeVotingAdapter(
+            {"US.SAIC": _cand("US.SAIC", "DA-20260901191627-US.SAIC-1ea2")}, TODAY)
+        sched.voting_coordinator = old
+        monkeypatch.setattr(pl, "_bridge_reloaded_date", TODAY)
+        monkeypatch.setattr(pl, "_bridge_reloaded_mtime", 100.0)
+        monkeypatch.setattr(pl, "_bridge_mtime", lambda _d: 200.0)
+        _reload_bridge_if_landed(sched)
+        assert sched.voting_coordinator is fresh_bridge
+        assert pl._bridge_reloaded_date == TODAY
+        assert pl._bridge_reloaded_mtime == 200.0
 
 
 def _mkdb():

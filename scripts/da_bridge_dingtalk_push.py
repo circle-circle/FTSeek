@@ -42,6 +42,8 @@ PUSH_WINDOW_END_EXCLUSIVE_MIN = 9 * 60 + 29
 # --wait-fresh-event; 等待函数/flag 保留供回滚与历史重放, 默认不等待。
 FRESH_EVENT_LEDGER = DATA / "shadow" / "ue_fresh_da_candidate_pool.jsonl"
 FRESH_EVENT_WAIT_DEADLINE_MIN = 9 * 60 + 28
+DA_SCHEDULE_LEDGER = DATA / "shadow" / "da_main_schedule.jsonl"
+DA_WAIT_DEADLINE_MIN = 9 * 60 + 27
 FRESH_EVENT_POLL_SEC = 30
 # 终态口径 (2026-10-16 巡检实证排雷): skipped_* 族=「本行未生产」不能当「批次已完成」
 # — EST 季错季行会在 08:10 ET 写 skipped_outside_window, 若算终态 ⇒ 09:12 的推送读到它
@@ -83,6 +85,47 @@ def _fresh_event_terminal_today(date: str) -> bool:
     except Exception:
         return False
     return False
+
+
+_DA_TERMINAL = frozenset({
+    "complete", "complete_unparsed_stdout", "pipeline_timeout_finalized",
+    "pipeline_skipped", "pipeline_failed", "pipeline_json_parse_failed",
+    "pipeline_spawn_failed", "deadline_missed",
+    "skipped_non_trading_day", "skipped_outside_window",
+    "skipped_already_running",
+})
+
+
+def _da_terminal_today(date: str) -> bool:
+    """今天的主链载体是否已写终态事件 (running/heartbeat 不算)。"""
+    try:
+        if not DA_SCHEDULE_LEDGER.exists():
+            return False
+        for line in reversed(
+                DA_SCHEDULE_LEDGER.read_text(encoding="utf-8").splitlines()[-50:]):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except Exception:
+                continue
+            if row.get("date") == date and row.get("status") in _DA_TERMINAL:
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _wait_da_done(date: str) -> str:
+    """Wait for today's DA carrier terminal; bridge freshness remains the hard gate."""
+    import time as _time
+    while True:
+        if _da_terminal_today(date):
+            return "da_done"
+        now = _now_et()
+        if now.hour * 60 + now.minute >= DA_WAIT_DEADLINE_MIN:
+            return "deadline_proceed_without_da_terminal"
+        _time.sleep(FRESH_EVENT_POLL_SEC)
 
 
 def _wait_fresh_event_done(date: str) -> str:
@@ -417,7 +460,8 @@ def _build_message(date, bridge):
     return "\n".join(lines)
 
 
-def main(date=None, dry=False, force_window=False, wait_fresh_event=False):
+def main(date=None, dry=False, force_window=False, wait_fresh_event=False,
+         wait_da=False):
     date = date or _today_et()
     now = _now_et()
     if not force_window and not _in_push_window(now):
@@ -447,6 +491,11 @@ def main(date=None, dry=False, force_window=False, wait_fresh_event=False):
         _append_skip_record(date, "already_pushed")
         return
 
+    # 2026-10-23: 等 DA 主链终态, 避免晚到批次被当成"无 bridge"跳过; 死线照推.
+    if wait_da:
+        wait_outcome = _wait_da_done(date)
+        print(f"[DA] 等待结局: {wait_outcome}")
+
     # 2026-10-16: 等 fresh-event 批次终态 (UE 产出指令入 DB 后, DB 计数面才完整)
     if wait_fresh_event:
         wait_outcome = _wait_fresh_event_done(date)
@@ -461,7 +510,9 @@ def main(date=None, dry=False, force_window=False, wait_fresh_event=False):
     try:
         from app.push import push_text_safe
         from app.push.message import Level as _Lv, Category as _Ct
-        push_text_safe(msg, level=_Lv.NORMAL, category=_Ct.SYSTEM)
+        # Short-lived cron process: use sync=True so the台账 only records a
+        # real delivery result, not a fire-and-forget enqueue.
+        push_text_safe(msg, level=_Lv.NORMAL, category=_Ct.SYSTEM, sync=True)
         print("\n[ok] 已推送 (PushHub)")
         _append_summary_record(date, bridge, instruction_summary, "pushed")
     except Exception as e:
@@ -476,6 +527,8 @@ if __name__ == "__main__":
     ap.add_argument("--force-window", action="store_true", help="跳过 ET 窗口守卫")
     ap.add_argument("--wait-fresh-event", action="store_true",
                     help="推送前等当日 UE fresh-event 批次终态 (死线 09:28 ET 照推)")
+    ap.add_argument("--wait-da", action="store_true",
+                    help="推送前等 DA 主链终态 (死线 09:27 ET 照推)")
     a = ap.parse_args()
     main(date=a.date, dry=a.dry, force_window=a.force_window,
-         wait_fresh_event=a.wait_fresh_event)
+         wait_fresh_event=a.wait_fresh_event, wait_da=a.wait_da)

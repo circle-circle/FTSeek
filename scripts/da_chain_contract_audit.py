@@ -289,8 +289,10 @@ def source_stats(collected: Dict[str, Any], trade_date: str) -> Dict[str, Any]:
             pub_missing[section] += 1
         elif (date.fromisoformat(trade_date) - d).days > 7:
             stale[section] += 1
-        # 研报渲染只读 time; 新闻渲染走 publish_time; news_v2 的 time 为粗粒度显示.
-        if section == "research" and not item.get("time"):
+        # 2026-10-23: research now renders publish_time (LLM Prompt fix); a
+        # timestamp in either field means the model can see an age. Only a
+        # record with neither field is a real render-time gap.
+        if section == "research" and not (item.get("time") or item.get("publish_time")):
             render_missing[section] += 1
 
     sentiment = collected.get("sentiment") or []
@@ -721,7 +723,7 @@ def summarize(price: Dict[str, Dict[str, Any]], debate: Dict[str, Any],
         findings.append({
             "severity": "high",
             "area": "source_time",
-            "message": "研报渲染时间为空 (模型看到无日期研报)",
+            "message": "研报无任何发布时间 (模型无法判断时效)",
             "count": agg["render_time_missing"].get("research", 0),
         })
     if agg.get("duplicate_extra_items"):
@@ -732,14 +734,9 @@ def summarize(price: Dict[str, Dict[str, Any]], debate: Dict[str, Any],
             "count": agg["duplicate_extra_items"],
             "cross_section_extra_items": agg.get("cross_section_extra_items", 0),
         })
-    if debate.get("partial_agreed_true"):
-        findings.append({
-            "severity": "medium",
-            "area": "debate_state",
-            "message": "PARTIAL_AGREE 同时 agreed=true, 规范状态应为 PARTIAL_AGREE",
-            "count": len(debate["partial_agreed_true"]),
-            "symbols": [r["symbol"] for r in debate["partial_agreed_true"]],
-        })
+    # 2026-10-23: challenger_agreed_raw is intentionally retained for audit;
+    # canonical classification is challenger_verdict_state. Do not re-flag
+    # PARTIAL_AGREE + raw true (that pair is expected after the state fix).
     if stages.get("status") == "ok":
         if stages.get("entry_gap_gt_1pct"):
             findings.append({

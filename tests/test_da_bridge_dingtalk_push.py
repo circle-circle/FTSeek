@@ -220,3 +220,16 @@ def test_wait_fresh_event_skip_is_not_terminal(tmp_path, monkeypatch):
         f.write(json.dumps({"type": "fresh_event_batch", "date": "2026-10-16",
                             "mode": "execute", "status": "complete"}) + "\n")
     assert PUSH._fresh_event_terminal_today("2026-10-16") is True
+
+
+def test_da_terminal_today_reads_carrier_ledger(tmp_path, monkeypatch):
+    ledger = tmp_path / "da_main_schedule.jsonl"
+    ledger.write_text("\n".join([
+        json.dumps({"date": "2026-10-07", "status": "running"}),
+        json.dumps({"date": "2026-10-07", "status": "heartbeat"}),
+    ]) + "\n", encoding="utf-8")
+    monkeypatch.setattr(PUSH, "DA_SCHEDULE_LEDGER", ledger)
+    assert PUSH._da_terminal_today("2026-10-07") is False
+    with ledger.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"date": "2026-10-07", "status": "complete"}) + "\n")
+    assert PUSH._da_terminal_today("2026-10-07") is True

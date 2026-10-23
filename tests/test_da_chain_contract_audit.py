@@ -88,7 +88,7 @@ def test_finnhub_url_ids_do_not_collapse_into_one_duplicate():
     assert M._dedupe_key(a) != M._dedupe_key(b)
 
 
-def test_source_stats_detects_cross_section_same_story_and_missing_research_time():
+def test_source_stats_detects_cross_section_same_story_and_research_time():
     collected = {
         "news": [{"news_id": "1", "title": "same", "publish_time": "1792669312"}],
         "research": [{"news_id": "1", "title": "same", "publish_time": "1792669312"}],
@@ -98,7 +98,9 @@ def test_source_stats_detects_cross_section_same_story_and_missing_research_time
     s = M.source_stats(collected, "2026-10-22")
     assert s["duplicate_extra_items"] == 1
     assert s["cross_section_extra_items"] == 1
-    assert s["render_time_missing"].get("research") == 1
+    assert s["render_time_missing"].get("research", 0) == 0
+    collected["research"][0].pop("publish_time")
+    assert M.source_stats(collected, "2026-10-22")["render_time_missing"].get("research") == 1
 
 
 def test_compute_rr_direction_aware_and_invalid_geometry():
