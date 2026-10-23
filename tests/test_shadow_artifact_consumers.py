@@ -186,12 +186,16 @@ def test_ack_does_not_hide_unclaimed_new_cases():
     开关 false 后分支 inert, 非生产读方 ⇒ 逐条实测后认领。
     2026-10-19 新增 ue_tier_gate (退役批): scan 内写者仅挂 inject, 现行 --da-feed skip inject;
     eval cron/watchdog 已摘, 非生产读方 ⇒ 逐条实测后认领。
+    2026-10-23 新增 premarket_invalidation (判据结题): 产物仍被 daily_invariant_check W7
+    (干净昨收快照) 与 data_freshness_watchdog 只读消费; 两者是审计/巡检面, 非交易链,
+    采集保留 ⇒ 逐条实测后认领。
     """
     expected = {"universe_expansion_shadow", "limit_entry", "da_glm_shadow",
                 "da_prompt_distill_shadow", "premarket_peer_shadow",
                 "ue_midday_shadow", "ue_earnings_clue_shadow", "eth_ext_entry_prefilter",
                 "ue_short_boost_shadow", "p1_1_vwap_slope",
-                "ext_entry_exec_price_shadow", "ue_tier_gate"}
+                "ext_entry_exec_price_shadow", "ue_tier_gate",
+                "premarket_invalidation"}
     assert set(sr._CONSUMER_ACK) == expected, (
         f"豁免表新增了未认领条目: {set(sr._CONSUMER_ACK) - expected} — "
         f"每条必须逐条实测 (消费者是终点报表还是生产门) 后才可加, 禁批量豁免")

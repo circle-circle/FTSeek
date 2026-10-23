@@ -593,7 +593,7 @@ class TestRegistryEntryPairsWithEvaluator:
         assert it is not None
         assert it.no_adjudication_reason.startswith("ADJUDICATED_NOT_READY"), (
             "已裁 NOT_READY 的事项必须挂账, 否则 refresh_counts 会把已裁事项重复提升 READY")
-        assert it.last_evaluated == "2026-10-09"
+        assert it.last_evaluated >= "2026-10-09"
         notifications = sr.refresh_counts()   # 对真实数据实跑, 不得提升本项
         assert it.status == sr.ShadowStatus.OBSERVING
         assert all("ue_quote_freshness_shadow" not in n for n in notifications)

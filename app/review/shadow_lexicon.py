@@ -84,7 +84,7 @@ SHADOW_LEXICON: dict[str, dict[str, str]] = {
     },
     "premarket_invalidation": {
         "plain": "盘前证伪条件 A/B/C（跳空/方向失效就作废这单）",
-        "conclusion": "A/C 已按 2026-09-11 处置为『不转正』; B 执行样本 n=4<20 ⇒ 攒样中。⚠️ 但实测发现相位不符: 产物 396 条全在开盘后 5–17 分钟 (用盘中价), 判据文字说的是『盘前』⇒ 裁决前须先定谳口径",
+        "conclusion": "**已结题（KILLED, 2026-10-23, 采集保留）**：A/C 已按 2026-09-11 处置为『不转正』；B 判据已结题，不再提请转正。相位口径 09:35–09:59 ET 已定谳；历史行仅保留审计。",
         "cls": "AUTO_WATCH",
     },
     "reentry_quick_tp_gate": {
@@ -214,7 +214,7 @@ SHADOW_LEXICON: dict[str, dict[str, str]] = {
     },
     "eth_relative_volume_gate": {
         "plain": "事件票被绝对量闸拦下后, 用『相对自己近 20 日中位量的比值』替代绝对量门 — 拦得对不对",
-        "conclusion": "真 n 轴 = would_pass_relative 样本, 实测 0/30 (53 行全是 turnover_too_low 采样, would_pass 均 None; 交易日 1/15) ⇒ **远未达门, 非 53/30** (2026-10-08 RFC-139 复查修复批 P1: count_mode lines→where:would_pass_relative=True 纠正假达标)。且 eval_script 是采集器不是结算器 — 三条判据（中位数>0 / 胜率≥55% / 剔最强单日仍>0）还没出读数 ⇒ 达门后须先补结算脚本再呈裁（NO_SETTLER）; 死线 2026-11-30",
+        "conclusion": "**已退役（KILLED, 2026-10-23, 输入断供）**：真 n 轴 would_pass_relative=0/30（53 行均为 turnover_too_low 采样，would_pass 均 None；交易日 1/15），随后上游 RFC-104 阶段0 关停/输入断供 ⇒ 判据轴数学不可达，不呈裁；历史产物留档。",
         "cls": "NEEDS_USER",
     },
 }

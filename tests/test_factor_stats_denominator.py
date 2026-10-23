@@ -93,10 +93,18 @@ class TestRealDataVerdictFlip:
 
     @pytest.fixture(scope="class")
     def rows(self):
+        """冻结在 RFC-112 评估窗 (2026-06-28→2026-09-26), 不随生产新增交易漂移。
+
+        旧写法 days_back=90 是滚动窗: 2026-10 新数据进来后 pe_below_industry 可合法
+        转为 positive, 本测试会把"数据演化"误报成"口径修复洗白因子"。这里冻结样本窗
+        以复现 RFC-112 的裁决, 不改判据/阈值, 也不要求未来数据永远保持 negative。
+        """
         from app.playbook.db import PlaybookDB
-        r = PlaybookDB().get_instructions_with_outcome(days_back=90)
+        raw = PlaybookDB().get_instructions_with_outcome(days_back=365)
+        start, end = "2026-06-28", "2026-09-26"
+        r = [x for x in raw if start <= str(x.get("date") or "")[:10] <= end]
         if not r:
-            pytest.skip("无 outcome 数据")
+            pytest.skip("RFC-112 冻结窗无 outcome 数据")
         return r
 
     def _group(self, rows):

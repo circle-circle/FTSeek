@@ -70,9 +70,11 @@ ENABLED = os.getenv("EXIT_RTH_ZERO_FILL_AUTORELEASE", "true").lower() == "true"
 KIND = "rth_zero_fill_autorelease"
 
 # (仓位库, target_env) — 与 exit_intents.target_env 值域一致 (同 exit_closekey_health)
+from app.core.paths import get_trade_records_db_for_arm as _trade_db_for_arm
+
 _POSITION_DBS = (
-    (ROOT / "data" / "ftseek_us.db", "sim"),
-    (ROOT / "data" / "ftseek_us_live.db", "real"),
+    (_trade_db_for_arm("sim"), "sim"),
+    (_trade_db_for_arm("real"), "real"),
 )
 
 

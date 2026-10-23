@@ -172,9 +172,14 @@ class TestCallSiteContract:
         assert any(getattr(x.func, "id", "") == "MarketDataRouter"
                    for x in ast.walk(helper) if isinstance(x, ast.Call))
 
-    def test_both_order_path_sites_use_the_helper(self):
-        """两个原构造点 (arrival price / 成交价兜底) 都改走私有单例取价。"""
-        assert _SVC_SRC.count("_private_router_quote(symbol)") == 2
+    def test_only_arrival_price_uses_the_helper(self):
+        """2026-10-23 hotfix 后成交价兜底改券商终态累计量价: 只剩 arrival price 一处取价。
+
+        这不是放宽棘轮: 第二处 quote 兜底已被 55e4331de 删除, 用陈旧报价记账比缺价更坏。
+        仍然要求构造点唯一 (上方 test_no_per_order_construction_remains)。
+        """
+        assert _SVC_SRC.count("_private_router_quote(symbol)") == 1
+        assert "quote 兜底" not in _SVC_SRC.split("_private_router_quote(symbol)", 2)[-1]
 
     def test_helper_never_touches_the_shared_push_router(self):
         """私有单例不复用进程级共享 router — 共享实例的标的在 _subscribed_symbols 内,

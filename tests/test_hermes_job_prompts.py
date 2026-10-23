@@ -39,16 +39,33 @@ def jobs():
 
 
 def _prompts(jobs):
-    return [(j["id"], j["name"], j.get("prompt") or "") for j in jobs]
+    """可执行 job 的 prompt; 已完成的一次性 job 只作历史记录, 不再扫描。
+
+    2026-10-23: b4059a74a427 (EOD 首窗验证) 是 enabled=false/state=completed 的
+    one-shot, 已跑完且不会再调度; 其 prompt 里的只读核验 SQL 不构成执行风险。
+    若该 job 被重新启用 (enabled=true), 仍会回到扫描面。
+    """
+    return [(j["id"], j["name"], j.get("prompt") or "") for j in jobs
+            if not (not j.get("enabled") and j.get("state") == "completed")]
+
+
+def _sql_offenders(jobs):
+    return [f"{jid} ({name})"
+            for jid, name, pr in _prompts(jobs)
+            if _SQL_SELECT.search(pr) or "sqlite3.connect" in pr]
 
 
 def test_no_prompt_embeds_sql(jobs):
-    offenders = [f"{jid} ({name})"
-                 for jid, name, pr in _prompts(jobs)
-                 if _SQL_SELECT.search(pr) or "sqlite3.connect" in pr]
+    offenders = _sql_offenders(jobs)
     assert not offenders, (
         "cron prompt 内嵌可执行 SQL (无版本控制/无测试覆盖, 列名漂移只能在生产报错), "
         "请抽为 scripts/ 下脚本并补测试:\n  " + "\n  ".join(offenders))
+
+
+def test_enabled_prompt_with_sql_is_still_flagged():
+    fake = [{"id": "x", "name": "x", "enabled": True, "state": "scheduled",
+             "prompt": "SELECT symbol FROM trade_records"}]
+    assert _sql_offenders(fake), "enabled job 内嵌 SQL 必须继续告警"
 
 
 def test_referenced_repo_scripts_exist(jobs):

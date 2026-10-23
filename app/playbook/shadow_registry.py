@@ -4454,6 +4454,14 @@ _CONSUMER_ACK: dict[str, str] = {
         "+ scripts/ue_short_boost_final_settlement.py (一次性结算器, 留档可读); 写方链 "
         "(UE 直写 inject) 已于 10-06 退役 ⇒ 产物为冻结归档, 读它不改任何生产行为 "
         "⇒ 归档展示型消费, 认领不占周检噪音预算。"),
+    # 2026-10-23: premarket_invalidation 判据结题但采集保留; 产物仍被 W7 不变量与
+    # freshness watchdog 读取。两者是只读度量/巡检, 不是交易链, 停采会断尺子原料。
+    "premarket_invalidation": (
+        "2026-10-23 判据结题 (KILLED) 后实测: 产物 data/premarket_invalidation_shadow.jsonl "
+        "仍被 scripts/daily_invariant_check.py W7 (干净昨收快照) 与 "
+        "scripts/data_freshness_watchdog.py (产物新鲜度) 只读消费; 二者是审计/巡检面, "
+        "不改订单、仓位、退出。采集保留 ⇒ 显式认领, 不占周检噪音预算; 若将来停采, 须先拆 "
+        "W7/freshness 依赖或确认其可缺失。"),
     # ── 2026-10-03 清理批新增认领 (终态但产物仍喂生产链, 逐条写理由) ──────────────
     "premarket_peer_shadow": (
         "2026-10-03 清理批判 KILLED 时实测确认: **采集必须保留** — "

@@ -75,6 +75,11 @@ ITERATION_CONSUMED = {"factor_profiles.yaml", "strategy_variants.yaml"}
 # 仓外运行时消费键 (2026-08-28): 普查语料只有仓内 *.py, 这些键按语料判 orphan,
 # 但仓外活体脚本真读它们 → 不是死键, 而是"本仓 grep 看不见的开关"。逐个实证见值。
 EXTERNAL_CONSUMED = {
+    "unified_config.yaml:da_skip_leveraged_etf": (
+        "/root/.hermes/skills/deep-stock-analysis/scripts/pipeline.py:835 "
+        "_da_skip_leveraged_etf 读 universe_expansion.da_skip_leveraged_etf "
+        "作杠杆/反向 ETF 前置过滤 (RFC-159; 仓内语料看不到该读者)"
+    ),
     "unified_config.yaml:da_candidate_feed": (
         "/root/.hermes/skills/deep-stock-analysis/scripts/pipeline.py:168 读 "
         "universe_expansion.da_candidate_feed 作 UE→DA 注入总开关 (false 即跳过)"

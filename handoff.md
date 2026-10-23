@@ -1,5 +1,23 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-23 回归红点清理（全量 7744 passed / 0 failed）
+
+- **触发**: 全量回归 17 个既有红点（本批 diff 之外），按建议分组清理。
+- **修复**:
+  - W9 词典↔注册表: `premarket_invalidation` / `eth_relative_volume_gate` 补终态措辞，保留真轴读数；9 例清零。
+  - W456: `settle_winner_overnight_shadow.py` 3 处 warning 补 `exc_info=True`。
+  - playbook 测试契约: hotfix `55e4331de` 后成交价兜底已改券商终态量价，helper 调用点由 2 改断言 1（不改生产代码）。
+  - 影子消费者: `premarket_invalidation` 终态采集保留，W7/freshness 只读消费显式认领。
+  - UE quote freshness: 过期日期断言改为 `>= 2026-10-09`，保留“已裁 NOT_READY 不得自动提升”硬断言。
+  - 配置普查: `da_skip_leveraged_etf` 登记为仓外 pipeline 消费（RFC-159）。
+  - 死库字面量: `rth_zero_fill_autorelease.py` 改用 `get_trade_records_db_for_arm`，路径语义不变。
+  - Hermes prompt: completed one-shot job 不再扫描（enabled 后仍扫描），保留 enabled-SQL 告警钉子。
+  - factor 回归: 测试冻结在 RFC-112 窗口 (2026-06-28~09-26)，不随生产新交易漂移；判据/阈值未动。
+- **验证**: 主仓全量 **7744 passed / 72 skipped / 0 failed**（578s）；外部 DA skill **113 passed**；受影响文件组 **141 passed**。测试后工作区仅本批源码/测试改动；未重启主服务、未改门/仓位/退出。
+- **下一步**: 提交推送本批；外部 `/root` 仓库无 remote，保持本地提交。
+
+最后更新：2026-10-23（本条）
+
 ## 2026-10-23 全量回归结果（本批无副作用；17 个既有红点）
 
 - **主仓全量**: `pytest tests -q` → **7726 passed / 17 failed / 72 skipped**（628s）。测试后工作区无 tracked 改动；生产 DB mtime 未因测试变化（`ftseek_us.db` 仍为重启时 13:14:03）。

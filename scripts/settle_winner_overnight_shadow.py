@@ -87,7 +87,7 @@ def _bars_truncated(bars, day: str) -> bool:
         import exit_replay_backtest as _erb
         return bool(_erb.bars_truncated(bars, day))
     except Exception as e:  # SSOT 不可用 → 收严兜底 (比误把半日当完整便宜)
-        logger.warning("残缺判据加载失败 (回退 15:55 兜底): %s", e)
+        logger.warning("残缺判据加载失败 (回退 15:55 兜底): %s", e, exc_info=True)
         return (not bars) or len(bars) < 30 or str(bars[-1][0])[11:16] < "15:55"
 
 
@@ -140,7 +140,7 @@ def _fetch_bars(symbol: str, day: str):
             if ctx is not None:
                 ctx.close()
         except Exception as e:
-            logger.warning("补拉后 ctx 关闭异常 (不影响结果): %s", e)
+            logger.warning("补拉后 ctx 关闭异常 (不影响结果): %s", e, exc_info=True)
     if not got:
         return None, status
     if status == "truncated":
@@ -183,7 +183,7 @@ def ensure_bars(symbol: str, day: str):
         if not is_trading_day_str("US", day):
             return None, "not_trading_day"
     except Exception as e:
-        logger.warning("bar 日/交易日历判定异常 %s %s: %s", symbol, day, e)
+        logger.warning("bar 日/交易日历判定异常 %s %s: %s", symbol, day, e, exc_info=True)
         return None, "error"
     return _fetch_bars(symbol, day)
 
