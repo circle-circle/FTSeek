@@ -840,7 +840,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         "cross_section_duplicate_groups", "cross_section_extra_items")},
         ensure_ascii=False))
     print("debate:", json.dumps(report["debate_states"], ensure_ascii=False),
-          "partial+agreed_true=", len(report["partial_agreed_true"]))
+          "raw_agreed_true=", len(report["partial_agreed_true"]),
+          "(canonical state is challenger_verdict_state)")
     if stages.get("status") == "ok":
         print("stages:", json.dumps({k: stages.get(k) for k in (
             "instructions", "matched", "ambiguous", "no_instruction",
