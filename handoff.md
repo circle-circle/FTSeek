@@ -4,7 +4,7 @@
 
 - **用户要求**: 「针对异常问题按照建议做修复，确保方案和建议能真正合理且能从根源上解决问题」。
 - **范围**: 纯可靠性/可观测性/数据真值；**未改交易门、仓位、止损止盈、频率**。行为口径项列入 DEB §5 待裁。
-- **提交**: 主仓 `5e5b851ca`（DEB-20261023-da-chain-hardening + carrier/FTSeek/审计/测试）；外部 `/root` 仓库 `b0d5726`（DA skill + 线上 carrier；无 remote，未推送）。
+- **提交**: 主仓 `5e5b851ca`（根因修复）+ `4dbf1890a`（统一 admission）+ `bd9b1c54f`（重启记录）；外部 `/root` 仓库 `b0d5726`（DA skill + 线上 carrier；无 remote，未推送）。
 - **载体**: `ops/hermes/da_main_carrier.py` 与 `/root/.hermes/scripts/da_main_carrier.py` 已逐字节同步。
 - **修复**:
   - carrier：preflight fail-soft（pullback/watchlist/日历超时不再打死批次）；启动 `running` + 60s heartbeat；stderr 实时落盘；0857 ET deadline；超时/rc=124/rc≠0 → `pipeline --mode finalize`；bridge/DB 真值对账（10/12 类 JSON 假失败不再误报）；单例锁；watchlist 空转 scanner-only。
@@ -13,7 +13,7 @@
   - 数据：Finnhub 429/5xx 有界退避 + 并发上限；news_v2 保留完整 publish_time；`_quality_effective/source_failed` additive 真值视图（不改门）。
   - FTSeek：同日 bridge mtime 变化允许刷新 adapter；push `--wait-da`（死线 09:27）+ `sync=True`；audit 以 publish_time/规范状态为准（去掉假红）。
 - **运维**: crontab 两行 push 已加 `--wait-da`，备份 `data/crontab.backup.20261023_da_wait_fix.txt`（回滚=删 flag）。
-- **验证**: 外部 skill **124 passed**；主仓定向 **117 passed**（含 execution_admission 4）；`tests/playbook` **1218 passed**；finalize 副本集成 31 analyses→15 bridge candidates；真实 10/23 批次 31 只、15 条指令、无分析异常。
+- **验证**: 外部 skill **124 passed**；主仓定向 **117 passed**（含 execution_admission 4）；`tests/playbook` **1222 passed**；finalize 副本集成 31 analyses→15 bridge candidates；真实 10/23 批次 31 只、15 条指令、无分析异常。
 - **重启**: 两轮 `systemctl restart ftseek-us`（21:38 加载 carrier/pipeline/FTSeek 安全修复；21:50 加载统一 admission）。当前 PID **3429103**，`active`；两轮启动冒烟均 **7/7**；在仓 4 笔（MSFT/TSM/TMUS/ACN，均为重启前已有/已成交）；非 BOOKED 出场 0；重启段无 Traceback/CRITICAL/ERROR。
 - **执行口径（用户裁「统一 admission」）**: `auto_execute` 在真实 re-price/尺寸后、chase_cap 前对 DA 行再跑同一 `admission.evaluate`；命中 REJECT 用 `mark_instruction_guardrail_skip` 置 SKIP 并落 `exec_gate_audit`。新增 `playbook.admission.enforce_at_execution=true`（false 回滚）；阈值不变。10/23 实测 14 条在仓 DA 行按实际尺寸均 PASS；BABA 仍为 generate 侧 admission SKIP。WARN conf=0.35、confidence_sizing=false、watchlist extras 无上限、源失败是否入 prompt/质量门、重跑 stale 行撤回语义仍待裁。
 - **下一步**: 观察下一 DA 批（新 carrier/pipeline 生效）并核对 running/heartbeat/stderr/deadline/artifacts；就 DEB §5 四项逐项裁决，批准后再按一次一变量实施。
