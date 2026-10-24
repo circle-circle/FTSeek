@@ -7,6 +7,9 @@
   2. 确定性基线统计 (by 侧/原因/深度桶 的 V型率) — 不依赖 LLM, 永远可得
   3. n>=8 才调 LLM: 让模型看样本表, 按固定 JSON schema 提【判别假设】
      (conditions: 允许字段 × gt/lt/ge/le/eq × 阈值 → predict V|DOWN)
+  3.5 边界校验 (validate_hypotheses): conditions 必须是 [{field,op,value}] 对象数组;
+     形状不合法 (如 LLM 写了自然语言字符串) → 整条假设丢弃 + warn, 不让单条脏输出
+     把整个周报 (含确定性基线) 打挂 — 2026-10-24 实测 AttributeError 事故
   4. 每个假设立刻用确定性 evaluator 在【全部】带标签样本上判分
      (命中率/precision=V型率/平均cf挽回) — LLM 自说自话不算数
   5. 毕业门控: n_labeled>=20 且某假设 matched>=8 且 precision>=0.7 且命中集内
@@ -45,13 +48,20 @@ MILESTONES = (10, 20, 30)
 NUM_FIELDS = ("depth_bps", "mfe_pct", "giveback_bps", "held_minutes",
               "minutes_since_open", "atr_pct", "depth_atr_ratio")
 CAT_FIELDS = ("side", "exit_reason", "path", "quote_src", "fresh_extreme")
+OPS = ("gt", "lt", "ge", "le", "eq")
+_HYP_FIELDS = frozenset(NUM_FIELDS) | frozenset(CAT_FIELDS)
 
 SYSTEM = """你是量化交易研究助理。给定"保本线穿透"事件样本表 (每行=一次穿透触发+离场后真实结局),
 提出可判别的假设: 哪类穿透是"快速下跌趋势"(应即走, predict=DOWN), 哪类是"缓慢临时回撤/V型"(持有等回摆更优, predict=V)。
 规则: 每个假设 = 1~3 个条件 (字段×比较符×阈值) + predict + rationale(中文,≤50字)。
 只允许用这些字段: 数值 depth_bps(穿透深度bps,正=已击穿) mfe_pct giveback_bps held_minutes minutes_since_open atr_pct depth_atr_ratio;
 类别 side(active/passive) exit_reason path quote_src fresh_extreme(true/false)。
-比较符: gt lt ge le eq。阈值须落在样本可见范围内。至多提4个假设。宁缺毋滥: 样本看不出规律就返回空列表。"""
+比较符: gt lt ge le eq。阈值须落在样本可见范围内。至多提4个假设。宁缺毋滥: 样本看不出规律就返回空列表。
+
+输出格式 (conditions 必须是对象数组, 每项恰好 {field, op, value} 三个键; 禁止把条件写成自然语言字符串):
+{"hypotheses": [{"conditions": [{"field": "depth_bps", "op": "ge", "value": 30},
+                               {"field": "fresh_extreme", "op": "eq", "value": true}],
+                 "predict": "DOWN", "rationale": "刷新低且深穿透多为趋势延续"}]}"""
 
 SCHEMA_REQ = {"hypotheses": list}
 
@@ -113,6 +123,44 @@ def _match(hyp, s):
         if op == "eq" and not sv == val: return False
         if op not in ("gt", "lt", "ge", "le", "eq"): return False
     return True
+
+
+def _cond_ok(c):
+    """单个条件形状校验: 必须恰好是 {field, op, value} 且字段/比较符在白名单内。"""
+    if not isinstance(c, dict):
+        return False
+    field, op, val = c.get("field"), c.get("op"), c.get("value")
+    if field not in _HYP_FIELDS or op not in OPS or val is None:
+        return False
+    if field in CAT_FIELDS:
+        return op == "eq"
+    try:
+        float(val)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def validate_hypotheses(hyps):
+    """LLM 输出边界校验 → (合格假设, 被丢弃假设).
+
+    2026-10-24 实测: schema_required={"hypotheses": list} 只校验顶层类型, 嵌套
+    conditions 无约束; LLM 偶尔把条件写成自然语言字符串 (如 "深度>300bps 且刷新低")
+    ⇒ _match 的 c.get() 抛 AttributeError ⇒ 整个周报 (含确定性基线) 一并归零。
+    纪律: 任一条件形状不合法 → **整条假设丢弃**, 不删单个条件 —— 删条件会放宽命中集,
+    在毕业门 (precision/少数类) 里等价于把门变松; 丢弃必须 warn 留证 + 进报告计数。
+    """
+    good, dropped = [], []
+    for h in hyps or []:
+        conds = h.get("conditions") if isinstance(h, dict) else None
+        if isinstance(conds, list) and conds and all(_cond_ok(c) for c in conds):
+            good.append(h)
+        else:
+            dropped.append(h)
+    if dropped:
+        print(f"[warn] 丢弃 {len(dropped)}/{len(dropped) + len(good)} 条形状不合法的假设: "
+              + "; ".join(str(d)[:160] for d in dropped))
+    return good, dropped
 
 
 def score_hypothesis(hyp, samples):
@@ -281,28 +329,30 @@ def main():
     stats = baseline_stats(samples)
     scored = []
     hyps = ask_llm(samples)
-    if hyps:
-        for h in hyps[:4]:
-            if not isinstance(h, dict):
-                continue
-            scored.append({**h, **score_hypothesis(h, samples)})
+    hyps_ok, hyps_dropped = validate_hypotheses(hyps or [])
+    for h in hyps_ok[:4]:
+        scored.append({**h, **score_hypothesis(h, samples)})
     deb = maybe_open_deb_draft(scored, samples)
     report = {"generated_at": datetime.now().isoformat(timespec="seconds"),
               "n_labeled": n, "baseline": stats,
               "llm_called": hyps is not None, "hypotheses_scored": scored,
+              "hypotheses_dropped": len(hyps_dropped),
+              "dropped_samples": [str(d)[:200] for d in hyps_dropped[:4]],
               "deb_draft": deb,
               "graduation_gate": {"n": GRAD_N, "matched": GRAD_MATCHED,
                                   "precision": GRAD_PRECISION,
                                   "minority": GRAD_MINORITY}}
     OUT_LATEST.write_text(json.dumps(report, ensure_ascii=False, indent=1))
     md = [f"# 穿透影子分析报告 ({report['generated_at']})", "",
-          f"带标签样本: **{n}** | LLM已调: {hyps is not None} | DEB草稿: {deb or '无'}", "",
+          f"带标签样本: **{n}** | LLM已调: {hyps is not None} | "
+          f"丢弃形状不合法假设: {len(hyps_dropped)} | DEB草稿: {deb or '无'}", "",
           "## 确定性基线", "```json", json.dumps(stats, ensure_ascii=False, indent=1), "```",
           "", "## 假设判分 (LLM出题, 代码判卷)", "```json",
           json.dumps(scored, ensure_ascii=False, indent=1), "```"]
     REPORT_MD.write_text("\n".join(md), encoding="utf-8")
     print(json.dumps({"n_labeled": n, "baseline_overall": stats["overall"],
-                      "n_hypotheses": len(scored), "deb_draft": deb},
+                      "n_hypotheses": len(scored),
+                      "n_dropped": len(hyps_dropped), "deb_draft": deb},
                      ensure_ascii=False, indent=1))
 
 

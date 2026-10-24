@@ -218,6 +218,57 @@ def test_scorer_match_and_bad_op():
     assert pla.score_hypothesis(hyp, none_sample)["matched"] == 0
 
 
+def test_validate_hypotheses_drops_malformed_whole_hypothesis():
+    """2026-10-24 事故钉: LLM 把条件写成自然语言字符串 ⇒ _match 的 c.get() 崩,
+    连带确定性基线整份周报归零。纪律 = 整条假设丢弃 (不删单个条件: 删条件会放宽
+    命中集, 等价于把毕业门变松), 且必须留计数。"""
+    pla = _load_script("penetration_llm_analysis")
+    good = {"conditions": [{"field": "depth_bps", "op": "ge", "value": "30"}], "predict": "DOWN"}
+    str_cond = {"conditions": ["深度>300bps 且刷新低"], "predict": "DOWN"}
+    mixed = {"conditions": [{"field": "side", "op": "eq", "value": "passive"},
+                            "held_minutes < 5"], "predict": "V"}
+    ok, dropped = pla.validate_hypotheses([good, str_cond, mixed, "not-a-dict"])
+    assert ok == [good], f"合格集应只含形状合法项, 实得 {ok}"
+    assert len(dropped) == 3
+    # 形状不合法的绝不能进判分器 (修前: mixed/str_cond 会抛 AttributeError)
+    assert pla.score_hypothesis(good, [{"depth_bps": 35.0, "recovered_5m": True}])["matched"] == 1
+
+
+def test_validate_hypotheses_rejects_empty_unknown_and_bad_value():
+    pla = _load_script("penetration_llm_analysis")
+    bads = [
+        {"conditions": []},                                            # 空条件 = 匹配全集
+        {"conditions": [{"field": "vix", "op": "gt", "value": 20}]},    # 白名单外字段
+        {"conditions": [{"field": "depth_bps", "op": "gt", "value": "深"}]},  # 数值不可转
+        {"conditions": [{"field": "fresh_extreme", "op": "gt", "value": True}]},  # 类别字段只允许 eq
+        {"conditions": "depth_bps>30"},                                # conditions 非数组
+    ]
+    ok, dropped = pla.validate_hypotheses(bads)
+    assert ok == [] and len(dropped) == len(bads)
+
+
+def test_main_survives_string_condition(tmp_path, monkeypatch):
+    """端到端回归: 修前 main() 在此输入上抛 AttributeError, 报告文件不落盘。"""
+    pla = _load_script("penetration_llm_analysis")
+    samples = [{"depth_bps": 35.0, "side": "passive", "recovered_5m": True},
+               {"depth_bps": 5.0, "side": "active", "recovered_5m": False}]
+    monkeypatch.setattr(pla, "load_samples", lambda: samples)
+    monkeypatch.setattr(pla, "ask_llm", lambda _s: [
+        {"conditions": ["depth_bps > 30"], "predict": "DOWN"},          # 脏: 字符串条件
+        {"conditions": [{"field": "depth_bps", "op": "ge", "value": 30}], "predict": "V"},
+    ])
+    monkeypatch.setattr(pla, "MILESTONE_STATE", tmp_path / "ms.json")
+    monkeypatch.setattr(pla, "OUT_LATEST", tmp_path / "latest.json")
+    monkeypatch.setattr(pla, "REPORT_MD", tmp_path / "report.md")
+    monkeypatch.setattr(pla, "_push", lambda _m: True)
+    pla.main()
+    rep = json.loads((tmp_path / "latest.json").read_text(encoding="utf-8"))
+    assert rep["hypotheses_dropped"] == 1
+    assert len(rep["hypotheses_scored"]) == 1
+    assert rep["baseline"]["overall"]["n"] == 2      # 确定性基线不再随 LLM 脏输出归零
+    assert "丢弃形状不合法假设: 1" in (tmp_path / "report.md").read_text(encoding="utf-8")
+
+
 # ── 6. 源级契约 ────────────────────────────────────────────
 def test_pipeline_hook_present():
     src = (REPO / "app" / "playbook" / "pipeline_parts"
