@@ -1707,7 +1707,7 @@ REGISTRY: list[ShadowItem] = [
                             "逐事件即判, 不等 n; 回滚线见 DEB-20260903 §十二。",
         eval_script="scripts/penetration_llm_analysis.py",
         created="2026-09-03",
-        last_evaluated="2026-09-13",
+        last_evaluated="2026-10-24",
         verdict_history=[{"date": "2026-09-13", "verdict": "KEEP_SAMPLING",
                          "evidence": "判据实测(B17: n_labeled≥20 ∧ 某假设matched≥8 ∧ precision≥0.7): "
                                      "n_labeled=42 ✓ 但 hypotheses_scored=[] — LLM 出题环零可判分假设, "
@@ -1716,6 +1716,15 @@ REGISTRY: list[ShadowItem] = [
                                      "非实测结果, 不得当达标读 (2026-09-13 实锤)。基线: overall "
                                      "v_rate_5m=0.976 (active 1.000/passive 0.750) — 几乎全 V 回, "
                                      "判别器要分出'快跌不回'的少数族, 当前无假设能分。维持攒样。"},
+                         {"date": "2026-10-24", "verdict": "KEEP_SAMPLING",
+                          "evidence": "判据实测(B17) n_labeled=208 ✓ (v_rate_5m=0.942, 未V回=12); "
+                                      "3 条假设全部判分, 最佳 = passive+SL_BREAKEVEN: matched=18 ✓ "
+                                      "v_rate=0.722 ✓ 少数类 nonv=5 ✗ (<GRAD_MINORITY=8) ⇒ 唯一未达项"
+                                      "是少数类臂, 数学上不可裁 (precision 已在 0.942 基线上, 类别失衡时"
+                                      "该门无鉴别力) ⇒ 维持攒样, 不开 DEB。另: 07:30 那轮 cron 曾因 LLM 把"
+                                      "conditions 写成字符串而崩 (_match AttributeError), 已加边界校验"
+                                      " validate_hypotheses (整条丢弃+计数) 并补跑出上述读数; 本条 verdict"
+                                      " 与 '丢弃=0' 同批实测 (commit 135687deb)。"},
                         ],
         notes="count_mode=where:type=penetration — 计采集事件数 (每事件 1 行 penetration "
               "+ ≤1 行 outcome, 用 lines 会双倍计数); 判分口径是已回填配对 n_labeled "

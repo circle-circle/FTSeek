@@ -522,8 +522,10 @@ def _sec_penetration():
     try:
         import penetration_llm_analysis as _pen
         _minority_min, _grad_n = _pen.GRAD_MINORITY, _pen.GRAD_N
+        _grad_matched, _grad_prec = _pen.GRAD_MATCHED, _pen.GRAD_PRECISION
     except Exception:
         _minority_min, _grad_n = 8, 20
+        _grad_matched, _grad_prec = 8, 0.7
     lines.append(f"  类别: V回{v5_all} / 未V回{n_nonv} (每类须 ≥{_minority_min})")
     if n_labeled and v5_all / n_labeled >= 0.95 and n_nonv < _minority_min:
         lines.append(f"  ⇒ V型率{100*v5_all/n_labeled:.0f}% (穿透后绝大多数回摆): 支持"
@@ -534,10 +536,45 @@ def _sec_penetration():
         _tail = (f" — 样本量达门但少数类 {n_nonv}<{_minority_min} ⇒ 判别器不可训练"
                  " (V型率高时 precision 门在基线上即过)")
     else:
-        _tail = " — 样本量与类别平衡均达门, 周六分析环评估开DEB"
+        _tail = (" — cohort 层样本量与类别均达门; 裁决看命中集内少数类 (见下行最新分析)")
     lines.append(f"  攒样: {n_labeled}/{_grad_n} 带标签"
                  + (f" (V型率{100*v5_all/n_labeled:.0f}%)" if n_labeled else "")
                  + _tail)
+    # 2026-10-24 (用户裁「同意」): 最新分析环读数上板 —— 判分/丢弃计数 + 最佳假设距门差。
+    #   缘起: ①判别器常常 matched/precision 已过门、只差少数类一臂, 此前要手开
+    #   penetration_analysis_latest.json 才知道还差几条; ②LLM 输出被形状校验丢弃时,
+    #   若板上只写「零判分假设」会被读成"基线里没有规律"(2026-09-13 就这样读错过一次),
+    #   故丢弃数必须与判分数同屏, 且明写"是丢弃不是无规律"。
+    try:
+        _an = json.loads((SHADOW_DIR / "penetration_analysis_latest.json")
+                         .read_text(encoding="utf-8"))
+    except Exception:
+        _an = None
+    if isinstance(_an, dict):
+        _scored = [h for h in (_an.get("hypotheses_scored") or []) if isinstance(h, dict)]
+        _drop = int(_an.get("hypotheses_dropped") or 0)
+        _gen = str(_an.get("generated_at") or "")[:10]
+        _cands = [h for h in _scored
+                  if (h.get("matched") or 0) >= _grad_matched
+                  and (h.get("v_rate") or 0) >= _grad_prec]
+        if _cands:
+            # 排序口径 = "距毕业门最近" (少数类条数优先), 不是"最强" (v_rate×matched):
+            #   唯一未达项是少数类臂, 按强度排会挑出一条 matched 更少、少数类更少的假设,
+            #   板上读数就该对准缺口本身 (2026-10-24 实测: 强度序给 nonv=1, 缺口序给 nonv=5)。
+            _b = max(_cands, key=lambda h: ((h.get("nonv_count") or 0),
+                                            (h.get("v_rate") or 0) * (h.get("matched") or 0)))
+            _nonv_b = _b.get("nonv_count") or 0
+            _gap = (f"差{_minority_min - _nonv_b}条到少数类门 (唯一未达项)"
+                    if _nonv_b < _minority_min else "全部达门, 待周六分析环开DEB")
+            lines.append(f"  最新分析({_gen}): 判分{len(_scored)}条/丢弃{_drop} | "
+                         f"最近毕业门假设 matched={_b.get('matched')} "
+                         f"v_rate={100*(_b.get('v_rate') or 0):.0f}% "
+                         f"少数类{_nonv_b}/{_minority_min} ⇒ {_gap}")
+        else:
+            lines.append(f"  最新分析({_gen}): 判分{len(_scored)}条/丢弃{_drop} | "
+                         f"无假设达 matched≥{_grad_matched}∧v_rate≥{_grad_prec:.0%}"
+                         + ("(丢弃>0 ⇒ 是 LLM 输出形状不合法被丢, 非'无规律'; "
+                            "看报告 dropped_samples)" if _drop else ""))
     return lines
 
 

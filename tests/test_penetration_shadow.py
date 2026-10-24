@@ -269,6 +269,47 @@ def test_main_survives_string_condition(tmp_path, monkeypatch):
     assert "丢弃形状不合法假设: 1" in (tmp_path / "report.md").read_text(encoding="utf-8")
 
 
+# ── 5b. 看板读数 (2026-10-24 用户裁「同意」: 少数类缺口 + 丢弃数上板) ─────
+def _board_with_latest(tmp_path, monkeypatch, latest):
+    pla = _load_script("shadow_board")
+    monkeypatch.setattr(pla, "SHADOW_DIR", tmp_path)
+    (tmp_path / "penetration_shadow.jsonl").write_text(
+        json.dumps({"type": "penetration", "event_id": "E1", "et_date": "2026-10-24",
+                    "symbol": "DELL", "side": "passive", "exit_reason": "SL_BREAKEVEN",
+                    "depth_bps": 30.0}) + "\n"
+        + json.dumps({"type": "outcome", "event_id": "E1", "et_date": "2026-10-24",
+                      "status": "labeled", "recovered_5m": True}) + "\n",
+        encoding="utf-8")
+    (tmp_path / "penetration_analysis_latest.json").write_text(
+        json.dumps(latest, ensure_ascii=False), encoding="utf-8")
+    return pla
+
+
+def test_board_shows_minority_gap_of_closest_hypothesis(tmp_path, monkeypatch):
+    """板上必须直接给出「还差几条少数类」, 且按缺口排序 — 强度序会挑出 nonv 更少的
+    假设, 让缺口看起来更远 (2026-10-24 实测: 强度序 nonv=1 / 缺口序 nonv=5)。"""
+    pla = _board_with_latest(tmp_path, monkeypatch, {
+        "generated_at": "2026-10-24T08:17:15", "hypotheses_dropped": 0,
+        "hypotheses_scored": [
+            {"matched": 17, "v_rate": 0.941, "nonv_count": 1, "predict": "V"},
+            {"matched": 18, "v_rate": 0.722, "nonv_count": 5, "predict": "V"},
+            {"matched": 3, "v_rate": 1.0, "nonv_count": 0, "predict": "V"},   # 未过 matched 门
+        ]})
+    out = "\n".join(pla._sec_penetration())
+    assert "matched=18" in out and "少数类5/8" in out
+    assert "差3条到少数类门" in out
+
+
+def test_board_distinguishes_dropped_from_no_pattern(tmp_path, monkeypatch):
+    """零判分有两种成因 (真无规律 / LLM 输出被丢弃), 板上必须能区分 —— 2026-09-13
+    就曾把「LLM 出题环零可判分假设」读成基线里没有规律。"""
+    pla = _board_with_latest(tmp_path, monkeypatch, {
+        "generated_at": "2026-10-24T08:17:15", "hypotheses_dropped": 2,
+        "hypotheses_scored": []})
+    out = "\n".join(pla._sec_penetration())
+    assert "判分0条/丢弃2" in out and "非'无规律'" in out
+
+
 # ── 6. 源级契约 ────────────────────────────────────────────
 def test_pipeline_hook_present():
     src = (REPO / "app" / "playbook" / "pipeline_parts"
