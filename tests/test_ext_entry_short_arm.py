@@ -209,7 +209,12 @@ def test_direction_comes_from_magnitude_not_surprise():
 
     mod = _load()
     src = inspect.getsource(mod.collect)
-    assert 'change_pct >= SHORT_GAP_MIN' in src, "方向判据必须读幅度 (跳空)"
+    # 2026-10-25 RFC-167: 判据下沉到 SSOT (两条扫描臂共用), 本断言守的语义**不变** ——
+    # 方向必须来自幅度 (跳空)。故改成双层核: ① collect 必须调 SSOT (不得内联回第三份)
+    # ② SSOT 源码里仍必须是 change_pct >= SHORT_GAP_MIN。
+    assert "_classify_ext_direction(" in src, "方向判据必须经 SSOT, 不得内联"
+    assert "change_pct >= SHORT_GAP_MIN" in inspect.getsource(
+        mod._classify_ext_direction), "方向判据必须读幅度 (跳空)"
     assert 'if _direction == "LONG" and (' in src, "财报正负门必须只作用于多侧"
     assert "surprise_pct\"]] > 0 and" not in src.replace(" ", ""), "不得把 surprise 用于定方向"
 

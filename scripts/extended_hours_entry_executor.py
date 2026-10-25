@@ -145,6 +145,80 @@ ENTRY_CHG_BAND = (os.getenv("EXT_ENTRY_CHG_BAND", "") or "").strip()
 SHORT_ALLOW = os.getenv("EXT_ENTRY_ALLOW_SHORT", "false").lower() == "true"
 SHORT_GAP_MIN = float(os.getenv("EXT_ENTRY_SHORT_GAP_MIN", "3.0") or 3.0)
 
+# ── 空头近失带观测 (RFC-167, 2026-10-25; record-only · 零下单 · 零改闸) ──────────
+#   依据 (A10 实测): 空侧 4 笔 +$281.14 = **$70.3/笔**, 是多头 ($16.8/笔) 的 4.2 倍,
+#   但 6 周只有 4 个信号 —— SHORT_GAP_MIN=3.0 把 2–3% 跳空的 fade 全挡在门外,
+#   而这一档**没有任何影子在测** (grep data/shadow/ 无 short_gap*). 直接降到 2.0
+#   属交易行为变更 (会改变成交集合) ⇒ 先落 record-only, 攒够样本再预注册裁决。
+#   判定仍逐字为 `change_pct >= SHORT_GAP_MIN`; 观测写盘失败绝不影响下单路径。
+SHORT_NEARMISS_BAND = (os.getenv("EXT_ENTRY_SHORT_NEARMISS_BAND", "") or "").strip()
+SHORT_NEARMISS_DIR = ROOT / "data" / "shadow" / "ext_short_nearmiss"
+
+
+def _short_nearmiss_lo():
+    """近失带下界; 空/非法 ⇒ None (整段观测关闭, 不猜默认值)。"""
+    if not SHORT_NEARMISS_BAND:
+        return None
+    try:
+        return float(SHORT_NEARMISS_BAND.split(",")[0])
+    except (TypeError, ValueError):
+        return None
+
+
+def _record_short_nearmiss(symbol, session, change_pct, price, volume, now_et):
+    """把 [lo, SHORT_GAP_MIN) 的空侧近失票按 (ET日, 时段, 标的) 去重落一行 (record-only)。
+
+    为什么按日一文件而不是 jsonl 追加: 本链每 5min 一个 tick, 同一票一天能看到 60+ 次;
+    追加会把"出现过几只票"污染成"出现多少票次"(实测其他影子踩过: 同一票 2814 行)。
+    首 tick 的价/涨幅 = 事件当时读数, 后续 tick 只累加 ticks/last_chg。
+    """
+    day = now_et.strftime("%Y-%m-%d")
+    path = SHORT_NEARMISS_DIR / (day + ".json")
+    SHORT_NEARMISS_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        doc = json.loads(path.read_text())
+    except (OSError, ValueError):
+        doc = {}
+    rows = doc.get("rows") or {}
+    key = "%s:%s" % (session, symbol)
+    prev = rows.get(key)
+    if prev:
+        prev["ticks"] = int(prev.get("ticks") or 1) + 1
+        prev["last_chg"] = round(float(change_pct), 2)
+        prev["last_ts"] = now_et.isoformat()
+    else:
+        rows[key] = {"symbol": symbol, "session": session,
+                     "chg_pct": round(float(change_pct), 2),
+                     "px": round(float(price), 4),
+                     "volume": int(volume or 0),
+                     "first_ts": now_et.isoformat(),
+                     "last_ts": now_et.isoformat(), "ticks": 1}
+    doc["et_date"] = day
+    doc["short_gap_min"] = SHORT_GAP_MIN
+    doc["band_lo"] = _short_nearmiss_lo()
+    doc["rows"] = rows
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=1))
+    os.replace(str(tmp), str(path))
+
+
+def _classify_ext_direction(symbol, session, change_pct, price, volume):
+    """方向判定 SSOT (RFC-099 语义, 逐字不变) + 空头近失带记录 (RFC-167)。
+
+    判定 = `SHORT_ALLOW and change_pct >= SHORT_GAP_MIN` —— 与两条扫描臂的历史内联式等价。
+    近失带只在**判完之后**追加一行观测, 整段包 try/except: 埋点异常绝不允许改变
+    "这一票开不开、开哪一边" (观测面与决策面解耦, 同 2026-09-23 判据②的纪律)。
+    """
+    is_short = bool(SHORT_ALLOW and change_pct >= SHORT_GAP_MIN)
+    if SHORT_ALLOW and not is_short:
+        _lo = _short_nearmiss_lo()
+        if _lo is not None and _lo <= change_pct < SHORT_GAP_MIN:
+            try:
+                _record_short_nearmiss(symbol, session, change_pct, price, volume, _now_et())
+            except Exception:
+                _log.warning("short nearmiss shadow 写入失败 (不影响判定)", exc_info=True)
+    return "SHORT" if is_short else "LONG"
+
 
 def _entry_chg_ok(change_pct):
     """入场涨幅闸: 有 ENTRY_CHG_BAND ⇒ 带内通过; 无 ⇒ 旧口径 (>= ENTRY_CHANGE_PCT)。
@@ -2606,7 +2680,8 @@ def collect(session, dry=False):
                 # 方向判定与 live 臂同步 (RFC-099, 2026-09-23 复查批 P1-1): 生产已开
                 # SHORT_ALLOW ⇒ dry 观测臂必须看到同一人群, 否则研究影子/日报/闸计数
                 # 的空侧全盲 (违背「先可见再打磨优化」)。默认 OFF ⇒ 恒 LONG ⇒ 语义不变。
-                _direction = "SHORT" if (SHORT_ALLOW and change_pct >= SHORT_GAP_MIN) else "LONG"
+                # RFC-167: 判定与近失带观测合并到 SSOT 助手 (两条扫描臂共用, 防内联式漂移)。
+                _direction = _classify_ext_direction(symbol, session, change_pct, price, volume)
                 earnings, earnings_reason = _earnings_surprise(symbol, session)
                 if (_direction == "LONG" and not _chg_ok) or not _vol_ok:
                     counts["momentum_volume"] = counts.get("momentum_volume", 0) + 1
@@ -2896,7 +2971,8 @@ def collect(session, dry=False):
                 # 方向 (RFC-099): LONG=现役温和带; SHORT=跳空 ≥ SHORT_GAP_MIN。
                 #   默认 OFF ⇒ _direction 恒为 LONG ⇒ 下行闸/计数语义 byte 级不变。
                 #   注: 上方观测 pass (2033~2262) 不动 —— 它只记观测台账, 不下单。
-                _direction = "SHORT" if (SHORT_ALLOW and change_pct >= SHORT_GAP_MIN) else "LONG"
+                # RFC-167: 判定与近失带观测合并到 SSOT 助手 (两条扫描臂共用, 防内联式漂移)。
+                _direction = _classify_ext_direction(symbol, session, change_pct, price, volume)
                 earnings, earnings_reason = _earnings_surprise(symbol, session)
                 if (_direction == "LONG" and not _chg_ok) or not _vol_ok:
                     counts["momentum_volume"] = counts.get("momentum_volume", 0) + 1
