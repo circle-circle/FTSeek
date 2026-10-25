@@ -438,6 +438,11 @@ if has_outcome > 0:
     print(f"  Win Rate:  {win_rate:.1f}% (target: ≥55%)")
     print(f"  Total PnL: ${total_pnl:.2f}")
     if weekly_pnl:
+        # 2026-10-25: 口径标注。本块的周 PnL 来自 playbook_instructions (不是 trade_records),
+        #   实测同一周两口径可差 2.5 倍 (W42: 指令表 $234.38/27笔 vs 出场日 $582.11/40笔),
+        #   不标口径会被下游报告读成"周报自相矛盾"。EXT 旁路成交不写指令表 ⇒ 本块只含主链。
+        print("  周度口径: playbook_instructions.date(入场日) ∧ executed ∧ outcome∈{win,loss}; "
+              "EXT 旁路不入表 ⇒ 与 trade_records 出场日全源口径不可互比")
         for wk in sorted(weekly_pnl.keys(), reverse=True)[:3]:
             s = weekly_pnl[wk]
             print(f"  {wk}: ${s['pnl']:.2f} ({s['wins']}W/{s['losses']}L)")
@@ -513,7 +518,8 @@ try:
                COUNT(*) as cnt,
                SUM(CASE WHEN COALESCE(tr.pnl_net, tr.realized_pnl) > 0 THEN 1 ELSE 0 END) as wins,
                SUM(CASE WHEN COALESCE(tr.pnl_net, tr.realized_pnl) < 0 THEN 1 ELSE 0 END) as losses,
-               SUM(COALESCE(tr.pnl_net, tr.realized_pnl)) as total_pnl
+               SUM(COALESCE(tr.pnl_net, tr.realized_pnl)) as total_pnl,
+               MAX(tr.trade_date) as last_trade_date
         FROM trade_records tr
         LEFT JOIN snap.signal_snapshots ss ON tr.decision_id = ss.decision_id
         WHERE tr.trade_date >= ?
@@ -525,16 +531,33 @@ try:
     """, (_cutoff_30d,)).fetchall()
     if _attr_rows:
         print(f"\n🏷️ SIGNAL SOURCE ATTRIBUTION (30d)")
+        # 2026-10-25: 带末次成交日 + 停供标记。已关闭的源 (如 universe_expansion 10-05 停、
+        #   intraday_reentry 09-15 停) 在 30d 窗内仍有余量行, 不标"已停供"会被周报当成
+        #   "仍在跑、需持续观察"的活行动项 (周日复盘实测: 报告建议①即此误读)。
         for r in _attr_rows:
             d = dict(r)
             _w = d['wins'] or 0
             _l = d['losses'] or 0
             _wr = _w/(_w+_l)*100 if (_w+_l) > 0 else 0
             _src = d['signal_source'] or 'unlinked'
-            print(f"  {_src:20s}: {d['cnt']:3d} trades, WR={_wr:.0f}%, PnL=${d['total_pnl'] or 0:.2f}")
+            _last = str(d.get('last_trade_date') or '')
+            _tag = ""
+            if _last:
+                try:
+                    _age = (datetime.now().date() -
+                            datetime.strptime(_last, '%Y-%m-%d').date()).days
+                    if _age > 7:
+                        _tag = f" [末次成交 {_last}, ⚪已停供 {_age} 天 ⇒ 读数仅历史]"
+                    else:
+                        _tag = f" [末次成交 {_last}]"
+                except ValueError:  # 日期格式异常不得让整段消失, 只降级掉标记
+                    _tag = f" [末次成交 {_last}]"
+            print(f"  {_src:20s}: {d['cnt']:3d} trades, WR={_wr:.0f}%, "
+                  f"PnL=${d['total_pnl'] or 0:.2f}{_tag}")
     conn.execute("DETACH DATABASE snap")
 except Exception as _attr_err:
-    pass
+    # 显性留痕: 源归因段静默消失会让周报漏掉"出血口在哪"这一段 (except:pass 棘轮)
+    print(f"\n🏷️ SIGNAL SOURCE ATTRIBUTION: ⚠️ 不可用 ({type(_attr_err).__name__}: {_attr_err})")
 
 print(f"\n⚙️ CONFIG")
 for k, v in config_state.items():

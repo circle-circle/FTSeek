@@ -87,6 +87,25 @@ def _exit_date_et(exit_time: Optional[str]) -> str:
         return ""
 
 
+def rows_by_exit_stage(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """把同一批成交按**出场**时段重贴 stage 标签 (入场时段口径的对照臂)。
+
+    为什么需要 (2026-10-25 周日复盘实测): 按入场时段分桶会把"盘中/盘后建仓、次日
+    盘前兑现"的仓全部记进建仓时段, 而它们的利润实际由延长时段退出链交付 ——
+    实测 W42 净额 +$582.11 里 **80% 来自盘前出场的 4 笔 (+$466.00)**, 同期盘中
+    出场的 34 笔只有 +$94.07。只看入场口径会得出"延长时段合计只贡献 $343"的错误印象。
+
+    只替换 `stage` 字段, 不碰 net/exit_reason/pnl ⇒ 两个口径可同屏并列且必然对账。
+    盘外时段 (20:00–03:59 ET) 归空串=未标注 (不臆造), 与入场口径同律。
+    """
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        d = dict(r)
+        d["stage"] = phase_from_time(d.get("exit_time")) or ""
+        out.append(d)
+    return out
+
+
 def stage_breakdown(rows: Iterable[Dict[str, Any]]) -> "OrderedDict[str, Dict[str, Any]]":
     """按阶段聚合: n / 净额 / 胜率 / MFE=0 笔数 / 方向拆分 / 出场原因拆分。"""
     out: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
@@ -119,17 +138,19 @@ def _fmt(net: float) -> str:
     return f"{'+' if net >= 0 else '-'}${abs(net):,.2f}"
 
 
-def render_stage_section(rows: List[Dict[str, Any]], title: str = "分阶段成交统计") -> str:
+def render_stage_section(rows: List[Dict[str, Any]], title: str = "分阶段成交统计",
+                         caliber: Optional[str] = None) -> str:
     """Markdown 段: ①阶段总表 ②阶段×方向×出场原因 ③延长时段单列 (样本不足标注)。
 
     口径提示随输出一起给出 (净额=pnl_net 费后; 阶段=entry_session 优先, 空则按 ET 时钟回退)。
+    `caliber` 可覆盖阶段来源说明 —— 出场时段对照臂传自己的口径 (否则会印成入场口径, 误导)。
     """
     bd = stage_breakdown(rows)
     if not bd:
         return f"### {title}\n（区间内无已平仓样本）"
+    _caliber = caliber or ("阶段=落库 entry_session 优先, 为空按 ET 时钟回退")
     lines = [f"### {title}",
-             "_口径: 净额=费后 pnl_net; 阶段=落库 entry_session 优先, 为空按 ET 时钟回退; "
-             "样本 <5 笔仅作方向性参考_",
+             f"_口径: 净额=费后 pnl_net; {_caliber}; 样本 <5 笔仅作方向性参考_",
              "",
              "| 阶段 | 笔数 | 净额 | 笔均 | 胜率 | MFE=0 |",
              "| --- | --- | --- | --- | --- | --- |"]

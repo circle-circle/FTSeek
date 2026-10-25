@@ -183,6 +183,13 @@ def render(cur: Dict, prev: Optional[Dict], days: int) -> str:
         # 刻意不在报告文本里硬编码库文件名: 载体名由 SSOT 解析器给 (dead_db 门也据此不告警)
         "实盘(真钱)周报另见 scripts/live_weekly_review.py (美股段 + 港股段, "
         "载体 = 看板实盘专属库, 由 app.core.db_utils.get_dashboard_db() 解析)",
+        # 2026-10-25 口径互斥提示 (周日综合复盘实测): 同一份报告里 OKR 段还会印一条
+        #   "Wnn: $X (nW/nL)" —— 那是指令表口径 (playbook_instructions.date=入场日 ∧
+        #   executed ∧ outcome∈{win,loss} ∧ EXT 旁路不入表), 与本段 trade_records 出场日
+        #   全源口径不同。实测 W42 两数 $582.11(40笔) vs $234.38(27笔), 不标口径会被
+        #   读成"报告自相矛盾"或"哪个数才是真的"。
+        "⚠️ 口径互斥: 同页 OKR 段的「Wnn: $X」是指令表口径 (入场日/仅主链), 与本段"
+        "出场日全源口径不可互比、不可相加",
     ]
     if not cur["total_n"]:
         # 措辞刻意保留"无已了结交易"原句 (tests/test_weekly_trade_summary.py 钉了它),
@@ -227,12 +234,21 @@ def render(cur: Dict, prev: Optional[Dict], days: int) -> str:
     # 2026-09-18 (用户裁「周报加阶段×方向×出场原因 + 延长时段单列, ETH 单列」):
     #   与上面"方向×退出原因"表同窗口同来源白名单, 只多一个阶段维度。
     try:
-        from app.review.stage_stats import rows_from_db, render_stage_section
+        from app.review.stage_stats import rows_by_exit_stage, rows_from_db, render_stage_section
         _rows = [r for r in rows_from_db(DB_PATH, cur["start"], cur["end"])
                  if str(r.get("source_type") or "") in TRADE_SOURCES]
         if _rows:
             lines.append("")
-            lines.append(render_stage_section(_rows, f"分阶段成交统计 ({cur['start']} ~ {cur['end']})"))
+            lines.append(render_stage_section(
+                _rows, f"分阶段成交统计·按入场时段 ({cur['start']} ~ {cur['end']})"))
+            # 2026-10-25: 对照臂。入场口径把"盘中/盘后建仓、次日盘前兑现"的仓记进建仓时段,
+            #   而这类仓的利润由延长时段退出链交付 (实测 W42 净额 80% = 盘前出场 4 笔 +$466,
+            #   盘中出场 34 笔仅 +$94)。两臂同批成交同口径金额, 必然对账。
+            lines.append("")
+            lines.append(render_stage_section(
+                rows_by_exit_stage(_rows),
+                f"分出场时段成交统计·按出场时刻 ({cur['start']} ~ {cur['end']}, 对照臂)",
+                caliber="阶段=按 exit_time 的 ET 时钟判定 (盘外 20:00–03:59 归未标注)"))
     except Exception as _e:
         lines.append(f"(阶段维度渲染失败: {_e})")
     return "\n".join(lines)

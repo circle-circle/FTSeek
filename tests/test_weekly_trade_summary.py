@@ -39,7 +39,8 @@ CREATE TABLE trade_records (
     realized_pnl REAL,
     pnl_net REAL,
     source_type TEXT,
-    metadata_json TEXT
+    metadata_json TEXT,
+    data_quality TEXT
 )
 """
 
@@ -343,3 +344,33 @@ def test_a9_where_is_schema_tolerant():
         "SELECT COUNT(*) FROM trade_records WHERE realized_pnl IS NOT NULL " + a9_clean_where(old)
     ).fetchone()
     assert rows == (0,)
+
+
+# ── 阶段双口径 + 口径互斥提示 (2026-10-25 周日复盘实测: 同页两个 W42 数字打架) ──
+def test_render_has_both_stage_arms_and_caliber_guard(db, monkeypatch):
+    """入场口径与出场口径必须同屏并列, 且印口径互斥提示。
+
+    病灶: 报告同时印 trade_records 出场日 $582.11(40笔) 与指令表入口日 $234.38(27笔),
+    且阶段只按入场分桶 —— 读者无法判断哪个是真、也看不见"盘前兑现"的那部分利润。
+    """
+    _row(db, "2026-08-26T06:12:46-04:00", entry_time="2026-08-25T16:45:00-04:00", net=236.81)
+    monkeypatch.setattr(wts, "DB_PATH", str(db))
+    cur = wts.summarize_window(_conn(db), "2026-08-21", "2026-08-27")
+    txt = wts.render(cur, None, 7)
+    assert "按入场时段" in txt
+    assert "按出场时刻" in txt
+    assert "口径互斥" in txt
+
+
+def test_both_arms_totals_are_identical(db, monkeypatch):
+    """两臂合计必须相等 (只换维度不改账) —— 防分桶实现把某类行漏掉。"""
+    from app.review.stage_stats import rows_by_exit_stage, rows_from_db, stage_breakdown
+    _row(db, "2026-08-26T06:12:46-04:00", entry_time="2026-08-25T16:45:00-04:00", net=236.81)
+    _row(db, "2026-08-27T15:52:40-04:00", entry_time="2026-08-27T09:46:00-04:00", net=78.96)
+    rows = [r for r in rows_from_db(str(db), "2026-08-21", "2026-08-27")
+            if str(r.get("source_type") or "") in wts.TRADE_SOURCES]
+    a = stage_breakdown(rows)
+    b = stage_breakdown(rows_by_exit_stage(rows))
+    assert sum(x["n"] for x in a.values()) == sum(x["n"] for x in b.values()) == 2
+    assert round(sum(x["net"] for x in a.values()), 2) == \
+           round(sum(x["net"] for x in b.values()), 2)

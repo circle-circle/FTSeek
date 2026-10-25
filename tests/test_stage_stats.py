@@ -16,8 +16,8 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.review.stage_stats import (  # noqa: E402
-    MIN_N_FOR_READING, load_trades, normalize_stage, render_stage_section, stage_breakdown,
-    window_of, rows_for_closed_trades,
+    MIN_N_FOR_READING, load_trades, normalize_stage, render_stage_section, rows_by_exit_stage,
+    stage_breakdown, window_of, rows_for_closed_trades,
 )
 
 
@@ -156,3 +156,45 @@ def test_rows_for_closed_trades_returns_empty_without_window(tmp_path):
     assert rows_for_closed_trades([], str(db)) == []          # 无窗口
     assert rows_for_closed_trades([{"exit_time": "2026-09-18T19:29:49-04:00"}], None) == []
     assert rows_for_closed_trades([{"exit_time": "2026-09-18T19:29:49-04:00"}], str(db)) == []
+
+
+# ── 4. 出场时段对照臂 (2026-10-25 周日复盘: 入场口径把盘前兑现的利润记进盘中) ──────
+
+def test_rows_by_exit_stage_only_relabels_stage():
+    """出场口径只换 stage 标签: 净额/退出原因/方向一律不动 ⇒ 两臂必然对账。"""
+    rows = [{"symbol": "US.TSLA", "stage": "regular", "dir_cn": "做空",
+             "exit_reason": "SL_TRAIL_LOCK", "net": 236.81, "gross": 241.0,
+             "mfe_pct": 6.35, "direction": "SHORT",
+             "entry_time": "2026-10-21T16:45:23-04:00",
+             "exit_time": "2026-10-22T06:12:46-04:00"}]
+    out = rows_by_exit_stage(rows)
+    assert out[0]["stage"] == "premarket"                 # 06:12 ET 出场 = 盘前
+    assert out[0]["net"] == 236.81
+    assert out[0]["exit_reason"] == "SL_TRAIL_LOCK"
+    assert rows[0]["stage"] == "regular"                   # 原行不被就地改写
+
+
+def test_rows_by_exit_stage_offhours_is_unlabeled():
+    """盘外 20:00–03:59 ET 归未标注 (不臆造阶段), 与入场口径同律。"""
+    out = rows_by_exit_stage([{"stage": "regular", "net": 1.0,
+                               "exit_time": "2026-10-22T01:30:00-04:00"}])
+    assert out[0]["stage"] == ""
+
+
+def test_render_stage_section_caliber_override():
+    """出场臂必须能覆盖口径行, 否则会把 exit 口径印成 entry 口径 (误导读者)。"""
+    rows = [_row("US.X", "premarket", "做多", "SL_BREAKEVEN", 10.0)]
+    txt = render_stage_section(rows, "出场臂", caliber="阶段=按 exit_time 的 ET 时钟判定")
+    assert "按 exit_time 的 ET 时钟判定" in txt
+    assert "entry_session" not in txt
+
+
+def test_two_arms_reconcile_on_same_rows():
+    """同批成交两臂合计必须相等 (入场 vs 出场只换维度, 不改账)。"""
+    rows = [_row("US.A", "regular", "做多", "SL_TRAIL_LOCK", 100.0),
+            _row("US.B", "regular", "做空", "SL_INITIAL", -50.0)]
+    entry_bd = stage_breakdown(rows)
+    exit_bd = stage_breakdown(rows_by_exit_stage(rows))
+    assert sum(b["n"] for b in entry_bd.values()) == sum(b["n"] for b in exit_bd.values()) == 2
+    assert round(sum(b["net"] for b in entry_bd.values()), 2) == \
+           round(sum(b["net"] for b in exit_bd.values()), 2) == 50.0
