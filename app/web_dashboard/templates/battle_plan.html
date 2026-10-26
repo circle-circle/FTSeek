@@ -1,14 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}Pipeline — FTSeek-US{% endblock %}
-
-{% block nav_plan_class %}class="active"{% endblock %}
-{% block nav_plan_class2 %}class="active"{% endblock %}
-{% block nav_plan_class3 %}class="active"{% endblock %}
+{% block title %}旧版 Pipeline — FTSeek-US{% endblock %}
 
 {% block head %}
 <style>
     .pl-container { max-width: 960px; margin: 0 auto; padding: 12px; }
+    .pl-legacy-notice { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 14px; margin: 0 0 12px; background: #1c1500; border: 1px solid #7a5c00; border-radius: 8px; color: #fbbf24; font-size: 12px; line-height: 1.45; }
+    .pl-legacy-notice b { color: #fde68a; }
+    .pl-legacy-notice .tool-btn { margin-left: auto; }
 
     /* ── 漏斗 ── */
     .pl-funnel { display: flex; align-items: center; justify-content: center; gap: 0; margin: 16px 0; flex-wrap: wrap; }
@@ -35,13 +34,14 @@
     .pl-date-input { padding: 4px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; font-size: 12px; }
     .pl-refresh-btn { padding: 4px 12px; background: #30363d; border: none; border-radius: 4px; color: #c9d1d9; cursor: pointer; font-size: 12px; }
     .pl-refresh-btn:hover { background: #3d444d; }
+    .pl-filter-btn, .pl-refresh-btn, .pl-date-input { min-height: 36px; }
 
     /* ── 标的卡片 ── */
-    .pl-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; margin-bottom: 8px; transition: border-color 0.2s; }
+    .pl-card { min-width: 0; background: #161b22; border: 1px solid #30363d; border-radius: 8px; margin-bottom: 8px; transition: border-color 0.2s; }
     .pl-card:hover { border-color: #388bfd55; }
     .pl-card-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; cursor: pointer; }
-    .pl-card-left { display: flex; align-items: center; gap: 10px; }
-    .pl-symbol { font-size: 15px; font-weight: 700; color: #e1e4e8; }
+    .pl-card-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .pl-symbol { font-size: 15px; font-weight: 700; color: #e1e4e8; overflow-wrap: anywhere; }
     .pl-direction { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
     .pl-dir-BUY { background: #16a34a33; color: #4ade80; }
     .pl-dir-SELL_SHORT { background: #ef444433; color: #f87171; }
@@ -50,7 +50,7 @@
     .pl-src-badge { padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: 0.3px; }
     .pl-src-ue { background: #f59e0b22; color: #fbbf24; border: 1px solid #f59e0b55; }
     .pl-src-other { background: #6b728022; color: #9ca3af; border: 1px solid #6b728055; }
-    .pl-card-right { display: flex; align-items: center; gap: 12px; font-size: 12px; color: #8b949e; }
+    .pl-card-right { display: flex; align-items: center; gap: 12px; min-width: 0; font-size: 12px; color: #8b949e; }
     .pl-conf-badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
     .pl-conf-high { background: #16a34a22; color: #4ade80; }
     .pl-conf-mid { background: #eab30822; color: #facc15; }
@@ -89,7 +89,7 @@
 
     /* thesis */
     .pl-thesis { font-size: 12px; color: #c9d1d9; line-height: 1.5; }
-    .pl-skip-reason { font-size: 11px; color: #f0883e; }
+    .pl-skip-reason { font-size: 11px; color: #f0883e; line-height: 1.45; overflow-wrap: anywhere; word-break: break-word; }
 
     /* data quality */
     .pl-dq-row { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -135,11 +135,31 @@
     .pl-brief-entry { font-size: 11px; color: #8b949e; margin: 4px 0; }
     .pl-brief-risk { font-size: 11px; color: #f0883e; margin-bottom: 3px; line-height: 1.4; }
     .pl-brief-dq { font-size: 10px; color: #8b949e; margin-top: 6px; padding-top: 4px; border-top: 1px solid #21262d; line-height: 1.5; }
+    @media (max-width: 600px) {
+        .pl-container { padding: 8px; }
+        .pl-legacy-notice { align-items: flex-start; padding: 10px 12px; }
+        .pl-legacy-notice .tool-btn { margin-left: 0; }
+        .pl-filter-bar { gap: 6px; }
+        .pl-filter-bar > span[style*="flex:1"] { display: none; }
+        .pl-date-input { flex: 1 1 100%; min-height: 40px; }
+        .pl-refresh-btn, .pl-filter-btn { min-height: 40px; padding: 8px 12px; }
+        .pl-card-header { flex-wrap: wrap; gap: 8px; padding: 10px 12px; }
+        .pl-card-right { width: 100%; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+        .pl-theme-card { min-width: 0; flex-basis: 100%; }
+        .pl-ctx-grid { grid-template-columns: 1fr; }
+        .pl-funnel-stage { min-width: 80px; padding: 8px 10px; }
+    }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="pl-container">
+    <div class="pl-legacy-notice">
+        <b>旧 Pipeline 页面已停用。</b>
+        <span>今日计划与执行以 Playbook 为准。</span>
+        <a class="tool-btn" href="/playbook">前往计划</a>
+    </div>
+
     <!-- Filter Bar -->
     <div class="pl-filter-bar">
         <input type="date" id="plDate" class="pl-date-input" value="">

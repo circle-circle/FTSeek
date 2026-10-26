@@ -1,5 +1,64 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-25 21:50 富途实盘安全影子 + 服务重启（冒烟 7/7）
+
+- **用户裁决**: P0-1 不过度设计、P0-2 不做大改、其他 P1 可做 → 同意执行。
+- **范围**: 只做 LIVE 规则退出后的一次性保护 STOP 回挂、`submit_order` 券商容量只读影子、账户风险字段/公司行动/止损漂移只读观测。未改订单 validator、四锁、仓位、止损止盈、频率或 Playbook 主路由；账户风险字段仅透传 API，未新增 Dashboard 可视化。
+- **P0-1 一次性回挂**: 仅在规则退出已撤本策略 STOP、`close_res` **明确失败**（非 `*_pending`/unknown）时尝试一次。回挂前强制核实券商持仓仍为原方向原完整数量、无同标的平仓侧活动单、STOP 价可取；先持久化 `stop_rehang_attempted/count`，成功后写回 `sl_broker_order_id`。持仓/活动单/状态无法确认、guard/receipt 写盘失败、回挂失败一律不重复卖，HIGH 告警并 `HALT_NEW_LIVE`。重复触发或 guard 已落盘但无成功回执同样 HALT，不静默重试。STOP 自身部分成交保持现有 `hold` + 每 STOP 聚合告警，不自动平残余。
+- **P0-2 容量影子**: `broker_capacity_shadow.py` 仅在 REAL 且经 `DualBroker.submit_order` 的 `place_order` 前调用 `acctradinginfo_query`，记录四方向容量、请求股数、同标的活跃单/外部手动单。纯 JSONL 记录、fail-open，不拦截、不改返回值。**明确不覆盖 durable `ExitLifecycle` 规则退出**：平仓热路径不加两次券商 RPC；不得据此声称已覆盖全部 LIVE 平仓。第二阶段 `BROKER_CAPACITY_REJECT` 未启用。
+- **P1 只读项**: `accinfo_query` 风险字段透传到标准化账户、Dashboard `_parse_account`、`DataService.to_usd`、`/api/order-capacity`；`scripts/check_corporate_actions.py` 用 `get_rehab`，窗口改为 ET 日期；在线 effective SL vs 券商 STOP 漂移影子不调用 `modify_order`。两个影子均已登记 `shadow_registry`。
+- **验证**: 定向安全/容量/公司行动契约 **73 passed**；影子登记治理 **70 passed**；`tests/web_dashboard` **164 passed**；退出链 **161 passed**；EOD/退出监控邻近契约 **92 passed**；`py_compile`、`git diff --check` 通过；`check_corporate_actions.py US.MSFT` 只读实跑成功（空窗口、0 error）。
+- **重启前核对**: LIVE 在仓 0；SIM 在仓 US.MSFT LONG 9 / US.TSM LONG 14；`exit_intents` 229 条全 `BOOKED`；`app/ scripts/` 仅有本批与已上线的其他会话 WIP，未新引入未知文件。
+- **重启后**: `systemctl restart ftseek-us`，PID **3835721**，`active` since **21:50:15 CST**；启动冒烟 **7/7**（ConfigValidator / 漂移检测 / 热重载 / SSOT 0 BLOCKING / 双臂安全 / 退出快循环 / 零 Traceback-CRITICAL）。`ftseek-dashboard` PID **3835846**，`/login` **200**；该服务为 15min 闲置自退的 socket-activated 单元，inactive 属正常。
+- **边界**: 未建立完整 LIVE 订单状态机；撤 STOP 后、平仓/回挂前的极窄进程崩溃窗口本批不新增启动巡检，需人工对账。P0-2 样本只代表 `submit_order` 路径；容量/漂移毕业生效前不得转硬门或自动改 STOP。
+- **下一步**: 攒 ≥30 笔 REAL `submit_order` 样本/≥10 个交易日、≥20 个独立 LIVE STOP/≥10 个交易日；先看容量不足率、未知率、外部活动单占比与 STOP 漂移，再提案有限拒绝或动态改单。工作树**未提交**且含其他会话 WIP，提交前按文件筛选，禁止整体 `git add`。
+
+最后更新：2026-10-25（本条）
+
+## 2026-10-25 20:32 重启 ftseek-us（冒烟 7/7）
+
+- **触发**: 用户要求重启服务；本批 Dashboard 改动已由 dashboard 进程加载，主服务按军规单独重启。
+- **重启前核对**: `exit_intents` 229 条全部 `BOOKED`；在仓 2 笔（US.MSFT LONG 9 / US.TSM LONG 14）；`app/ scripts/` 的非 Dashboard WIP（`main.py`、`scripts/freeze_sentinel.py`、`app/observability/fault_dump.py`）mtime 均为 10-23，早于 18:47:53 启动的旧进程，已在线上加载，本次未新引入其他会话改动。
+- **重启后**: `systemctl restart ftseek-us`，PID **3824253**，`active` since **20:32:20 CST**；启动冒烟 **7/7**（ConfigValidator / 漂移检测 / 热重载 / SSOT 0 BLOCKING / 双臂安全 / 退出快循环 / 零 Traceback-CRITICAL）。
+- **状态**: 在仓仍 2 笔（MSFT/TSM）；`exit_intents` 仍 229 条全 BOOKED；启动段无 Traceback/CRITICAL/ERROR。`ftseek-dashboard` 仍 active，`/login` 200。
+- **边界**: 未改交易门/仓位/止损止盈/频率；未提交工作树改动。
+
+最后更新：2026-10-25（本条）
+
+## 2026-10-25 Dashboard 实盘 runtime / 断线只读态（Batch 2 最小版；仅 dashboard 生效）
+
+- **用户要求**: 在富途 App 未来不可用时，用现有 Web Dashboard 更好地实盘交易与展示；不重复造轮子、不过度复杂，重点做真实信息与信噪比。
+- **范围**: Dashboard 只读状态层 + 前端 guard；**未改订单 validator、四锁、仓位、止损止盈、频率、Playbook 执行管线，未重启 `ftseek-us`**。
+- **落地**:
+  - 新增 `app/web_dashboard/runtime_status.py`；`/api/trade/snapshot.runtime` 输出 `broker/account/quotes/positions/orders/market/as_of/runtime_as_of/capabilities/reasons`。
+  - fail-safe：断线全关；持仓 DB fallback 禁开仓/减仓/改保护；订单审计 fallback 禁撤单；报价降级禁新开仓但允许减仓；现有 `blocks_now` 只禁开仓；账户未知禁开仓。
+  - `get_today_orders_with_status()` 返回 `{orders, source, broker_ok, error, as_of}`，旧 `get_today_orders()` 兼容；`/api/orders/today` 同步带来源元数据。
+  - `_parse_positions()` 以 `current_sl` 优先，补 `take_profit_price`、券商 SL/TP 单 ID、`protection_state=broker_attached|db_only|none|unknown`；只有存在止损来源列时才宣称保护状态已知。
+  - `_calc_stop_distances()` 优先真实 SL/TP，ATR 仅 fallback，并输出 `sl_source/tp_source`。
+  - `trade.html` / `trade.js`：单行 runtime 横幅、服务端 capabilities 控制下单/确认/平仓/撤单/接管、读取失败 fail-closed、订单“撤单锁定”、持仓“券商单/仅DB/无保护/未知”、断线摘要点“离线”；静态版本 `trade.js?v=20261025b`。
+- **口径边界**: 手动看板固定走 REAL（`ManualOrderService._is_live()` 恒 True），`ALLOW_REAL_TRADING` 不是手动总闸；`broker_attached` 仅是本地 DB 有券商 STOP 单 ID，未逐单核验活跃性；断线只能只读本地台账/最近缓存，不能交易。
+- **验证**: `tests/web_dashboard` **164 passed**（新增 runtime 契约 14 例）；`py_compile`、`node --check trade.js`、`git diff --check` 通过。真实快照 `broker=connected/account=real/positions=live/orders=live/market=closed`，capabilities 全开。Playwright 1440×1000 / 390×844：真实态 + 拦截 snapshot 模拟 disconnected 共 4 次，全部 200、0 console/page error、0 横向溢出；断线横幅 `danger`、`#btnSubmit` disabled、摘要点“离线”；摘要高度真实态 169.8/145.8px、断线态 158.8/134.8px。
+- **运维**: 本批先重启 `ftseek-dashboard.service`（19:49:23 CST），`/login` 200；随后按用户要求重启 `ftseek-us`（20:32:20 CST，冒烟 7/7），详见上条。工作树改动**未提交**，且含其他会话 WIP，提交前按文件筛选，勿整体 `git add`。
+- **明确未做**: 重连对账状态机；改止损快捷入口；三条移动端动作全部 ≤3 步；首页待办严格 ≤3；富途 App 的完整替代。旧 `/plan` 物理退役前仍需零引用审计。
+- **下一步**: 先提交本批 Dashboard 文件；再评估是否给今日页接入同一 runtime 条，以及是否实现“重连待对账”只读门槛和改止损快捷入口。
+
+最后更新：2026-10-25（本条）
+
+## 2026-10-25 Dashboard UX 精简 Batch 1（dashboard 已生效；未改交易后端）
+
+- **用户要求**: 以实盘交易和信息价值为核心，降低噪音、清理无用 Tab、优化布局与移动端体验；不重复造轮子、不过度复杂。
+- **范围**: Jinja 模板 / CSS / 前端 JS + 今日摘要对过期作战计划的只读聚合修正；**未改交易 API、订单闸门、四锁、仓位、止损止盈、频率或 Playbook 下单/退出管线**。
+- **入口**: 一级导航 7 → 4（今日 `/`、计划 `/playbook`、交易 `/trade`、系统 `/system`）。`/trade/hk` 改为交易页“美股/港股”市场切换；`/watchlist` 改为今日/交易/计划的次级入口；旧 `/plan` 保留兼容访问、加停用横幅并移除导航 active，未做重定向/物理删除。
+- **今日页**: 增加统一页头；待办/“当前无需操作”提到历史日报之前；决策链路、OKR、毕业门禁、因子、退出画像、新机制、记分牌、校准、完整分析默认收起，点击“研究数据”才加载；决策脑健康仅异常或研究展开时占首屏。过期作战计划（当前文件冻结于 2026-07-31）不再用旧 `position_actions` 产生“必须执行”，消除与“当前无需操作”的矛盾。
+- **交易页**: 增加页头；桌面“下单票据 + 持仓/交易记录”双栏，移动端保持下单 → 持仓 → 交易记录；交易记录/券商真值条归入右栏，未新增第二套台账；账户摘要 sticky 在平板/移动端避开顶部导航，不再遮挡。方向/操作按钮、持仓/交易记录标题和自动保护提示改为纯文本，不依赖 emoji 字体。
+- **其他页面**: 股票池增加页头与交易入口，移动端改为“标的价格涨跌信号 / 因子与操作”两行布局，动作改显式“做多/做空/移除”；港股快捷手数与系统风险档位提升到 40px 触控高度；Playbook 页头在移动端换行，regime 徽标改为 CSS 状态点并兼容小写枚举；系统页状态卡与模式标题去掉装饰 emoji。
+- **文档**: `docs/decisions/RFC-165-lean-trading-cockpit.md`、`docs/design/2026-10-25_lean-trading-cockpit.md` 已更新为 Batch 1 实施记录；Batch 2 runtime/断线只读态见上条。
+- **验证**: `tests/web_dashboard` **150 passed**（新增过期计划摘要 3 例）；交易 UI 定向契约（batch2/3/4/5 + RFC-078 + gates + close_position）**112 passed**；`node --check` dashboard.js/playbook.js/trade.js 通过；`git diff --check` 通过。Playwright 7 页 × 桌面 1440×1000 / 移动 390×844：全部 200、0 console error、0 横向溢出；交易页 `.trade-workspace` 仅 2 个直接子节点，右栏含持仓 + 交易记录；移动端 sticky 摘要压到约 119px；研究模块默认 9/9 隐藏，展开后请求 5 个研究接口；导航模式/市场标签最终文本无 emoji。补测 320/768/1024 宽度，修复旧 `/plan` 320px 文本溢出与港股页 1024px 宽表撑页；港股 1280/1440 保留双栏。
+- **运维**: 仅重启 `ftseek-dashboard` 使今日摘要 `.py` 修正生效并验证 `/login` 200、snapshot decision `must_do=0`；**未重启 `ftseek-us`**，当前 `ftseek-us`/`ftseek-dashboard` 均 active。当前工作树改动**未提交**，且含其他会话 WIP（`main.py`、`scripts/freeze_sentinel.py`、`app/observability/fault_dump.py` 等），提交前须按文件筛选，勿整体 `git add`。
+- **下一步（Batch 2 已部分落地，见上条）**: 剩余重连对账状态机、改止损快捷入口、关键动作 ≤3 步、首页待办 ≤3。旧 `/plan` 物理退役前先做零引用审计（`/api/battle-plan` 仍有消费方）。
+
+最后更新：2026-10-25（本条）
+
 ## 2026-10-23 DA 链路根因修复 + 重启（冒烟 7/7）
 
 - **用户要求**: 「针对异常问题按照建议做修复，确保方案和建议能真正合理且能从根源上解决问题」。

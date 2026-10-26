@@ -2,7 +2,7 @@
 {% block title %}{{ title }}{% endblock %}
 
 {% block head %}
-    <link rel="stylesheet" href="/static/css/dashboard.css?v=dq20260806">
+    <link rel="stylesheet" href="/static/css/dashboard.css?v=ux20261025b">
     <script src="/static/chart.umd.min.js"></script>
 {% endblock %}
 
@@ -11,20 +11,31 @@
 {% block nav_home_class3 %}class="active"{% endblock %}
 
 {% block nav_extra %}
-<span class="market-badge" id="marketBadge">🔴 休市</span>
-<span class="mode-tag {{ 'live' if is_live else 'sim' }}" id="modeTag">{{ '🔴 实盘' if is_live else '🟢 模拟' }}</span>
+<span class="market-badge" id="marketBadge">休市</span>
+<span class="mode-tag {{ 'live' if is_live else 'sim' }}" id="modeTag">{{ '实盘' if is_live else '模拟' }}</span>
 {% endblock %}
 {% block nav_extra_tablet %}
-<span class="market-badge" id="marketBadge2">🔴 休市</span>
-<span class="mode-tag {{ 'live' if is_live else 'sim' }}" id="modeTag2">{{ '🔴 实盘' if is_live else '🟢 模拟' }}</span>
+<span class="market-badge" id="marketBadge2">休市</span>
+<span class="mode-tag {{ 'live' if is_live else 'sim' }}" id="modeTag2">{{ '实盘' if is_live else '模拟' }}</span>
 {% endblock %}
 {% block nav_extra_mobile %}
-<span class="mode-tag {{ 'live' if is_live else 'sim' }}" id="modeTag3" style="margin-left:0">{{ '🔴 实盘' if is_live else '🟢 模拟' }}</span>
+<span class="mode-tag {{ 'live' if is_live else 'sim' }}" id="modeTag3" style="margin-left:0">{{ '实盘' if is_live else '模拟' }}</span>
 {% endblock %}
 
 
 {% block content %}
     <div class="container">
+
+        <div class="page-head">
+            <div>
+                <h1>今日</h1>
+                <div class="page-sub">只显示需要处理的事 · 研究数据默认收起</div>
+            </div>
+            <div class="page-actions">
+                <button class="tool-btn" id="researchToggle" type="button" aria-expanded="false" onclick="toggleResearch()">研究数据</button>
+                <a class="tool-btn" href="/watchlist">股票池</a>
+            </div>
+        </div>
 
         <!-- AUTO-TRADE CONTROL BAR moved to /system page -->
 
@@ -47,20 +58,20 @@
             </div>
             <!-- Secondary Row: market context + alerts -->
             <div class="status-row status-secondary" id="statusSecondary">
-                <div class="pill pill-sm" id="pillEquity">💰 --</div>
+                <div class="pill pill-sm" id="pillEquity">资产 --</div>
                 <div class="pill pill-sm" id="pillSpy">SPY --</div>
                 <div class="pill pill-sm" id="pillVix">VIX --</div>
-                <div class="pill pill-sm" id="pillSimLive" style="display:none">🟢 -- 🔴 --</div>
+                <div class="pill pill-sm" id="pillSimLive" style="display:none">模拟 -- · 实盘 --</div>
                 <div class="pill pill-sm" id="pillMargin">保证金 <span class="v" id="pillMarginVal">--</span></div>
-                <div class="pill pill-sm" id="pillKillSwitch">🛡️ <span id="pillKillVal">--</span></div>
+                <div class="pill pill-sm" id="pillKillSwitch">熔断 <span id="pillKillVal">--</span></div>
                 <div class="pill pill-sm" id="pillEarnings" style="display:none">⚠️ <span id="pillEarningsVal">--</span></div>
-                <div class="pill pill-sm" id="pillEmergency" style="display:none;cursor:pointer;border-color:rgba(248,113,113,0.4)" onclick="riskCmdEmergencyClose()">🔴 制动</div>
+                <div class="pill pill-sm" id="pillEmergency" style="display:none;cursor:pointer;border-color:rgba(248,113,113,0.4)" onclick="riskCmdEmergencyClose()">紧急制动</div>
             </div>
         </div>
 
         <!-- ═══ Decision Summary (决策摘要 — 今日该干什么？) ═══ -->
         <div id="decisionSummary" style="display:none;margin-bottom:12px;padding:12px 14px;background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg)">
-            <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;font-weight:700;letter-spacing:0.5px;margin-bottom:8px">📋 决策摘要</div>
+            <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;font-weight:700;letter-spacing:0.5px;margin-bottom:8px">决策摘要</div>
             <div id="dsLine1" style="font-size:14px;font-weight:600;color:var(--text-primary);margin-bottom:4px"></div>
             <div id="dsLine2" style="font-size:13px;color:var(--text-secondary);margin-bottom:4px"></div>
             <div id="dsLine3" style="font-size:13px;color:var(--text-secondary)"></div>
@@ -70,7 +81,7 @@
         <div id="brainHealth" class="card" style="display:none;margin-bottom:10px;padding:10px 14px">
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                 <span id="bhDot" style="width:10px;height:10px;border-radius:50%;background:#8b949e"></span>
-                <span style="font-weight:600;font-size:13px">🧠 决策脑</span>
+                <span style="font-weight:600;font-size:13px">决策脑</span>
                 <span id="bhAdapter" style="font-size:11px;padding:2px 8px;border-radius:8px"></span>
                 <span id="bhCandidates" style="font-size:12px;color:#8b949e"></span>
                 <span id="bhAge" style="font-size:11px;color:#7d8590"></span>
@@ -79,7 +90,7 @@
         </div>
 
         <!-- ═══ 今日决策链路漏斗 (候选→指令→触发→成交→持仓→退出) ═══ -->
-        <div id="chainFunnel" class="card" style="display:none;margin-bottom:12px;padding:12px 14px">
+        <div id="chainFunnel" class="card research-module" style="display:none;margin-bottom:12px;padding:12px 14px">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
                 <h2 style="font-size:14px;margin:0">🔗 今日决策链路 <span id="cfDate" style="font-size:11px;color:#8b949e;font-weight:normal"></span></h2>
                 <span id="cfSkipped" style="font-size:11px;color:#8b949e"></span>
@@ -113,16 +124,18 @@
 
         <!-- ═══ 退出画像已下移到"完整分析"复盘区 (2026-07-11) ═══ -->
 
-        <!-- ═══ Daily Report (收盘后自动显示) ═══ -->
-        <div id="dailyReport" style="display:none"></div>
-
         <!-- ═══ Action Zone (仅在有行动项时出现) ═══ -->
         <div id="actionZone" style="display:none">
             <div id="actionList"></div>
         </div>
 
+        <div id="todayNoAction" class="today-no-action">
+            <span class="today-no-action-dot" aria-hidden="true"></span>
+            <span id="todayNoActionText">正在检查待办…</span>
+        </div>
+
         <!-- ═══ OKR Card (盈利目标进度) ═══ -->
-        <div id="okrCard" class="card" style="display:none;margin-top:8px;padding:10px 14px">
+        <div id="okrCard" class="card research-module" style="display:none;margin-top:8px;padding:10px 14px">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
                 <div style="display:flex;align-items:center;gap:6px">
                     <span>🎯</span>
@@ -165,8 +178,11 @@
             </div>
         </div>
 
+        <!-- ═══ Daily Report (历史摘要, 排在待办与持仓之后) ═══ -->
+        <div id="dailyReport" style="display:none"></div>
+
         <!-- ═══ Graduation (毕业门禁 + SIM 常驻状态) ═══ -->
-        <div id="graduationCard" class="card" style="margin-top:8px;padding:10px 14px">
+        <div id="graduationCard" class="card research-module" style="margin-top:8px;padding:10px 14px">
             <div style="display:flex;align-items:center;gap:8px;font-size:12px">
                 <span>🎓</span>
                 <span style="font-weight:600;color:#e1e4e8">毕业门禁</span>
@@ -177,7 +193,7 @@
         </div>
 
         <!-- ═══ Factor Performance (因子性能, 打磨杠杆) ═══ -->
-        <div id="factorCard" class="card" style="margin-top:8px;padding:10px 14px">
+        <div id="factorCard" class="card research-module" style="margin-top:8px;padding:10px 14px">
             <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:#8b949e">
                 <span>🧪</span>
                 <span style="font-weight:600;color:#e1e4e8">因子性能</span>
@@ -187,7 +203,7 @@
         </div>
 
         <!-- ═══ 退出画像 (近30天 exit_reason 归类 — 复盘区, 退出是否与入场论点脱钩) ═══ -->
-        <div id="exitProfile" class="card" style="display:none;margin-top:8px;padding:12px 14px">
+        <div id="exitProfile" class="card research-module" style="display:none;margin-top:8px;padding:12px 14px">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
                 <h2 style="font-size:14px;margin:0">🚪 退出画像 <span style="font-size:11px;color:#8b949e;font-weight:normal">近30天</span></h2>
                 <span id="epHeadline" style="font-size:11px;color:#8b949e"></span>
@@ -199,7 +215,7 @@
         </div>
 
         <!-- ═══ 新机制观测 (2026-07-28 看板审计 P1: shadow/板块脉搏/topup/价源爬坡) ═══ -->
-        <div id="newMech" class="card" style="display:none;margin-top:8px;padding:12px 14px">
+        <div id="newMech" class="card research-module" style="display:none;margin-top:8px;padding:12px 14px">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
                 <h2 style="font-size:14px;margin:0">🧪 新机制观测 <span style="font-size:11px;color:#8b949e;font-weight:normal">shadow · 板块脉搏 · 价源爬坡</span></h2>
                 <span id="nmAsof" style="font-size:11px;color:#8b949e"></span>
@@ -208,7 +224,7 @@
         </div>
 
         <!-- ═══ 周六记分牌 (2026-07-31 ⑥G1: exit/direction/trigger_gate — 翻文件→开页面) ═══ -->
-        <div id="scorecards" class="card" style="display:none;margin-top:8px;padding:12px 14px">
+        <div id="scorecards" class="card research-module" style="display:none;margin-top:8px;padding:12px 14px">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
                 <h2 style="font-size:14px;margin:0">📋 周六记分牌 <span style="font-size:11px;color:#8b949e;font-weight:normal">退出纪律 · 方向命中 · 触发门</span></h2>
                 <span id="scAsof" style="font-size:11px;color:#8b949e"></span>
@@ -217,7 +233,7 @@
         </div>
 
         <!-- ═══ 校准视图 (confidence 分桶 vs 胜率 — DA 原值, 复盘区) ═══ -->
-        <div id="calibration" class="card" style="display:none;margin-top:8px;padding:12px 14px">
+        <div id="calibration" class="card research-module" style="display:none;margin-top:8px;padding:12px 14px">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
                 <h2 style="font-size:14px;margin:0">🎯 信心校准 <span style="font-size:11px;color:#8b949e;font-weight:normal">confidence vs 胜率</span></h2>
                 <span id="calMeta" style="font-size:11px;color:#8b949e"></span>
@@ -227,7 +243,7 @@
         </div>
 
         <!-- ═══ Analytics (完整分析) ═══ -->
-        <div class="card" id="analyticsCard" style="margin-top:8px">
+        <div class="card research-module" id="analyticsCard" style="margin-top:8px">
             <div class="collapsible-header" onclick="toggleSection('analytics')">
                 <h2 style="font-size:14px;margin:0">📊 完整分析 <span style="font-size:12px;color:#8b949e;font-weight:normal" id="analyticsLabel"></span></h2>
                 <span class="arrow" id="analyticsArrow">▶</span>
@@ -310,32 +326,37 @@
         <!-- ═══ Bottom Bar ═══ -->
         <div class="bottom-bar">
             <div>
-                <span id="bottomMode">{{ '🔴 实盘' if is_live else '🟢 模拟' }}</span>
+                <span id="bottomMode">{{ '实盘' if is_live else '模拟' }}</span>
                 <span style="margin-left:8px">·</span>
                 <span style="margin-left:8px"><span class="refresh-dot" id="refreshDot"></span><span id="bottomUpdated">上次刷新: --</span></span>
             </div>
             <div>
-                <a href="/system">⚙️ 系统设置</a>
+                <a href="/system">系统设置</a>
                 <span style="margin-left:12px">·</span>
-                <a href="#" onclick="event.preventDefault();switchToAnalytics()">📊 完整分析</a>
+                <a href="#" onclick="event.preventDefault();switchToAnalytics()">完整分析</a>
             </div>
         </div>
     </div>
 {% endblock %}
 
 {% block external_scripts %}
-<script src="/static/js/dashboard.js?v=dq20260806"></script>
+<script src="/static/js/dashboard.js?v=ux20261025b"></script>
 <script>
 // ═══ 决策链路可视化 (漏斗 + 脑健康 + 单笔追踪, 2026-07-11) ═══
 (function(){
   function esc(s){ return (s==null?'':String(s)).replace(/[<>&]/g,function(c){return {'<':'&lt;','>':'&gt;','&':'&amp;'}[c];}); }
+  var _brainHealthIssue = false;
+
+  function applyBrainHealthVisibility(){
+    var el = document.getElementById('brainHealth'); if(!el) return;
+    el.style.display = (_brainHealthIssue || document.body.classList.contains('show-research')) ? 'block' : 'none';
+  }
 
   // ── 决策脑健康 ──
   async function loadBrainHealth(){
     try{
       var d = await apiFetch('/api/brain/health');
       var el = document.getElementById('brainHealth'); if(!el) return;
-      el.style.display='block';
       var colors={healthy:'#4ade80',degraded:'#fbbf24',critical:'#f87171'};
       var adLabel={bridge:'DA驱动',technical:'技术兜底(降级)',null:'全SKIP(停摆)'};
       var adBg={bridge:'#1a3a2a',technical:'#3a2f1a',null:'#3a1a1a'};
@@ -346,6 +367,8 @@
       document.getElementById('bhCandidates').textContent = d.bridge_exists ? (d.candidates+' 候选') : '无 bridge';
       document.getElementById('bhAge').textContent = d.age_hours!=null ? ('· '+d.age_hours+'h前生成') : '';
       document.getElementById('bhWarn').textContent = (d.warnings&&d.warnings.length)? ('⚠️ '+d.warnings[0]) : '';
+      _brainHealthIssue = d.status !== 'healthy' || !!(d.warnings && d.warnings.length);
+      applyBrainHealthVisibility();
     }catch(e){}
   }
 
@@ -553,7 +576,13 @@
     }catch(e){ /* 静默: 记分牌卡失败不拖垮页面 */ }
   }
 
-  function refreshChain(){ loadBrainHealth(); loadFunnel(); loadExitProfile(); loadCalibration(); loadNewMechanisms(); loadScorecards(); }
+  function refreshResearch(){
+    if (!document.body.classList.contains('show-research')) return;
+    loadFunnel(); loadExitProfile(); loadCalibration(); loadNewMechanisms(); loadScorecards();
+  }
+  window.__loadResearch = refreshResearch;
+  window.__syncBrainHealth = applyBrainHealthVisibility;
+  function refreshChain(){ loadBrainHealth(); refreshResearch(); }
   setTimeout(refreshChain, 500);
   setInterval(refreshChain, 60000);
 })();

@@ -44,6 +44,11 @@ def et_today() -> str:
     return et_now().strftime("%Y-%m-%d")
 
 
+def _fresh_iso() -> str:
+    """券商数据成功落地的 ET 时间戳 (供 runtime as-of, 不是响应时间)。"""
+    return et_now().isoformat(timespec="seconds")
+
+
 def et_days_ago(n: int) -> str:
     return (et_now() - timedelta(days=n)).strftime("%Y-%m-%d")
 
@@ -124,6 +129,16 @@ class DataService:
         # _reconcile_ghosts 写 DB; DB fallback / 查询失败 / 超时 / env 未知一律 False。
         self._last_positions_authoritative: bool = False
         self._last_positions_env: Optional[str] = None  # 'REAL' / 'SIMULATE' / None
+        # 数据源落地时间 (仅成功应答刷新; DB fallback/失败清空, 不冒充新鲜数据)。
+        self._last_account_data_at: Optional[str] = None
+        self._last_positions_data_at: Optional[str] = None
+
+    def get_source_freshness(self) -> Dict[str, Optional[str]]:
+        """返回 account/positions 最近一次成功取数的 ET 时间戳。"""
+        return {
+            "account": self._last_account_data_at,
+            "positions": self._last_positions_data_at,
+        }
 
     async def _emit_change(self, key: str, new_value: Any):
         """缓存刷新后发 WS 事件 (非阻塞, 失败静默)"""
@@ -307,6 +322,19 @@ class DataService:
             "initial_margin": converted["initial_margin"],
             "maintenance_margin": converted["maintenance_margin"],
             "frozen_cash": converted["frozen_cash"],
+            "risk_status": converted.get("risk_status", "N/A"),
+            "risk_level": converted.get("risk_level", "N/A"),
+            "exposure_level": converted.get("exposure_level", "N/A"),
+            "exposure_limit": converted.get("exposure_limit", "N/A"),
+            "used_limit": converted.get("used_limit", "N/A"),
+            "remaining_limit": converted.get("remaining_limit", "N/A"),
+            "is_pdt": converted.get("is_pdt", "N/A"),
+            "pdt_seq": converted.get("pdt_seq", "N/A"),
+            "beginning_dtbp": converted.get("beginning_dtbp", "N/A"),
+            "dt_status": converted.get("dt_status", "N/A"),
+            "remaining_dtbp": converted.get("remaining_dtbp", "N/A"),
+            "dt_call_amount": converted.get("dt_call_amount", "N/A"),
+            "risk_fields_currency": "broker_native",
             "currency": "USD",
             "account_scope": converted["account_scope"],
             "fx": converted["fx"],
@@ -314,6 +342,7 @@ class DataService:
         }
 
     def _fetch_account(self) -> dict:
+        self._last_account_data_at = None
         svc, trd_env, acc_id = self._get_env_ctx()
         if not svc:
             return {}
@@ -321,6 +350,7 @@ class DataService:
             from futu import RET_OK
             ret, funds = svc._broker_ctx.accinfo_query(trd_env=trd_env, acc_id=acc_id)
             if ret == RET_OK and not funds.empty:
+                self._last_account_data_at = _fresh_iso()
                 return dict(funds.iloc[0])
         except Exception as e:
             logger.error(f"[DataService] accinfo failed: {e}")
@@ -350,6 +380,7 @@ class DataService:
         # 掐断、闩停留在上一轮 True 的情况 (那会让降级空列表被误读成"券商确认零持仓")。
         self._last_positions_env = self._trd_env_label(trd_env)
         self._last_positions_authoritative = False
+        self._last_positions_data_at = None
         if not svc:
             logger.warning("[DataService] svc is None, using DB fallback")
             return self._fetch_positions_from_db()
@@ -363,6 +394,7 @@ class DataService:
             if ret == RET_OK:
                 # 权威应答 (含空表): 允许下游幽灵对账据此写 DB
                 self._last_positions_authoritative = True
+                self._last_positions_data_at = _fresh_iso()
                 # DEB-20260904 #S11: RET_OK + 空表 = broker 权威确认零持仓 —
                 # 原逻辑与"查询失败"混同走 DB fallback, 把已平仓的 DB 幽灵行
                 # 复活为持仓。空结果必须直接采信, 仅失败/异常才回退 DB。
@@ -385,6 +417,7 @@ class DataService:
         # get_positions_raw 交出 [] —— 这个空**不是**券商说的零持仓, 绝不能拿去做
         # "DB 有 / 券商无" 的差集 (否则一次券商抖动 = 全仓标异常, 24h 后全删)。
         self._last_positions_authoritative = False
+        self._last_positions_data_at = None
         import sqlite3
         # RFC-078 (2026-09-08): 看板专属库路由 — 本函数是**实盘**持仓的 DB fallback,
         # 原 get_main_db 在 TRADE_ENV=1 下返回 sim 库, 而 sim 库 open_positions 现役 3 行

@@ -1,22 +1,18 @@
 {% extends "base.html" %}
-{% block nav_watchlist_class %}class="active"{% endblock %}
-{% block nav_watchlist_class2 %}class="active"{% endblock %}
-{% block nav_watchlist_class3 %}class="active"{% endblock %}
-
 {% block nav_extra %}
-<span class="mode-tag {{ 'live' if is_live else 'sim' }}" id="modeTag">{{ '🔴 实盘' if is_live else '🟢 模拟' }}</span>
+<span class="mode-tag {{ 'live' if is_live else 'sim' }}" id="modeTag">{{ '实盘' if is_live else '模拟' }}</span>
 {% endblock %}
 {% block nav_extra_tablet %}
-<span class="mode-tag {{ 'live' if is_live else 'sim' }}" id="modeTag2">{{ '🔴 实盘' if is_live else '🟢 模拟' }}</span>
+<span class="mode-tag {{ 'live' if is_live else 'sim' }}" id="modeTag2">{{ '实盘' if is_live else '模拟' }}</span>
 {% endblock %}
 {% block nav_extra_mobile %}
-<span class="mode-tag {{ 'live' if is_live else 'sim' }}" id="modeTag3" style="margin-left:0">{{ '🔴 实盘' if is_live else '🟢 模拟' }}</span>
+<span class="mode-tag {{ 'live' if is_live else 'sim' }}" id="modeTag3" style="margin-left:0">{{ '实盘' if is_live else '模拟' }}</span>
 {% endblock %}
 
 {% block extra_css %}
-    .wl-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
-    .wl-header h1 { font-size: 18px; font-weight: 700; }
-    .wl-add { display: flex; gap: 8px; flex: 1; min-width: 200px; }
+    .wl-toolbar { display: flex; margin-bottom: 12px; }
+    .wl-add { display: flex; gap: 8px; flex: 1; min-width: 0; max-width: 480px; }
+    .wl-add .btn { min-height: 36px; }
     .wl-input {
         flex: 1; padding: 6px 10px; border: 1px solid #30363d; border-radius: 6px;
         background: #0d1117; color: #e1e4e8; font-size: 13px; outline: none; min-height: 36px;
@@ -33,7 +29,7 @@
     .wl-row:last-child { border-bottom: none; }
     .wl-row:hover { background: #161b22; }
 
-    .wl-sym { font-weight: 700; color: #58a6ff; text-decoration: none; min-width: 64px; }
+    .wl-sym { display: inline-flex; align-items: center; min-height: 36px; font-weight: 700; color: #58a6ff; text-decoration: none; min-width: 64px; }
     .wl-sym:hover { text-decoration: underline; }
     .wl-price { font-variant-numeric: tabular-nums; min-width: 60px; text-align: right; }
     .wl-chg { font-variant-numeric: tabular-nums; min-width: 56px; text-align: right; font-size: 12px; }
@@ -48,8 +44,11 @@
     .wl-factor.f-low { color: #8b949e; }
     .wl-factor.f-plan { background: rgba(96,165,250,0.12); color: #60a5fa; border-radius: 3px; padding: 1px 4px; }
     .wl-acts { display: flex; gap: 4px; flex-shrink: 0; }
-    .wl-acts a, .wl-acts button { font-size: 11px; color: #8b949e; text-decoration: none; padding: 2px 6px; border: none; background: none; cursor: pointer; }
+    .wl-acts a, .wl-acts button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 4px 7px; border: none; background: none; color: #8b949e; font-size: 11px; text-decoration: none; cursor: pointer; }
     .wl-acts a:hover, .wl-acts button:hover { color: #58a6ff; }
+    .wl-acts .wl-long { color: #4ade80; }
+    .wl-acts .wl-short { color: #f87171; }
+    .wl-acts .wl-remove { color: #7d8590; }
 
     /* Header row */
     .wl-head { display: flex; align-items: center; gap: 8px; padding: 6px 12px;
@@ -72,21 +71,46 @@
     .wl-toast.error { background: #da3633; }
     .loading-text { text-align: center; padding: 30px; color: #8b949e; font-size: 13px; }
 
-    @media (max-width: 480px) {
-        .wl-header { flex-direction: column; align-items: stretch; }
-        .wl-add { min-width: 0; }
+    @media (max-width: 600px) {
+        .wl-toolbar { margin-bottom: 10px; }
+        .wl-add { max-width: none; }
+        .wl-add .btn { min-height: 40px; }
+        .wl-head { display: none; }
+        .wl-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto auto auto;
+            grid-template-areas:
+                "sym price chg signal"
+                "factor . . acts";
+            align-items: center;
+            gap: 6px 8px;
+            padding: 10px 12px;
+        }
+        .wl-sym { grid-area: sym; min-width: 0; }
+        .wl-price { grid-area: price; min-width: 0; }
+        .wl-chg { grid-area: chg; min-width: 0; }
+        .wl-signal { grid-area: signal; min-width: 0; text-align: right; white-space: nowrap; }
+        .wl-factor { grid-area: factor; min-width: 0; justify-self: start; }
         .wl-stats { display: none; }
-        .wl-head .h-stats { display: none; }
-        .wl-signal { min-width: 60px; }
+        .wl-acts { grid-area: acts; justify-self: end; gap: 2px; }
+        .wl-acts a, .wl-acts button { min-width: 40px; min-height: 40px; padding: 6px 8px; }
     }
 {% endblock %}
 
 {% block content %}
 <div class="container">
-    <div class="wl-header">
-        <h1>📋 股票池</h1>
+    <div class="page-head">
+        <div>
+            <h1>股票池</h1>
+            <div class="page-sub">关注标的 · 快速进入交易</div>
+        </div>
+        <div class="page-actions">
+            <a class="tool-btn" href="/trade">交易</a>
+        </div>
+    </div>
+    <div class="wl-toolbar">
         <div class="wl-add">
-            <input type="text" class="wl-input" id="addInput" placeholder="AAPL" autocomplete="off">
+            <input type="text" class="wl-input" id="addInput" placeholder="AAPL" autocomplete="off" aria-label="添加股票代码">
             <button class="btn btn-buy btn-sm" id="addBtn" onclick="addStock()">+ 添加</button>
         </div>
     </div>
@@ -145,8 +169,6 @@
             var fCls = fs >= 0.6 ? 'f-high' : fs >= 0.4 ? 'f-med' : 'f-low';
             if (it.in_plan) fCls += ' f-plan';
             factorHtml = '<span class="wl-factor ' + fCls + '" title="因子评分 (0-100)">' + (fs*100).toFixed(0) + (it.in_plan ? ' ★' : '') + '</span>';
-        } else {
-            factorHtml = '<span class="wl-factor">—</span>';
         }
 
         // Trade stats compact
@@ -165,9 +187,9 @@
             factorHtml +
             '<span class="wl-stats">' + statsHtml + '</span>' +
             '<span class="wl-acts">' +
-                '<a href="/trade?symbol=' + encodeURIComponent(it.symbol) + '&direction=LONG" title="做多">🟢</a>' +
-                '<a href="/trade?symbol=' + encodeURIComponent(it.symbol) + '&direction=SHORT" title="做空">🔴</a>' +
-                '<button onclick="removeStock(\'' + esc(it.symbol) + '\')" title="移除">✕</button>' +
+                '<a class="wl-long" href="/trade?symbol=' + encodeURIComponent(it.symbol) + '&direction=LONG" title="做多 ' + esc(it.symbol) + '">做多</a>' +
+                '<a class="wl-short" href="/trade?symbol=' + encodeURIComponent(it.symbol) + '&direction=SHORT" title="做空 ' + esc(it.symbol) + '">做空</a>' +
+                '<button class="wl-remove" onclick="removeStock(\'' + esc(it.symbol) + '\')" title="移除 ' + esc(it.symbol) + '">移除</button>' +
             '</span>' +
         '</div>';
     }

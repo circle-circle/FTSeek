@@ -184,7 +184,10 @@ td, .v, .ts-value, .value, .metric .value, .lc-pnl { font-variant-numeric: tabul
 
 /* ── Bottom Bar ── */
 .bottom-bar { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; margin-top: 16px; border-top: 1px solid #30363d; font-size: 12px; color: #8b949e; flex-wrap: wrap; gap: 8px; }
-.bottom-bar a { color: #58a6ff; text-decoration: none; }
+.bottom-bar a { display: inline-flex; align-items: center; min-height: 36px; color: #58a6ff; text-decoration: none; }
+@media (max-width: 767px) {
+    .bottom-bar a { min-height: 40px; }
+}
 
 /* ── Sector heatmap ── */
 .sector-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px; }
@@ -220,6 +223,30 @@ td { padding: 6px 4px; border-bottom: 1px solid #21262d; }
     .chart-wrap { height: 200px; }
     .mini-metrics { grid-template-columns: repeat(2, 1fr); }
     .activity-stats { gap: 10px; }
+}
+
+/* ── UX 2026-10-25: 今日页只保留行动信息，研究模块按需展开 ── */
+body:not(.show-research) .research-module { display: none !important; }
+
+.today-no-action {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 4px 0 10px;
+    padding: 9px 12px;
+    border: 1px solid var(--border-subtle, #21262d);
+    border-radius: var(--radius-md, 8px);
+    background: var(--bg-surface, #161b22);
+    color: var(--text-secondary, #8b949e);
+    font-size: 12px;
+    line-height: 1.4;
+}
+.today-no-action-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--green, #4ade80);
+    flex: 0 0 6px;
 }
 
 /* ── Pre-market Risk Card ── */

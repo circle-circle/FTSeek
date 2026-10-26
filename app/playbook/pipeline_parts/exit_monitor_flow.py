@@ -41,6 +41,7 @@ def monitor_playbook_exits(
     patient_exit_arm_eligible: Callable,
     patient_exit_eval_wait: Callable,
     patient_exit_trigger_telemetry: Callable,
+    _handle_live_rule_exit_failure: Callable | None = None,
 ) -> int:
 
     """盘中监控 PLAYBOOK_SIM / PLAYBOOK_LIVE 真实仓位的退出.
@@ -476,14 +477,32 @@ def monitor_playbook_exits(
                         decision = _playbook_exit_decision(
                             reason, current_price, meta, round(held_minutes / 60, 1))
                         decision["sl_fallback_attribution"] = attribution
-                        close_res = dual.close_position(
-                            symbol, qty, direction, target_env=_row_target,
-                            exit_owner=_playbook_exit_owner(db_path, r, meta), exit_decision=decision)
+                        try:
+                            close_res = dual.close_position(
+                                symbol, qty, direction, target_env=_row_target,
+                                exit_owner=_playbook_exit_owner(db_path, r, meta),
+                                exit_decision=decision)
+                        except Exception as _sl_close_error:
+                            logger.error(
+                                f"[playbook dual] SL 平仓异常 {symbol} ({_row_target}): "
+                                f"{_sl_close_error}"
+                            )
+                            _alert_close_failure(
+                                symbol, _row_target, "BROKER_EXCEPTION", str(_sl_close_error)
+                            )
+                            if _handle_live_rule_exit_failure is not None:
+                                _handle_live_rule_exit_failure(
+                                    dual, conn, r, meta,
+                                    {"success": False, "error": "broker_exception", "dealt_qty": None},
+                                )
+                            continue
                         if not close_res.get("success"):
                             _alert_close_failure(symbol, _row_target, "SL_EXIT_PENDING",
                                                  close_res.get("error", "exit evidence pending"),
                                                  # 2026-09-14: 同上 — 瞬态分流, 终态零延迟
                                                  error=close_res.get("error", ""))
+                            if _handle_live_rule_exit_failure is not None:
+                                _handle_live_rule_exit_failure(dual, conn, r, meta, close_res)
                             continue
                         exited += _book_playbook_exit_result(dual, close_res, conn)
                         continue
@@ -563,6 +582,22 @@ def monitor_playbook_exits(
                         minutes_from_open, r["entry_time"],
                         earnings_guard=getattr(scheduler, "earnings_risk_guard", None),
                     )
+                    # P1 DEB-20261025: read-only drift observation; throttled by
+                    # stop id inside the module.  Never calls modify_order.
+                    if not exit_reason and _src == "PLAYBOOK_LIVE":
+                        try:
+                            from app.playbook.broker_stop_drift_shadow import (
+                                record_stop_drift_shadow,
+                            )
+                            record_stop_drift_shadow(
+                                dual, row=r, meta=meta,
+                                effective_sl=float(meta.get("_effective_sl_observed") or 0),
+                                now_ts=time_module.time(),
+                            )
+                        except Exception:
+                            logger.debug(
+                                "[playbook live] broker STOP drift shadow failed", exc_info=True
+                            )
                     # ── 耐心出场 arm (§18.3-1): DEAD_SIGNAL_EXIT + 浅水下 → 转等待不立即平 ──
                     if exit_reason == "DEAD_SIGNAL_EXIT":
                         if direction == "LONG":
@@ -906,6 +941,11 @@ def monitor_playbook_exits(
                 except Exception as _e:
                     logger.error(f"[playbook dual] 平仓异常 {symbol} ({_row_target}): {_e}")
                     _alert_close_failure(symbol, _row_target, "BROKER_EXCEPTION", str(_e))
+                    if _handle_live_rule_exit_failure is not None:
+                        _handle_live_rule_exit_failure(
+                            dual, conn, r, meta,
+                            {"success": False, "error": "broker_exception", "dealt_qty": None},
+                        )
                     continue
 
                 if not close_res.get("success"):
@@ -913,6 +953,8 @@ def monitor_playbook_exits(
                                          close_res.get("error", "exit evidence pending"),
                                          # 2026-09-14: 传 error 原文 → 瞬态 *_pending 走宽限分流
                                          error=close_res.get("error", ""))
+                    if _handle_live_rule_exit_failure is not None:
+                        _handle_live_rule_exit_failure(dual, conn, r, meta, close_res)
                     continue
                 exited += _book_playbook_exit_result(dual, close_res, conn)
             except Exception as row_error:

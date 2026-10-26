@@ -4191,6 +4191,55 @@ REGISTRY: list[ShadowItem] = [
         notes="2026-10-22 当日建当日登 (全链路复查 R1 批: 先登记再攒样, 不再重蹈"
               "「在采未注册」)。回滚: 删本条目 + 删脚本 (产物留档)。",
     ),
+    ShadowItem(
+        id="broker_capacity_shadow",
+        name="券商容量/同标的活跃单只读影子 (P0-2 第一阶段)",
+        status=ShadowStatus.OBSERVING,
+        description="REAL 经 DualBroker.submit_order 下单前记录 acctradinginfo_query 的 "
+                    "max_cash_buy / max_position_sell / max_sell_short / max_buy_back、请求股数 "
+                    "与同标的活跃单 (含外部手动单)。写方 app/execution/broker_capacity_shadow.py, "
+                    "接线 dual_broker.submit_order (place_order 前)。**口径**: 不含 durable "
+                    "ExitLifecycle 规则退出 — 平仓热路径不增加券商 RPC。**纯记录**: 不拦截、不改返回值; "
+                    "查询异常/字段缺失/写盘失败全部 fail-open, 只 warning。"
+                    "第二阶段有限拦截 (BROKER_CAPACITY_REJECT) 未启用, 须用户二次裁决。",
+        data_path="data/broker_capacity_shadow.jsonl",
+        config_key=None,
+        min_n=30,
+        graduation_criteria="≥30 笔 REAL 下单且 ≥10 个交易日; 读数: insufficient_rate、"
+                            "unknown_rate、外部活动单占比。若 insufficient ≥3 笔, 逐笔核对"
+                            "请求量/可交易量/实际成交, 证伪『容量不足会拒单或漏成交』后才可提案"
+                            "有限拒绝; 接口未知率 >20% 不得转硬门。",
+        eval_script="scripts/live_safety_shadow_report.py",
+        eval_on_demand=True,
+        created="2026-10-25",
+        notes="DEB-20261025。方向映射 LONG 开=max_cash_buy / LONG 平=max_position_sell / "
+              "SHORT 开=max_sell_short / SHORT 回补=max_buy_back。数量单位=股, 价格=USD。"
+              "样本口径仅覆盖 submit_order 路径, 不得据此声称覆盖全部 LIVE 平仓。"
+              "回滚: 删 dual_broker 的 record-only 调用 (产物留档)。",
+    ),
+    ShadowItem(
+        id="broker_stop_drift_shadow",
+        name="在线有效止损 vs 券商 STOP 漂移影子",
+        status=ShadowStatus.OBSERVING,
+        description="LIVE 规则链每轮暴露 _effective_sl_observed (cooldown/breakeven/trailing/"
+                    "early-tight 后的在线有效 SL), 影子按 stop_id 5 分钟节流调用 "
+                    "query_order_status, 记录与券商 STOP aux_price 的漂移。"
+                    "写方 app/playbook/broker_stop_drift_shadow.py, 接线 exit_monitor_flow。"
+                    "**绝不调用 modify_order**, 不改变退出规则或保护单价格。",
+        data_path="data/shadow/broker_stop_drift.jsonl",
+        config_key=None,
+        min_n=20,
+        count_mode="distinct:stop_order_id",
+        graduation_criteria="≥20 个独立 LIVE STOP 且 ≥10 个交易日; 读数 abs_drift_bps 中位/p90/"
+                            "max 与 drift_gt_10bp 占比。只有漂移导致止损失效或显著滑点的证据, "
+                            "才提案动态改单; 提案须用户二次批准。",
+        eval_script="scripts/live_safety_shadow_report.py",
+        eval_on_demand=True,
+        created="2026-10-25",
+        notes="DEB-20261025。单位: 价格 USD, 漂移 bps。计数轴=独立 stop_order_id, 防止同一 "
+              "STOP 每 5 分钟重复记录虚增样本。回滚: 删 exit_monitor_flow 的观测调用 "
+              "(parity: 退出规则/券商 STOP 均不变)。",
+    ),
 ]
 
 

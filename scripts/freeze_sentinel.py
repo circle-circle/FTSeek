@@ -33,9 +33,22 @@
 交易日开盘时无人看护 (2026-09-05 存量 UBER/RIVN/HOOD 即此形态)。本层只补"死了没人知道":
 不判行情、不判冻结, 只在 systemd 已放弃时拉一次并 critical 告警。
 回滚: 删 main() 内存活层分支 + evaluate_liveness/service_state/do_revive 三函数。
+
+快速冻结层 (DEB-20261023, 2026-10-23 用户批准):
+  10/22 实证: PlaybookExitFastLoop 卡在无超时的 request_history_kline (py-spy 栈
+  freeze_20261022_214002_pid3056646.txt), 心跳正是该循环更新 → 420s 后才处置;
+  且 systemctl restart 的 SIGTERM 因进程僵死被忽略, 120s 后 SIGKILL, 端到端 ~9.5min。
+  10/23 同类: 人工在 4min 重启, 仍 SIGKILL (无栈)。
+  本层: 心跳停滞 >90s + ActiveState=active/SubState=running + TRADING + 启动宽限
+  → py-spy + SIGUSR1 (faulthandler) 双栈取证 → SIGKILL 硬停 → systemd
+  Restart=always 拉起 (~30s) → critical 告警。420s 旧层保留为兜底 (快速层禁用或
+  启动时间不可知时生效)。
+  回滚: FTSEEK_SENTINEL_FAST_S=0 (只关快速层, 不动旧层) + 删 evaluate_fast/hard_restart.
 """
 from __future__ import annotations
 
+import os
+import signal
 import subprocess
 import sys
 import time
@@ -51,6 +64,23 @@ PY_SPY = REPO / "venv" / "bin" / "py-spy"
 STACK_DIR = REPO / "logs" / "freeze_stacks"
 SERVICE = "ftseek-us"
 REVIVE_STATE = Path("/run/ftseek-freeze-sentinel.revive.state")
+RUN_LOCK = Path("/run/ftseek-freeze-sentinel.lock")
+_NO_LOCK = object()  # 锁文件不可写时照常运行 (锁是防重叠, 不是安全闸)
+STARTUP_GRACE_S = 180
+HARD_KILL_WAIT_S = 15
+RESTART_VERIFY_S = 45
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, "") or default)
+    except (TypeError, ValueError):
+        return default
+
+
+# 90s ≈ 出场快循环 10s 节拍的 9 倍; 正常一轮 K 线/报价调用远小于此.
+# 0 = 只保留 420s 旧层 (快速层回滚阀).
+FAST_STALE_S = _env_int("FTSEEK_SENTINEL_FAST_S", 90)
 
 
 # ── 纯决策 (单元测试锚点) ─────────────────────────────────────────────────
@@ -105,6 +135,36 @@ def evaluate(now_ts: float, hb_mtime, service_active: bool,
     return "enforce", f"age={age:.0f}s"
 
 
+def evaluate_fast(now_ts: float, hb_mtime, active_state: str, sub_state: str,
+                  phase_allows: bool, last_enforce_ts, started_ts,
+                  fast_stale_s: int = None) -> tuple:
+    """快速冻结层纯决策 (DEB-20261023). 返回 (action, reason); action ∈ ok|skip|enforce.
+
+    与 420s 旧层互补: 旧层等内部 heal 先出手; 快速层针对"内部 heal 也无法执行"的
+    整进程/出场循环僵死 — 心跳源就是出场快循环, 它卡住时心跳必然停滞。
+    """
+    stale_s = FAST_STALE_S if fast_stale_s is None else fast_stale_s
+    if stale_s <= 0:
+        return "skip", "fast_lane_disabled"
+    if hb_mtime is None:
+        return "skip", "heartbeat_missing"
+    age = now_ts - hb_mtime
+    if age <= stale_s:
+        return "ok", f"age={age:.0f}s"
+    if active_state != "active" or sub_state != "running":
+        return "skip", f"service_not_running({active_state}/{sub_state})"
+    if started_ts is None:
+        # 启动时间不可知时不抢跑 (交回 420s 旧层), 防重启循环.
+        return "skip", "start_time_unknown"
+    if now_ts - started_ts < STARTUP_GRACE_S:
+        return "skip", f"startup_grace({int(now_ts - started_ts)}s<{STARTUP_GRACE_S}s)"
+    if not phase_allows:
+        return "skip", "stale_but_not_trading"
+    if last_enforce_ts is not None and now_ts - last_enforce_ts < RESTART_COOLDOWN_S:
+        return "skip", f"cooldown({int(now_ts - last_enforce_ts)}s<{RESTART_COOLDOWN_S}s)"
+    return "enforce", f"age={age:.0f}s>{stale_s}s"
+
+
 def evaluate_liveness(active_state: str, result: str, now_ts: float,
                       last_revive_ts) -> tuple:
     """纯决策 (存活层)。返回 (action, reason); action ∈ ok|skip|revive.
@@ -129,30 +189,57 @@ def evaluate_liveness(active_state: str, result: str, now_ts: float,
 
 # ── 副作用层 ──────────────────────────────────────────────────────────────
 
-def service_is_active() -> bool:
+def _started_ts_from_monotonic(mono_us: str):
     try:
-        r = subprocess.run(["systemctl", "is-active", SERVICE],
-                           capture_output=True, text=True, timeout=10)
-        return r.stdout.strip() == "active"
+        mono = int(mono_us)
+        if mono <= 0:
+            return None
+        uptime = float(Path("/proc/uptime").read_text().split()[0])
+        return time.time() - (uptime - mono / 1_000_000.0)
     except Exception:
-        return True  # systemctl 不可用时不以此闸门拦截
+        return None
 
 
-def service_state() -> tuple:
-    """返回 (ActiveState, Result) — 比 is-active 多一个 Result, 用于区分
-    "运维干净停机" 与 "崩溃/ start-limit 击穿"。systemctl 不可用 → ("unknown","unknown")。"""
+def _started_ts_from_text(text: str):
+    # systemd: "Fri 2026-10-23 21:50:32 CST"
     try:
-        r = subprocess.run(["systemctl", "show", SERVICE,
-                            "-p", "ActiveState", "-p", "Result"],
-                           capture_output=True, text=True, timeout=10)
-        kv = {}
+        parts = text.split()
+        if len(parts) >= 4:
+            return datetime.strptime(" ".join(parts[1:3]), "%Y-%m-%d %H:%M:%S").timestamp()
+    except Exception:
+        pass
+    return None
+
+
+def service_runtime_state() -> tuple:
+    """返回 (ActiveState, SubState, Result, started_ts).
+
+    started_ts 供快速层做启动宽限; 不可知时返回 None → 快速层跳过, 交 420s 旧层。
+    """
+    kv = {}
+    try:
+        r = subprocess.run(
+            ["systemctl", "show", SERVICE,
+             "-p", "ActiveState", "-p", "SubState", "-p", "Result",
+             "-p", "ActiveEnterTimestampMonotonic", "-p", "ActiveEnterTimestamp"],
+            capture_output=True, text=True, timeout=10)
         for line in r.stdout.splitlines():
             if "=" in line:
                 k, v = line.split("=", 1)
                 kv[k.strip()] = v.strip()
-        return kv.get("ActiveState", "unknown"), kv.get("Result", "unknown")
     except Exception:
-        return "unknown", "unknown"
+        return "unknown", "unknown", "unknown", None
+    started_ts = _started_ts_from_monotonic(kv.get("ActiveEnterTimestampMonotonic", ""))
+    if started_ts is None:
+        started_ts = _started_ts_from_text(kv.get("ActiveEnterTimestamp", ""))
+    return (kv.get("ActiveState", "unknown"), kv.get("SubState", "unknown"),
+            kv.get("Result", "unknown"), started_ts)
+
+
+def service_state() -> tuple:
+    """返回 (ActiveState, Result) — 保留旧接口 (存活层/旧冻结层)。"""
+    active, _sub, result, _started = service_runtime_state()
+    return active, result
 
 
 def last_revive_ts():
@@ -222,6 +309,120 @@ def do_restart() -> bool:
         return False
 
 
+def _signal_caught(pid: int, signum: int) -> bool:
+    """目标进程是否捕获了该信号 (读 /proc/<pid>/status SigCgt)。"""
+    try:
+        for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+            if line.startswith("SigCgt:"):
+                return bool(int(line.split()[1], 16) & (1 << (signum - 1)))
+    except Exception:
+        return False
+    return False
+
+
+def _main_pid_alive(pid: int) -> bool:
+    try:
+        if b"main.py" not in Path(f"/proc/{pid}/cmdline").read_bytes():
+            return False
+        stat = Path(f"/proc/{pid}/stat").read_text()
+        state = stat.split(")", 1)[1].split()[0]
+        return state != "Z"
+    except Exception:
+        return False
+
+
+def _has_pending_unit_job() -> bool:
+    """systemd 是否已有在途 job (如运维正在 restart/stop) — 有则让路。"""
+    try:
+        r = subprocess.run(["systemctl", "show", SERVICE, "-p", "Job"],
+                           capture_output=True, text=True, timeout=10)
+        line = r.stdout.strip()
+        return bool(line.split("=", 1)[1].strip()) if "=" in line else False
+    except Exception:
+        return False
+
+
+def dump_inprocess_stacks(pid: int, ts: str) -> str:
+    """SIGUSR1 → faulthandler 全线程栈写 stderr (systemd 落到 ftseek_us.log)。
+
+    只有目标进程确实捕获 SIGUSR1 才发送 — 未装 faulthandler 的旧进程收到 SIGUSR1
+    的默认动作是终止, 会绕过 py-spy/SIGKILL 序列。
+    """
+    if not pid or not _signal_caught(pid, signal.SIGUSR1):
+        return "SIGUSR1 未注册 (跳过进程内栈)"
+    try:
+        os.kill(pid, signal.SIGUSR1)
+        return f"SIGUSR1 已发送 ({ts}, 栈见 logs/ftseek_us.log)"
+    except Exception as e:
+        return f"SIGUSR1 发送失败: {e}"
+
+
+def hard_restart(pid: int, ts: str) -> tuple:
+    """快速层处置: 双栈取证 → SIGKILL → 等 systemd Restart=always 拉起。
+
+    返回 (status, inproc_note)。不调 systemctl restart — 僵死进程的 SIGTERM 会被
+    忽略并拖满 120s (10/22、10/23 实证)。
+    """
+    inproc = dump_inprocess_stacks(pid, ts) if pid else "pid 未解析"
+    if pid:
+        time.sleep(3)  # 给 faulthandler 写完 stderr
+        # 处置前复核单元状态, 避免与运维 systemctl stop/restart 抢方向盘
+        state, sub, _result, _started = service_runtime_state()
+        pending_job = _has_pending_unit_job()
+        if state != "active" or sub != "running" or pending_job:
+            return f"跳过硬停: 单元 {state}/{sub} (在途 job={pending_job})", inproc
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except Exception as e:
+            return f"SIGKILL 失败, 需人工: {e}", inproc
+        deadline = time.time() + HARD_KILL_WAIT_S
+        while time.time() < deadline and _main_pid_alive(pid):
+            time.sleep(0.5)
+        if _main_pid_alive(pid):
+            return "SIGKILL 后进程仍在 (疑 D 状态), 需人工", inproc
+    else:
+        try:
+            subprocess.run(["systemctl", "kill", "-s", "SIGKILL", "--kill-who=main",
+                            SERVICE], capture_output=True, text=True, timeout=10)
+        except Exception as e:
+            return f"无 PID 且 systemctl kill 失败, 需人工: {e}", inproc
+
+    # 等 Restart=always 拉起
+    deadline = time.time() + RESTART_VERIFY_S
+    while time.time() < deadline:
+        state, sub, _result, _started = service_runtime_state()
+        if state == "active" and sub == "running":
+            return "SIGKILL 硬停成功, systemd 已自动拉起", inproc
+        time.sleep(1)
+    # 兜底: start-limit 击穿时 reset-failed + start
+    try:
+        subprocess.run(["systemctl", "reset-failed", SERVICE], timeout=60)
+    except Exception as e:
+        print(f"[freeze-sentinel] reset-failed 失败 (继续 start): {e}")
+    try:
+        subprocess.run(["systemctl", "start", SERVICE], timeout=200)
+        return "自动拉起超时, reset-failed+start 已发出", inproc
+    except Exception as e:
+        return f"重启失败, 需人工: {e}", inproc
+
+
+def acquire_run_lock():
+    """防 cron 重叠 (硬停 + 告警可能 >60s); 拿不到锁返回 None, 锁文件不可写则照常运行。"""
+    try:
+        import fcntl
+        f = open(RUN_LOCK, "a+")
+        try:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            f.close()
+            return None
+        return f
+    except Exception:
+        return _NO_LOCK
+
+
 def do_revive() -> bool:
     """start-limit 击穿后 systemd 会拒绝再拉起 → 必须先 reset-failed 清计数."""
     try:
@@ -241,6 +442,10 @@ def alert(msg: str) -> None:
 
 
 def main() -> int:
+    run_lock = acquire_run_lock()
+    if run_lock is None:
+        return 0  # 上一轮仍在处置 (硬停+告警最长 >60s), 防 cron 重叠
+
     now_ts = time.time()
     now_cst = datetime.now()
     ts = now_cst.strftime("%Y%m%d_%H%M%S")
@@ -249,7 +454,7 @@ def main() -> int:
     except Exception:
         hb_mtime = None
     phase_ok, basis = market_phase_allows(now_cst)
-    active_state, result = service_state()
+    active_state, sub_state, result, started_ts = service_runtime_state()
 
     # ── 存活层 (先判): 服务死了 → 冻结层无意义 (心跳必然停滞, 且 phase 门会挡住处置) ──
     laction, lreason = evaluate_liveness(active_state, result, now_ts, last_revive_ts())
@@ -271,7 +476,28 @@ def main() -> int:
         alert(msg)
         return 0
 
-    action, reason = evaluate(now_ts, hb_mtime, service_is_active(),
+    # ── 快速冻结层 (DEB-20261023): 出场快循环是心跳源, 它卡住 = 退出监控停摆 ──
+    faction, freason = evaluate_fast(now_ts, hb_mtime, active_state, sub_state,
+                                     phase_ok, last_enforce_ts(), started_ts)
+    if faction == "enforce":
+        pid = resolve_main_pid()
+        stack_file = dump_stacks(pid, ts) if pid else "(pid 未解析, 跳过 py-spy)"
+        status, inproc = hard_restart(pid, ts)
+        try:
+            STATE.write_text(str(now_ts))
+        except Exception as e:
+            print(f"[freeze-sentinel] 冷却态写失败 (不阻断): {e}")
+        age = int(now_ts - hb_mtime)
+        msg = (f"🚨 [freeze-sentinel·快速层] 出场快循环心跳停滞 {age}s "
+               f"(>{FAST_STALE_S}s) — 进程疑冻结 | py-spy: {stack_file} | "
+               f"{inproc} | {status} | DEB-20261023")
+        print(f"[{ts}] {msg}")
+        alert(msg)
+        return 0
+    if faction == "skip" and hb_mtime is not None and (now_ts - hb_mtime) > FAST_STALE_S:
+        print(f"[{ts}] fast skip: {freason} ({basis})")
+
+    action, reason = evaluate(now_ts, hb_mtime, active_state == "active",
                               phase_ok, last_enforce_ts())
     if action == "ok":
         return 0  # 健康静默
@@ -280,14 +506,14 @@ def main() -> int:
         return 0
     pid = resolve_main_pid()
     stack_file = dump_stacks(pid, ts) if pid else "(pid 未解析, 跳过取证)"
-    ok = do_restart()
+    status, inproc = hard_restart(pid, ts)
     try:
         STATE.write_text(str(now_ts))
     except Exception as e:
         print(f"[freeze-sentinel] 冷却态写失败 (不阻断): {e}")
     age = int(now_ts - hb_mtime) if hb_mtime is not None else -1
-    msg = (f"🚨 [freeze-sentinel] 进程冻结处置: 心跳停滞 {age}s (>420s 裁决阈值) | "
-           f"栈: {stack_file} | systemctl restart {'成功' if ok else '失败, 需人工'} | DEB-20260902 E0")
+    msg = (f"🚨 [freeze-sentinel] 进程冻结处置: 心跳停滞 {age}s (>420s 兜底阈值) | "
+           f"py-spy: {stack_file} | {inproc} | {status} | DEB-20261023")
     print(f"[{ts}] {msg}")
     alert(msg)
     return 0

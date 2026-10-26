@@ -3186,6 +3186,9 @@ def _release_live_broker_stop_for_rule_exit(dual, conn, row, meta) -> Dict[str, 
     if dealt_qty > 0:
         if _reconcile_broker_stop_exit(dual, conn, row, meta):
             return {"action": "reconciled"}
+        _alert_broker_stop_partial_fill(
+            symbol, stop_order_id, dealt_qty, quantity, row.get("direction")
+        )
         return {"action": "hold", "error": "broker_stop_fill_reconcile_pending"}
     if str(raw.get("order_status", "") or "").upper() in terminal_no_fill:
         return {"action": "proceed"}
@@ -3213,6 +3216,9 @@ def _release_live_broker_stop_for_rule_exit(dual, conn, row, meta) -> Dict[str, 
         if dealt_qty > 0:
             if _reconcile_broker_stop_exit(dual, conn, row, meta):
                 return {"action": "reconciled"}
+            _alert_broker_stop_partial_fill(
+                symbol, stop_order_id, dealt_qty, quantity, row.get("direction")
+            )
             return {"action": "hold", "error": "broker_stop_fill_reconcile_pending"}
         if str(raw.get("order_status", "") or "").upper() in terminal_no_fill:
             logger.info(
@@ -3222,6 +3228,326 @@ def _release_live_broker_stop_for_rule_exit(dual, conn, row, meta) -> Dict[str, 
             return {"action": "proceed"}
 
     return {"action": "hold", "error": "broker_stop_cancel_pending"}
+
+
+_LIVE_GUARD_ALERTED: set = set()
+_BROKER_STOP_PARTIAL_ALERTED: set = set()
+_TERMINAL_ORDER_STATUSES = frozenset({
+    "FILLED_ALL", "CANCELLED_ALL", "CANCELLED_PART", "FAILED", "DISABLED", "DELETED",
+})
+_UNSAFE_CLOSE_ERROR_MARKERS = (
+    "pending", "identity", "ledger", "account_mismatch", "reconciliation",
+    "quantity_unknown", "broker_exception",
+)
+
+
+def _alert_broker_stop_partial_fill(symbol: str, stop_order_id: str, dealt_qty: float,
+                                    requested_qty: float, direction: str = "") -> None:
+    """Aggregate one alert per STOP order; never auto-close the residual."""
+    try:
+        key = f"{symbol}:{date.today().isoformat()}:{stop_order_id}"
+        if key in _BROKER_STOP_PARTIAL_ALERTED:
+            return
+        _BROKER_STOP_PARTIAL_ALERTED.add(key)
+        if len(_BROKER_STOP_PARTIAL_ALERTED) > 512:
+            _BROKER_STOP_PARTIAL_ALERTED.clear()
+        logger.error(
+            "[playbook live] broker STOP partial/uncertain fill %s %s qty=%s/%s "
+            "stop_id=%s — keep HELD, no auto residual close",
+            symbol, direction, dealt_qty, requested_qty, stop_order_id,
+        )
+        from app.push import get_push_hub
+        from app.push.message import Level as _PushLevel
+        get_push_hub().push_text(
+            f"⚠️ [券商保护单部分成交] {symbol} {direction} "
+            f"已成交 {dealt_qty:g}/{requested_qty:g} 股, STOP={stop_order_id}. "
+            f"系统保持 HELD, 不自动平残余, 请人工核对券商持仓与退出意图.",
+            level=_PushLevel.HIGH,
+        )
+    except Exception as error:
+        logger.warning(
+            "[playbook live] broker STOP partial-fill alert failed %s: %s", symbol, error,
+            exc_info=True,
+        )
+
+
+def _halt_live_stop_protection_gap(symbol: str, reason: str, detail: str,
+                                   stop_order_id: str = "") -> dict:
+    """HIGH alert + HALT_NEW_LIVE without submitting any replacement sell order."""
+    key = f"{symbol}:{date.today().isoformat()}:{reason}"
+    try:
+        if key not in _LIVE_GUARD_ALERTED:
+            _LIVE_GUARD_ALERTED.add(key)
+            if len(_LIVE_GUARD_ALERTED) > 512:
+                _LIVE_GUARD_ALERTED.clear()
+            logger.critical(
+                "[playbook live] STOP protection gap %s reason=%s detail=%s stop_id=%s "
+                "— no replacement sell submitted; halting new LIVE entries",
+                symbol, reason, detail, stop_order_id,
+            )
+            from app.push import get_push_hub
+            from app.push.message import Level as _PushLevel
+            get_push_hub().push_text(
+                f"🚨 [LIVE 保护缺口] {symbol} {reason}: {detail}. "
+                f"系统未重复挂卖单, 已 HALT_NEW_LIVE; 请立即核对券商持仓、活动单与保护 STOP.",
+                level=_PushLevel.HIGH,
+            )
+        from app.playbook.live_arm_gate import halt_live_new_positions
+        state = halt_live_new_positions(f"broker_stop_gap:{symbol}:{reason}")
+    except Exception as error:
+        logger.error(
+            "[playbook live] STOP protection-gap HALT failed %s: %s", symbol, error,
+            exc_info=True,
+        )
+        state = {"halted": False, "reason": "halt_write_failed"}
+    return {"action": "halted", "reason": reason, "detail": detail, "halt": state}
+
+
+def _connection_db_path(conn) -> str:
+    try:
+        row = next(r for r in conn.execute("PRAGMA database_list") if r[1] == "main")
+        return str(row[2] or "")
+    except Exception:
+        return ""
+
+
+def _persist_live_stop_rehang_state(conn, trade_id: int, updates: Dict[str, Any], *,
+                                    stop_id: str = "", symbol: str = "") -> bool:
+    """Persist the one-shot guard/receipt before/after the broker call."""
+    import sqlite3
+
+    db_path = _connection_db_path(conn)
+    if not db_path or db_path == ":memory:":
+        return False
+    db = sqlite3.connect(db_path, timeout=5)
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute(
+            "SELECT metadata_json FROM trade_records WHERE id=?", (int(trade_id),)
+        ).fetchone()
+        if row is None:
+            raise ValueError("LIVE trade record missing")
+        try:
+            metadata = json.loads(row[0] or "{}")
+        except (TypeError, ValueError):
+            metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata.update(updates)
+        db.execute(
+            "UPDATE trade_records SET metadata_json=? WHERE id=?",
+            (json.dumps(metadata, ensure_ascii=False), int(trade_id)),
+        )
+        if stop_id and symbol:
+            db.execute(
+                "UPDATE open_positions SET sl_broker_order_id=? "
+                "WHERE symbol=? AND account_type='live' "
+                "AND owner_strategy='playbook_live' AND owner='auto'",
+                (str(stop_id), str(symbol)),
+            )
+        db.commit()
+        return True
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def _stop_price_from_metadata(meta: Dict[str, Any]) -> float:
+    candidates = [meta.get("stop_price")]
+    broker_stop = meta.get("broker_stop")
+    if isinstance(broker_stop, dict):
+        candidates.append(broker_stop.get("stop_price"))
+    candidates.append(meta.get("stop_loss"))
+    for value in candidates:
+        try:
+            price = float(value or 0)
+        except (TypeError, ValueError):
+            continue
+        if price > 0:
+            return price
+    return 0.0
+
+
+def _position_matches_live_short(row, position) -> bool:
+    """Require one exact US position row matching direction and full quantity."""
+    symbol = str(row.get("symbol") or "")
+    direction = str(row.get("direction") or "").upper()
+    expected = float(row.get("quantity") or 0)
+    if position.get("code") != symbol or expected <= 0:
+        return False
+    try:
+        signed = float(position.get("qty"))
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(signed) or abs(abs(signed) - expected) > max(1e-6, expected * 1e-9):
+        return False
+    side = str(position.get("position_side") or "").rsplit(".", 1)[-1].upper()
+    if side not in {"LONG", "SHORT"}:
+        side = "SHORT" if signed < 0 else "LONG"
+    return side == direction
+
+
+def _live_close_failure_is_explicit(error: Any) -> bool:
+    code = str(error or "").strip()
+    if not code:
+        return False
+    lowered = code.lower()
+    return not any(marker in lowered for marker in _UNSAFE_CLOSE_ERROR_MARKERS)
+
+
+def _maybe_rehang_live_broker_stop(dual, conn, row, meta, close_res) -> Dict[str, Any]:
+    """Attempt exactly one protective STOP rehang after an explicit close failure."""
+    symbol = str(row.get("symbol") or "")
+    stop_order_id = str(meta.get("sl_broker_order_id") or "").strip()
+    if row.get("source_type") != "PLAYBOOK_LIVE" or not stop_order_id:
+        return {"action": "not_applicable"}
+    if meta.get("stop_rehang_attempted") or int(meta.get("stop_rehang_count") or 0) >= 1:
+        # The first attempt may have succeeded and its STOP was later released by
+        # the next rule-exit try.  Returning silently here would leave the LIVE
+        # position unprotected after a second explicit close failure.  Keep the
+        # one-shot no-resubmit rule, but surface the gap and stop new LIVE entries.
+        return _halt_live_stop_protection_gap(
+            symbol, "stop_rehang_already_attempted",
+            f"previous_stop_id={stop_order_id}", stop_order_id,
+        )
+
+    error = str(close_res.get("error") or "")
+    try:
+        dealt_qty = float(close_res.get("dealt_qty") or 0)
+    except (TypeError, ValueError):
+        dealt_qty = 0.0
+    if close_res.get("order_filled") or dealt_qty > 0 or not _live_close_failure_is_explicit(error):
+        return _halt_live_stop_protection_gap(
+            symbol, "close_outcome_unknown", error or "exit evidence pending", stop_order_id,
+        )
+
+    stop_price = _stop_price_from_metadata(meta)
+    direction = str(row.get("direction") or "").upper()
+    quantity = float(row.get("quantity") or 0)
+    if stop_price <= 0:
+        return _halt_live_stop_protection_gap(
+            symbol, "stop_price_missing", f"stop_id={stop_order_id}", stop_order_id,
+        )
+
+    attempt_updates = {
+        "stop_rehang_attempted": True,
+        "stop_rehang_count": int(meta.get("stop_rehang_count") or 0) + 1,
+        "stop_rehang_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "stop_rehang_close_error": error,
+    }
+    meta.update(attempt_updates)
+    persist_error = None
+    try:
+        persisted = _persist_live_stop_rehang_state(
+            conn, int(row["id"]), attempt_updates, symbol=symbol,
+        )
+
+    except Exception as error:
+        persist_error = error
+        logger.error(
+            "[playbook live] rehang guard persist failed %s: %s", symbol, persist_error,
+            exc_info=True,
+        )
+        persisted = False
+    if not persisted:
+        return _halt_live_stop_protection_gap(
+            symbol, "rehang_guard_persist_failed", str(persist_error or "db unavailable"),
+            stop_order_id,
+        )
+
+    position_result = dual.query_positions("real", refresh_cache=True)
+    if not position_result.get("success"):
+        return _halt_live_stop_protection_gap(
+            symbol, "position_check_unavailable", position_result.get("error", ""), stop_order_id,
+        )
+    matches = [p for p in position_result.get("positions", []) if p.get("code") == symbol]
+    if len(matches) != 1 or not _position_matches_live_short(row, matches[0]):
+        return _halt_live_stop_protection_gap(
+            symbol, "position_changed_or_ambiguous",
+            f"matches={len(matches)} expected_qty={quantity:g}", stop_order_id,
+        )
+
+    orders_result = dual.query_symbol_orders(symbol, target_env="real")
+    if not orders_result.get("success"):
+        return _halt_live_stop_protection_gap(
+            symbol, "active_order_check_unavailable", orders_result.get("error", ""), stop_order_id,
+        )
+    close_side = "SELL" if direction == "LONG" else "BUY"
+    active_close_orders = []
+    for order in orders_result.get("orders", []):
+        status = str(order.get("order_status") or "").rsplit(".", 1)[-1].upper()
+        if status in _TERMINAL_ORDER_STATUSES:
+            continue
+        side = str(order.get("trd_side") or "").rsplit(".", 1)[-1].upper()
+        if side == close_side or side not in {"BUY", "SELL"}:
+            active_close_orders.append(str(order.get("order_id") or ""))
+    if active_close_orders:
+        return _halt_live_stop_protection_gap(
+            symbol, "active_close_order_present", ",".join(active_close_orders), stop_order_id,
+        )
+
+    replacement = dual.place_protective_stop(
+        symbol, quantity, direction, stop_price, target_env="real",
+    )
+    if not isinstance(replacement, dict):
+        replacement = {"success": False, "error": f"invalid_result:{type(replacement).__name__}"}
+    new_stop_id = str(replacement.get("futu_order_id") or "").strip()
+    if not replacement.get("success") or not new_stop_id:
+        detail = str(replacement.get("error") or replacement.get("reason") or replacement)
+        return _halt_live_stop_protection_gap(
+            symbol, "stop_rehang_failed", detail, stop_order_id,
+        )
+
+    receipt = {
+        "sl_broker_order_id": new_stop_id,
+        "stop_rehang_order_id": new_stop_id,
+        "stop_rehang_succeeded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "stop_rehang_replaced_order_id": stop_order_id,
+        "stop_rehang_stop_price": stop_price,
+    }
+    meta.update(receipt)
+    try:
+        receipt_saved = _persist_live_stop_rehang_state(
+            conn, int(row["id"]), receipt, stop_id=new_stop_id, symbol=symbol,
+        )
+    except Exception as receipt_error:
+        logger.error(
+            "[playbook live] rehang receipt persist failed %s: %s", symbol, receipt_error,
+            exc_info=True,
+        )
+        receipt_saved = False
+    if not receipt_saved:
+        return _halt_live_stop_protection_gap(
+            symbol, "rehang_receipt_persist_failed", f"new_stop_id={new_stop_id}", new_stop_id,
+        )
+    logger.warning(
+        "[playbook live] protective STOP rehung once %s qty=%s price=%s old=%s new=%s",
+        symbol, quantity, stop_price, stop_order_id, new_stop_id,
+    )
+    return {"action": "rehung", "futu_order_id": new_stop_id, "stop_price": stop_price}
+
+
+def _handle_live_rule_exit_failure(dual, conn, row, meta, close_res) -> Dict[str, Any]:
+    """Route a rule-exit failure to safe one-shot recovery or HALT_NEW_LIVE."""
+    try:
+        if row.get("source_type") != "PLAYBOOK_LIVE":
+            return {"action": "not_applicable"}
+        if not str(meta.get("sl_broker_order_id") or "").strip():
+            return {"action": "not_applicable"}
+        if close_res.get("success"):
+            return {"action": "not_applicable"}
+        return _maybe_rehang_live_broker_stop(dual, conn, row, meta, close_res)
+    except Exception as error:
+        logger.exception(
+            "[playbook live] rehang handler failed %s (fail-close to HALT)",
+            row.get("symbol"),
+        )
+        return _halt_live_stop_protection_gap(
+            str(row.get("symbol") or ""), "rehang_handler_error", str(error),
+            str(meta.get("sl_broker_order_id") or ""),
+        )
 
 
 def _annotate_breakeven_close_telemetry(
@@ -3652,6 +3978,7 @@ def monitor_playbook_exits(scheduler) -> int:
         _portfolio_backstop_evaluate=_portfolio_backstop_evaluate,
         _reconcile_broker_stop_exit=_reconcile_broker_stop_exit,
         _release_live_broker_stop_for_rule_exit=_release_live_broker_stop_for_rule_exit,
+        _handle_live_rule_exit_failure=_handle_live_rule_exit_failure,
         _resume_playbook_exits=_resume_playbook_exits,
         _sl_fallback_exit_reason=_sl_fallback_exit_reason,
         _track_bar_peak_trough=_track_bar_peak_trough,
@@ -3723,6 +4050,7 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
         _playbook_exit_decision=_playbook_exit_decision,
         _playbook_exit_owner=_playbook_exit_owner,
         _release_live_broker_stop_for_rule_exit=_release_live_broker_stop_for_rule_exit,
+        _handle_live_rule_exit_failure=_handle_live_rule_exit_failure,
         _resume_playbook_exits=_resume_playbook_exits,
         _today_et_str=_today_et_str,
     )

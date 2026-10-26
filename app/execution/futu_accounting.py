@@ -23,8 +23,44 @@ def _rounded(value: float) -> float:
     return round(value, 2)
 
 
+def _risk_scalar(value: Any) -> Any:
+    """Preserve broker risk fields without pretending N/A is numeric zero."""
+    if value is None:
+        return "N/A"
+    if type(value).__name__ in ("bool", "bool_"):
+        return bool(value)
+    if isinstance(value, str):
+        text = value.strip()
+        return text or "N/A"
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return str(value)
+    if not math.isfinite(number):
+        return "N/A"
+    return int(number) if number.is_integer() else number
+
+
+def _risk_fields(raw: Mapping[str, Any]) -> dict:
+    """Broker-native account risk fields.
+
+    ``exposure_limit/used_limit/remaining_limit`` and
+    ``beginning_dtbp/remaining_dtbp/dt_call_amount`` are broker amount fields;
+    they are intentionally **not** FX-converted here because Futu already returns
+    them in the account's risk currency and the REAL account may report ``N/A``.
+    ``pdt_seq`` is a count; the remaining fields are broker enums/booleans.
+    The Dashboard labels them as broker-native to avoid a false USD claim.
+    """
+    fields = (
+        "risk_status", "risk_level", "exposure_level", "exposure_limit",
+        "used_limit", "remaining_limit", "is_pdt", "pdt_seq", "beginning_dtbp",
+        "dt_status", "remaining_dtbp", "dt_call_amount",
+    )
+    return {field: _risk_scalar(raw.get(field, "N/A")) for field in fields}
+
+
 def _direct_account(raw: Mapping[str, Any], currency: str) -> dict:
-    return {
+    account = {
         "total_assets": _safe_float(raw.get("total_assets")),
         "cash": _safe_float(raw.get("cash")),
         "market_val": _safe_float(raw.get("market_val")),
@@ -49,6 +85,8 @@ def _direct_account(raw: Mapping[str, Any], currency: str) -> dict:
         "raw_currency": currency,
         "fx": 1.0,
     }
+    account.update(_risk_fields(raw))
+    return account
 
 
 def normalize_futu_account(
@@ -114,7 +152,7 @@ def normalize_futu_account(
     long_mv = _safe_float(raw.get("long_mv")) * fx_rate
     short_mv = abs(_safe_float(raw.get("short_mv"))) * fx_rate
 
-    return {
+    account = {
         "total_assets": _rounded(total_assets * fx_rate),
         "cash": _rounded(cash),
         "market_val": _rounded(_safe_float(raw.get("market_val")) * fx_rate),
@@ -158,3 +196,5 @@ def normalize_futu_account(
             "usd_net_cash_power" if usd_power > 0 else f"power×{fx_rate:.4f}"
         ),
     }
+    account.update(_risk_fields(raw))
+    return account

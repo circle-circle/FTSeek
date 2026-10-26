@@ -356,6 +356,11 @@ class ManualOrderService:
         from app.web_dashboard.order.executor import get_today_orders
         return get_today_orders(self)
 
+    def get_today_orders_with_status(self) -> Dict[str, Any]:
+        """查询今日订单 + 来源/券商查询状态 (runtime 契约)."""
+        from app.web_dashboard.order.executor import get_today_orders_with_status
+        return get_today_orders_with_status(self)
+
     def cancel_order(self, order_id: str) -> Dict[str, Any]:
         """撤销指定订单."""
         from app.web_dashboard.order.executor import cancel_order

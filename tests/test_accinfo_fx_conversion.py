@@ -41,6 +41,10 @@ RAW_REAL_HKD = {
     "securities_assets": "660473.7899999999",
     "debt": "10000.0", "interest_debt": "500.0",
     "short_sell_power": "100000.0", "net_assets_power": "600000.0",
+    "risk_status": "LEVEL3", "risk_level": "N/A", "exposure_level": "SAFE",
+    "exposure_limit": "N/A", "used_limit": "N/A", "remaining_limit": "N/A",
+    "is_pdt": "N/A", "pdt_seq": "N/A", "beginning_dtbp": "N/A",
+    "dt_status": "N/A", "remaining_dtbp": "N/A", "dt_call_amount": "N/A",
 }
 
 
@@ -142,6 +146,28 @@ def test_dashboard_account_paths_share_broker_hkd_caliber():
     assert _parse_account(RAW_REAL_HKD)["avl_cash"] == pytest.approx(
         31513.55, abs=0.01
     )
+
+
+def test_broker_risk_fields_pass_through_without_fake_usd_values():
+    """P1 DEB-20261025: risk fields survive both normalization and Dashboard."""
+    parsed = _parse_account(RAW_REAL_HKD)
+    assert parsed["risk_status"] == "LEVEL3"
+    assert parsed["risk_level"] == "N/A"
+    assert parsed["exposure_level"] == "SAFE"
+    assert parsed["remaining_limit"] == "N/A"
+    assert parsed["is_pdt"] == "N/A"
+    assert parsed["pdt_seq"] == "N/A"
+    assert parsed["remaining_dtbp"] == "N/A"
+    assert parsed["risk_fields_currency"] == "broker_native"
+
+    converted = DataService.to_usd(RAW_REAL_HKD)
+    for field in (
+        "risk_status", "risk_level", "exposure_level", "exposure_limit",
+        "used_limit", "remaining_limit", "is_pdt", "pdt_seq", "beginning_dtbp",
+        "dt_status", "remaining_dtbp", "dt_call_amount",
+    ):
+        assert converted[field] == parsed[field]
+    assert converted["risk_fields_currency"] == "broker_native"
 
 
 def test_order_capacity_route_uses_shared_hkd_caliber(monkeypatch):

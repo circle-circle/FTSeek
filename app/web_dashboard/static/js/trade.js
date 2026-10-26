@@ -26,8 +26,116 @@
         // 声明在顶部以避免 TDZ —— updateEstimate 早于轮询段执行也要能安全读。
         let _gates = null;
         let _gatesTimer = null;
+        // 服务端下发的 runtime/capabilities — 前端只消费, 不自行猜测能否交易。
+        let _runtime = null;
         const _riskCfg = { riskPct: 0.01, maxPct: 0.05 };
         const isLive = (window.__CONFIG__ && window.__CONFIG__.isLive) || false;
+
+        const _RUNTIME_LABELS = {
+            broker: {connected:'券商已连接', degraded:'券商数据降级', disconnected:'券商不可用', unknown:'券商未确认'},
+            quotes: {live:'报价实时', degraded:'报价降级', unknown:'报价逐单校验'},
+            positions: {live:'持仓实时', degraded:'持仓为本地兜底', unknown:'持仓未确认'},
+            orders: {live:'订单实时', degraded:'订单为本地审计', unknown:'订单未确认'},
+            market: {regular:'盘中', pre:'盘前', after:'盘后', closed:'休市', unknown:'时段未知'}
+        };
+
+        function _runtimeCan(action) {
+            return !!(_runtime && _runtime.capabilities && _runtime.capabilities[action] === true);
+        }
+
+        function _runtimeLabel(kind, value) {
+            return (_RUNTIME_LABELS[kind] && _RUNTIME_LABELS[kind][value]) || value || '未知';
+        }
+
+        function _formatEtTime(iso) {
+            if (!iso) return '';
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return '';
+            try {
+                return d.toLocaleTimeString('en-US', {
+                    timeZone: 'America/New_York', hour12: false,
+                    hour: '2-digit', minute: '2-digit', second: '2-digit'
+                }) + ' ET';
+            } catch (e) { return ''; }
+        }
+
+        function _runtimeGuard(action, modal) {
+            if (_runtimeCan(action)) return true;
+            const name = {place:'开仓', reduce:'平仓/减仓', cancel:'撤单', modify_stop:'修改止损'}[action] || action;
+            let msg = '交易状态确认中，请稍候';
+            if (_runtime) {
+                const reason = (_runtime.reasons || [])[0];
+                msg = `只读：${name}当前不可用${reason ? ' — ' + reason : ''}`;
+            }
+            if (modal) showResult('🔒', msg); else showMsg('err', msg);
+            return false;
+        }
+
+        function _setRuntimeButton(id, allowed, reason, opts) {
+            const btn = document.getElementById(id);
+            if (!btn) return;
+            opts = opts || {};
+            // 允许态不要覆盖价格偏离勾选/提交中的临时禁用; 禁止态永远优先。
+            if (allowed && (btn.dataset.busy === '1' || opts.enableWhenAllowed === false)) return;
+            btn.disabled = !allowed;
+            btn.title = allowed ? '' : (reason || '当前运行状态不允许此动作');
+        }
+
+        function applyRuntimeState(rt) {
+            _runtime = rt || null;
+            const banner = document.getElementById('runtimeBanner');
+            const caps = (_runtime && _runtime.capabilities) || {};
+            _setRuntimeButton('btnSubmit', caps.place === true, (_runtime && (_runtime.reasons || [])[0]) || '');
+            _setRuntimeButton('confirmBtn', caps.place === true, (_runtime && (_runtime.reasons || [])[0]) || '', {enableWhenAllowed:false});
+            _setRuntimeButton('closeConfirmBtn', caps.reduce === true, (_runtime && (_runtime.reasons || [])[0]) || '', {enableWhenAllowed:false});
+            if (!banner || !_runtime) return;
+
+            const broker = _runtime.broker || 'unknown';
+            const tone = (broker === 'disconnected' || broker === 'unknown') ? 'danger'
+                : (broker === 'degraded' || _runtime.positions === 'degraded'
+                    || _runtime.orders === 'degraded' || _runtime.quotes === 'degraded'
+                    || caps.place === false) ? 'warn' : 'ok';
+            const parts = [
+                _runtimeLabel('quotes', _runtime.quotes),
+                _runtimeLabel('positions', _runtime.positions),
+                _runtimeLabel('orders', _runtime.orders),
+                _runtimeLabel('market', _runtime.market)
+            ];
+            const timeLabel = _formatEtTime(_runtime.as_of);
+            const checkedAt = _formatEtTime(_runtime.runtime_as_of);
+            const reason = (_runtime.reasons || [])[0] || '';
+            const readOnly = broker === 'disconnected' || broker === 'unknown';
+            banner.className = 'runtime-banner ' + tone;
+            banner.title = (_runtime.reasons || []).join('\n');
+            banner.innerHTML = '<span class="runtime-dot"></span>'
+                + '<b>' + (readOnly ? '只读模式 · ' : '') + escHtml(_runtimeLabel('broker', broker)) + '</b>'
+                + '<span class="runtime-sep">·</span>'
+                + parts.map(function(p) { return '<span>' + escHtml(p) + '</span>'; }).join('<span class="runtime-sep">·</span>')
+                + (timeLabel ? '<span class="runtime-sep">·</span><span>数据 ' + escHtml(timeLabel) + '</span>'
+                    : (checkedAt ? '<span class="runtime-sep">·</span><span>校验 ' + escHtml(checkedAt) + '</span>' : ''))
+                + (reason ? '<span class="runtime-sep">·</span><span class="runtime-reason">' + escHtml(reason) + '</span>' : '');
+            // 横幅与摘要条的新鲜度必须同源；断线时不能再显示绿色“实时”。
+            if (readOnly) {
+                const dot = document.querySelector('.ts-dot');
+                if (dot) { dot.classList.add('stale'); dot.classList.remove('degraded'); }
+                const freshEl = document.getElementById('tsFreshText');
+                if (freshEl) {
+                    freshEl.textContent = '离线';
+                    freshEl.style.color = '#f87171';
+                    freshEl.title = '券商连接不可用；仅展示最近缓存/本地台账';
+                }
+            }
+        }
+
+        function showRuntimeUnavailable(reason) {
+            applyRuntimeState({
+                broker:'unknown', account:'unknown', quotes:'unknown', positions:'unknown',
+                orders:'unknown', market:'unknown', as_of:null,
+                runtime_as_of:new Date().toISOString(),
+                capabilities:{place:false, reduce:false, cancel:false, modify_stop:false},
+                reasons:[reason || '交易状态读取失败；已切换只读']
+            });
+        }
 
         function formatHoldingTime(created_at) {
             if (!created_at) return '--';
@@ -213,7 +321,6 @@
             const srcStr = '(' + (s.sourceLabel || s.source || '') + ')';
             const labelTxt = (s.source === 'battle_plan' ? 'AI建议:' : '建议:');
             let html = '';
-            html += '<span class="ai-icon">💡</span>';
             html += '<span class="ai-label">' + labelTxt + '</span>';
             html += '<span class="ai-val">' + s.shares + '股</span>';
             html += '<span class="ai-sep">·</span>';
@@ -326,7 +433,7 @@
                 group.style.display = 'block';
                 check.checked = true;
                 autoHint.style.display = 'block';
-                autoHint.textContent = `⚡ 已自动开启 — 当前处于${phase === 'PRE_MARKET' ? '盘前' : '盘后'}时段`;
+                autoHint.textContent = `已自动开启 — 当前处于${phase === 'PRE_MARKET' ? '盘前' : '盘后'}时段`;
                 if (closedHint) closedHint.style.display = 'none';
                 // 盘前盘后强制切换为限价单
                 const otypeEl = document.getElementById('orderType');
@@ -342,7 +449,7 @@
                 autoHint.style.display = 'none';
                 if (closedHint) {
                     closedHint.style.display = 'block';
-                    closedHint.textContent = '⏳ ' + getNextSessionText(phase, etMinutes) + ' · 已开启盘前/盘后成交';
+                    closedHint.textContent = getNextSessionText(phase, etMinutes) + ' · 已开启盘前/盘后成交';
                 }
                 // 休市也强制限价单
                 const otypeEl2 = document.getElementById('orderType');
@@ -391,6 +498,7 @@
         }
 
         async function takeoverPos(symbol) {
+            if (!_runtimeGuard('modify_stop', false)) return;
             try {
                 const resp = await fetch('/api/positions/takeover', {
                     method: 'POST',
@@ -770,9 +878,12 @@
                 const on = this.checked;
                 window._priceWarnAck = on;
                 confirmBtn.disabled = !on;
-                confirmBtn.style.opacity = on ? '1' : '0.5';
-                confirmBtn.style.cursor = on ? 'pointer' : 'not-allowed';
-                confirmBtn.textContent = on ? w.ackText : w.gateText;
+                // 价格偏离确认不能覆盖服务端下发的只读态；执行时仍有 guard 兜底。
+                if (!confirmBtn.disabled && !_runtimeCan('place')) confirmBtn.disabled = true;
+                const allowed = !confirmBtn.disabled;
+                confirmBtn.style.opacity = allowed ? '1' : '0.5';
+                confirmBtn.style.cursor = allowed ? 'pointer' : 'not-allowed';
+                confirmBtn.textContent = allowed ? w.ackText : w.gateText;
             });
         }
 
@@ -930,6 +1041,7 @@
         }
 
         function previewOrder() {
+          if (!_runtimeGuard('place', false)) return;
           try {
             let sym = document.getElementById('symbol').value.trim().toUpperCase();
             if (!sym.includes('.')) { sym = 'US.' + sym; document.getElementById('symbol').value = sym; }
@@ -1015,6 +1127,9 @@
             // ── 价格偏离检测 (P0 2026-06-15: SNDK 事故防护) ──
             // 仅盘中实时行情有效; 盘前/盘后/休市时报价不准, 跳过检测
             const confirmBtn = document.getElementById('confirmBtn');
+            confirmBtn.disabled = !_runtimeCan('place');
+            confirmBtn.style.opacity = confirmBtn.disabled ? '0.5' : '1';
+            confirmBtn.style.cursor = confirmBtn.disabled ? 'not-allowed' : 'pointer';
             const _skipDevCheck = (phase !== 'REGULAR');
             // B8: 阈值改读 /api/trade/gates —— 后端 validator 用的就是这组服务常量
             // (PRICE_DEVIATION_WARN_PCT=5.0 / HARD_PCT=10.0), 前端再硬编码一份 5/10
@@ -1068,6 +1183,7 @@
 
         async function executeOrder() {
             if (!pendingOrder) return;
+            if (!_runtimeGuard('place', false)) return;
             const order = pendingOrder;
             // 传递价格偏离确认标志
             if (window._priceWarnAck) {
@@ -1078,7 +1194,7 @@
             closePreview();
             // ── Mobile fix: 全屏加载遮罩 + 按钮禁用 (防重复点击, 2026-06-18) ──
             const confirmBtn = document.getElementById('confirmBtn');
-            if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = '提交中...'; }
+            if (confirmBtn) { confirmBtn.dataset.busy = '1'; confirmBtn.disabled = true; confirmBtn.textContent = '提交中...'; }
             var _loadingOverlay = document.getElementById('orderLoadingOverlay');
             if (!_loadingOverlay) {
                 _loadingOverlay = document.createElement('div');
@@ -1136,7 +1252,7 @@
                 showMsg('err', `❌ ${e.name === 'AbortError' ? '请求超时(30s)，请检查网络后重试' : e.message}`);
             } finally {
                 if (_loadingOverlay) _loadingOverlay.style.display = 'none';
-                if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '确认下单'; }
+                if (confirmBtn) { delete confirmBtn.dataset.busy; confirmBtn.disabled = !_runtimeCan('place'); confirmBtn.textContent = '确认下单'; }
             }
         }
 
@@ -1202,8 +1318,12 @@
             html += '<div class="diag-action ' + sig.actionCls + '">' + escHtml(sig.action) + '</div>';
             sig.reasons.forEach(r => { html += '<div class="diag-reason">' + escHtml(r) + '</div>'; });
             html += '<div class="diag-btns">';
-            html += '<button class="diag-btn" onclick="closePos(\'' + escHtml(sym) + '\',' + qty + ',true)">平半仓</button>';
-            html += '<button class="diag-btn danger" onclick="closePos(\'' + escHtml(sym) + '\',' + qty + ',false)">全平</button>';
+            if (_runtimeCan('reduce')) {
+                html += '<button class="diag-btn" onclick="closePos(\'' + escHtml(sym) + '\',' + qty + ',true)">平半仓</button>';
+                html += '<button class="diag-btn danger" onclick="closePos(\'' + escHtml(sym) + '\',' + qty + ',false)">全平</button>';
+            } else {
+                html += '<span class="diag-btn" style="opacity:.55;cursor:not-allowed" title="券商/持仓状态未确认">平仓锁定</span>';
+            }
             html += '<a class="diag-btn" href="/stock/' + encodeURIComponent(sym) + '">详情 →</a>';
             // 查找该标的的活跃挂单, 提供撤单按钮
             var pendingForSym = (_brokerOrders || []).filter(function(o) {
@@ -1211,7 +1331,7 @@
                 return o.code === sym && st.indexOf('FILLED') < 0 && st.indexOf('CANCEL') < 0
                     && st.indexOf('FAIL') < 0 && st.indexOf('REJECT') < 0;
             });
-            if (pendingForSym.length > 0) {
+            if (pendingForSym.length > 0 && _runtimeCan('cancel')) {
                 html += '<button class="diag-btn" style="border-color:#f59e0b;color:#fbbf24" onclick="cancelOrder(\'' + escHtml(pendingForSym[0].order_id) + '\');hideDiag()">撤挂单 (' + pendingForSym.length + ')</button>';
             }
             html += '</div>';
@@ -1240,6 +1360,7 @@
         let closeCtx = null;
 
         function closePos(sym, totalQty, isHalf) {
+            if (!_runtimeGuard('reduce', true)) return;
             const absQty = Math.abs(parseInt(totalQty) || 0);
             if (!absQty) { showResult('⚠️', `${sym} 无持仓`); return; }
             closeCtx = { sym, absQty };
@@ -1258,7 +1379,10 @@
             document.getElementById('closeReasonInput').value = '';
             renderCloseReasonChips('');
             document.getElementById('closeError').style.display = 'none';
-            document.getElementById('closeConfirmBtn').textContent = '确认平仓';
+            const closeBtn = document.getElementById('closeConfirmBtn');
+            closeBtn.disabled = !_runtimeCan('reduce');
+            closeBtn.title = closeBtn.disabled ? '当前运行状态不允许平仓' : '';
+            closeBtn.textContent = '确认平仓';
             document.getElementById('closeModal').classList.add('show');
             setTimeout(() => document.getElementById('closeQtyInput').focus(), 100);
             hydrateCloseSessionHint(sym);
@@ -1345,6 +1469,7 @@
 
         async function executeClose() {
             if (!closeCtx) return;
+            if (!_runtimeGuard('reduce', true)) return;
             const { sym, absQty } = closeCtx;
             const errEl = document.getElementById('closeError');
             errEl.style.display = 'none';
@@ -1363,6 +1488,7 @@
             const reason = document.getElementById('closeReasonInput').value.trim();
 
             const btn = document.getElementById('closeConfirmBtn');
+            btn.dataset.busy = '1';
             btn.disabled = true;
             btn.textContent = '提交中...';
 
@@ -1395,7 +1521,8 @@
                 closeCloseModal();
                 showResult('❌', e.message);
             } finally {
-                btn.disabled = false;
+                delete btn.dataset.busy;
+                btn.disabled = !_runtimeCan('reduce');
                 btn.textContent = '确认平仓';
             }
         }
@@ -1409,11 +1536,13 @@
 
         let _pendingCancelId = null;
         function cancelOrder(id) {
+            if (!_runtimeGuard('cancel', false)) return;
             _pendingCancelId = id;
             document.getElementById('confirmText').textContent = `确认撤销订单 ${id}？`;
             document.getElementById('confirmModal').classList.add('show');
         }
         async function _executeCancel() {
+            if (!_runtimeGuard('cancel', false)) return;
             const id = _pendingCancelId;
             document.getElementById('confirmModal').classList.remove('show');
             if (!id) return;
@@ -1492,10 +1621,14 @@
             if (topAlert && topScore >= 30) {
                 banner.style.display = 'block';
                 const icon = topAlert.type === 'danger' ? '🔴' : topAlert.type === 'warning' ? '🟡' : '💰';
+                const closeAction = String(topAlert.actionFn || '').indexOf('closePos') === 0;
+                const actionHtml = (closeAction && !_runtimeCan('reduce'))
+                    ? '<span class="attn-action" style="font-size:12px;opacity:.7">只读</span>'
+                    : '<span class="attn-action"><button class="attn-btn" onclick="' + topAlert.actionFn + '">' + topAlert.action + '</button></span>';
                 banner.innerHTML = '<div class="attn-banner ' + topAlert.type + '">' +
                     '<span class="attn-icon">' + icon + '</span>' +
                     '<span class="attn-text">' + topAlert.msg + '</span>' +
-                    '<span class="attn-action"><button class="attn-btn" onclick="' + topAlert.actionFn + '">' + topAlert.action + '</button></span></div>';
+                    actionHtml + '</div>';
             } else {
                 banner.style.display = 'none';
             }
@@ -1508,17 +1641,25 @@
         async function loadTradeSnapshot() {
             try {
                 const res = await fetch('/api/trade/snapshot');
-                if (!res.ok) { console.error('snapshot HTTP error:', res.status); return; }
+                if (!res.ok) {
+                    console.error('snapshot HTTP error:', res.status);
+                    showRuntimeUnavailable('状态接口 HTTP ' + res.status + '；已切换只读');
+                    return;
+                }
                 const d = await res.json();
                 // B7 (批3): 原每轮 console.log('[snapshot]', …) 已删 —— 盘中 5s 一轮 =
                 // 每分钟 12 行浏览器控制台噪声, 且与后端 [trade/snapshot] 日志同内容双份
                 // (后端那条同批降为 debug)。异常路径的 console.error 全部保留。
 
+                if (d.runtime) applyRuntimeState(d.runtime);
+                else showRuntimeUnavailable('后端未下发运行时状态；已切换只读');
+
                 const positions = (d.positions || []).filter(p => p.qty !== 0);
                 document.getElementById('posCount').textContent = `(${positions.length})`;
 
                 // Phase A (2026-07-12): 数据新鲜度 — 任一持仓现价非实时即视为降级
-                const degraded = !!d.stale || positions.some(p => p.stale);
+                const brokerOffline = !!(_runtime && (_runtime.broker === 'disconnected' || _runtime.broker === 'unknown'));
+                const degraded = !!d.stale || positions.some(p => p.stale) || brokerOffline;
 
                 // ── 更新顶部摘要条 ──
                 const acc = d.account || {};
@@ -1576,14 +1717,16 @@
                 // 数据新鲜度 (Phase A: 三态 — 绿=实时券商 / 黄=降级(成本价) / 灰=离线)
                 const dot = document.querySelector('.ts-dot');
                 if (dot) {
-                    dot.classList.remove('stale');
-                    dot.classList.toggle('degraded', degraded);
+                    dot.classList.toggle('stale', brokerOffline);
+                    dot.classList.toggle('degraded', !brokerOffline && degraded);
                 }
                 const freshEl = document.getElementById('tsFreshText');
                 if (freshEl) {
-                    freshEl.textContent = degraded ? '降级·成本价' : '实时';
-                    freshEl.style.color = degraded ? '#d29922' : '#8b949e';
-                    freshEl.title = degraded ? '券商实时数据不可用, 现价用成本价占位, 浮盈/今日盈亏暂不可知' : ('数据时间 ' + (d.as_of || ''));
+                    freshEl.textContent = brokerOffline ? '离线' : (degraded ? '降级·成本价' : '实时');
+                    freshEl.style.color = brokerOffline ? '#f87171' : (degraded ? '#d29922' : '#8b949e');
+                    freshEl.title = brokerOffline
+                        ? '券商连接不可用；仅展示最近缓存/本地台账'
+                        : (degraded ? '券商实时数据不可用, 现价用成本价占位, 浮盈/今日盈亏暂不可知' : ('数据时间 ' + (d.as_of || '')));
                 }
                 _failCount = 0;
                 // 清除之前的错误提示
@@ -1648,10 +1791,16 @@
                         // 一个 10px 色点, 要看数字必须点开弹层 —— 而注意力横幅的最高优先级恰恰是
                         // "距止损 < 2%"。现升为独立列 (数据本就在 snapshot.stop_distances), 色点与
                         // 弹层保留为动作入口。ATR 估算值显式标 "~", 不伪装成系统真实 SL。
+                        const protMeta = {
+                            broker_attached: {label:'券商单', color:'#4ade80', title:'本地记录显示券商端已挂止损单（未逐单向券商核验）'},
+                            db_only: {label:'仅DB', color:'#fbbf24', title:'止损只存在本地 DB，券商端未确认挂单'},
+                            none: {label:'无保护', color:'#f87171', title:'系统未找到该持仓的止损保护'},
+                            unknown: {label:'未知', color:'#8b949e', title:'保护状态查询失败，不能据此判断已保护'}
+                        }[p.protection_state] || {label:'未知', color:'#8b949e', title:'保护状态未知'};
                         const slCell = slData
                             ? `<div style="font-size:12px;font-weight:700;color:${slData.danger ? '#f87171' : (slData.sl_distance_pct < 5 ? '#fbbf24' : '#8b949e')}">${slData.sl_distance_pct.toFixed(1)}%${slData.atr_estimated ? '<span title="止损位为 ATR 估算 (非系统实际 SL)">~</span>' : ''}</div>`
-                              + `<div style="font-size:11px;color:#8b949e">$${(slData.stop_loss || 0).toFixed(2)}</div>`
-                            : '<div style="color:#8b949e">--</div>';
+                              + `<div style="font-size:11px;color:#8b949e">$${(slData.stop_loss || 0).toFixed(2)} <span style="color:${protMeta.color};font-weight:600" title="${protMeta.title}">${protMeta.label}</span></div>`
+                            : `<div style="color:#8b949e">--</div><div style="font-size:11px;color:${protMeta.color}" title="${protMeta.title}">${protMeta.label}</div>`;
                         // 点击代码跳转交易页面并带入代码+数量
                         const tradeUrl = '/trade?symbol=' + encodeURIComponent(sym) + '&qty=' + qty;
                         return `<tr onclick="showDiag('${escHtml(sym)}', this)" style="cursor:pointer">
@@ -1695,6 +1844,7 @@
                 renderUnifiedOrders();
             } catch (e) {
                 console.error('Trade snapshot error:', e);
+                showRuntimeUnavailable('交易状态读取失败；已切换只读');
                 _failCount++;
                 const dot = document.querySelector('.ts-dot');
                 if (dot) { dot.classList.add('stale'); dot.classList.remove('degraded'); }
@@ -1869,9 +2019,10 @@
                 var note = '';
                 if (o.remark) note = escHtml(String(o.remark).substring(0, 30));
                 var oid = String(o.order_id || '');
-                var cancelBtn = canCancel && oid
+                var cancelBtn = canCancel && oid && _runtimeCan('cancel')
                     ? '<button class="btn-cancel" style="font-size:11px;padding:4px 10px;min-height:auto" onclick="event.stopPropagation();cancelOrder(\'' + escHtml(oid) + '\')">撤单</button>'
-                    : (isFilled ? '<span style="font-size:11px;color:#4ade80">已成交</span>' : '');
+                    : (isFilled ? '<span style="font-size:11px;color:#4ade80">已成交</span>'
+                        : (canCancel ? '<span style="font-size:11px;color:#8b949e">撤单锁定</span>' : ''));
                 var sortKey = o.create_time || '';
                 var qtyDisplay = o.filled_qty || o.dealt_qty || o.qty || 0;
                 rows.push({
@@ -1948,6 +2099,7 @@
                 if (activeCnt > 0) parts.push(activeCnt + ' 活跃');
                 if (filledCnt > 0) parts.push(filledCnt + ' 成交');
                 if (auditList.length > 0) parts.push(auditList.length + ' 系统');
+                if (_runtime && _runtime.orders !== 'live') parts.push(_runtimeLabel('orders', _runtime.orders));
                 if (totalRows > MAX_ROWS) parts.push('显示最新 ' + MAX_ROWS + '/' + totalRows);
                 badge.textContent = rows.length ? '(' + parts.join(' · ') + ')' : '';
             }

@@ -92,6 +92,7 @@ def _force_close_orphaned_sim_positions(
     _release_live_broker_stop_for_rule_exit: Callable,
     _resume_playbook_exits: Callable,
     _today_et_str: Callable,
+    _handle_live_rule_exit_failure: Callable | None = None,
 ) -> int:
 
     """EOD 兜底: 强制平仓所有未平仓的 PLAYBOOK_SIM/ORB_ENGINE 真实仓位 (via broker).
@@ -314,6 +315,11 @@ def _force_close_orphaned_sim_positions(
                     conn.execute("UPDATE trade_records SET metadata_json=? WHERE id=?",
                                  (_json.dumps(_meta), r["id"]))
                     conn.commit()
+                    if _handle_live_rule_exit_failure is not None:
+                        _handle_live_rule_exit_failure(
+                            dual, conn, r, _meta,
+                            {"success": False, "error": "broker_exception", "dealt_qty": None},
+                        )
                     raise
                 if not close_res.get("success"):
                     _alert_close_failure(symbol, _row_target, "EOD_EXIT_PENDING",
@@ -321,6 +327,8 @@ def _force_close_orphaned_sim_positions(
                                          # 2026-09-14: 第四处同病调用点 (EOD 平仓走同一
                                          # close_res.error 语义) — 瞬态 *_pending 走宽限分流.
                                          error=close_res.get("error", ""))
+                    if _handle_live_rule_exit_failure is not None:
+                        _handle_live_rule_exit_failure(dual, conn, r, _meta, close_res)
                     continue
                 closed += _book_playbook_exit_result(dual, close_res, conn)
             except Exception as row_error:

@@ -1,30 +1,22 @@
 # 辩论库机器索引 (index_generated.md)
 
-> **本文件由 `scripts/build_debate_index.py` 生成** (2026-10-11), 请勿手改。
+> **本文件由 `scripts/build_debate_index.py` 生成** (2026-10-23), 请勿手改。
 > 决策摘要以 [README.md](README.md) 手工索引为准; 本页只做全量清单与漏登对账。
 
-共 **197** 个 DEB 文件。
+共 **203** 个 DEB 文件。
 
 ## 漏登对账
 
-⚠️ 以下 **14** 个近 14 天新文件未在 README 索引收录 (需补登):
+⚠️ 以下 **6** 个近 14 天新文件未在 README 索引收录 (需补登):
 
-- `DEB-20260928-averaging-down-separability.md`
-- `DEB-20260928-ext-exec-price50-shadow.md`
-- `DEB-20260928-profitability-and-loss-reduction-survey.md`
-- `DEB-20260928-sl-initial-stop-geometry.md`
-- `DEB-20260928-supply-price-tier-shadow.md`
-- `DEB-20260928-trail-lock-pyramid-shadow.md`
-- `DEB-20260930-earnings-direction-replay.md`
-- `DEB-20261003-reentry-quick-tp-deletion.md`
-- `DEB-20261003-weekly-optimizer-p26-rebuild.md`
-- `DEB-20261008-model-long-bias-decomposition.md`
-- `DEB-20261008-ops-hardening-batch.md`
-- `DEB-20261008-playbook-pipeline-refactor-roadmap.md`
-- `DEB-20261008-premarket-trend-continuation-verdict.md`
-- `DEB-20261008-profit-ladder-scaleout-feasibility.md`
+- `DEB-20261014-geometry-restart-preregistration.md`
+- `DEB-20261016-strategy-attribution-confidence-ic-gates.md`
+- `DEB-20261023-da-chain-hardening.md`
+- `DEB-20261023-earnings-429-and-futu-primary-surprise.md`
+- `DEB-20261023-freeze-fast-lane.md`
+- `DEB-20261023-ue-intraday-side-channel-adjudication.md`
 
-📦 历史归档 **154** 个未登文件 (执行记录类, 不强制登记, 本页全量清单可查):
+📦 历史归档 **168** 个未登文件 (执行记录类, 不强制登记, 本页全量清单可查):
 
 - `DEB-20260626-okr_trading_chain.md`
 - `DEB-20260626-simulate_architecture.md`
@@ -180,6 +172,20 @@
 - `DEB-20260923-shadow-board-caliber-fixes.md`
 - `DEB-20260923-ue-long-cut-replay.md`
 - `DEB-20260926-composite-bear-veto-falsification.md`
+- `DEB-20260928-averaging-down-separability.md`
+- `DEB-20260928-ext-exec-price50-shadow.md`
+- `DEB-20260928-profitability-and-loss-reduction-survey.md`
+- `DEB-20260928-sl-initial-stop-geometry.md`
+- `DEB-20260928-supply-price-tier-shadow.md`
+- `DEB-20260928-trail-lock-pyramid-shadow.md`
+- `DEB-20260930-earnings-direction-replay.md`
+- `DEB-20261003-reentry-quick-tp-deletion.md`
+- `DEB-20261003-weekly-optimizer-p26-rebuild.md`
+- `DEB-20261008-model-long-bias-decomposition.md`
+- `DEB-20261008-ops-hardening-batch.md`
+- `DEB-20261008-playbook-pipeline-refactor-roadmap.md`
+- `DEB-20261008-premarket-trend-continuation-verdict.md`
+- `DEB-20261008-profit-ladder-scaleout-feasibility.md`
 
 ## 全量清单 (按日期)
 
@@ -271,7 +277,7 @@
 | [DEB-20260811-quality-gate-calibration](DEB-20260811-quality-gate-calibration.md) | 2026-08-11 | 观察点待辩论（本文件供多模型对抗性分析；任何改动需辩论收敛 + OOS 验证后用户终裁） | - | 182 |
 | [DEB-20260812-blackout-1015-oos](DEB-20260812-blackout-1015-oos.md) | 2026-08-12 | ⚠️ OOS 作废 (2026-08-15) — entry_open_blackout_hhmm 已被用户直裁改为 0935 | - | 80 |
 | [DEB-20260812-entry-reference-dynamic-anchor](DEB-20260812-entry-reference-dynamic-anchor.md) | 2026-08-12 | 提案裁决中 (未实施; 前置影子 Plan B 已上线 5fb13699) | - | 158 |
-| [DEB-20260812-futu-unused-channels](DEB-20260812-futu-unused-channels.md) | 2026-08-12 | 立案待辩 (record-only 提案, 零行为变更) | - | 302 |
+| [DEB-20260812-futu-unused-channels](DEB-20260812-futu-unused-channels.md) | 2026-08-12 | 立案待辩 (record-only 提案, 零行为变更) | - | 322 |
 | [DEB-20260813-dead-order-early-exit](DEB-20260813-dead-order-early-exit.md) | 2026-08-13 | 提案裁决中 (未实施; 纯影子判据预注册) | - | 813 |
 | [DEB-20260814-da-prompt-gate-bottleneck](DEB-20260814-da-prompt-gate-bottleneck.md) | 2026-08-14 | 提案裁决中 (未实施; 证据全量实测, 供跨模型辩论) | - | 425 |
 | [DEB-20260815-stable-profit-feasibility](DEB-20260815-stable-profit-feasibility.md) | 2026-08-15 | 提案裁决中 (实验预注册; Phase 0 冻结基线即刻生效) | - | 1605 |
@@ -324,7 +330,7 @@
 | [DEB-20260904-experience-generalization-system](DEB-20260904-experience-generalization-system.md) | 2026-09-04 | 多模型辩论完成** (三角色, §九; kimi-reviewer 事实核查 / qwen-architect 证伪攻击 / glm-verifier 实证复现), ~~**最终共识方案待用户裁决 (§十, 批次0)**~~ **最终共识方案已裁决 — 2026-09-05 用户裁"按建议执行" (D1 维持冻结 / … | - | 420 |
 | [DEB-20260904-fullchain-bughunt](DEB-20260904-fullchain-bughunt.md) | 2026-09-04 | 待决策 — 112/112 簇已独立核实裁决 (CONFIRMED 101 / REJECTED 11), 由 harness merge_verdicts_deb 于 2026-09-04 10:27 回注 | - | 1770 |
 | [DEB-20260905-sim-data-collection](DEB-20260905-sim-data-collection.md) | 2026-09-05 | 已裁决 + 已执行 (2026-09-05 14:00 CST 批, 裁决依据 = 用户当日指令"我需要不停止 sim 模拟交易, 且要保障正常交易且收集数据…不要终止开仓, 要继续交易下去") | - | 2146 |
-| [DEB-20260907-prompt-contract-role-boundary-review](DEB-20260907-prompt-contract-role-boundary-review.md) | 2026-09-07 | 修复执行中（§1–§13 为交叉审阅稿；§14 起为生产变更执行记录） | - | 469 |
+| [DEB-20260907-prompt-contract-role-boundary-review](DEB-20260907-prompt-contract-role-boundary-review.md) | 2026-09-07 | 修复执行中（§1–§13 为交叉审阅稿；§14 起为生产变更执行记录） | - | 534 |
 | [DEB-20260907-three-rulers-and-engine-break](DEB-20260907-three-rulers-and-engine-break.md) | 2026-09-07 | 已执行（三项只读交付物 + 一项计划外根因修复），**未动任何 live 路径**；裁决项见 §九 | - | 583 |
 | [DEB-20260909-exit-params-multi-model-debate](DEB-20260909-exit-params-multi-model-debate.md) | 2026-09-09 | (未标注) | - | 284 |
 | [DEB-20260909-sl-initial-rootcause-and-entry-gate](DEB-20260909-sl-initial-rootcause-and-entry-gate.md) | 2026-09-09 | (未标注) | 6 | 258 |
@@ -379,6 +385,12 @@
 | [DEB-20261008-playbook-pipeline-refactor-roadmap](DEB-20261008-playbook-pipeline-refactor-roadmap.md) | 2026-10-08 | (未标注) | - | 882 |
 | [DEB-20261008-premarket-trend-continuation-verdict](DEB-20261008-premarket-trend-continuation-verdict.md) | 2026-10-08 | (未标注) | - | 88 |
 | [DEB-20261008-profit-ladder-scaleout-feasibility](DEB-20261008-profit-ladder-scaleout-feasibility.md) | 2026-10-08 | ADJUDICATED（2026-10-08 用户裁「继续」批推 F1–F4 按建议执行） | - | 200 |
-| [DEB-20261009-event-to-trade-pipeline](DEB-20261009-event-to-trade-pipeline.md) | 2026-10-09 | (未标注) | - | 2478 |
+| [DEB-20261009-event-to-trade-pipeline](DEB-20261009-event-to-trade-pipeline.md) | 2026-10-09 | (未标注) | - | 2988 |
 | [DEB-20261009-unified-session-scan-dispatch](DEB-20261009-unified-session-scan-dispatch.md) | 2026-10-09 | (未标注) | 2 | 640 |
-| [DEB-20261011-jev-structured-decision-automation-discipline](DEB-20261011-jev-structured-decision-automation-discipline.md) | 2026-10-11 | (未标注) | 3 | 151 |
+| [DEB-20261011-jev-structured-decision-automation-discipline](DEB-20261011-jev-structured-decision-automation-discipline.md) | 2026-10-11 | (未标注) | 3 | 316 |
+| [DEB-20261014-geometry-restart-preregistration](DEB-20261014-geometry-restart-preregistration.md) | 2026-10-14 | (未标注) | - | 137 |
+| [DEB-20261016-strategy-attribution-confidence-ic-gates](DEB-20261016-strategy-attribution-confidence-ic-gates.md) | 2026-10-16 | (未标注) | - | 119 |
+| [DEB-20261023-da-chain-hardening](DEB-20261023-da-chain-hardening.md) | 2026-10-23 | 已实施（无交易门/仓位/止损止盈/频率变更） | - | 89 |
+| [DEB-20261023-earnings-429-and-futu-primary-surprise](DEB-20261023-earnings-429-and-futu-primary-surprise.md) | 2026-10-23 | (未标注) | - | 266 |
+| [DEB-20261023-freeze-fast-lane](DEB-20261023-freeze-fast-lane.md) | 2026-10-23 | (未标注) | - | 111 |
+| [DEB-20261023-ue-intraday-side-channel-adjudication](DEB-20261023-ue-intraday-side-channel-adjudication.md) | 2026-10-23 | (未标注) | - | 258 |

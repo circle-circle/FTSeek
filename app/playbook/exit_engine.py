@@ -583,6 +583,10 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
                         f"(entry={entry_price:.4f}, tight={_et_sl_pct:.2f}% basis={_et_basis})"
                     )
 
+    # DEB-20261025 P1: expose the online effective SL for the read-only broker
+    # STOP drift shadow.  This is telemetry only and does not alter any exit rule.
+    meta["_effective_sl_observed"] = round(_active_sl, 4) if _active_sl > 0 else None
+
     # 规则1: SL止损 (最高优先级 — 亏损仓位必须先检查止损)
     # 2026-07-14: 拆分原 SL_FIXED_PCT 复合标签. 同一标签曾混合三种机制(近30天9笔仅1笔
     #   真止损, 其余为保本+锁利), 污染退出侧诊断. 按 effective_sl 相对 entry 的位置区分,

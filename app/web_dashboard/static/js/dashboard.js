@@ -50,8 +50,31 @@
         if (loaders[name]) loaders[name]();
     }
     function switchToAnalytics() {
+        setResearchOpen(true);
         var body = document.getElementById('analyticsBody');
         if (!body.classList.contains('open')) toggleSection('analytics');
+        var card = document.getElementById('analyticsCard');
+        if (card) setTimeout(function() { card.scrollIntoView({behavior: 'smooth', block: 'start'}); }, 0);
+    }
+
+    function setResearchOpen(open) {
+        var isOpen = !!open;
+        document.body.classList.toggle('show-research', isOpen);
+        var btn = document.getElementById('researchToggle');
+        if (btn) {
+            btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+            btn.textContent = isOpen ? '收起研究' : '研究数据';
+        }
+        if (isOpen && typeof window.__loadResearch === 'function') {
+            window.__loadResearch();
+        }
+        if (typeof window.__syncBrainHealth === 'function') {
+            window.__syncBrainHealth();
+        }
+    }
+
+    function toggleResearch() {
+        setResearchOpen(!document.body.classList.contains('show-research'));
     }
 
     // ══════════════════════════════════════════════════════
@@ -161,7 +184,7 @@
         document.getElementById('pillPositions').textContent = positions.length;
 
         var pillEquity = document.getElementById('pillEquity');
-        if (pillEquity) pillEquity.innerHTML = '💰 <span class="v">$' + fmtK(account.total_assets || 0) + '</span>';
+        if (pillEquity) pillEquity.innerHTML = '资产 <span class="v">$' + fmtK(account.total_assets || 0) + '</span>';
 
         var marginPct = margin.usage_pct || 0;
         var dot = document.getElementById('sysDot');
@@ -190,14 +213,14 @@
             var simStr = (simPnl >= 0 ? '+$' : '-$') + fmt(Math.abs(simPnl));
             var liveStr = (livePnl >= 0 ? '+$' : '-$') + fmt(Math.abs(livePnl));
             simLiveEl.style.display = '';
-            simLiveEl.innerHTML = '🟢 模拟 <span class="' + (simPnl >= 0 ? 'green' : 'red') + '">' + simStr + '</span> · 🔴 实盘 <span class="' + (livePnl >= 0 ? 'green' : 'red') + '">' + liveStr + '</span>';
+            simLiveEl.innerHTML = '模拟 <span class="' + (simPnl >= 0 ? 'green' : 'red') + '">' + simStr + '</span> · 实盘 <span class="' + (livePnl >= 0 ? 'green' : 'red') + '">' + liveStr + '</span>';
         }
     }
 
     // ── Mode Tags (nav + footer) ──
     function renderModeTags(isLive) {
         var cls = isLive ? 'mode-tag live' : 'mode-tag sim';
-        var text = isLive ? '🔴 实盘' : '🟢 模拟';
+        var text = isLive ? '实盘' : '模拟';
         ['modeTag', 'modeTag2', 'modeTag3', 'bottomMode'].forEach(function(id) {
             var el = document.getElementById(id);
             if (el) { el.className = cls; el.textContent = text; }
@@ -508,7 +531,7 @@
 
         var html = '<div class="daily-report">';
         html += '<div class="dr-header">';
-        html += '<span class="dr-title">📊 交易日报</span>';
+        html += '<span class="dr-title">交易日报</span>';
         html += '<span class="dr-date">' + periodLabel + ' ' + dateStr + ' ' + dayName + '</span>';
         html += '</div>';
 
@@ -934,6 +957,8 @@
     function renderActionZone(lifecycle, earnings) {
         var el = document.getElementById('actionZone');
         var list = document.getElementById('actionList');
+        var empty = document.getElementById('todayNoAction');
+        var emptyText = document.getElementById('todayNoActionText');
         if (!el || !list) return;
         var actions = [];
 
@@ -941,32 +966,37 @@
         (lifecycle || []).forEach(function(lc) {
             var sym = (lc.symbol || '').replace(/^US\./, '');
             if (lc.stop_loss_triggered) {
-                actions.push({level:'danger', icon:'🔴', text: sym + ' 已触发止损 $' + (lc.stop_loss||0).toFixed(2), action:'平仓', href:'/trade?symbol='+lc.symbol+'&op=CLOSE'});
+                actions.push({level:'danger', text: sym + ' 已触发止损 $' + (lc.stop_loss||0).toFixed(2), action:'平仓', href:'/trade?symbol='+lc.symbol+'&op=CLOSE'});
             }
             if (lc.trailing_stop_triggered) {
-                actions.push({level:'warning', icon:'🟢', text: sym + ' 已触发追踪止盈 $' + (lc.trailing_stop_price||0).toFixed(2), action:'确认平仓', href:'/trade?symbol='+lc.symbol+'&op=CLOSE'});
+                actions.push({level:'warning', text: sym + ' 已触发追踪止盈 $' + (lc.trailing_stop_price||0).toFixed(2), action:'确认平仓', href:'/trade?symbol='+lc.symbol+'&op=CLOSE'});
             }
             // Near stop-loss warning (< 2%)
             if (lc.sl_distance_pct != null && lc.sl_distance_pct >= 0 && lc.sl_distance_pct < 2 && !lc.stop_loss_triggered) {
-                actions.push({level:'warning', icon:'⚠️', text: sym + ' 距止损仅 ' + lc.sl_distance_pct.toFixed(1) + '%', action:null});
+                actions.push({level:'warning', text: sym + ' 距止损仅 ' + lc.sl_distance_pct.toFixed(1) + '%', action:null});
             }
         });
 
         // 2. Earnings alerts for held positions
         var eToday = (earnings && earnings.today) || [];
         eToday.forEach(function(e) {
-            actions.push({level:'warning', icon:'📊', text: (e.symbol||'').replace('US.','') + ' 今日盘后财报', action:null});
+            actions.push({level:'warning', text: (e.symbol||'').replace('US.','') + ' 今日盘后财报', action:null});
         });
 
-        if (!actions.length) { el.style.display = 'none'; return; }
+        if (!actions.length) {
+            el.style.display = 'none';
+            if (empty) empty.style.display = 'flex';
+            if (emptyText) emptyText.textContent = '当前无需操作';
+            return;
+        }
 
         el.style.display = 'block';
+        if (empty) empty.style.display = 'none';
         list.innerHTML = actions.map(function(a) {
             var bg = a.level === 'danger' ? 'rgba(248,113,113,0.08)' : 'rgba(251,191,36,0.06)';
             var border = a.level === 'danger' ? 'rgba(248,113,113,0.3)' : 'rgba(251,191,36,0.3)';
             var actionHtml = a.action && a.href ? '<a href="'+a.href+'" style="margin-left:auto;font-size:11px;padding:2px 8px;background:#3a1a1a;color:#f87171;border:1px solid rgba(248,113,113,0.3);border-radius:4px;text-decoration:none;white-space:nowrap">'+a.action+'</a>' : '';
             return '<div style="display:flex;align-items:center;gap:8px;padding:6px 14px;background:'+bg+';border:1px solid '+border+';border-radius:6px;margin-bottom:4px;font-size:12px">' +
-                '<span>'+a.icon+'</span>' +
                 '<span style="color:#e1e4e8">'+a.text+'</span>' +
                 actionHtml +
                 '</div>';
@@ -1257,13 +1287,13 @@
         var badge = document.getElementById('marketBadge');
         var badge2 = document.getElementById('marketBadge2');
         if (t >= 570 && t < 960) {
-            var cls = 'market-badge open', txt = '🟢 盘中';
+            var cls = 'market-badge open', txt = '盘中';
         } else if (t >= 240 && t < 570) {
-            var cls = 'market-badge pre', txt = '🟡 盘前';
+            var cls = 'market-badge pre', txt = '盘前';
         } else if (t >= 960 && t < 1200) {
-            var cls = 'market-badge after', txt = '🟠 盘后';
+            var cls = 'market-badge after', txt = '盘后';
         } else {
-            var cls = 'market-badge closed', txt = '🔴 休市';
+            var cls = 'market-badge closed', txt = '休市';
         }
         if (badge) { badge.className = cls; badge.textContent = txt; }
         if (badge2) { badge2.className = cls; badge2.textContent = txt; }
@@ -1688,6 +1718,7 @@
     // Hash 导航 — 从其他页面点击"分析"跳转时自动展开
     (function() {
         if (window.location.hash === '#analytics') {
+            setResearchOpen(true);
             var body = document.getElementById('analyticsBody');
             var arrow = document.getElementById('analyticsArrow');
             if (body && !body.classList.contains('open')) {
@@ -1718,7 +1749,7 @@
             var pillKillVal = document.getElementById('pillKillVal');
             var pillKillSwitch = document.getElementById('pillKillSwitch');
             if (pillKillVal) {
-                pillKillVal.textContent = _riskCmdPaused ? '🔴 制动中' : '🟢 运行';
+                pillKillVal.textContent = _riskCmdPaused ? '制动中' : '运行';
                 if (pillKillSwitch) pillKillSwitch.style.borderColor = _riskCmdPaused ? '#f87171' : '#30363d';
             }
             
@@ -1728,7 +1759,7 @@
                 pillEmergency.style.display = _riskCmdPaused ? '' : 'none';
                 // P0-T5: 已制动时显示"恢复交易"而非再次制动(no-op)
                 if (_riskCmdPaused) {
-                    pillEmergency.textContent = '🟢 恢复交易';
+                    pillEmergency.textContent = '恢复交易';
                     pillEmergency.setAttribute('onclick', 'riskCmdTogglePause()');
                     pillEmergency.style.borderColor = 'rgba(74,222,128,0.4)';
                 }
@@ -1764,7 +1795,7 @@
 
         // ── Expose handlers to window for inline HTML event handlers ──
         Object.assign(window, {
-            cancelThesis, cancelProtection, confirmProtection, editThesis, loadChallenge, riskCmdEmergencyClose, riskCmdTogglePause, saveThesis, setStopLoss, sortPositions, switchTab, switchToAnalytics, toggleHeatmap, togglePosExpand, toggleSection
+            cancelThesis, cancelProtection, confirmProtection, editThesis, loadChallenge, riskCmdEmergencyClose, riskCmdTogglePause, saveThesis, setStopLoss, setResearchOpen, sortPositions, switchTab, switchToAnalytics, toggleHeatmap, togglePosExpand, toggleResearch, toggleSection
         });
 
 })();

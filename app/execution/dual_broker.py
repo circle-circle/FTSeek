@@ -265,6 +265,30 @@ class DualBrokerAdapter:
                 return {"success": False, "submit_state": "DEFINITIVE_REJECT",
                         "error": "dual_broker_notional_cap", "futu_order_id": ""}
 
+            # P0-2 stage 1 (DEB-20261025): REAL 下单前只读记录券商容量与同标的
+            # 活跃单。影子模块内部吞掉所有异常, 不拦截、不改返回值; 第二阶段
+            # 的有限拒绝须等样本裁决后另行开启。
+            if target_env == "real":
+                try:
+                    from app.execution.broker_capacity_shadow import (
+                        record_order_capacity_shadow,
+                    )
+                    record_order_capacity_shadow(
+                        ctx,
+                        acc_id=acc_id,
+                        trd_env=trd_env,
+                        lock=lock,
+                        order=order,
+                        target_env=target_env,
+                        is_exit=_is_close,
+                    )
+                except Exception as _capacity_error:
+                    logger.warning(
+                        "[DualBroker] capacity shadow failed (order path unchanged) "
+                        f"{order.symbol}: {_capacity_error}",
+                        exc_info=True,
+                    )
+
             trd_side = TrdSide.BUY if order.direction == Direction.LONG else TrdSide.SELL
             futu_order_type = FutuOrderType.MARKET if order.order_type == OrderType.MARKET else FutuOrderType.NORMAL
 
@@ -580,22 +604,62 @@ class DualBrokerAdapter:
 
     def get_positions(self, target_env: str = "sim") -> list:
         """查询指定账户持仓."""
+        result = self.query_positions(target_env)
+        return result["positions"] if result.get("success") else []
+
+    def query_positions(self, target_env: str = "sim", *, refresh_cache: bool = False) -> Dict[str, Any]:
+        """Return broker positions plus explicit query success evidence.
+
+        ``get_positions`` keeps its historical list return for existing callers.
+        Protective-stop recovery needs to distinguish "zero positions" from
+        "broker query failed", so it uses this evidence-returning variant.
+        """
         try:
             ctx, acc_id, trd_env, lock = self._ctx_and_acc(target_env)
+            query = {
+                "trd_env": trd_env,
+                "acc_id": int(acc_id) if acc_id else 0,
+            }
+            if refresh_cache:
+                query["refresh_cache"] = True
             with lock:
-                ret, data = ctx.position_list_query(trd_env=trd_env, acc_id=int(acc_id) if acc_id else 0)
-            if ret == 0 and not data.empty:
+                ret, data = ctx.position_list_query(**query)
+            if ret == 0 and data is not None and not data.empty:
                 # 2026-09-21 全链路复查修复 (P0-2): 与 broker_adapter.get_positions()
                 # 同口径 — REAL 综合账户可能返回港股等跨市场持仓, 按 code 前缀隔离美股行。
                 # 消费方 (playbook 按 US.XXX 精确匹配) 在 SIM 下行为零变化。
-                return [
+                positions = [
                     r for r in data.to_dict("records")
                     if str(r.get("code", "")).startswith("US.")
                 ]
-            return []
+                return {"success": True, "positions": positions, "error": ""}
+            if ret == 0:
+                return {"success": True, "positions": [], "error": ""}
+            return {"success": False, "positions": [], "error": str(data)}
         except Exception as e:
             logger.warning(f"[DualBroker] get_positions {target_env} 失败: {e}")
-            return []
+            return {"success": False, "positions": [], "error": str(e)}
+
+    def query_symbol_orders(self, symbol: str, target_env: str = "real") -> Dict[str, Any]:
+        """Return same-symbol broker orders for read-only safety checks."""
+        try:
+            ctx, acc_id, trd_env, lock = self._ctx_and_acc(target_env)
+            with lock:
+                ret, data = ctx.order_list_query(
+                    code=str(symbol), trd_env=trd_env,
+                    acc_id=int(acc_id) if acc_id else 0,
+                    refresh_cache=True,
+                )
+            if ret != 0 or data is None:
+                return {"success": False, "orders": [], "error": str(data)}
+            orders = [] if data.empty else data.to_dict("records")
+            return {"success": True, "orders": orders, "error": ""}
+        except Exception as error:
+            logger.warning(
+                "[DualBroker] query_symbol_orders failed %s env=%s: %s",
+                symbol, target_env, error, exc_info=True,
+            )
+            return {"success": False, "orders": [], "error": str(error)}
 
     def get_short_pool(self, code_list, target_env: str = "sim") -> Dict[str, Dict[str, Any]]:
         """借券池/费率/可空状态快照 (futu get_margin_ratio; 2026-07-30 实测 SIM/REAL 均可查).

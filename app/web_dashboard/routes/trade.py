@@ -13,6 +13,7 @@ from app.web_dashboard.data_service import get_data_service
 from app.web_dashboard.api_response import api_ok, api_error, err_broker_unavailable
 from app.web_dashboard.mode_switch_service import get_mode_switch_service
 from app.web_dashboard.order.gates import collect_manual_gates
+from app.web_dashboard.runtime_status import build_runtime_status
 from app.execution.futu_accounting import normalize_futu_account
 
 logger = logging.getLogger("ftseek_us.routes.trade")
@@ -54,6 +55,16 @@ def _write_yaml_auto_trading(enabled: bool) -> bool:
     except Exception as e:
         logger.error(f"[auto-trade] YAML 写入失败: {e}")
         return False
+
+
+async def _load_manual_gates_cached(ds, svc=None) -> dict:
+    """共享 15s 闸门缓存: snapshot 与 /api/trade/gates 使用同一份只读状态。"""
+    cached = ds.cache.get("trade_gates")
+    if cached is not None:
+        return cached
+    gates = await asyncio.to_thread(collect_manual_gates, svc)
+    ds.cache.set("trade_gates", gates, ttl=15)
+    return gates
 
 
 def register(app, templates):
@@ -172,8 +183,15 @@ def register(app, templates):
         if cached is not None:
             return cached
         svc = get_manual_order_service()
-        orders = svc.get_today_orders()
-        result = {"orders": orders}
+        # 带上来源元数据: 前端/排障能区分券商实时应答与审计 DB 兜底。
+        meta = await asyncio.to_thread(svc.get_today_orders_with_status)
+        result = {
+            "orders": meta.get("orders") or [],
+            "source": meta.get("source"),
+            "broker_ok": bool(meta.get("broker_ok")),
+            "error": meta.get("error"),
+            "as_of": meta.get("as_of"),
+        }
         ds.cache.set("orders_today", result, ttl=10)
         return result
 
@@ -468,6 +486,17 @@ def register(app, templates):
                 "power": round(power, 2),
                 "max_short_power": round(max_short_power, 2),
                 "account_currency": converted["raw_currency"],
+                # P1 DEB-20261025: read-only broker risk passthrough for the
+                # order preflight.  These do not change capacity calculations.
+                "risk_status": converted.get("risk_status", "N/A"),
+                "risk_level": converted.get("risk_level", "N/A"),
+                "exposure_level": converted.get("exposure_level", "N/A"),
+                "remaining_limit": converted.get("remaining_limit", "N/A"),
+                "is_pdt": converted.get("is_pdt", "N/A"),
+                "pdt_seq": converted.get("pdt_seq", "N/A"),
+                "remaining_dtbp": converted.get("remaining_dtbp", "N/A"),
+                "dt_call_amount": converted.get("dt_call_amount", "N/A"),
+                "risk_fields_currency": "broker_native",
             }
         except Exception as e:
             logger.error(f"[order-capacity] {symbol}: {e}")
@@ -523,9 +552,17 @@ def register(app, templates):
         account = _parse_account(acc_raw)
         positions = await _parse_positions(ds, pos_raw)
 
-        # Today orders
+        # Today orders — 带来源元数据 (broker / audit_db), 不让 fallback 冒充实时
         svc = ds.svc()
-        orders = svc.get_today_orders() if svc._connected else []
+        try:
+            orders_meta = await asyncio.to_thread(svc.get_today_orders_with_status)
+        except Exception as e:
+            logger.warning("[trade snapshot] order query failed: %s", e)
+            orders_meta = {
+                "orders": [], "source": "none", "broker_ok": False,
+                "error": f"exception: {e}", "as_of": None,
+            }
+        orders = orders_meta.get("orders") or []
 
         # Stop distances (from risk data)
         stop_distances = []
@@ -545,6 +582,51 @@ def register(app, templates):
         except Exception:
             pass
 
+        # 运行时能力: 只读汇总, 不改变任何交易闸门/执行逻辑。
+        gates = None
+        try:
+            gates = await _load_manual_gates_cached(ds, svc)
+        except Exception as e:
+            logger.debug("[trade/snapshot] gates unavailable: %s", e)
+
+        try:
+            from app.utils.timezone import market_phase_now, now_et
+            freshness = ds.get_source_freshness() if hasattr(ds, "get_source_freshness") else {}
+            timestamps = [
+                freshness.get("account"), freshness.get("positions"),
+            ]
+            if orders_meta.get("source") == "broker" and orders_meta.get("as_of"):
+                timestamps.append(orders_meta.get("as_of"))
+            data_as_of = min(t for t in timestamps if t) if any(timestamps) else None
+            runtime = build_runtime_status(
+                connect_flag=bool(getattr(svc, "_connected", False)),
+                account_known=bool(account),
+                # account_scope 是资金换算作用域 ("global"), 不是 REAL/SIM; 交易环境
+                # 的唯一来源是 ManualOrderService._is_live() (当前手动台恒 REAL)。
+                account_scope=("real" if svc._is_live() else "sim") if account else None,
+                positions_raw=pos_raw,
+                positions=positions,
+                positions_authoritative=bool(getattr(ds, "_last_positions_authoritative", False)),
+                orders_meta=orders_meta,
+                gates=gates,
+                market_phase=market_phase_now(),
+                runtime_as_of=now_et().isoformat(timespec="seconds"),
+                data_as_of=data_as_of,
+            )
+        except Exception as e:
+            logger.warning("[trade/snapshot] runtime status failed: %s", e)
+            runtime = {
+                "broker": "unknown", "account": "unknown", "quotes": "unknown",
+                "positions": "unknown", "orders": "unknown", "market": "unknown",
+                "as_of": None,
+                "runtime_as_of": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "capabilities": {
+                    "place": False, "reduce": False,
+                    "cancel": False, "modify_stop": False,
+                },
+                "reasons": ["运行时状态构建失败；交易动作已锁定"],
+            }
+
         # Audit orders (for unified trade records)
         audit_orders = []
         try:
@@ -559,6 +641,7 @@ def register(app, templates):
             "stop_distances": stop_distances,
             "pnl": pnl_data,
             "audit": {"orders": audit_orders},
+            "runtime": runtime,
             # Phase A (2026-07-12): 快照级新鲜度 — 前端据此切换圆点颜色与 "--" 展示
             "stale": bool(any(p.get("stale") for p in positions)),
             "as_of": datetime.now().isoformat(timespec="seconds"),
@@ -585,9 +668,7 @@ def register(app, templates):
         if cached is not None:
             return cached
         # 依赖均为进程内读取 (flag 文件 / capital_safety 状态 / DB 计数), 无 broker RPC
-        gates = await asyncio.to_thread(collect_manual_gates)
-        ds.cache.set("trade_gates", gates, ttl=15)
-        return gates
+        return await _load_manual_gates_cached(ds, ds.svc())
 
     @router.get("/api/trade/slow-data")
     async def trade_slow_data(request: Request):

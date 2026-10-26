@@ -50,14 +50,15 @@ function renderSummary(data) {
     const regime = data.recent_regime;
     const badge = document.getElementById('regimeBadge');
     if (regime) {
+        const regimeKey = String(regime.regime || '').toUpperCase();
         const regimeMap = {
-            'RISK_ON': '🟢 RISK_ON',
-            'CAUTIOUS': '🟡 CAUTIOUS',
-            'RISK_OFF': '🔴 RISK_OFF',
-            'NO_TRADE': '⛔ NO_TRADE',
+            'RISK_ON': 'RISK_ON',
+            'CAUTIOUS': 'CAUTIOUS',
+            'RISK_OFF': 'RISK_OFF',
+            'NO_TRADE': 'NO_TRADE',
         };
-        badge.textContent = regimeMap[regime.regime] || regime.regime;
-        badge.className = 'pb-regime-badge pb-regime-' + regime.regime;
+        badge.textContent = regimeMap[regimeKey] || regimeKey || '--';
+        badge.className = 'pb-regime-badge pb-regime-' + regimeKey;
     } else {
         badge.textContent = '-- 未评估 --';
     }
@@ -72,7 +73,7 @@ function renderInstructions(instructions) {
     const skipped = instructions.filter(i => i.direction === 'SKIP');
 
     if (active.length === 0 && skipped.length === 0) {
-        activeContainer.innerHTML = '<div class="pb-empty">📋 今日暂无交易指令<br><small>盘前 08:00 ET 自动生成</small></div>';
+        activeContainer.innerHTML = '<div class="pb-empty">今日暂无交易指令<br><small>盘前 08:00 ET 自动生成</small></div>';
         skippedSection.style.display = 'none';
         return;
     }
@@ -98,7 +99,7 @@ function renderInstructionCard(inst) {
 
     let statusBadge = '';
     if (executed) {
-        statusBadge = `<span class="pb-executed-badge">✅ 已执行 @ $${fmt(inst.execution_price)}</span>`;
+        statusBadge = `<span class="pb-executed-badge">已执行 @ $${fmt(inst.execution_price)}</span>`;
     }
     if (inst.outcome === 'win') statusBadge += ' <span class="pb-executed-badge" style="background:#16a34a55">Win +$' + fmt(inst.pnl) + '</span>';
     if (inst.outcome === 'loss') statusBadge += ' <span class="pb-executed-badge" style="background:#ef444455">Loss -$' + fmt(Math.abs(inst.pnl)) + '</span>';
@@ -134,12 +135,12 @@ function renderInstructionCard(inst) {
 
         ${inst.thesis ? `<div class="pb-thesis">${inst.thesis}</div>` : ''}
 
-        ${risks.length ? `<div class="pb-risks">⚠️ ${risks.join(' | ')}</div>` : ''}
+        ${risks.length ? `<div class="pb-risks">${risks.join(' | ')}</div>` : ''}
 
         ${!executed ? `
         <div class="pb-actions">
             <button class="pb-btn pb-btn-execute" onclick="showConfirmModal(${inst.id})">▶ 执行${inst.direction === 'BUY' ? '买入' : '做空'}</button>
-            <button class="pb-btn pb-btn-skip" onclick="showSkipOptions(${inst.id})">👎 跳过</button>
+            <button class="pb-btn pb-btn-skip" onclick="showSkipOptions(${inst.id})">跳过</button>
         </div>
         <div class="pb-skip-section" id="skip-${inst.id}">
             <div class="pb-skip-options">
@@ -188,7 +189,7 @@ function showConfirmModal(instructionId) {
         <div class="pb-confirm-detail">${inst.position_size} 股 = $${fmt(totalValue)}</div>
         <div class="pb-confirm-detail">风险 $${fmt(inst.risk_amount)} | R:R ${inst.risk_reward ? inst.risk_reward.toFixed(1) : '-'}:1</div>
         ${inst.thesis ? `<div class="pb-confirm-detail" style="color:#8b949e">${inst.thesis}</div>` : ''}
-        <div class="pb-confirm-detail" style="color:#f0883e;margin-top:8px">⚠️ 默认以模拟模式执行 (simulate)</div>
+        <div class="pb-confirm-detail" style="color:#f0883e;margin-top:8px">默认以模拟模式执行 (simulate)</div>
     `;
     document.getElementById('confirmModal').style.display = 'flex';
 }

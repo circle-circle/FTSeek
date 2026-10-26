@@ -300,6 +300,14 @@ def _run_new_scheduler(args):
     """启动 TradingScheduler: DI容器装配 + 多模型投票 + 自适应轮询 + Futu LV3"""
     import fcntl
 
+    # DEB-20261023 freeze-fast-lane: 进程内取证 — SIGUSR1 全线程栈快照, 供外部
+    #   freeze_sentinel 快速层在心跳停滞时采集 (纯诊断, 不改交易行为)。
+    try:
+        from app.observability.fault_dump import enable_fault_diagnostics
+        enable_fault_diagnostics()
+    except Exception as _fd_err:
+        logger.warning("[Liveness] fault diagnostics 初始化失败 (不影响启动): %s", _fd_err)
+
     # DEB-20260903 #13: 双实例防护 — 原 /run 不可写时仅 print 警告继续启动, 防护静默失效
     #   (且 lock_fd 未定义 → cleanup_lock NameError). 现优先 /run, 失败回退数据目录锁;
     #   两者均失败则 fail-closed 退出 (双交易实例风险 > 不启动).

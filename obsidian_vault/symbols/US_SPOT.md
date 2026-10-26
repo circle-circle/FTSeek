@@ -3,10 +3,10 @@ type: "symbol"
 symbol: "US.SPOT"
 name: "Spotify Technology"
 industry: "Media"
-latest_date: "2026-08-31"
-latest_direction: "BUY"
-latest_score: 3.0
-latest_rating: "看多"
+latest_date: "2026-10-23"
+latest_direction: "SKIP"
+latest_score: 6.0
+latest_rating: "观望"
 total_trades: 1
 win_rate: 1.0
 tags: [symbol, US]
@@ -104,6 +104,55 @@ Communication板块昨日+1.42%领涨→SPOT作为流媒体龙头获资金关注
 ## 同行业 (Media)
 - [[US_AMC]]
 - [[US_DIS]]
+- [[US_GOOG]]
+- [[US_GOOGL]]
+- [[US_META]]
+- [[US_NTES]]
+---
+
+## 2026-10-23 | 观望 | 信心中高 | SKIP
+<!-- id:2026-10-23-bca7 -->
+
+> Q3订阅+6M及毛利率33%利好已在昨日放量大涨(量比2.67)中充分定价，盘前-0.61%无增量edge，叠加RSI超买与内部人MSPR -27.39净卖出，SKIP观望等回踩MA5($536.86)。
+
+- **标的**: Spotify Technology (US.SPOT) | 现价: 580.12 | 评分: 6.0/10
+- **IC ID**: `DA-20261023202340-US.SPOT-bca7`
+- **数据质量**: 数据源 19/19 (100%)
+
+### 看多论据
+  1. [HIGH][IC=-0.01n=1018] Q3新增6M premium subscribers(总计306M)超预期，Premium revenue +15%，毛利率扩张至33%，基本面强劲 (fundamental)
+  2. [MEDIUM][IC=-0.04n=1489] 机构看好，47位分析师中买入占比78.7%，摩根士丹利维持买入评级及$640目标价 (news)
+
+### 看空论据
+  1. [HIGH][IC=-0.00n=1023] 内部人情绪悲观，6个月平均MSPR为-27.39(净卖出)，且近期无买入记录，缺乏内部资金信心 (fundamental)
+  2. [MEDIUM][IC=+0.00n=299] 所属Communication板块今日盘前-1.42%，昨日-1.7%，个股逆势大涨后面临板块均值回归与资金分流压力 (macro)
+
+### 交易计划
+- 入场: SKIP观望。右侧回补计划：等待股价回踩MA5($536.86)且缩量企稳后重新评估，当前不执行任何入场。
+- 止损: 跌破MA20($514.52)
+- 止盈: 大摩目标价$640
+- 支撑: 536.86, 514.52, 508.01 | 阻力: 588.88, 640.0, 673.16
+
+### 风险
+  - 追高风险：5日涨幅+9.4%且RSI/KDJ强超买，短期回调概率大
+  - 板块逆风：Communication板块盘前-1.42%，缺乏资金共振
+  - 估值压力：PE(TTM) 36.85，动态PE 49.51，高于市场平均水平，对业绩容错率低
+  - [挑战者] 10/22期权流为明显看多下注，未被bear_case纳入: 575行权价看涨成交1,493张(未平仓2,187张, $1,269,050)、570行权价500张($565,000)均10
+  - [挑战者] 盘前相对强度与bear_case'板块逆风→均值回归'的因果未获价格确认: SPOT盘前-0.61% 好于所属Communication板块-1.42%，个股并未跟随板块杀跌，该bear_
+
+### 因果链
+Q3订阅用户超预期(+6M)及毛利率扩张(33%) → 昨日股价放量大涨(量比2.67)充分定价利好 → 今日盘前无异动(-0.61%)且RSI超买/板块逆风(-1.42%) → 短期缺乏增量edge，追高性价比低，需等待回踩MA5($536.86)确认支撑
+
+### 论据IC验证
+- 基于2470条历史信号alpha IC验证 (overall_t1=-0.0067)
+
+## 同行业 (Media)
+- [[US_AMC]]
+- [[US_ANGI]]
+- [[US_BMBL]]
+- [[US_CARG]]
+- [[US_DIS]]
+- [[US_EVC]]
 - [[US_GOOG]]
 - [[US_GOOGL]]
 - [[US_META]]

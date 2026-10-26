@@ -867,16 +867,23 @@ def close_position(service: "ManualOrderService", symbol: str, reason: str,
 # 订单查询 / 撤单
 # ─────────────────────────────────────────────────────────────
 
-def get_today_orders(service: "ManualOrderService") -> List[Dict[str, Any]]:
-    """查询今日所有订单状态 (按时间倒序).
+def get_today_orders_with_status(service: "ManualOrderService") -> Dict[str, Any]:
+    """查询今日订单并显式返回来源, 避免 DB fallback 冒充券商实时状态.
 
-    优先查 Futu broker, 失败或为空时 fallback 到本地审计 DB.
+    Returns:
+        {"orders": list, "source": "broker"|"audit_db"|"none",
+         "broker_ok": bool, "error": str|None, "as_of": ISO-8601 ET}
     """
-    orders = []
+    orders: List[Dict[str, Any]] = []
+    broker_ok = False
+    source = "none"
+    query_error: Optional[str] = None
 
     # ── 1. 尝试 Futu broker 查询 ──
     try:
-        if service.connect():
+        if not service.connect():
+            query_error = "broker_not_connected"
+        else:
             from futu import TrdEnv, RET_OK
             trd_env = TrdEnv.REAL if service._is_live() else TrdEnv.SIMULATE
             if service._is_live():
@@ -887,6 +894,12 @@ def get_today_orders(service: "ManualOrderService") -> List[Dict[str, Any]]:
             ret, data = service._broker_ctx.order_list_query(
                 trd_env=trd_env, acc_id=acc_id,
             )
+            if ret == RET_OK:
+                # RET_OK + 空表也是券商权威应答: 来源仍是 broker, 不是 unknown。
+                broker_ok = True
+                source = "broker"
+            else:
+                query_error = f"query_failed: {data}"
             if ret == RET_OK and not data.empty:
                 # Use ET timezone for today filter (Futu returns ET timestamps)
                 from app.utils.timezone import get_trade_date
@@ -917,6 +930,7 @@ def get_today_orders(service: "ManualOrderService") -> List[Dict[str, Any]]:
                         "filled_qty": int(row.get("dealt_qty", 0) or 0) if _is_filled else 0,
                     })
     except Exception as e:
+        query_error = f"exception: {e}"
         logger.warning(f"[订单查询] Broker 查询异常, 降级到审计 DB: {e}")
 
     # ── 2. Broker 为空时 fallback 到本地审计 DB ──
@@ -964,13 +978,33 @@ def get_today_orders(service: "ManualOrderService") -> List[Dict[str, Any]]:
                     "update_time": "",
                     "filled_qty": 0,
                 })
+            if orders:
+                source = "audit_db"
             logger.info(f"[订单查询] Broker 无数据, 从审计 DB 加载 {len(orders)} 条")
         except Exception as e:
+            if not orders:
+                query_error = query_error or f"audit_db_failed: {e}"
             logger.warning(f"[订单查询] 审计 DB fallback 失败: {e}")
 
     # 按创建时间倒序
     orders.sort(key=lambda x: x["create_time"], reverse=True)
-    return orders
+    try:
+        from app.utils.timezone import now_et
+        as_of = now_et().isoformat(timespec="seconds")
+    except Exception:
+        as_of = datetime.now().isoformat(timespec="seconds")
+    return {
+        "orders": orders,
+        "source": source,
+        "broker_ok": broker_ok,
+        "error": query_error,
+        "as_of": as_of,
+    }
+
+
+def get_today_orders(service: "ManualOrderService") -> List[Dict[str, Any]]:
+    """兼容旧签名: 只返回订单列表。"""
+    return get_today_orders_with_status(service)["orders"]
 
 
 def cancel_order(service: "ManualOrderService", order_id: str) -> Dict[str, Any]:

@@ -505,6 +505,21 @@ def _parse_account(raw: dict) -> dict:
         "frozen_cash": converted["frozen_cash"],
         "margin_usage": margin_usage,
         "risk_status": str(raw.get("risk_status", "N/A")),
+        # P1 (DEB-20261025): broker-native risk fields, read-only passthrough.
+        # Amount fields are not re-FX'd here; FUTU already reports them in its
+        # account risk currency (REAL often returns N/A for some of them).
+        "risk_level": converted.get("risk_level", "N/A"),
+        "exposure_level": converted.get("exposure_level", "N/A"),
+        "exposure_limit": converted.get("exposure_limit", "N/A"),
+        "used_limit": converted.get("used_limit", "N/A"),
+        "remaining_limit": converted.get("remaining_limit", "N/A"),
+        "is_pdt": converted.get("is_pdt", "N/A"),
+        "pdt_seq": converted.get("pdt_seq", "N/A"),
+        "beginning_dtbp": converted.get("beginning_dtbp", "N/A"),
+        "dt_status": converted.get("dt_status", "N/A"),
+        "remaining_dtbp": converted.get("remaining_dtbp", "N/A"),
+        "dt_call_amount": converted.get("dt_call_amount", "N/A"),
+        "risk_fields_currency": "broker_native",
         "interest_charged": converted["interest_charged_amount"],
         "currency": "USD",
         "account_scope": converted["account_scope"],
@@ -553,6 +568,7 @@ async def _parse_positions(ds, pos_raw: list) -> list:
     owner_map = {}
     db_symbols = set()
     protection_map = {}
+    protection_known = False
     entry_time_map = {}
     try:
         rows = await ds.get_open_position_owners()
@@ -562,14 +578,27 @@ async def _parse_positions(ds, pos_raw: list) -> list:
     except Exception:
         pass
     try:
-        prot_rows = await ds.db_query(
-            "SELECT symbol, stop_loss_price, trailing_stop_price, "
-            "stop_loss_triggered, trailing_stop_triggered "
-            "FROM open_positions"
-        )
-        protection_map = {r["symbol"]: r for r in prot_rows}
+        # 先探列, 兼容旧库缺 sl_broker_order_id/current_sl 的形态; 探列成功才宣称
+        # "保护状态已知", 否则前端显示 unknown, 不把查询失败伪装成"无保护"。
+        col_rows = await ds.db_query("PRAGMA table_info(open_positions)")
+        cols = {str(r.get("name") or "") for r in col_rows}
+        wanted = [
+            "symbol", "current_sl", "stop_loss_price", "initial_tp",
+            "trailing_stop_price", "sl_broker_order_id", "tp_broker_order_id",
+            "stop_loss_triggered", "trailing_stop_triggered",
+        ]
+        selected = [c for c in wanted if c in cols]
+        # 至少要有一种止损来源列才允许宣称“保护状态已知”。只有
+        # stop_loss_triggered 之类的旁证列不能证明“已查询止损位/券商单”。
+        has_sl_schema = bool(cols & {"current_sl", "stop_loss_price", "sl_broker_order_id"})
+        if "symbol" in cols and has_sl_schema:
+            prot_rows = await ds.db_query(
+                f"SELECT {', '.join(selected)} FROM open_positions"
+            )
+            protection_map = {r["symbol"]: r for r in prot_rows}
+            protection_known = True
     except Exception:
-        pass
+        protection_known = False
 
     positions = []
     for p in pos_raw:
@@ -635,6 +664,22 @@ async def _parse_positions(ds, pos_raw: list) -> list:
         sector = _SECTOR_MAP.get(code_short, "其他")
 
         prot = protection_map.get(code, {})
+        _stored_sl = safe_float(prot.get("stop_loss_price", 0))
+        _current_sl = safe_float(prot.get("current_sl", 0))
+        # 口径统一: 交易中移动止损写 current_sl, 初始/静态止损写 stop_loss_price。
+        # 展示以 current_sl 优先, 避免"改过止损但看板仍显示旧值"。
+        _effective_sl = _current_sl if _current_sl > 0 else _stored_sl
+        _effective_tp = safe_float(prot.get("initial_tp", 0))
+        _sl_oid = str(prot.get("sl_broker_order_id") or "").strip()
+        _tp_oid = str(prot.get("tp_broker_order_id") or "").strip()
+        if not protection_known:
+            _protection_state = "unknown"
+        elif _sl_oid:
+            _protection_state = "broker_attached"
+        elif _effective_sl > 0:
+            _protection_state = "db_only"
+        else:
+            _protection_state = "none"
         # P2 (2026-06-21): 从detailed_map注入基本面+资金流字段
         dq = detailed_map.get(code, {})
         positions.append({
@@ -658,7 +703,15 @@ async def _parse_positions(ds, pos_raw: list) -> list:
             "owner": owner_map.get(code, "legacy"),
             "legacy": code not in db_symbols,
             "created_at": entry_time_map.get(code),
-            "stop_loss_price": prot.get("stop_loss_price"),
+            "stop_loss_price": _effective_sl if _effective_sl > 0 else None,
+            "take_profit_price": _effective_tp if _effective_tp > 0 else None,
+            "current_sl": _current_sl if _current_sl > 0 else None,
+            "initial_stop_loss_price": _stored_sl if _stored_sl > 0 else None,
+            "sl_broker_order_id": _sl_oid or None,
+            "tp_broker_order_id": _tp_oid or None,
+            "broker_sl_attached": bool(_sl_oid),
+            "broker_tp_attached": bool(_tp_oid),
+            "protection_state": _protection_state,
             "trailing_stop_price": prot.get("trailing_stop_price"),
             "stop_loss_triggered": bool(prot.get("stop_loss_triggered")),
             "trailing_stop_triggered": bool(prot.get("trailing_stop_triggered")),
@@ -889,15 +942,29 @@ async def _calc_stop_distances(ds, positions: list, is_live: bool) -> list:
                 continue
             direction = p["direction"]
             # 优先用 ExitMonitor 缓存的真实 ATR, fallback 到 2% 估算
-            atr = _get_atr(p["code"])
-            atr_estimated = False
-            if atr <= 0:
-                atr = cur * 0.02
-                atr_estimated = True
+            raw_atr = _get_atr(p["code"])
+            atr = raw_atr if raw_atr > 0 else cur * 0.02
             # SL: entry ± 4.0×ATR (与 atr_stop 一致)
             # TP: entry ± 1.0×ATR (与 scale_out 一致)
-            sl = cost - atr * 4 if direction == "LONG" else cost + atr * 4
-            tp = cost + atr * 1 if direction == "LONG" else cost - atr * 1
+            atr_sl = cost - atr * 4 if direction == "LONG" else cost + atr * 4
+            atr_tp = cost + atr * 1 if direction == "LONG" else cost - atr * 1
+            actual_sl = safe_float(p.get("stop_loss_price", 0))
+            actual_tp = safe_float(p.get("take_profit_price", 0))
+            if actual_sl > 0:
+                sl = actual_sl
+                sl_source = ("broker" if p.get("protection_state") == "broker_attached"
+                             else "db")
+                atr_estimated = False
+            else:
+                sl = atr_sl
+                sl_source = "atr_estimated" if raw_atr <= 0 else "atr"
+                atr_estimated = raw_atr <= 0
+            if actual_tp > 0:
+                tp = actual_tp
+                tp_source = ("broker" if p.get("broker_tp_attached") else "db")
+            else:
+                tp = atr_tp
+                tp_source = "atr_estimated" if raw_atr <= 0 else "atr"
 
             if direction == "LONG":
                 sl_dist = (cur - sl) / cur * 100
@@ -919,6 +986,8 @@ async def _calc_stop_distances(ds, positions: list, is_live: bool) -> list:
                 "unrealized_pnl": p.get("unrealized_pnl", 0),
                 "danger": sl_dist < 2,
                 "atr_estimated": atr_estimated,
+                "sl_source": sl_source,
+                "tp_source": tp_source,
             })
     else:
         # 模拟盘: 从 DB 读取 SL/TP
@@ -1320,7 +1389,7 @@ async def _calc_weekly_pnl(ds) -> dict:
 def _calc_decision_summary(market: dict, margin: dict, pnl: dict, weekly_pnl: dict) -> dict:
     """构造 3 行决策摘要数据 (纯内存/文件, 无 broker 调用)"""
     # 读 battle plan 文件
-    plan_actions = {"must_do": 0, "opportunities": 0, "regime": "UNKNOWN", "brief": ""}
+    plan_actions = _empty_plan_actions()
     try:
         from pathlib import Path as _Path
         import json as _json
@@ -1333,27 +1402,7 @@ def _calc_decision_summary(market: dict, margin: dict, pnl: dict, weekly_pnl: di
         if _plan_path.exists():
             with open(_plan_path) as f:
                 plan = _json.load(f)
-            from app.web_dashboard.data_service import battle_plan_is_stale
-            targets = [] if battle_plan_is_stale(plan) else plan.get("targets", [])
-            position_actions = plan.get("position_actions", [])
-            restricted = set(plan.get("restricted", []))
-
-            must_do = sum(
-                1
-                for pa in position_actions
-                if pa.get("action", "").upper() in ("EXIT", "CLOSE", "REDUCE")
-            )
-            opps = sum(
-                1
-                for t in targets
-                if t.get("symbol", "").replace("US.", "") not in restricted
-                and t.get("symbol", "") not in restricted
-                and float(t.get("confidence", 0) or 0) >= 60
-            )
-            plan_actions["must_do"] = must_do
-            plan_actions["opportunities"] = opps
-            plan_actions["regime"] = plan.get("market_regime", "UNKNOWN")
-            plan_actions["brief"] = plan.get("morning_brief", "")
+            plan_actions = _summarize_plan_actions(plan)
     except Exception:
         pass
 
@@ -1392,4 +1441,45 @@ def _calc_decision_summary(market: dict, margin: dict, pnl: dict, weekly_pnl: di
             "week_trades": weekly_pnl.get("trades", 0),
             "week_win_rate": weekly_pnl.get("win_rate", 0),
         },
+    }
+
+
+def _empty_plan_actions() -> dict:
+    return {"must_do": 0, "opportunities": 0, "regime": "UNKNOWN", "brief": ""}
+
+
+def _summarize_plan_actions(plan: dict) -> dict:
+    """把作战计划压成今日摘要；过期计划整体作废，不得只清 targets。
+
+    2026-10-25 Dashboard UX 审计：旧计划文件冻结在 2026-07-31，targets 已按
+    stale 清空，但 position_actions 仍参与 must_do 计数，导致首屏同时出现
+    "1 项必须执行" 与 "当前无需操作"。计划日期不是今日 ET 时，所有摘要字段
+    都必须回到空值，旧仓动作不能冒充今日待办。
+    """
+    if not isinstance(plan, dict):
+        return _empty_plan_actions()
+    from app.web_dashboard.data_service import battle_plan_is_stale
+    if battle_plan_is_stale(plan):
+        return _empty_plan_actions()
+
+    targets = plan.get("targets", []) or []
+    position_actions = plan.get("position_actions", []) or []
+    restricted = set(plan.get("restricted", []) or [])
+    must_do = sum(
+        1
+        for pa in position_actions
+        if str(pa.get("action", "")).upper() in ("EXIT", "CLOSE", "REDUCE")
+    )
+    opps = sum(
+        1
+        for t in targets
+        if t.get("symbol", "").replace("US.", "") not in restricted
+        and t.get("symbol", "") not in restricted
+        and float(t.get("confidence", 0) or 0) >= 60
+    )
+    return {
+        "must_do": must_do,
+        "opportunities": opps,
+        "regime": plan.get("market_regime", "UNKNOWN"),
+        "brief": plan.get("morning_brief", ""),
     }

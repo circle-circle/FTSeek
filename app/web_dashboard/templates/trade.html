@@ -6,13 +6,13 @@
 {% block nav_trade_class3 %}class="active"{% endblock %}
 
 {% block nav_extra %}
-<span class="mode-tag {{ 'live' if is_live else 'sim' }}">{{ '🔴 实盘' if is_live else '🟢 模拟' }}</span>
+<span class="mode-tag {{ 'live' if is_live else 'sim' }}">{{ '实盘' if is_live else '模拟' }}</span>
 {% endblock %}
 {% block nav_extra_tablet %}
-<span class="mode-tag {{ 'live' if is_live else 'sim' }}">{{ '🔴 实盘' if is_live else '🟢 模拟' }}</span>
+<span class="mode-tag {{ 'live' if is_live else 'sim' }}">{{ '实盘' if is_live else '模拟' }}</span>
 {% endblock %}
 {% block nav_extra_mobile %}
-<span class="mode-tag {{ 'live' if is_live else 'sim' }}" style="margin-left:0">{{ '🔴 实盘' if is_live else '🟢 模拟' }}</span>
+<span class="mode-tag {{ 'live' if is_live else 'sim' }}" style="margin-left:0">{{ '实盘' if is_live else '模拟' }}</span>
 {% endblock %}
 
 {% block extra_css %}
@@ -25,6 +25,27 @@
         @keyframes _orderSpin { to { transform: rotate(360deg); } }
         /* ── Trade Summary Strip ── */
         .trade-summary { display: flex; flex-direction: column; gap: 6px; padding: 10px 14px; background: #161b22; border: 1px solid #30363d; border-radius: 10px; margin-bottom: 12px; position: sticky; top: 0; z-index: 50; }
+        /* ── Runtime 状态条: 只读/降级必须先于数字被看见 ── */
+        .runtime-banner { display: flex; align-items: center; gap: 7px; min-height: 24px; padding: 4px 8px; margin: -2px -4px 2px; border: 1px solid #30363d; border-radius: 7px; background: #0d1117; color: #c9d1d9; font-size: 11px; line-height: 1.35; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
+        .runtime-banner::-webkit-scrollbar { display: none; }
+        .runtime-banner.ok { border-color: #1f6f43; color: #86efac; background: rgba(34,197,94,0.06); }
+        .runtime-banner.warn { border-color: #7a5c00; color: #fbbf24; background: rgba(245,158,11,0.07); }
+        .runtime-banner.danger { border-color: #ef4444; color: #fca5a5; background: rgba(239,68,68,0.09); }
+        .runtime-banner b { color: inherit; font-weight: 700; }
+        .runtime-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: 0 0 auto; }
+        .runtime-sep { opacity: 0.4; }
+        .runtime-reason { opacity: 0.85; }
+        .btn:disabled, .diag-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+        .btn-sm { min-height: 36px; }
+        @media (max-width: 1023px) { .trade-summary { top: 42px; z-index: 40; } }
+        @media (max-width: 767px) { .trade-summary { top: 39px; } }
+        .trade-workspace { display: grid; grid-template-columns: minmax(360px, 0.85fr) minmax(0, 1.25fr); gap: 12px; align-items: start; }
+        .trade-ticket-col, .trade-context-col { min-width: 0; }
+        .trade-context-col { display: grid; gap: 12px; }
+        .trade-workspace .card { margin-bottom: 0; }
+        @media (max-width: 1199px) {
+            .trade-workspace { grid-template-columns: 1fr; }
+        }
         .ts-row-primary { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
         .ts-row-secondary { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding-top: 6px; border-top: 1px solid #21262d; font-size: 11px; color: #8b949e; }
         .ts-row-secondary b { color: #e1e4e8; font-weight: 600; margin-left: 4px; }
@@ -283,6 +304,7 @@
         .risk-cfg .rc-sep { color: #30363d; padding: 0 4px; }
 
         @media (max-width: 768px) {
+            .btn-sm { min-height: 40px; }
             .form-grid { grid-template-columns: 1fr; }
             .dir-group { flex-wrap: wrap; }
             .diag-card { width: calc(100vw - 20px); left: 10px !important; right: 10px; }
@@ -339,8 +361,16 @@
             .pos-stack tbody > tr > td:empty { display: none; }
             .estimate-panel .est-line { gap: 8px; }
             .trade-summary { gap: 2px; padding: 6px 8px; }
+            .trade-workspace, .trade-context-col { gap: 8px; }
             .ts-item { padding: 3px 8px; min-width: 55px; }
             .ts-val { font-size: 12px; }
+            .ts-row-secondary, .gates-row {
+                flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
+                -webkit-overflow-scrolling: touch;
+            }
+            .ts-row-secondary::-webkit-scrollbar, .gates-row::-webkit-scrollbar { display: none; }
+            .ts-row-secondary > *, .gates-row > * { flex: 0 0 auto; }
+            .ts-row-secondary { gap: 10px; }
             .ai-suggest { font-size: 10px; gap: 4px; padding: 5px 8px; }
             .ai-suggest .ai-link { margin-left: 0; flex-basis: 100%; text-align: right; }
             .risk-cfg { font-size: 10px; gap: 4px; }
@@ -355,11 +385,28 @@
 
 {% block content %}
     <div class="container">
+        <div class="page-head">
+            <div>
+                <h1>交易</h1>
+                <div class="page-sub">美股 · 下单、保护与对账</div>
+            </div>
+            <div class="page-actions">
+                <div class="market-switch" aria-label="交易市场">
+                    <a class="active" href="/trade" aria-current="page">美股</a>
+                    <a href="/trade/hk">港股</a>
+                </div>
+                <a class="tool-btn" href="/watchlist">股票池</a>
+            </div>
+        </div>
+
         <!-- ═══ 注意力优先横幅 (自动检测最紧急事项) ═══ -->
         <div id="attentionBanner" style="display:none"></div>
 
         <!-- ═══ 账户摘要条 (实时) ═══ -->
         <div class="trade-summary" id="tradeSummary">
+            <div class="runtime-banner warn" id="runtimeBanner" role="status" aria-live="polite">
+                <span class="runtime-dot"></span><b>正在确认交易状态…</b><span class="runtime-reason">券商 / 持仓 / 订单校验中</span>
+            </div>
             <div class="ts-row-primary">
                 <div class="ts-item"><span class="ts-label">总资产</span><span class="ts-val" id="tsAssets">--</span></div>
                 <div class="ts-item"><span class="ts-label">持仓盈亏</span><span class="ts-val" id="tsPosPnl">--</span><span class="ts-sub" id="tsPosPnlPct">--</span></div>
@@ -376,8 +423,11 @@
             <div class="gates-row" id="gatesRow"></div>
         </div>
 
+        <div class="trade-workspace">
+        <div class="trade-ticket-col">
         <!-- ═══ 下单表单 ═══ -->
         <div class="card" id="orderFormCard">
+            <h2 style="font-size:14px;margin-bottom:12px">下单 <span style="font-size:11px;color:#8b949e;font-weight:400">预览后确认</span></h2>
             <div class="form-grid">
                         <div class="form-group">
                             <label>标的</label>
@@ -394,15 +444,15 @@
                         <div class="form-group">
                             <label>方向</label>
                             <div class="dir-group">
-                                <button type="button" class="dir-btn long active" data-dir="LONG" onclick="setDir('LONG')">📈 做多</button>
-                                <button type="button" class="dir-btn short" data-dir="SHORT" onclick="setDir('SHORT')">📉 做空</button>
+                                <button type="button" class="dir-btn long active" data-dir="LONG" onclick="setDir('LONG')">做多</button>
+                                <button type="button" class="dir-btn short" data-dir="SHORT" onclick="setDir('SHORT')">做空</button>
                             </div>
                         </div>
                         <div class="form-group">
                             <label>操作</label>
                             <div class="dir-group">
-                                <button type="button" class="dir-btn open active" data-op="OPEN" onclick="setOp('OPEN')">🔓 开仓</button>
-                                <button type="button" class="dir-btn close" data-op="CLOSE" onclick="setOp('CLOSE')">🔒 平仓</button>
+                                <button type="button" class="dir-btn open active" data-op="OPEN" onclick="setOp('OPEN')">开仓</button>
+                                <button type="button" class="dir-btn close" data-op="CLOSE" onclick="setOp('CLOSE')">平仓</button>
                             </div>
                         </div>
                         <div class="form-group" id="priceGroup" style="display:none">
@@ -465,10 +515,10 @@
                             当前处于非盘中时段，仅支持限价单。流动性较低，bid-ask 价差可能扩大 3-5 倍。
                         </div>
                         <div id="extRthAutoHint" style="display:none;font-size:11px;color:#fbbf24;margin-top:4px;padding-left:26px;font-weight:600">
-                            ⚡ 已自动开启 — 当前处于盘前/盘后时段
+                            已自动开启 — 当前处于盘前/盘后时段
                         </div>
                         <div id="extRthClosedHint" style="display:none;font-size:12px;color:#f87171;margin-top:4px;padding:6px 10px;background:rgba(248,113,113,0.08);border-radius:6px;font-weight:500">
-                            ⏳ 非交易时段
+                            非交易时段
                         </div>
                     </div>
 
@@ -482,7 +532,7 @@
                             开仓成交后自动在 broker 端挂 STOP 止损 + LIMIT 止盈单 (GTC)
                         </div>
                         <div id="autoSlTpOff" style="display:none;font-size:11px;color:#fbbf24;margin-top:4px;padding-left:26px">
-                            ⚠️ 无自动保护 — 需手动管理止损止盈
+                            无自动保护 — 需手动管理止损止盈
                         </div>
                     </div>
 
@@ -513,7 +563,6 @@
 
                     <!-- Existing position hint for same symbol -->
                     <div class="held-hint" id="heldHint">
-                        <span class="held-icon">📌</span>
                         <span id="heldHintText"></span>
                     </div>
 
@@ -532,15 +581,17 @@
                     </div>
 
                     <div class="btn-group">
-                        <button class="btn btn-buy" id="btnSubmit" onclick="previewOrder()">预览下单</button>
+                        <button class="btn btn-buy" id="btnSubmit" onclick="previewOrder()" disabled title="正在确认券商与持仓状态">预览下单</button>
                         <button class="btn btn-ghost" onclick="fetchQuote()">刷新报价</button>
                     </div>
                     <div class="result" id="result"></div>
         </div>
+        </div>
 
+        <div class="trade-context-col">
         <!-- 持仓 -->
         <div class="card">
-                    <h2>📊 持仓 <span id="posCount" style="font-size:12px;color:#8b949e"></span>
+                    <h2>持仓 <span id="posCount" style="font-size:12px;color:#8b949e"></span>
                         <button class="btn btn-ghost btn-sm" onclick="loadPositions()">刷新</button>
                     </h2>
                     <!-- Desktop & Mobile: unified table view -->
@@ -554,7 +605,6 @@
                                 <tbody id="posBody"><tr><td colspan="7" class="loading">加载中...</td></tr></tbody>
                             </table>
                         </div>
-                    </div>
                 </div>
         </div>
 
@@ -562,7 +612,7 @@
         <div class="card">
             <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer"
                  onclick="toggleOrders()">
-                <h2 style="margin:0">📋 交易记录
+                <h2 style="margin:0">交易记录
                     <span id="ordersBadge" style="font-size:11px;color:#8b949e;font-weight:400"></span>
                 </h2>
                 <div style="display:flex;align-items:center;gap:8px">
@@ -588,15 +638,17 @@
                 </div>
             </div>
         </div>
+        </div>
+        </div>
     </div>
 
     <!-- Preview modal — 预览即确认，无CONFIRM输入 -->
     <div class="overlay" id="previewModal" onclick="if(event.target===this){closePreview();event.stopPropagation();}">
         <div class="modal" onclick="event.stopPropagation()">
-            <h3 id="previewTitle">📋 订单预览</h3>
+            <h3 id="previewTitle">订单预览</h3>
             <div id="previewContent" style="margin:12px 0"></div>
             <div class="btn-group">
-                <button class="btn btn-buy" id="confirmBtn" onclick="executeOrder()">确认下单</button>
+                <button class="btn btn-buy" id="confirmBtn" onclick="executeOrder()" disabled title="正在确认券商与持仓状态">确认下单</button>
                 <button class="btn btn-ghost" onclick="closePreview()">取消</button>
             </div>
         </div>
@@ -605,7 +657,7 @@
     <!-- Close position modal (平仓 + 止损/止盈合一) -->
     <div class="overlay" id="closeModal" onclick="if(event.target===this){closeCloseModal();event.stopPropagation();}">
         <div class="modal" onclick="event.stopPropagation()">
-            <h3 id="closeTitle">🔒 平仓</h3>
+            <h3 id="closeTitle">平仓</h3>
             <div style="margin:12px 0">
                 <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #21262d">
                     <span style="color:#8b949e">标的</span><span id="closeSym" style="font-weight:600"></span>
@@ -620,7 +672,7 @@
                 <div id="closeSessionHint" style="display:none;font-size:12px;line-height:1.5;padding:8px 10px;background:#2a1a0a;border:1px solid #f59e0b;border-radius:6px;margin:10px 0"></div>
                 <div id="closeThesisRow" style="display:none;padding:8px 0;border-bottom:1px solid #21262d">
                     <div style="display:flex;justify-content:space-between">
-                        <span style="color:#8b949e">📋 入场理由</span>
+                        <span style="color:#8b949e">入场理由</span>
                     </div>
                     <div id="closeThesis" style="font-size:12px;color:#c9d1d9;margin-top:4px;line-height:1.5"></div>
                 </div>
@@ -646,7 +698,7 @@
             </div>
             <div id="closeError" style="display:none;color:#f87171;font-size:12px;padding:6px 10px;background:#2a0a0a;border:1px solid #ef4444;border-radius:4px;margin-bottom:8px"></div>
             <div class="btn-group">
-                <button class="btn btn-sell" id="closeConfirmBtn" onclick="executeClose()">确认平仓</button>
+                <button class="btn btn-sell" id="closeConfirmBtn" onclick="executeClose()" disabled title="正在确认券商与持仓状态">确认平仓</button>
                 <button class="btn btn-ghost" onclick="closeCloseModal()">取消</button>
             </div>
         </div>
@@ -655,7 +707,7 @@
     <!-- Attribution display -->
     <div class="overlay" id="attrModal">
         <div class="modal" style="max-width:420px">
-            <h3 style="margin:0 0 12px;font-size:15px">📊 交易归因</h3>
+            <h3 style="margin:0 0 12px;font-size:15px">交易归因</h3>
             <div id="attrContent" style="font-size:13px;line-height:1.8"></div>
             <div style="margin-top:16px;text-align:right">
                 <button class="btn btn-ghost" onclick="document.getElementById('attrModal').classList.remove('show')">关闭</button>
@@ -666,7 +718,7 @@
     <!-- Generic confirm modal -->
     <div class="overlay" id="confirmModal">
         <div class="modal" style="max-width:380px">
-            <h3 style="margin:0 0 12px;font-size:15px">⚠️ 确认操作</h3>
+            <h3 style="margin:0 0 12px;font-size:15px">确认操作</h3>
             <p id="confirmText" style="font-size:13px;color:#c9d1d9;margin:0 0 16px"></p>
             <div class="btn-group">
                 <button class="btn btn-sell" onclick="_executeCancel()">确认</button>
@@ -696,6 +748,6 @@
 {% endblock %}
 
 {% block external_scripts %}
-<script src="/static/js/trade.js?v=20260908d"></script>
+<script src="/static/js/trade.js?v=20261025b"></script>
 {# 2026-09-08: /static/ 是 max-age=2592000 immutable (app.py:184) — 改 JS 必须 bump 版本号 #}
 {% endblock %}

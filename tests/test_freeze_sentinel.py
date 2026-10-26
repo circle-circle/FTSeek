@@ -16,6 +16,17 @@
   S11 inactive + Result=success → skip (干净退出 ≈ 运维主动 stop, 不抢方向盘)
   S12 failed / 异常退出 → revive (reset-failed + restart + critical)
   S13 revive 冷却期内 → skip; systemctl 不可用 (unknown) → skip 不拦截
+
+快速冻结层 (DEB-20261023):
+  S14 心跳 ≤90s → ok
+  S15 >90s + active/running + TRADING + 过启动宽限 + 无冷却 → enforce
+  S16 非 active/running → skip (含 stop-sigterm 过渡态)
+  S17 启动宽限内 / 启动时间不可知 → skip
+  S18 非 TRADING → skip
+  S19 冷却期内 → skip
+  S20 快速层禁用 (FTSEEK_SENTINEL_FAST_S=0) → skip
+  S21 心跳缺失 → skip
+  S22 硬停路径: 双栈取证先于 SIGKILL, 且禁用 systemctl restart
 """
 import importlib.util
 from datetime import datetime
@@ -150,3 +161,82 @@ def test_main_runs_liveness_before_freeze_layer():
     body = src[src.index("def main()"):]
     assert body.index("evaluate_liveness(") < body.index("evaluate(now_ts, hb_mtime")
     assert "alert(msg)" in body, "存活层处置必须 critical 外推 (进程已死, 进程内通道不可达)"
+
+
+# ── 快速冻结层 (DEB-20261023, S14–S22) ────────────────────────────────────
+
+def _fast(now, age, active="active", sub="running", trading=True,
+          cooldown=None, started_ago=3600, stale=None):
+    return fs.evaluate_fast(
+        now, None if age is None else now - age,
+        active, sub, trading, cooldown,
+        None if started_ago is None else now - started_ago,
+        stale,
+    )
+
+
+def test_fast_threshold_is_90():
+    assert fs.FAST_STALE_S == 90, "快速层 90s 为 DEB-20261023 裁决值, 改动须新裁决"
+
+
+def test_fast_fresh_ok():
+    assert _fast(NOW, 10)[0] == "ok"
+    assert _fast(NOW, fs.FAST_STALE_S)[0] == "ok"  # 边界含等号
+
+
+def test_fast_stale_enforce():
+    a, r = _fast(NOW, 91)
+    assert a == "enforce" and "91" in r
+
+
+def test_fast_requires_running_unit():
+    """10/22 的 stop-sigterm 过渡态必须让路 — 否则会与运维 stop 抢方向盘。"""
+    assert _fast(NOW, 91, active="deactivating", sub="stop-sigterm")[0] == "skip"
+    assert _fast(NOW, 91, active="inactive", sub="dead")[0] == "skip"
+    assert _fast(NOW, 91, active="activating", sub="start-pre")[0] == "skip"
+
+
+def test_fast_startup_grace_skip():
+    a, r = _fast(NOW, 91, started_ago=fs.STARTUP_GRACE_S - 1)
+    assert a == "skip" and "startup_grace" in r
+
+
+def test_fast_start_time_unknown_skip():
+    """启动时间不可知时不抢跑, 交回 420s 旧层 (防重启循环)。"""
+    a, r = _fast(NOW, 91, started_ago=None)
+    assert a == "skip" and "start_time_unknown" in r
+
+
+def test_fast_not_trading_skip():
+    a, r = _fast(NOW, 91, trading=False)
+    assert a == "skip" and "not_trading" in r
+
+
+def test_fast_cooldown_skip():
+    a, r = _fast(NOW, 91, cooldown=NOW - 60)
+    assert a == "skip" and "cooldown" in r
+
+
+def test_fast_disabled_rollback_valve():
+    a, r = _fast(NOW, 1000, stale=0)
+    assert a == "skip" and "disabled" in r
+
+
+def test_fast_missing_heartbeat_skip():
+    a, r = _fast(NOW, None)
+    assert a == "skip" and r == "heartbeat_missing"
+
+
+def test_fast_hard_stop_sequence_dumps_then_kills():
+    """取证先于硬停; 且快速层不得回退到 SIGTERM restart (僵死进程会拖满 120s)。"""
+    src = (REPO / "scripts" / "freeze_sentinel.py").read_text(encoding="utf-8")
+    body = src[src.index("def hard_restart("):]
+    body = body[:body.index("\ndef ")]
+    assert body.index("dump_inprocess_stacks(") < body.index("signal.SIGKILL")
+    assert '"restart"' not in body, "硬停路径不得调用 systemctl restart"
+
+
+def test_sentinel_run_lock_prevents_overlap():
+    src = (REPO / "scripts" / "freeze_sentinel.py").read_text(encoding="utf-8")
+    body = src[src.index("def main()"):]
+    assert body.index("acquire_run_lock()") < body.index("evaluate_liveness(")

@@ -1,17 +1,18 @@
 {% extends "base.html" %}
 
-{% block title %}📋 Playbook — FTSeek-US{% endblock %}
+{% block title %}计划 · Playbook — FTSeek-US{% endblock %}
 
-{% block nav_trade_class %}class="active"{% endblock %}
-{% block nav_trade_class2 %}class="active"{% endblock %}
-{% block nav_trade_class3 %}class="active"{% endblock %}
+{% block nav_plan_class %}class="active"{% endblock %}
+{% block nav_plan_class2 %}class="active"{% endblock %}
+{% block nav_plan_class3 %}class="active"{% endblock %}
 
 {% block head %}
 <style>
     .pb-container { max-width: 800px; margin: 0 auto; padding: 12px; }
     .pb-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
     .pb-header h2 { font-size: 18px; color: #e1e4e8; }
-    .pb-regime-badge { padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+    .pb-regime-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+    .pb-regime-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: 0 0 6px; }
     .pb-regime-RISK_ON { background: #16a34a22; color: #4ade80; border: 1px solid #16a34a; }
     .pb-regime-CAUTIOUS { background: #eab30822; color: #facc15; border: 1px solid #eab308; }
     .pb-regime-RISK_OFF { background: #ef444422; color: #f87171; border: 1px solid #ef4444; }
@@ -82,17 +83,24 @@
     .pb-loading { text-align: center; padding: 40px; color: #58a6ff; }
     .pb-executed-badge { background: #16a34a33; color: #4ade80; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
     .pb-feedback-badge { font-size: 11px; color: #8b949e; margin-left: 8px; }
+    @media (max-width: 600px) {
+        .pb-container .page-head { flex-wrap: wrap; }
+        .pb-container .page-actions { width: 100%; justify-content: flex-start; }
+    }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="pb-container">
-    <!-- Header -->
-    <div class="pb-header">
-        <h2>📋 今日交易指令</h2>
+    <div class="page-head">
         <div>
+            <h1>计划</h1>
+            <div class="page-sub">Playbook · 今日交易指令与执行状态</div>
+        </div>
+        <div class="page-actions">
             <span id="regimeBadge" class="pb-regime-badge">--</span>
-            <button onclick="loadPlaybook()" style="margin-left:8px;padding:4px 12px;background:#30363d;border:none;border-radius:4px;color:#c9d1d9;cursor:pointer;font-size:12px;">🔄 刷新</button>
+            <a class="tool-btn" href="/watchlist">股票池</a>
+            <button class="tool-btn" type="button" onclick="loadPlaybook()">刷新</button>
         </div>
     </div>
 
@@ -136,5 +144,5 @@
 
 {% block scripts %}{% endblock %}
 {% block external_scripts %}
-<script src="/static/js/playbook.js?v=20260618a"></script>
+<script src="/static/js/playbook.js?v=ux20261025a"></script>
 {% endblock %}
