@@ -316,3 +316,22 @@ LONG×开盘窗 —— 只印读数, 不作独立裁决依据。
 `auto_execute_flow.py` 一处 (gate 调用传 scheduler) / `unified_config.yaml` 三键
 (ruler/grace_sweeps/grace_votes) / `settle_entry_confirm_forward.py` (双代双窗) /
 注册表条目 notes 追加 / 两个契约测试文件 / 本文档 §4 指针 + §5.10。
+
+## 8. 裁决日并列口径 (2026-10-26 增补, 用户裁「按性价比执行」)
+
+裁决日 (n≥60 ∨ ≥10 交易日) 必须**同时**给出下面两组读数, 不得只引用其中一组 —
+两条腿作用域不同、结论可能相反, 分开看会各说各话:
+
+1. **本门整体** (§4 ①②③④): 现役读数 = c1 未收敛 (`SL_INITIAL` 族净均 −148.72 ≥ −40 门槛未达)、
+   c2 开盘窗为负 (−20.94/笔, n=12, t=−0.89)、c3 机制不达标 (opp 均 0.3565% > 0.30%)、
+   c4 勉强达标 (8.79 = 地板)。
+2. **追价腿** (RFC-153 与本批 RFC-170 影子): 按
+   `data/shadow/entry_confirm_forward.jsonl` 的 `chase_shadow_would_abandon` 切两群,
+   比较 `trade_records` 实现净额。现有回溯 (n=53): 追价 >0.6% 桶净均 −27.84, 且
+   3 笔 `SL_INITIAL` 全落在追价最大的三笔 (+0.41/+1.07/+1.41%)。
+   ⚠️ 现役 RFC-153 只覆盖 `FADE_SHORT + 开盘15min + opp≥1%`; 本批数据指向
+   **全 archetype、界在 ~0.5%** —— 裁决日若两者结论不同, 以"同一人群 + 同尺"的那组为准,
+   不得用宽作用域结论直接放宽/收紧窄作用域的现役常量 (那是阈值购物)。
+
+纪律: 本批只**记录** (RFC-170), 未改任何判定; 裁决日前禁止把 `CHASE_SHADOW_PCT`
+接进 `still`/abandon 判定。
