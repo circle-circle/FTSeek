@@ -54,6 +54,26 @@ _DAILY_ACCEPT_HOLIDAY_SEC = 20 * 3600.0   # 假日错位: 20h 内拉过即信任
 _DAILY_ACCEPT_POSTCLOSE_SEC = 15 * 60.0   # 收盘后刚拉过 → 信任 15min, 防重拉风暴
 
 
+def _session_final_bar(last_bar_date: str, fetched_ts: float, now_et: datetime) -> bool:
+    """该缓存条目是否为"已定稿的日线" (可跨进程落盘复用)。
+
+    盘中拉到的当日 bar 是半截 bar (close=当时价)。若落盘并在次日沿用, ATR/MA/RSI 与
+    prev_close 会整天吃一个错误收盘价 ⇒ 只有两类算定稿:
+      ① 末端 bar 早于今日 (历史交易日已收盘, 不再变);
+      ② 末端 bar = 今日 且 拉取时刻在今日 16:15 ET 之后 (收盘定稿后才拉的)。
+    """
+    try:
+        last = datetime.strptime(str(last_bar_date)[:10], "%Y-%m-%d").date()
+    except Exception:
+        return False
+    if last < now_et.date():
+        return True
+    if last > now_et.date():
+        return False
+    close_ts = now_et.replace(hour=16, minute=15, second=0, microsecond=0).timestamp()
+    return fetched_ts >= close_ts
+
+
 def daily_cache_acceptable(last_bar_date: str, fetched_ts: float,
                            now_et: datetime, now_epoch: float) -> bool:
     """日K缓存是否可直接复用 (相位感知, [RFC-171])。
@@ -1436,6 +1456,11 @@ class FutuLV3Provider:
                 ts = float(entry.get("fetched_at") or 0)
                 if not bars or ts <= 0 or sym in self._daily_kline_cache:
                     continue
+                # 半截当日 bar 不装载 (旧文件可能残留; 见 _session_final_bar 注释)
+                from app.utils.timezone import now_et as _now_et_ld
+                if not _session_final_bar(str(bars[-1].get("time", ""))[:10],
+                                          ts, _now_et_ld()):
+                    continue
                 self._daily_kline_cache[sym] = bars
                 self._daily_kline_cache_time[sym] = ts
                 loaded += 1
@@ -1471,6 +1496,11 @@ class FutuLV3Provider:
                     if not bars:
                         continue
                     mine_ts = self._daily_kline_cache_time.get(sym, 0.0)
+                    # 半截当日 bar 不落盘 (否则次日整天沿用错误收盘价)
+                    from app.utils.timezone import now_et as _now_et_sv
+                    if not _session_final_bar(str(bars[-1].get("time", ""))[:10],
+                                              mine_ts, _now_et_sv()):
+                        continue
                     prev = merged.get(sym) or {}
                     if float(prev.get("fetched_at") or 0) > mine_ts:
                         continue

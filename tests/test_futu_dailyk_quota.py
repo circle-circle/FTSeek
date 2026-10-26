@@ -235,3 +235,35 @@ class TestGetDailyKlineGate:
             out = provider.get_daily_kline("US.MSI", count=30)
         assert out is None
         assert "频率太高" in caplog.text
+
+
+class TestSessionFinalBar:
+    """[RFC-171] 半截当日 bar 不得落盘/装载 (否则次日整天沿用错误收盘价)。"""
+
+    def test_intraday_today_bar_not_final(self):
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo
+        from app.data.futu_lv3_provider import _session_final_bar
+        ET = ZoneInfo("America/New_York")
+        now = _dt(2026, 10, 26, 14, 0, tzinfo=ET)          # 盘中
+        fetched = now.timestamp()
+        assert _session_final_bar("2026-10-26", fetched, now) is False   # 当日半截 bar
+        assert _session_final_bar("2026-10-23", fetched, now) is True    # 历史日已定稿
+
+    def test_postclose_today_bar_is_final_only_if_fetched_after_close(self):
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo
+        from app.data.futu_lv3_provider import _session_final_bar
+        ET = ZoneInfo("America/New_York")
+        now = _dt(2026, 10, 26, 18, 0, tzinfo=ET)          # 收盘后
+        close = now.replace(hour=16, minute=15).timestamp()
+        assert _session_final_bar("2026-10-26", close + 60, now) is True   # 收盘后拉 → 定稿
+        assert _session_final_bar("2026-10-26", close - 3600, now) is False  # 盘中拉 → 半截
+
+    def test_future_bar_not_final(self):
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo
+        from app.data.futu_lv3_provider import _session_final_bar
+        ET = ZoneInfo("America/New_York")
+        now = _dt(2026, 10, 26, 12, 0, tzinfo=ET)
+        assert _session_final_bar("2026-10-27", now.timestamp(), now) is False
