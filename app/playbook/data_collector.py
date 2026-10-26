@@ -635,23 +635,35 @@ class PlaybookDataCollector:
                 from app.utils.timezone import now_et as _now_et
                 import datetime as _dt
                 today = _now_et().date()
-                end = today + _dt.timedelta(days=90)
-                fh_data = self.finnhub._get("calendar/earnings", {
-                    "symbol": bare,
-                    "from": today.isoformat(),
-                    "to": end.isoformat(),
-                })
-                if fh_data and isinstance(fh_data, dict):
-                    cal = fh_data.get("earningsCalendar", [])
-                    if cal:
-                        next_date = cal[0].get("date", "")
-                        if next_date:
-                            try:
-                                next_dt = _dt.datetime.strptime(next_date, "%Y-%m-%d")
-                                days_until = (next_dt.date() - today).days
-                            except Exception:
-                                pass
-                        quality = "ok"
+                # [RFC-171] 先查市场级日历 (1 call/日, 6h 缓存); 取不到再回退逐标查询。
+                #   原实现每标的 1 次 → 69 只候选 69 calls, 与 news/其它维度一起
+                #   打穿 Finnhub 免费档 60/min, 每命中一次 429 就盲睡 5s (实测单轮 62 次)。
+                cal = None
+                _idx = {}
+                try:
+                    _idx = self.finnhub.get_earnings_calendar_index(days_ahead=90)
+                except Exception:
+                    _idx = {}
+                if isinstance(_idx, dict) and _idx:
+                    cal = _idx.get(bare.upper()) or []
+                else:
+                    end = today + _dt.timedelta(days=90)
+                    fh_data = self.finnhub._get("calendar/earnings", {
+                        "symbol": bare,
+                        "from": today.isoformat(),
+                        "to": end.isoformat(),
+                    })
+                    if fh_data and isinstance(fh_data, dict):
+                        cal = fh_data.get("earningsCalendar", [])
+                if cal:
+                    next_date = cal[0].get("date", "")
+                    if next_date:
+                        try:
+                            next_dt = _dt.datetime.strptime(next_date, "%Y-%m-%d")
+                            days_until = (next_dt.date() - today).days
+                        except Exception:
+                            pass
+                    quality = "ok"
             except Exception as e:
                 logger.debug(f"Finnhub earnings calendar failed for {symbol}: {e}")
 

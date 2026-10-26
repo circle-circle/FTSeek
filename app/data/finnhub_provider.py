@@ -318,9 +318,18 @@ class FinnhubProvider:
         if self._is_cache_valid(cache_key, ttl_override=3600):
             return self._cache.get(cache_key, 0.0)
 
-        news_list = self.get_company_news(symbol, days=2)
+        news_list = self.get_company_news(symbol, days=3)
         if not news_list:
             return 0.0
+        # [RFC-171] 复用 days=3 的新闻载荷并本地截回 2 日窗 (原实现 days=2 另发一次
+        #   company-news 请求 = 每标的每天多 1 次 Finnhub 调用; 60/min 免费档下
+        #   69 只候选 ⇒ 多出 69 次, 直接贡献 429 停顿)。语义按发布时刻过滤后等价。
+        try:
+            _cutoff = (datetime.now() - timedelta(days=2)).timestamp()
+            news_list = [a for a in news_list
+                         if not a.get("datetime") or float(a.get("datetime")) >= _cutoff]
+        except Exception:
+            pass
 
         keywords = _SYMBOL_KEYWORDS.get(symbol, [self._to_ticker(symbol)])
         score = 0.0
@@ -547,6 +556,40 @@ class FinnhubProvider:
         self._set_cache(cache_key, data)
         logger.debug(f"[Finnhub] {symbol} 财报: {len(data)} 季度")
         return data
+
+    def get_earnings_calendar_index(self, days_ahead: int = 90) -> Dict[str, List[Dict[str, Any]]]:
+        """[RFC-171] 市场级财报日历一次拉全 (symbol → 未来财报行)。
+
+        原实现每标的发一次 `calendar/earnings?symbol=` (69 只 = 69 calls)。该端点
+        不传 symbol 时返回全市场日历 ⇒ 1 call/日, 调用方按 ticker 查表。
+        取回空/异常时返回 {} — 调用方须回退逐标查询 (保守, 不静默丢维度)。
+        缓存 6h (日内多次生成轮共享)。
+        """
+        if not self.enabled:
+            return {}
+        from datetime import date as _date, timedelta as _td
+        from app.utils.timezone import now_et as _now_et
+        _today = _now_et().date()
+        _end = _today + _td(days=days_ahead)
+        cache_key = f"fh_earncal_{_today.isoformat()}_{days_ahead}"
+        if self._is_cache_valid(cache_key, ttl_override=21600):
+            return self._cache.get(cache_key, {})
+        data = self._get("calendar/earnings", {
+            "from": _today.isoformat(), "to": _end.isoformat(),
+        })
+        idx: Dict[str, List[Dict[str, Any]]] = {}
+        if isinstance(data, dict):
+            for row in (data.get("earningsCalendar") or []):
+                sym = str(row.get("symbol") or "").upper()
+                if sym:
+                    idx.setdefault(sym, []).append(row)
+        if idx:
+            self._set_cache(cache_key, idx)
+            logger.info(f"[Finnhub] 财报日历市场级拉取: {len(idx)} 只 "
+                        f"({_today}~{_end}, 省去逐标查询)")
+        else:
+            logger.warning("[Finnhub] 财报日历市场级返回空 → 调用方回退逐标查询")
+        return idx
 
     def get_recommendation_trends(self, symbol: str) -> List[Dict[str, Any]]:
         """

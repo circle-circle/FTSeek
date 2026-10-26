@@ -29,7 +29,7 @@ import os
 import socket
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 
 from futu import CurKlineHandlerBase
@@ -37,6 +37,56 @@ from futu import CurKlineHandlerBase
 from app.utils.symbol_utils import to_dotted_class_share
 
 logger = logging.getLogger("ftseek_us.futu_lv3")
+
+# ── [RFC-171] 日K磁盘缓存 + 会话感知新鲜度 ────────────────────────────────
+# 病灶 (2026-10-26 实测): 日K缓存只在进程内存 (24h TTL) ⇒ 进程重建后 09:0x 的
+#   62 只候选批次必然全部冷启动 → 瞬间打满 OpenD 账户级 60次/30s 窗口 →
+#   末位标的 ret=-1 / 配额等待 10s 超时 → Router 回退 TwelveData (更慢、口径不同)。
+#   playbook 生成轮 09:01-09:06 的 TwelveData 回退即此路径 (日志 US.ARM ×2)。
+# 修法: ①缓存落盘 (跨进程重启/多实例复用); ②新鲜度判据从"24h TTL"改成
+#   "相位感知" — 盘中/盘前只需要到上一交易日的**已收盘**bar, 收盘后 (>=16:15 ET)
+#   才要求含当日 bar。⇒ 盘前批次 0 次历史K请求。
+_DAILY_DISK_PATH = (
+    __file__.rsplit("/app/data/", 1)[0] + "/data/cache/daily_kline_v1.json"
+)
+_DAILY_DISK_FLUSH_SEC = 30.0     # 落盘节流 (62 只批次只写 2-3 次)
+_DAILY_ACCEPT_HOLIDAY_SEC = 20 * 3600.0   # 假日错位: 20h 内拉过即信任
+_DAILY_ACCEPT_POSTCLOSE_SEC = 15 * 60.0   # 收盘后刚拉过 → 信任 15min, 防重拉风暴
+
+
+def daily_cache_acceptable(last_bar_date: str, fetched_ts: float,
+                           now_et: datetime, now_epoch: float) -> bool:
+    """日K缓存是否可直接复用 (相位感知, [RFC-171])。
+
+    - 盘前/盘中 (ET < 16:15): 只要求含**上一交易日**的已收盘 bar
+      (假日导致缓存末端落后时, 20h 内拉过仍信任, 避免假日晨反复重拉);
+    - 收盘后 (ET >= 16:15): 要求含**当日** bar (IC/影子回填需要当日行情);
+      刚拉过但当日 bar 尚未发布时 15min 内不重复请求。
+    - 硬底: 末端 bar 超过 10 天 → 一律不接受 (既有反幻觉守卫)。
+    """
+    if not last_bar_date or fetched_ts <= 0:
+        return False
+    try:
+        last = datetime.strptime(str(last_bar_date)[:10], "%Y-%m-%d").date()
+    except Exception:
+        return False
+    today = now_et.date()
+    if (today - last).days > 10:
+        return False
+    age = now_epoch - fetched_ts
+    if (now_et.hour, now_et.minute) >= (16, 15):
+        # 收盘后: 必须是"收盘后拉取且含当日 bar"的数据。盘中拉到的当日 bar 是
+        #   半截 bar (close=盘中价), 直接给 IC/影子回填会污染当日收益 ⇒ 必须重拉。
+        close_ts = now_et.replace(hour=16, minute=15, second=0, microsecond=0).timestamp()
+        if last >= today and fetched_ts >= close_ts:
+            return True
+        return age < _DAILY_ACCEPT_POSTCLOSE_SEC
+    prev = today - timedelta(days=1)
+    while prev.weekday() >= 5:          # 跳过周末 (假日由 20h 信任窗兜住)
+        prev -= timedelta(days=1)
+    if last >= prev:
+        return True
+    return age < _DAILY_ACCEPT_HOLIDAY_SEC
 
 
 def silence_futu_sdk_logs() -> None:
@@ -334,6 +384,11 @@ class FutuLV3Provider:
         # Daily K线缓存 (24hr TTL, 日线每天只变一次)
         self._daily_kline_cache: Dict[str, List[Dict]] = {}   # futu_symbol -> kline list
         self._daily_kline_cache_time: Dict[str, float] = {}   # futu_symbol -> cache timestamp
+        # [RFC-171] 日K落盘 (跨进程重启复用; 盘前批次零历史K请求)
+        self._daily_disk_loaded = False
+        self._daily_disk_dirty = False
+        self._daily_disk_last_flush = 0.0
+        self._daily_disk_lock = threading.Lock()
         # 2026-06-30: 过期K线标记缓存 — 避免反复fallback到TwelveData导致429
         self._stale_kline_notified: Dict[str, float] = {}  # futu_symbol -> last_notified_ts
 
@@ -1358,7 +1413,63 @@ class FutuLV3Provider:
             self._kline_refresh_lock.release()
             logger.warning("[FutuLV3] %s K 线后台刷新启动失败", symbol, exc_info=True)
 
-    def _acquire_daily_kline_quota(self, symbol_key: str, max_wait: float = 10.0) -> bool:
+    def _daily_disk_load(self) -> None:
+        """[RFC-171] 一次性把落盘日K装载进内存缓存 (失败静默, 退化为纯内存行为)。"""
+        if self._daily_disk_loaded:
+            return
+        with self._daily_disk_lock:
+            if self._daily_disk_loaded:
+                return
+            self._daily_disk_loaded = True
+            try:
+                import json as _json
+                with open(_DAILY_DISK_PATH, "r", encoding="utf-8") as fh:
+                    payload = _json.load(fh)
+            except FileNotFoundError:
+                return
+            except Exception as exc:
+                logger.warning(f"[FutuLV3·DailyK] 落盘缓存读取失败 (忽略): {exc}")
+                return
+            loaded = 0
+            for sym, entry in (payload.get("symbols") or {}).items():
+                bars = entry.get("bars") or []
+                ts = float(entry.get("fetched_at") or 0)
+                if not bars or ts <= 0 or sym in self._daily_kline_cache:
+                    continue
+                self._daily_kline_cache[sym] = bars
+                self._daily_kline_cache_time[sym] = ts
+                loaded += 1
+            if loaded:
+                logger.info(f"[FutuLV3·DailyK] 落盘日K缓存装载 {loaded} 只 "
+                            f"({_DAILY_DISK_PATH})")
+
+    def _daily_disk_save(self, force: bool = False) -> None:
+        """[RFC-171] 节流落盘 (30s); 原子写 (tmp+rename), 失败不影响取数。"""
+        now = time.time()
+        if not force and (now - self._daily_disk_last_flush) < _DAILY_DISK_FLUSH_SEC:
+            return
+        with self._daily_disk_lock:
+            if not self._daily_disk_dirty and not force:
+                return
+            self._daily_disk_last_flush = now
+            self._daily_disk_dirty = False
+            try:
+                import json as _json
+                import os as _os
+                payload = {"version": 1, "symbols": {
+                    sym: {"bars": bars,
+                          "fetched_at": self._daily_kline_cache_time.get(sym, 0.0)}
+                    for sym, bars in self._daily_kline_cache.items() if bars
+                }}
+                _os.makedirs(_os.path.dirname(_DAILY_DISK_PATH), exist_ok=True)
+                tmp = _DAILY_DISK_PATH + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as fh:
+                    _json.dump(payload, fh, ensure_ascii=False, separators=(",", ":"))
+                _os.replace(tmp, _DAILY_DISK_PATH)
+            except Exception as exc:
+                logger.warning(f"[FutuLV3·DailyK] 落盘缓存写入失败 (忽略): {exc}")
+
+    def _acquire_daily_kline_quota(self, symbol_key: str, max_wait: float = 30.0) -> bool:
         """日K配额门闸 (2026-08-27 ret=-1根因修): 复用 _wait_kline_quota 的全局60/30s窗口+单标的冷却.
 
         get_kline (分钟K) 走非阻塞拒绝, 但日线主要消费方是 EOD 批量回填 (ic_tracker/shadow_tracker/
@@ -1597,28 +1708,20 @@ class FutuLV3Provider:
 
         futu_symbol = self._to_futu_symbol(symbol)
 
-        # 检查缓存 (24hr TTL = 86400s) + 数据新鲜度检查
-        # 2026-06-27 P0修复: 缓存中可能有过期数据(返回2025年bars), 需检查最新bar日期
+        # 检查缓存 + 数据新鲜度 (2026-06-27 P0: 缓存里可能有过期数据/2025年bar)
+        # [RFC-171] 判据从"24h TTL + 10天宽限"改为相位感知 (daily_cache_acceptable):
+        #   盘前/盘中只要含上一交易日已收盘 bar 即命中 (跨进程重启落盘复用);
+        #   收盘后要求含当日 bar。⇒ 盘前 62 只批次零历史K请求, 消除配额打穿/回退。
+        self._daily_disk_load()
         cache_ts = self._daily_kline_cache_time.get(futu_symbol, 0)
         cached = self._daily_kline_cache.get(futu_symbol)
-        _cache_valid = False
-        if cached and len(cached) >= min(count, 5) and (time.time() - cache_ts < 86400):
-            # 数据新鲜度: 最新bar日期应在最近10天内(容错周末/假日)
-            try:
-                from datetime import date, timedelta
-                latest_bar_date = str(cached[-1].get("time", ""))[:10]
-                if latest_bar_date:
-                    latest = date.fromisoformat(latest_bar_date)
-                    # 允许10天宽限(覆盖长周末+周末), 超过则缓存失效
-                    if date.today() - latest <= timedelta(days=10):
-                        _cache_valid = True
-                    else:
-                        logger.info(f"[FutuLV3·DailyK] {symbol} 缓存数据过期 (latest={latest_bar_date}), 重新查询")
-            except Exception:
-                _cache_valid = True  # 解析失败时不阻断, 降级用缓存
-
-        if _cache_valid:
-            return cached[-count:]
+        if cached and len(cached) >= min(count, 5):
+            from app.utils.timezone import now_et as _now_et_dk
+            if daily_cache_acceptable(str(cached[-1].get("time", ""))[:10],
+                                      cache_ts, _now_et_dk(), time.time()):
+                return cached[-count:]
+            logger.debug(f"[FutuLV3·DailyK] {symbol} 缓存相位过期 "
+                         f"(latest={str(cached[-1].get('time',''))[:10]}), 重新查询")
 
         # 2026-08-27 ret=-1 根因修: DailyK 路径此前未接 K 线配额门闸 — EOD 批量恰在 24h 整点
         # 撞上日K缓存 TTL 集体过期, 45 symbol 在 6s 内连发打穿 OpenD 账户级频控 (60次/30s),
@@ -1648,6 +1751,20 @@ class FutuLV3Provider:
                 start=_start,
                 end=_end,
             )
+            # [RFC-171] ret=-1 = OpenD 账户级频控 (与分钟K/其它进程共享配额, 应用侧
+            #   60/30s 窗口只是近似 ⇒ 应用侧放行也可能被 OpenD 拒)。单次退避重试,
+            #   避免一次抖动就把日K永久推到 TwelveData (口径不同 + 更慢)。
+            if ret != 0:
+                time.sleep(2.0)
+                ret, data, _err = self._quote_ctx.request_history_kline(
+                    code=futu_symbol,
+                    ktype=KLType.K_DAY,
+                    max_count=max(count + 10, 320),
+                    start=_start,
+                    end=_end,
+                )
+                if ret == 0:
+                    logger.info(f"[FutuLV3·DailyK] {symbol} 退避重试成功")
 
             if ret == 0 and data is not None and len(data) > 0:
                 klines = []
@@ -1695,6 +1812,9 @@ class FutuLV3Provider:
                 # 写入缓存 (只在数据新鲜时写入)
                 self._daily_kline_cache[futu_symbol] = klines
                 self._daily_kline_cache_time[futu_symbol] = time.time()
+                # [RFC-171] 落盘 (节流 30s) — 供下次进程重建后盘前批次直接复用
+                self._daily_disk_dirty = True
+                self._daily_disk_save()
                 return klines[-count:]
             else:
                 # 2026-08-27: 透出 OpenD retMsg (此前 `_` 吞掉 → 频控/权限/无数据都只见 "ret=-1", 病灶查了10天)

@@ -60,7 +60,8 @@ class FundamentalProvider(BaseDataProvider):
 
     # 2026-08-22 (P1-3): 基本面数据 1h 缓存 — 降级链每次全量跑是浪费
     _fundamental_cache = {}
-    _FUNDAMENTAL_CACHE_TTL = 3600  # 1 小时
+    _FUNDAMENTAL_CACHE_TTL = 43200  # [RFC-171] 1h→12h: 基本面(PE/市值/行业/ROE)季度级变化,
+    # 盘前每个候选每天都重拉一次是纯浪费 (69 只 × 1 call 打 Finnhub 60/min)。
 
     def get_data(self, symbol: str, **kwargs) -> Dict[str, Any]:
         """获取基本面数据（自动降级: Futu → Finnhub → Yahoo → AlphaVantage）"""

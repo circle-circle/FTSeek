@@ -72,11 +72,25 @@ class TestGetDailyKlineGate:
         monkeypatch.setattr(time, "time", clock.now)
         monkeypatch.setattr(time, "sleep", lambda s: None)
 
-        real_today = date.today().isoformat()
-        bars = [{"time": f"{real_today} 00:00:00", "open": 1, "high": 1,
+        # 缓存必须"相位过期"才会走到门闸: 末端 bar 落后于上一交易日 (today-6) 且
+        #   拉取时间很旧 (age 远超 20h 假日信任窗) ⇒ daily_cache_acceptable=False。
+        from datetime import timedelta as _td
+        stale_day = (date.today() - _td(days=6)).isoformat()
+        bars = [{"time": f"{stale_day} 00:00:00", "open": 1, "high": 1,
                  "low": 1, "close": 1, "volume": 1, "turnover": 1}] * 40
         provider._daily_kline_cache = {"US.PAL": bars}
+        provider._daily_kline_cache_time = {"US.PAL": 1.0}
         _fill_window(provider, clock.t)
+        # [RFC-171] 有界等待上限 10s→30s: 假钟每轮 +0.5s ⇒ 60 个新鲜戳会在 30s
+        #   假时间窗内自然过期, 门闸会被"放行"(测试假象, 非真实饱和)。这里让窗口
+        #   在每个 tick 重新灌满 = 模拟"其它消费方持续占用配额"的真实饱和场景。
+        _orig_now = clock.now
+
+        def _now_keep_full():
+            t = _orig_now()
+            _fill_window(provider, t)
+            return t
+        monkeypatch.setattr(time, "time", _now_keep_full)
 
         calls = []
 
@@ -88,6 +102,65 @@ class TestGetDailyKlineGate:
         self._make_live(provider, clock.t, Ctx())
         out = provider.get_daily_kline("US.PAL", count=30)
         # 门闸挡住: OpenD 一次都没被打, 走缓存降级
+        assert calls == []
+        assert out == bars[-30:]
+
+    def test_phase_fresh_cache_skips_request_and_quota(self, provider):
+        """[RFC-171] 相位新鲜 (末端=上一交易日) 的缓存: 既不打 OpenD 也不耗配额。
+
+        这是盘前 09:0x 62 只候选批次的零点: 缓存落盘后重启进程仍命中 ⇒ 配额窗口
+        不被 62 连发打穿 ⇒ TwelveData 回退与 10-30s 等待从路径上消失。
+        """
+        from datetime import timedelta as _td
+        prev = date.today() - _td(days=1)
+        while prev.weekday() >= 5:
+            prev -= _td(days=1)
+        bars = [{"time": f"{prev.isoformat()} 00:00:00", "open": 1, "high": 1,
+                 "low": 1, "close": 1, "volume": 1, "turnover": 1}] * 40
+        provider._daily_kline_cache = {"US.PAL": bars}
+        provider._daily_kline_cache_time = {"US.PAL": time.time() - 3600}
+        provider._daily_disk_loaded = True      # 不读真实落盘文件
+
+        calls = []
+
+        class Ctx:
+            def request_history_kline(self, **kw):
+                calls.append(kw)
+                return 0, None, None
+
+        self._make_live(provider, 0, Ctx())
+        provider._kline_req_times = []
+        out = provider.get_daily_kline("US.PAL", count=30)
+        assert calls == []                       # 零 OpenD 请求
+        assert provider._kline_req_times == []   # 零配额消耗
+        assert out == bars[-30:]
+
+    def test_daily_disk_roundtrip_survives_restart(self, provider, tmp_path, monkeypatch):
+        """[RFC-171] 落盘 → 清内存 → 重新装载: 跨进程重启后仍零请求。"""
+        import app.data.futu_lv3_provider as _fp
+        from datetime import timedelta as _td
+        disk = tmp_path / "daily_kline_v1.json"
+        monkeypatch.setattr(_fp, "_DAILY_DISK_PATH", str(disk))
+        prev = date.today() - _td(days=1)
+        while prev.weekday() >= 5:
+            prev -= _td(days=1)
+        bars = [{"time": f"{prev.isoformat()} 00:00:00", "open": 1, "high": 1,
+                 "low": 1, "close": 1, "volume": 1, "turnover": 1}] * 40
+        provider._daily_kline_cache = {"US.PAL": bars}
+        provider._daily_kline_cache_time = {"US.PAL": time.time() - 3600}
+        provider._daily_disk_dirty = True
+        provider._daily_disk_save(force=True)
+        assert disk.exists()
+
+        p2 = FutuLV3Provider(host="127.0.0.1", port=1)
+        calls = []
+
+        class Ctx:
+            def request_history_kline(self, **kw):
+                calls.append(kw)
+                return 0, None, None
+        self._make_live(p2, 0, Ctx())
+        out = p2.get_daily_kline("US.PAL", count=30)
         assert calls == []
         assert out == bars[-30:]
 
