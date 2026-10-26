@@ -306,7 +306,7 @@ def _run_new_scheduler(args):
         from app.observability.fault_dump import enable_fault_diagnostics
         enable_fault_diagnostics()
     except Exception as _fd_err:
-        logger.warning("[Liveness] fault diagnostics 初始化失败 (不影响启动): %s", _fd_err)
+        logger.warning("[Liveness] fault diagnostics 初始化失败 (不影响启动): %s", _fd_err, exc_info=True)
 
     # DEB-20260903 #13: 双实例防护 — 原 /run 不可写时仅 print 警告继续启动, 防护静默失效
     #   (且 lock_fd 未定义 → cleanup_lock NameError). 现优先 /run, 失败回退数据目录锁;

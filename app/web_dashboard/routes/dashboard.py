@@ -385,6 +385,15 @@ def register(app, templates, dashboard):
                 "success": False, "symbol": symbol,
                 "error": f"{symbol} 是 SIM 数据收集仓, 看板(实盘台)不改写其止损 — DEB-20260905 §13.15",
             }
+        # [RFC-168] 归属校验: 本路此前零闸门 (只做 SIM 隔离), 任意 symbol 都能
+        #   触达改写止损价。加"标的须在本账户持仓台账" —— 提升止损保护的方向
+        #   本就可达, 该校验只拦无仓标的, 不收紧正当操作。
+        from app.web_dashboard.manual_order_service import get_manual_order_service as _get_svc
+        from app.web_dashboard.order.write_gates import check_symbol_held as _check_held
+        _ok, _msg = _check_held(_get_svc(), symbol)
+        if not _ok:
+            return {"success": False, "symbol": symbol, "error": _msg}
+
         rows = await ds.db_execute(
             "UPDATE open_positions SET stop_loss_price = ?, stop_loss_triggered = 0 "
             f"WHERE symbol = ? AND {real_only(db_path)}",
@@ -401,7 +410,16 @@ def register(app, templates, dashboard):
         # 判断触发类型
         body = await request.json() if request.headers.get("content-type") == "application/json" else {}
         reason = body.get("reason", "stop_loss")
-        result = svc.close_position(symbol, reason=reason)
+        # [RFC-168] 归属校验: 本路此前零闸门 —— 任意 symbol 都能触达平仓路径。
+        #   只查「该标的是否在本账户持仓台账」, **不收紧平仓可达性** (无仓可平本就
+        #   无意义, 该校验不会挡住任何正当减仓)。
+        from app.web_dashboard.order.write_gates import precheck_protection_confirm as _pre_confirm
+        _ok, _msg = await asyncio.to_thread(_pre_confirm, svc, symbol)
+        if not _ok:
+            return {"success": False, "symbol": symbol, "error": _msg}
+        # DEB-20260904 #S12: 同步 broker RPC 直接跑在 async handler 会阻塞整个
+        #   dashboard 事件循环 — 卸载到线程 (下单/平仓数秒期间所有请求卡死)。
+        result = await asyncio.to_thread(svc.close_position, symbol, reason=reason)
         if result.get("success"):
             # 发飞书通知已执行
             try:

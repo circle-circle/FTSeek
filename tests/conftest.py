@@ -23,6 +23,187 @@ except Exception:
 
 import pytest
 
+# ── 生产 SQLite 库写入隔离 (2026-10-26, RFC-168 方案 D) ─────────────────────
+# 病灶: 既有生产数据写硬闸只挂 open/Path.write_*/os.replace/os.rename,
+#   **sqlite3.connect 完全未挂** (2026-09-03 已在下方注释里自认, 但只补了
+#   regime_filter 一个登记缝) ⇒ 19 个生产库路径 (data/*.db、app/data/*.db、
+#   根 ftseek_us.db) 在测试中可写。app/event_stream/store.py:18 的
+#   EventStore() 默认路径即生产库 data/event_stream.db (1.6GB), 构造即
+#   CREATE TABLE 写入。生产库是判分样本与审计留痕的载体 — 测试写它 = 污染尺子。
+#
+# 手法: 拦 **写语句** 而非拦 connect。只读断言大量直连生产库
+#   (tests/core/test_track_record_context.py:146 等), 拦 connect 会打成假红;
+#   写语句级闸则只读零影响、写入当场红。
+#   实现借 sqlite3 的 set_trace_callback: 生产库连接挂回调, 执行到
+#   DML/DDL 抛错; SELECT/PRAGMA 照常放行。
+#
+# 顺序约束 (改动本段时勿动): 本 patch 必须早于**任何** app 模块 import 落地 ——
+#   app/core/db_utils.py:138 的 _safe_connect 在 import 期捕获 sqlite3.connect
+#   的引用; 若 conftest 晚于 db_utils 被 import, db_utils 造的连接会绕过本闸。
+#   故本段置于文件顶部 (早于下方 from app.utils.timezone import)。
+import sqlite3 as _sqlite3_guard
+
+_REAL_SQLITE_CONNECT = _sqlite3_guard.connect
+
+# 写类 action 集合 (= SQLITE_DENY 的判定依据)。事务/保存点/读/PRAGMA 放行:
+#   PRAGMA 是 db_utils 连接初始化 (journal_mode=WAL / busy_timeout) 必经之路,
+#   拦它会让所有生产库连接在初始化阶段就红, 掩盖真正的写入点;
+#   PRAGMA 不写业务数据, 不构成判分样本污染。
+_SQLITE_WRITE_ACTIONS = frozenset({
+    _sqlite3_guard.SQLITE_INSERT,
+    _sqlite3_guard.SQLITE_UPDATE,
+    _sqlite3_guard.SQLITE_DELETE,
+    _sqlite3_guard.SQLITE_CREATE_INDEX,
+    _sqlite3_guard.SQLITE_CREATE_TABLE,
+    _sqlite3_guard.SQLITE_CREATE_TEMP_INDEX,
+    _sqlite3_guard.SQLITE_CREATE_TEMP_TABLE,
+    _sqlite3_guard.SQLITE_CREATE_TEMP_TRIGGER,
+    _sqlite3_guard.SQLITE_CREATE_TEMP_VIEW,
+    _sqlite3_guard.SQLITE_CREATE_TRIGGER,
+    _sqlite3_guard.SQLITE_CREATE_VIEW,
+    _sqlite3_guard.SQLITE_CREATE_VTABLE,
+    _sqlite3_guard.SQLITE_DROP_INDEX,
+    _sqlite3_guard.SQLITE_DROP_TABLE,
+    _sqlite3_guard.SQLITE_DROP_TEMP_INDEX,
+    _sqlite3_guard.SQLITE_DROP_TEMP_TABLE,
+    _sqlite3_guard.SQLITE_DROP_TEMP_TRIGGER,
+    _sqlite3_guard.SQLITE_DROP_TEMP_VIEW,
+    _sqlite3_guard.SQLITE_DROP_TRIGGER,
+    _sqlite3_guard.SQLITE_DROP_VIEW,
+    _sqlite3_guard.SQLITE_DROP_VTABLE,
+    _sqlite3_guard.SQLITE_ALTER_TABLE,
+    _sqlite3_guard.SQLITE_ATTACH,
+    _sqlite3_guard.SQLITE_DETACH,
+    _sqlite3_guard.SQLITE_REINDEX,
+    _sqlite3_guard.SQLITE_ANALYZE,
+})
+
+# 会话级违规账: [(nodeid, 库路径, action 名, 主对象名)]
+_PROD_DB_VIOLATIONS = []
+
+# 已知存量豁免 (2026-10-26, RFC-168 方案 D)。
+#
+# 闸上线当日即抓出既有污染: 生产代码在测试中直连生产库并写表 (pdt_state /
+# pdt_trades / capital_state / trail_state_snapshot …)。这些是**架构性**写入点 ——
+# 生产代码经统一解析器 (get_main_db) 或历史硬编码路径直连, 逐一改造涉及风控与
+# 路径解析语义, 超出本批授权范围。
+#
+# 故按**库级**登记豁免: 该库在测试中的写入不再报红, 但**计数并展示**在报告里
+# (不静默 —— 存量污染仍在发生, 必须可见可跟踪, 并在交接里列为待办)。
+# 未登记库的写入仍当场红 —— 那才是闸真正要抓的"新增污染"。
+_KNOWN_PRODUCTION_WRITE_DBS = {
+    "ftseek_us.db": "app/risk/pdt_guard.py:64 等经 get_main_db() 直连主库 (生产代码在测试中直写)",
+    "trail_state.db": "app/risk/trail_state_store.py:31 硬编码 data/trail_state.db (待改统一解析器)",
+    # [RFC-168 实施期新发现] app/storage/review_tables.py:49 get_connection() 走
+    # db_pool 的 "review" 槽位 (生产库), **完全忽略构造时传入的 db_path** ⇒
+    # tests/test_review_tables.py 即使建了 tempfile 库, 实际仍写生产 review 库。
+    # 修它属存储层重构 (改连接目标/复用策略), 超出本批范围 ⇒ 登记豁免 + 单独立项。
+    "ftseek_us_review.db": "app/storage/review_tables.py:49 忽略 db_path 固定走 db_pool 生产槽位 (待修)",
+}
+
+# 已知存量命中计数 (会话级) — [(库路径, 对象名, 次数)]
+_KNOWN_PRODUCTION_WRITE_HITS = []
+
+
+def _known_production_write_db(db_path):
+    """该库是否属已知存量豁免库; 命中返回豁免理由, 未命中返回 None。"""
+    return _KNOWN_PRODUCTION_WRITE_DBS.get(Path(db_path).name)
+
+# 由下方 autouse fixture 按 @pytest.mark.allow_production_data_write 置位。
+_PROD_DB_WRITE_ALLOWED = False
+
+
+def _is_production_db_path(database):
+    """判定 connect 目标是否为**生产** SQLite 库; 非生产返回 None。
+
+    生产判据: 落在仓内 project_root 下、后缀 .db、且不在 pytest 临时目录里。
+    仓外路径 (如 /root/.hermes 下的库) 暂放行 — 登记为后续项。
+    URI 形式 (file:...?mode=ro) 亦解析出真实路径后判定 — 否则只读连接会绕过闸。
+    """
+    try:
+        raw = database if isinstance(database, str) else os.fspath(database)
+    except TypeError:
+        return None
+    if not raw or raw == ":memory:":
+        return None
+    if raw.startswith("file:"):
+        raw = raw[len("file:"):].split("?", 1)[0]
+        if not raw:
+            return None
+    try:
+        cand = Path(raw)
+        if not cand.is_absolute():
+            cand = project_root / cand
+        cand = cand.resolve()
+    except OSError:
+        return None
+    if cand.suffix.lower() != ".db":
+        return None
+    text = str(cand)
+    if "pytest-of-" in text or text.startswith("/tmp/"):
+        return None
+    try:
+        cand.relative_to(project_root)
+    except ValueError:
+        return None
+    return cand
+
+
+def _guarded_sqlite_connect(*args, **kwargs):
+    """sqlite3.connect 包装: 生产库连接挂写语句 authorizer, 其余原样放行。
+
+    机制说明 (为何不用 trace_callback): trace_callback 的回调异常会被 CPython
+    静默吞掉 (PyErr_Clear), 拦不住写; set_authorizer 返回 SQLITE_DENY 则语句
+    在 prepare 阶段被拒, 抛 "not authorized"。authorizer 回调内抛异常同样被吞,
+    故违规明细记入 _PROD_DB_VIOLATIONS, 由会话结束统一报红 —— 防生产代码里
+    `except sqlite3.Error: pass` 把违规吞掉导致用例假绿。
+    """
+    conn = _REAL_SQLITE_CONNECT(*args, **kwargs)
+    database = args[0] if args else kwargs.get("database")
+    prod = _is_production_db_path(database)
+    if prod is None:
+        return conn
+
+    def _authorizer(action, arg1, arg2, dbname, source):
+        if action in _SQLITE_WRITE_ACTIONS and not _PROD_DB_WRITE_ALLOWED:
+            known = _known_production_write_db(prod)
+            if known:
+                _KNOWN_PRODUCTION_WRITE_HITS.append((str(prod), arg1))
+                return _sqlite3_guard.SQLITE_OK
+            _PROD_DB_VIOLATIONS.append((request_id, str(prod), action, arg1))
+            return _sqlite3_guard.SQLITE_DENY
+        return _sqlite3_guard.SQLITE_OK
+
+    try:
+        conn.set_authorizer(_authorizer)
+    except Exception:
+        pass
+    return conn
+
+
+# 当前测试 nodeid (供报错文案定位; 由下方 fixture 维护)
+request_id = "<unknown>"
+
+
+_sqlite3_guard.connect = _guarded_sqlite_connect
+
+
+@pytest.fixture(autouse=True)
+def _track_current_test_id(request):
+    global request_id
+    request_id = request.node.nodeid
+    yield
+    request_id = "<unknown>"
+
+
+@pytest.fixture(autouse=True)
+def _allow_production_db_write_marker(request):
+    """@pytest.mark.allow_production_data_write 放行生产库写入 (与既有文件写闸同纪律)。"""
+    global _PROD_DB_WRITE_ALLOWED
+    _PROD_DB_WRITE_ALLOWED = bool(request.node.get_closest_marker("allow_production_data_write"))
+    yield
+    _PROD_DB_WRITE_ALLOWED = False
+
 
 @pytest.fixture(autouse=True)
 def _reset_market_regime_gate_cache():
@@ -392,9 +573,70 @@ _ALLOW_OUTBOUND_MARKER = "allow_outbound_notification"
 def pytest_sessionfinish(session, exitstatus):
     if _OUTBOUND_LEAKS or _OUTBOUND_BACKGROUND:
         _report_outbound_traces(session)
+    if _PROD_DB_VIOLATIONS:
+        _report_production_db_violations(session)
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+    if _KNOWN_PRODUCTION_WRITE_HITS:
+        _report_known_production_writes(session)
     if _OUTBOUND_LEAKS:
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
     _futu_thread_exit_bailout()
+
+
+def _report_known_production_writes(session):
+    """已知存量污染的计数展示 (不报红, 但必须可见)。
+
+    存量豁免不等于存量已解决 —— 生产库在测试中仍被写入, 该事实必须留在报告里,
+    直至对应写入点改造完成为止。
+    """
+    try:
+        tr = session.config.pluginmanager.getplugin("terminalreporter")
+        if tr is None:
+            return
+        by_db = {}
+        for db_path, obj in _KNOWN_PRODUCTION_WRITE_HITS:
+            by_db.setdefault(db_path, []).append(obj)
+        tr.write_line("")
+        tr.write_line("=" * 72)
+        tr.write_line(f"ℹ️  已知存量: 生产库在测试中被写入 {len(_KNOWN_PRODUCTION_WRITE_HITS)} 次"
+                      " (已登记豁免, 不报红)")
+        for db_path, objs in by_db.items():
+            reason = _known_production_write_db(db_path) or "?"
+            tables = sorted(set(objs))
+            tr.write_line(f"   · {db_path} × {len(objs)} — {reason}")
+            tr.write_line(f"     表: {', '.join(tables[:8])}")
+        tr.write_line("   该污染仍在发生, 改造对应写入点后应从此清单移除")
+        tr.write_line("=" * 72)
+    except Exception:
+        pass
+
+
+def _report_production_db_violations(session):
+    """生产库写入违规汇总报红。
+
+    必要性: authorizer 拒绝时抛的是 sqlite3.DatabaseError("not authorized"),
+    生产代码里若有 `except sqlite3.Error: pass` 会把它吞掉 ⇒ 用例可能仍绿。
+    故会话结束统一点名, 把"污染尺子"从"事后翻库才知道"变成"当场红"。
+    """
+    try:
+        tr = session.config.pluginmanager.getplugin("terminalreporter")
+        if tr is None:
+            return
+        tr.write_line("")
+        tr.write_line("=" * 72)
+        tr.write_line(f"🚨 生产 SQLite 库写入违规: {len(_PROD_DB_VIOLATIONS)} 次")
+        tr.write_line("   生产库承载判分样本与审计留痕, 测试写入 = 污染尺子"
+                      " (REVIEW-20260903 §四.8 同型)")
+        for nodeid, db_path, action, obj in _PROD_DB_VIOLATIONS[:20]:
+            tr.write_line(f"   · {nodeid} → {db_path} (action={action}, 对象={obj})")
+        if len(_PROD_DB_VIOLATIONS) > 20:
+            tr.write_line(f"   · … 其余 {len(_PROD_DB_VIOLATIONS) - 20} 次同理")
+        tr.write_line("   处置: 测试改连 tmp_path 下的临时库; 或把库路径提为模块常量并在"
+                      " _PRODUCTION_DATA_SEAMS 登记缝; 确需写真实路径才加"
+                      " @pytest.mark.allow_production_data_write 并注明理由")
+        tr.write_line("=" * 72)
+    except Exception:
+        pass
 
 
 def _report_outbound_traces(session):

@@ -905,7 +905,10 @@ def _check_positions(scheduler):
                     from app.pipeline.order_executor import record_flash_exit
                     record_flash_exit()
                 except Exception as e:
-                    logger.debug(f"[FLASH_EXIT] record_flash_exit 失败: {e}")
+                    # [RFC-168] 提到 warning: 熔断状态落盘失败 ⇒ 跨重启语义失效
+                    #   (进程内仍生效, 但重启后拦截解除)。debug 级会被静默, 属于
+                    #   "尺子说谎"同型 —— 判据不可用必须可见。
+                    logger.warning(f"[FLASH_EXIT] record_flash_exit 失败 (熔断状态未落盘, 跨重启失效): {e}", exc_info=True)
             # P0 修复 (2026-06-02): 更新标的日亏损计数 (防死亡螺旋)
             try:
                 from app.pipeline.order_executor import _update_symbol_daily_loss

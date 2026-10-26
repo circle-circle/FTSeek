@@ -371,10 +371,14 @@ class ManualOrderService:
         from app.web_dashboard.order.executor import takeover_position
         return takeover_position(self, symbol, owner)
 
-    def modify_stop_loss(self, symbol: str, new_sl: float) -> Dict[str, Any]:
-        """修改持仓止损 — 撤销旧 STOP 单 + 下新 STOP 单 + 更新 DB."""
+    def modify_stop_loss(self, symbol: str, new_sl: float,
+                         acknowledge: bool = False) -> Dict[str, Any]:
+        """修改持仓止损 — 撤销旧 STOP 单 + 下新 STOP 单 + 更新 DB.
+
+        acknowledge: 用户已显式确认「放宽止损保护」(RFC-168 方向校验)。
+        """
         from app.web_dashboard.order.executor import modify_stop_loss
-        return modify_stop_loss(self, symbol, new_sl)
+        return modify_stop_loss(self, symbol, new_sl, acknowledge=acknowledge)
 
     def _check_idempotency(self, key: Optional[str]) -> bool:
         from app.web_dashboard.order.executor import check_idempotency

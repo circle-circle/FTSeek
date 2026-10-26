@@ -221,6 +221,25 @@ def submit_order(service: "ManualOrderService", order: "ManualOrder",
             service._write_audit(order)
             return {"success": False, "error": "broker_connection_failed"}
 
+        # 2b. [RFC-168] 开仓前置: 账户资金与当前持仓状态须可**实时**确认
+        #     (runtime.capabilities 的服务端等价物 —— 此前该契约只被前端消费,
+        #     "断线只读态" 是 UI 锁不是安全锁, 直接 POST /api/orders 仍会成交)。
+        #     **只作用于开新仓**: 平仓单 (SELL LONG / BUY SHORT) 不受此约束 ——
+        #     断线/数据降级时恰恰最需要能减仓, 拦住它就是"更安全但更危险"。
+        _is_opening = (
+            (order.action == "BUY" and order.direction == "LONG")
+            or (order.action == "SELL" and order.direction == "SHORT")
+        )
+        if _is_opening:
+            from app.web_dashboard.order.write_gates import precheck_place as _pre_place
+            _ok, _msg = _pre_place(service)
+            if not _ok:
+                order.status = "rejected"
+                order.error_msg = _msg
+                service._write_audit(order)
+                return {"success": False, "error": _msg,
+                        "errors": [_msg], "order": asdict(order)}
+
         # 3. 执行下单
         try:
             from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, TimeInForce, RET_OK
@@ -1012,6 +1031,13 @@ def cancel_order(service: "ManualOrderService", order_id: str) -> Dict[str, Any]
     if not service.connect():
         return {"success": False, "error": "broker_connection_failed"}
 
+    # [RFC-168] 归属校验: 本路由此前仅做 order_id 字符白名单 ⇒ 持合法会话
+    #   即可撤销实盘账户的**任意**订单。归属不可确认时 fail-close。
+    from app.web_dashboard.order.write_gates import precheck_cancel as _pre_cancel
+    _ok, _msg = _pre_cancel(service, order_id)
+    if not _ok:
+        return {"success": False, "error": _msg}
+
     try:
         from futu import TrdEnv, RET_OK, ModifyOrderOp
         trd_env = TrdEnv.REAL if service._is_live() else TrdEnv.SIMULATE
@@ -1156,16 +1182,42 @@ def takeover_position(service: "ManualOrderService", symbol: str,
 # ─────────────────────────────────────────────────────────────
 
 def modify_stop_loss(service: "ManualOrderService", symbol: str,
-                     new_sl: float) -> Dict[str, Any]:
+                     new_sl: float, acknowledge: bool = False) -> Dict[str, Any]:
     """修改持仓止损 — 撤销旧 STOP 单 + 下新 STOP 单 + 更新 DB.
 
     关键: 之前 routes/trade.py 仅 UPDATE DB current_sl, 不下 broker 单 →
     程序退出后止损不存在, 实盘风险极高。
     模拟盘: Futu SIMULATE 不支持 STOP, 仅更新 DB (graceful degrade)。
+
+    [RFC-168] 闸门 + 串行化 (此前本路径完全绕过 validate_order, 且不持订单锁):
+      - 归属校验: 标的须在本账户持仓台账;
+      - 方向校验: **只拦「降低保护」, 增强保护放行**。硬拒放宽止损会挡住
+        "规避噪音扫出" 的正当诉求, 故用 acknowledge 表达用户显式确认;
+      - 持 _order_lock: 与下单路径串行, 防改止损与开仓并发改写同一标的。
+        该锁非可重入 ⇒ 锁内实现不得再取它。
     """
     if new_sl <= 0:
         return {"success": False, "error": "止损价必须 > 0"}
 
+    from app.web_dashboard.order.write_gates import precheck_modify_stop as _pre_sl
+    _ok, _msg = _pre_sl(service, symbol, new_sl, acknowledge=acknowledge)
+    if not _ok:
+        return {"success": False, "symbol": symbol, "new_sl": new_sl, "error": _msg}
+
+    # 与下单路径串行 (_order_lock 非可重入, 故下方实现不得再取它)。
+    # 锁缺失时降级为不串行 —— 锁只防并发改写同一标的, 正确性由上面的闸门保证,
+    # 不能因 service 实现缺该属性就让改止损整体失败 (保护动作必须可达)。
+    _lock = getattr(service, "_order_lock", None)
+    if _lock is None:
+        logger.warning("[止损] service 无 _order_lock, 本次改止损未串行化 (闸门仍生效)")
+        return _modify_stop_loss_locked(service, symbol, new_sl)
+    with _lock:
+        return _modify_stop_loss_locked(service, symbol, new_sl)
+
+
+def _modify_stop_loss_locked(service: "ManualOrderService", symbol: str,
+                              new_sl: float) -> Dict[str, Any]:
+    """modify_stop_loss 的锁内实现 (调用方须已持 service._order_lock)。"""
     # 1. 确保 DB 列存在
     service._ensure_sl_column()
 

@@ -4240,6 +4240,31 @@ REGISTRY: list[ShadowItem] = [
               "STOP 每 5 分钟重复记录虚增样本。回滚: 删 exit_monitor_flow 的观测调用 "
               "(parity: 退出规则/券商 STOP 均不变)。",
     ),
+    ShadowItem(
+        id="exit_intent_reaper_shadow",
+        name="出场意图账实不符巡检 (FILLED_UNBOOKED 残留)",
+        status=ShadowStatus.OBSERVING,
+        description="出场意图账本 (exit_intents, 独立 sqlite) 与成交台账 (trade_records) "
+                    "跨库无事务: pipeline 先落账再 ack intent, 崩溃窗口内 intent 停在 "
+                    "FILLED_UNBOOKED ⇒ exit_symbol_busy 冻结该标的所有后续出场, 且 "
+                    "REFUSE_UNBOOKED 拒绝人工释放。写方 scripts/exit_intent_reaper.py "
+                    "每 5 分钟巡检, 只读两库交叉核对 (owner_json.db_path + trade_id)。"
+                    "**纯影子**: 只写影子 JSONL + 走 app/push/ hub 告警, **不改任何状态** "
+                    "(不调 ack_booked) —— 启用自动补 ack 会改写出场状态机, 须另立提案。",
+        data_path="data/shadow/exit_intent_reaper.jsonl",
+        config_key=None,
+        min_n=1,
+        graduation_criteria="影子期只做**发生率观测**: 目标窗口内检出数 = 0 ⇒ 该崩溃窗口"
+                            "在现实运行中未发生, reaper 转常设巡检。检出 >0 ⇒ 逐笔核对, "
+                            "确认账实不符成因后再提案自动补 ack (须用户批准)。",
+        eval_script="scripts/exit_intent_reaper.py",
+        eval_on_demand=True,
+        created="2026-10-26",
+        notes="RFC-168 方案 E。现状 (2026-10-26): 229 条 intent 全 BOOKED, 非 BOOKED = 0 ⇒ "
+              "本项是**预防性**巡检, 非救火。STALE_AFTER_S=300 (排除正在 ack 的在途)。"
+              "计数轴=检出条数 (非样本累积), 故 min_n=1 即表示「发生过一次」。回滚: 摘 cron 行 "
+              "(不影响出场管线任何行为)。",
+    ),
 ]
 
 

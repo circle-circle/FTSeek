@@ -53,7 +53,7 @@ def _write_yaml_auto_trading(enabled: bool) -> bool:
             raise
         return True
     except Exception as e:
-        logger.error(f"[auto-trade] YAML 写入失败: {e}")
+        logger.error(f"[auto-trade] YAML 写入失败: {e}", exc_info=True)
         return False
 
 
@@ -232,10 +232,16 @@ def register(app, templates):
         if not symbol or new_sl <= 0:
             return api_error("BAD_REQUEST", "参数无效", 400)
 
+        # [RFC-168] 方向校验: 放宽止损保护需用户显式确认 (前端二次确认后带此标志)。
+        #   未确认时服务端拒绝 —— 收紧只作用于「降低保护」, 增强保护照常放行。
+        _ack = bool(body.get("acknowledge_weaken_stop", False))
+
         svc = get_manual_order_service()
         # DEB-20260904 #S12: 同步 broker RPC 直接跑在 async handler 会阻塞整个
         #   dashboard 事件循环 (下单/平仓数秒期间所有请求卡死) — 卸载到线程
-        result = await asyncio.to_thread(svc.modify_stop_loss, symbol=symbol, new_sl=new_sl)
+        result = await asyncio.to_thread(
+            svc.modify_stop_loss, symbol=symbol, new_sl=new_sl, acknowledge=_ack,
+        )
         ds = get_data_service()
         ds.invalidate_cache()
         if result.get("success"):
@@ -499,7 +505,7 @@ def register(app, templates):
                 "risk_fields_currency": "broker_native",
             }
         except Exception as e:
-            logger.error(f"[order-capacity] {symbol}: {e}")
+            logger.error(f"[order-capacity] {symbol}: {e}", exc_info=True)
             return {"symbol": symbol, "error": "数据查询异常"}
 
     @router.get("/api/live-account")
@@ -587,7 +593,7 @@ def register(app, templates):
         try:
             gates = await _load_manual_gates_cached(ds, svc)
         except Exception as e:
-            logger.debug("[trade/snapshot] gates unavailable: %s", e)
+            logger.warning("[trade/snapshot] gates unavailable: %s", e, exc_info=True)
 
         try:
             from app.utils.timezone import market_phase_now, now_et

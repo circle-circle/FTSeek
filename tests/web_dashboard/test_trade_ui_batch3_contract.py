@@ -172,9 +172,18 @@ def test_slow_data_endpoint_is_410_tombstone():
 
 
 def test_snapshot_logging_downgraded_and_deduplicated():
-    """B7: 盘中 5s 一轮 ⇒ 前后端各一份等量日志 = 每分钟 24 行噪声。"""
+    """B7: 盘中 5s 一轮 ⇒ 前后端各一份等量日志 = 每分钟 24 行噪声。
+
+    锚点用**正常路径**那条等量日志 (每轮都打 ⇒ 噪声源), 而非快照函数里的第一处
+    "[trade/snapshot]" 字样。早先用 .index() 会被偶发的**异常路径**日志抢锚
+    (如 gates 不可用), 那条不是每轮都打, 与本契约要防的噪声无关 ——
+    2026-10-26 RFC-168 批: 异常路径日志按 W4 纪律升级为 warning(..., exc_info=True)
+    后, 旧锚点误判 B7 契约失败。改锚定正常路径行, 契约意图不变且更准。
+    """
     routes = _src(US_ROUTES)
-    i = routes.index("[trade/snapshot]")
+    anchor = '"[trade/snapshot] positions='
+    assert anchor in routes, "正常路径的快照日志行不在 (B7 锚点失配, 快照日志可能已改名)"
+    i = routes.index(anchor)
     window = routes[max(0, i - 700):i + 300]
     assert "logger.debug" in window, "后端快照日志应降为 debug"
     assert "logger.info" not in window

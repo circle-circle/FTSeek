@@ -2020,8 +2020,23 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
                 "HIGH_VOL_BLOCKED", strength=signal.strength,
                 confidence=None, direction=direction_str)
             return False
-    except Exception:
-        pass
+    except Exception as _hv_err:
+        # [RFC-168] fail-close: 门禁判据不可判定时**拒绝开仓**。
+        #   原 except: pass ⇒ 门失效仍继续下单, 而 HIGH_VOL 是硬拦截 (HIGH_VOL
+        #   regime 133 笔累计亏 $39,537)。同文件下方 Kill Switch 检查已是
+        #   fail-close (RFC-060 P1.2) —— 两种哲学并存于同一执行路径, 此处收敛。
+        logger.error(
+            f"🚫 [HIGH_VOL门禁] {symbol} regime 判定异常, 按门禁不可用处理并拒绝开仓: {_hv_err}",
+            exc_info=True,
+        )
+        try:
+            get_rejection_logger().record(
+                symbol, f"HIGH_VOL gate check failed: {_hv_err}",
+                "HIGH_VOL_CHECK_ERROR", strength=signal.strength,
+                confidence=None, direction=direction_str)
+        except Exception:
+            pass
+        return False
 
 
     # ─── P1 (2026-06-02): Weak 状态过滤 — Muyuan 论文借鉴 ───
@@ -3404,8 +3419,15 @@ def _save_flash_exit_state():
         _active = [t for t in _FLASH_EXIT_TIMESTAMPS if t > _cutoff]
         with open(_FLASH_EXIT_STATE_FILE, 'w') as _f:
             _json_fe.dump({"timestamps": _active, "pause_until": _FLASH_EXIT_PAUSE_UNTIL}, _f)
-    except Exception:
-        pass
+    except Exception as _fes_err:
+        # [RFC-168] fail-close: 熔断状态不落盘 = 重启即失效 (闪退熔断的整个
+        #   跨重启语义失效)。落盘失败时**按熔断生效处理**并告警 —— 保守方向
+        #   是"继续拦截", 而非"解除拦截"。
+        logger.error(
+            f"🚨 [闪退熔断] 状态落盘失败, 按熔断生效处理 (不解除拦截): {_fes_err}",
+            exc_info=True,
+        )
+        raise
 
 
 def record_flash_exit():
@@ -4128,8 +4150,18 @@ def _submit_order_inner(scheduler, symbol: str, signal: SignalScore, context: Di
                     )
                     _r1_release_if_held()
                     return
-        except Exception:
-            pass
+        except Exception as _dup_err:
+            # [RFC-168] fail-close: 持仓查询异常时**拒绝开仓**。
+            #   原 except: pass ⇒ 重复开仓拦截完全失效 (RIVN 22:11 同时开 6 仓
+            #   的同型事故在异常路径上仍会复现)。查不到持仓 = 无法确认不重复
+            #   ⇒ 按已持仓处理, 宁可不开也不重复开。
+            logger.error(
+                f"🚫 [多仓拦截] {symbol} 持仓查询异常, 无法确认非重复开仓, "
+                f"按拒绝处理: {_dup_err}",
+                exc_info=True,
+            )
+            _r1_release_if_held()
+            return
 
         # 3. 按方向路由执行
         if signal.direction == Direction.SHORT:

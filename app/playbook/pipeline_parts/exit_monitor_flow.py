@@ -136,7 +136,7 @@ def monitor_playbook_exits(
                     f"→ 本轮用兜底价, 快循环不停摆"
                 )
         except Exception as _bq_e:
-            logger.debug(f"[playbook dual] 批量取价异常, 本轮回落逐仓取价: {_bq_e}")
+            logger.warning(f"[playbook dual] 批量取价异常, 本轮回落逐仓取价: {_bq_e}", exc_info=True)
         # 兜底: 并入最近一次成功价 (仅未超龄; 超龄按无价 = 旧行为)
         _batch_quotes = _pb_exit_price_cache_view(_pb_syms)
         _pb_oldest_age = 0.0
@@ -203,7 +203,7 @@ def monitor_playbook_exits(
             from app.playbook.config import get_playbook_config as _get_pb_cfg_bs
             _bs_raw = _get_pb_cfg_bs().get("portfolio_backstop", {}) or {}
         except Exception as _bs_cfg_e:
-            logger.warning(f"[playbook组合兜底] 配置读取失败 → 用内置保守默认: {_bs_cfg_e}")
+            logger.warning(f"[playbook组合兜底] 配置读取失败 → 用内置保守默认: {_bs_cfg_e}", exc_info=True)
             _bs_raw = {}
         _bs_cfg = {"enabled": True, "sl_loss_multiple": 1.5, "min_abs_loss_usd": 500.0,
                    "cooldown_sec": 300.0}

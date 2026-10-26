@@ -1313,19 +1313,20 @@ class TestRealPolicyWiring:
         assert scr["status"] in ("PASS", "REJECT", "UNKNOWN")
 
     def test_debt_marker_admission_cache_can_silently_disable_price_floor(self):
-        """债标记 (体例同 `tests/test_u1_fwd_return_sign_contract.py` 的冻结例外):
-        **钉住现状, 修好那天必须变红**。
+        """债标记的**修复守护** (2026-10-26 RFC-168 批修复, 原为"钉住现状, 修好那天必须变红")。
 
-        `app/playbook/admission.get_admission_config()` 把「配置容器不可用 → 内置缺省」
-        的结果**写进模块级 `_cfg_cache`**, 而 `_DEFAULTS["min_entry_price"] = 0.0`
-        (注释「0=不拦」)。⇒ 首次调用时容器不可用 (启动早期/容器降级/单测桩),
-        价格地板就静默归零, 且容器恢复后**也不刷新**, 只有 `refresh=True` 才拿回真值。
+        病灶: `app/playbook/admission.get_admission_config()` 把「拿不到真阈值」
+        的降级结果**写进模块级 `_cfg_cache`**, 而 `_DEFAULTS` 是**宽松档**
+        (`min_entry_price`/`min_notional_usd`/`max_sl_pct` 均 0.0 = 不拦)
+        ⇒ 首次读取失败即永久生效, 容器恢复后也不刷新 (只有 refresh=True 才拿回真值)。
+        降级**不抛异常** ⇒ `cmd_inject` 的 P1.5 守卫 ("配置读取失败 → 停止注入,
+        不猜阈值") 拦不住, "不猜阈值"的承诺被绕过。
 
-        为什么算本批的事: `cmd_inject` 的 P1.5 守卫是「候选资格配置读取失败 → 停止注入
-        (不猜阈值)」, 但这条降级**不抛异常** ⇒ 守卫拦不住, "不猜阈值"的承诺被绕过。
-        处置未定 (共享基建, DA/UE/topup/generate 四条写入路径都读它), 见
-        DEB-20260910 §17.6 待裁⑤。建议修法: 容器不可用时**不落缓存** (下次重试),
-        而不是把缺省值当真值缓存住。
+        修法 (DEB-20260910 §17.6 待裁⑤ 采纳): 容器不可用**或该节缺失**时
+        **不落缓存**, 下次重试 ⇒ 降级只在当次生效, 不固化。
+
+        本例现守护修复: ①降级期间返回缺省; ②容器恢复后**自动拿回真值**;
+        ③真值恢复后价格地板重新生效。修好之前这三条断言会红。
         """
         from app.playbook import admission as A
         from app.playbook.candidate_eligibility import evaluate_candidate
@@ -1339,19 +1340,22 @@ class TestRealPolicyWiring:
                 raise RuntimeError("config container unavailable")
 
             cc.get_config = _boom
-            poisoned_min_price = A.get_admission_config()["min_entry_price"]
+            degraded_min_price = A.get_admission_config()["min_entry_price"]
             cc.get_config = saved_get
-            cached_after_recovery = A.get_admission_config()["min_entry_price"]
-            assert poisoned_min_price == 0.0, "缺省价格地板已不是 0.0 — 债形态变了, 重写本例"
-            assert cached_after_recovery == 0.0, (
-                "容器恢复后缓存已能自愈 ⇒ 债已修, 请把本例改写成正确断言并关闭 §17.6 待裁⑤")
+            recovered_min_price = A.get_admission_config()["min_entry_price"]
+            assert degraded_min_price == 0.0, (
+                "容器不可用时返回的缺省价格地板已不是 0.0 — 债形态变了, 重写本例")
+            assert recovered_min_price != 0.0, (
+                "容器恢复后仍取缺省 ⇒ §17.6 待裁⑤ 的缓存固化债未修 "
+                "(修法: 降级时不落缓存, 下次重试)")
             verdict = evaluate_candidate(
                 {"symbol": "US.PNY", "price": 2.0, "screening_atr_ratio": 0.05,
                  "quote_age_sec": 10.0, "bid": 1.99, "ask": 2.01},
-                {"min_price": cached_after_recovery, "low_atr_enabled": True,
+                {"min_price": recovered_min_price, "low_atr_enabled": True,
                  "min_atr_ratio": 0.03, "max_quote_age_sec": 90.0,
                  "quote_gate_enabled": True, "borrow_gate_enabled": False})
-            assert "price_floor" not in verdict["reasons"], "价格地板仍在生效 — 债已修"
+            assert "price_floor" in verdict["reasons"], (
+                "容器恢复后价格地板应重新生效 — 真值未取回, 债仍在")
         finally:
             cc.get_config = saved_get
             A._cfg_cache = saved_cache

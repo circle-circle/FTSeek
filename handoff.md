@@ -1,5 +1,22 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-26 P0 安全闸门批 (RFC-168): Dashboard 写路径统一 + 交易热路径 fail-close + 生产库写闸
+
+- **用户裁决**: 「按照建议执行」— 指 2026-10-26 全系统审计 (8 项 P0 + P1/P2 分级建议) 的第一段 (5 项) 全量落地; 其中 "WIP 先归档为 baseline commit" / "reaper 先影子不自动补 ack" / "密钥只清日志不代持" 三项由用户逐项选定。
+- **范围**: (1) Dashboard 五条实盘写路径统一服务端闸门 + runtime.capabilities 升为服务端 fail-close; (2) 交易热路径 5 处 `except: pass` fail-open → fail-close; (3) 测试生产库写闸 (sqlite3.connect); (4) exit_intents 账实不符 reaper **影子**; (5) 日志归档密钥明文脱敏。**未改四锁、未改仓位/止损止盈/频率/信号分布、未切切实盘、新增入场假设 0 个** (OKR-2026-11 §1 继承裁决 4)。
+- **核心原则 (RFC-168 §提议方案 A)**: **统一的是「校验范式」, 不是「同一套闸门」** — 收紧只作用在「开新仓」与「降低保护」两个方向; 平仓/撤单/改善止损必须保持可达。给平仓套上开仓的金额上限 = "更安全但更危险"。实施期据此更正了 RFC 初稿里写反的 SL 方向判据 (初稿写成 "多头新 SL 不得高于旧 SL", 方向相反)。
+- **落地**: 新增 `app/web_dashboard/order/write_gates.py` (归属/方向/fail 方向/环境变量开关)、`scripts/exit_intent_reaper.py` (影子, 只检测+告警)、4 个契约测试文件 (55 例)。改 `tests/conftest.py` (生产库写闸)、`app/web_dashboard/{order/executor,manual_order_service,routes/*}`、`app/pipeline/{order_executor,position_monitor}`、`app/playbook/pipeline_parts/auto_execute_flow`、`app/playbook/admission.py` (缓存固化债修复)、`app/playbook/shadow_registry.py` (第 97 项)。cron 新增 1 条 (每 5 分钟); 台账 `docs/CONTROL-LOOP-LEDGER.md` 登记 `crontab-exit-intent-reaper`。
+- **验证**: 新增契约 55 例全绿 (sqlite 闸 19 + 写路径闸 21 + fail-close 6 + reaper 9); `tests/web_dashboard` 164 passed; 受 DB 影响面 30 文件 728 passed; **全量 `pytest tests -q` = 7894 passed / 3 failed / 72 skipped / 563.87s** (3 failed 均**已在 HEAD worktree 上复验为既有红点**, 非本批引入: `test_except_pass_ratchet` / `test_pipeline_size_ratchet` / `test_stale_index_guard`); `py_compile` + `git diff --check` 通过; **重启后启动冒烟 7/7** (ConfigValidator / 漂移检测 / 热重载 / SSOT 0 BLOCKING / 双臂安全 / 退出快循环 / 零 Traceback-CRITICAL)。
+- **实施期发现并修的既有缺陷**: (a) `admission.get_admission_config()` 把「拿不到真阈值」的降级结果写进进程级 `_cfg_cache` (内置缺省是宽松档 ⇒ 一次读取失败 = 整道门静默恒 PASS) — 修法为降级不落缓存, 采纳 DEB-20260910 §17.6 待裁⑤ 的建议修法, 原「钉住现状」债测试已按其自身指示改写为修复守护; (b) 测试写闸上线当日即抓出 3 处既有生产库污染 (`pdt_guard.py:64` / `trail_state_store.py:31` / `review_tables.py:49` 忽略传入 db_path 固定走 db_pool 生产槽位), 按库级登记豁免 + 计数展示 (可见可跟踪), 三个写入点待专项改造; (c) `tests/test_trade_ui_batch3_contract.py` 的 B7 锚点用 `.index("[trade/snapshot]")` 被偶发异常日志抢锚 → 改锚定正常路径等量日志行 (契约意图不变且更准)。
+- **重启前核对**: 在途出场 `exit_intents` 229 条全 `BOOKED` (非 BOOKED = 0); LIVE 在仓 0; `git status --porcelain -- app/ scripts/` 仅本批改动 (前序 WIP 已 baseline commit 归档)。
+- **重启后**: `systemctl restart ftseek-us` → PID **3995742**, `active` since 13:18:38 CST; 启动冒烟 **7/7**。`systemctl restart ftseek-dashboard` → PID **3995903**, `active`; write_gates 5 个闸实测全开 (PLACE/CANCEL/MODIFY_STOP/PROTECTION_CONFIRM/HK_PLACE)。broker sim/real ctx 均已连接, 启动段零 Traceback/CRITICAL/ERROR。
+- **⚠️ 运维事件 (须知)**: 改动过程中 `scripts/deploy_freshness_check.py` (每 10 分钟 cron) 于 **12:00:01** 检测到 "代码比进程新" 并**自动执行了 systemctl restart** ⇒ 本批**部分改动在未完成状态下被上线** (功能完整但日志规范/豁免清单未达最终态)。后续因 `stale_drift` 超安全窗口不再触发自动重启, 故 12:00 之后的改动未上线。本批已安排一次干净重启把最终态载入。**教训**: 改动期间应先摘掉 deploy_freshness 自愈或接受部分上线 (该机制对"改一半就上线"无防护)。
+- **边界**: 已知存量生产库污染未解 (见上 (b)); `except:pass` 棘轮仍红 (HEAD 即红 927 > 基线 921, 本批净 −4 至 923, 差 2 处待专项清剿); `pipeline.py` 体量棘轮仍红 (4056 > 3700, 前序 WIP 引入); `stale_index_guard` 判别口径仍红 (HEAD 即红)。以上三项**非本批引入**, 如实记录未修。
+- **密钥 (待用户处理)**: `logs/_archive_20260910/backfill_manual.log-20260710` 的 Twelve Data key 明文已覆写 (1 → 0, 复扫全 `logs/` 0 命中, 其余 9 个 `.env.us` 凭据无残留)。该 key **仍在生产使用** (`app/core/atr_provider.py`、`app/risk/data_health_guard.py`、`app/pipeline/*` 依赖), **建议轮换**: 换 `.env.us` 的 `TWELVEDATA_API_KEY` 后需重启 `ftseek-us` (多处模块导入期读取), 窗口避开盘中。
+- **下一步**: (1) 用户轮换 TWELVEDATA_API_KEY 并安排重启; (2) 观察 `exit_intent_reaper_shadow` ≥3 个交易日, 零检出方可提案启用自动补 ack (须另立 RFC + 用户批准); (3) 专项清剿 `except:pass` 剩 2 处与 `pipeline.py` 体量超标; (4) 改造 3 个生产库写入点 (pdt_guard / trail_state / review_tables) 以从测试写闸豁免清单移除; (5) 摘或改造 `deploy_freshness_check` 的自动重启语义, 避免改动中途自动上线半成品。
+
+最后更新：2026-10-26（本条）
+
 ## 2026-10-25 21:50 富途实盘安全影子 + 服务重启（冒烟 7/7）
 
 - **用户裁决**: P0-1 不过度设计、P0-2 不做大改、其他 P1 可做 → 同意执行。

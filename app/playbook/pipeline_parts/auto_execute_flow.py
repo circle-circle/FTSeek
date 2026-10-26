@@ -613,8 +613,19 @@ def run_playbook_auto_execute(
                                 from app.risk.capital_safety import get_capital_safety_system as _get_cs_f1
                                 _cs_f1 = _get_cs_f1()
                                 _water_mult = min(_cs_f1.get_position_multiplier(), _cs_f1.get_risk_multiplier())
-                            except Exception:
-                                pass
+                            except Exception as _wm_err:
+                                # [RFC-168] fail-close: 取不到水位 ⇒ 仓位保护失效,
+                                #   原实现停在初值 1.0 ⇒ 回撤期仓位**反向放大**
+                                #   (DEB-20260719-round2 Ω.3-4 修的就是这个, 异常路径上复发)。
+                                #   保守默认取 ORANGE 档 0.25 (既有档位, 非凭空值):
+                                #   明显保守但不归零 —— 归零会造成"静默停止下单"的观感故障。
+                                #   失败必告警, 不静默。
+                                _water_mult = 0.25
+                                logger.warning(
+                                    f"[playbook] {inst.get('symbol')} 资本安全水位读取失败, "
+                                    f"仓位乘数降为 ORANGE 保守档 0.25 (原 1.0): {_wm_err}",
+                                    exc_info=True,
+                                )
                             try:
                                 from app.playbook.market_regime import MarketRegimeGate as _MRG_f1
                                 _regime_str_f1 = _normalize_regime_str(_MRG_f1().assess())
@@ -631,8 +642,16 @@ def run_playbook_auto_execute(
                                         logger.info(f"[playbook] {inst['symbol']} CAUTIOUS 仓位乘数覆写: 0.5→{_cautious_mult} (sim采集期)")
                                 except Exception:
                                     pass
-                            except Exception:
-                                pass
+                            except Exception as _rg_err:
+                                # [RFC-168] fail-close: regime 评估失败 ⇒ 原停在 1.0
+                                #   (RISK_ON 全额)。保守默认取 CAUTIOUS 档 0.5, 与上方
+                                #   dict 的未知档默认值一致, 并告警。
+                                _regime_mult = 0.5
+                                logger.warning(
+                                    f"[playbook] {inst.get('symbol')} regime 评估失败, "
+                                    f"仓位乘数降为 CAUTIOUS 保守档 0.5 (原 1.0): {_rg_err}",
+                                    exc_info=True,
+                                )
                             _conf = float(inst.get("confidence", 0) or 0)
                             _conf_base = float(pb_cfg.get("min_confidence", 60) or 60)
                             # 2026-07-12: confidence 加权默认关闭 (拍平为 1.0). exit_scorecard 实测

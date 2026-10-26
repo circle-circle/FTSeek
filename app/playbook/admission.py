@@ -111,7 +111,20 @@ _cfg_cache: Optional[Dict[str, Any]] = None
 
 
 def get_admission_config(refresh: bool = False) -> Dict[str, Any]:
-    """配置: `playbook.admission` 覆盖内置缺省 (浅合并, 缺键回退)。"""
+    """配置: `playbook.admission` 覆盖内置缺省 (浅合并, 缺键回退)。
+
+    缓存纪律 (2026-10-26 RFC-168 批, 修 DEB-20260910 §17.6 待裁⑤):
+      **只有真正读到有效配置才进缓存**; 任何"降级"结果都不缓存。
+      降级 = ①容器不可用 (抛异常) ②容器可用但该节缺失/被桩替换 (读不到 dict)。
+      两者都意味着"当前拿不到真阈值", 而内置缺省是**宽松档**
+      (min_notional_usd=0.0 ⇒ 0=不拦; max_sl_pct=0.0 ⇒ 不拦;
+       min_entry_price=0.0 ⇒ 不拦) ⇒ 缓存降级值 = 把"读不到阈值"固化成
+      进程级结论, 门看起来在, 实际恒 PASS。
+      原实现把降级结果也写进 `_cfg_cache` ⇒ 一次读取失败即永久生效,
+      容器恢复后也不刷新 (只有 refresh=True 才拿回真值) —— 本函数在启动早期/
+      容器降级/单测桩下都会踩到。
+      失败路径每次重试, 成功后才进缓存 (重试成本仅在降级期存在, 可接受)。
+    """
     global _cfg_cache
     if _cfg_cache is not None and not refresh:
         return _cfg_cache
@@ -119,13 +132,17 @@ def get_admission_config(refresh: bool = False) -> Dict[str, Any]:
     try:
         from app.core.config_container import get_config
         override = get_config().get_dotted("playbook.admission", None)
-        if isinstance(override, dict):
-            for k, v in override.items():
-                if k in cfg and v is not None:
-                    cfg[k] = v
     except Exception:
-        pass  # 配置容器不可用 (单测/脚本) → 内置缺省
-    _cfg_cache = cfg
+        # 配置容器不可用 (单测/脚本) → 内置缺省, **不缓存**。
+        return cfg
+    if isinstance(override, dict):
+        for k, v in override.items():
+            if k in cfg and v is not None:
+                cfg[k] = v
+        _cfg_cache = cfg
+        return cfg
+    # 容器可用但读不到 `playbook.admission` 节 (缺节 / 被桩替换) → 同样降级,
+    # 同样不缓存 (下次重试, 桩撤除后自动拿回真值)。
     return cfg
 
 

@@ -90,6 +90,15 @@ def register(app, templates):
             reason=str(body.get("reason", "")),
             acknowledge_price_warning=bool(body.get("acknowledge_price_warning", False)),
         )
+        # [RFC-168] 港股开仓补齐全局闸: hk_order_service.validate() 只做
+        #   格式/整手/当日单数/金额/价格偏离, **无 kill switch / 无资本水位 /
+        #   无回撤熔断** ⇒ 港股绕过了美股 validator 的全部全局闸。此处补齐
+        #   开仓侧三条全局闸 (只作用于开仓; 港股平仓/撤单不受此约束)。
+        from app.web_dashboard.order.write_gates import precheck_hk_place as _pre_hk
+        _ok, _msg = _pre_hk()
+        if not _ok:
+            return api_error("ORDER_ERROR", _msg, 400)
+
         result = await asyncio.to_thread(
             svc.submit_order, order, body.get("idempotency_key"))
         if result.get("success"):
