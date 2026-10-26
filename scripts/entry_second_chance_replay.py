@@ -25,6 +25,9 @@ from typing import Optional
 ROOT = Path(__file__).resolve().parents[1]
 DB = ROOT / "data" / "ftseek_us.db"
 FWD = ROOT / "data" / "shadow" / "entry_confirm_forward.jsonl"
+# 单日档目录 (US_<SYM>_<YYYY-MM-DD>.json, 390 根 RTH) 优先; 多日档兜底 —
+# 多日档只到某个历史日, 若无日期守卫会把今天的弃单配成 3 天前的 bar (静默错日)。
+DAY_BAR_DIR = ROOT / "data" / "replay_bars"
 BAR_DIRS = (ROOT / "data" / "replay_bars_1m",
             ROOT / "data" / "replay_bars_1m_extra")
 CALIB_WARN = 0.02
@@ -61,10 +64,15 @@ def _load_insts() -> dict[int, dict]:
     return {int(r["id"]): dict(r) for r in rows}
 
 
-def _load_bars(symbol: str) -> Optional[list[tuple]]:
-    name = f"{symbol.replace('.', '_')}.json"
+def _load_bars(symbol: str, date_str: str = "") -> Optional[list[tuple]]:
+    """单日档优先 (US_<SYM>_<date>.json), 多日档兜底。返回 bar 列表 (不含日期校验)。"""
+    stem = symbol.replace('.', '_')
+    candidates = []
+    if date_str:
+        candidates.append(DAY_BAR_DIR / f"{stem}_{date_str}.json")
     for directory in BAR_DIRS:
-        path = directory / name
+        candidates.append(directory / f"{stem}.json")
+    for path in candidates:
         if not path.exists():
             continue
         try:
@@ -265,25 +273,32 @@ def main() -> int:
     rules = [x.strip() for x in args.rules.split(",") if x.strip()]
     abandoned = _load_abandoned()
     insts = _load_insts()
-    bars_cache: dict[str, Optional[list[tuple]]] = {}
+    bars_cache: dict[tuple, Optional[list[tuple]]] = {}
     episodes = []
-    no_bars = caliber_bad = 0
+    no_bars = caliber_bad = stale_bars = 0
     for row in abandoned:
         symbol = str(row.get("symbol") or "")
         inst = insts.get(int(row.get("inst_id") or 0))
         if not inst:
             continue
-        if symbol not in bars_cache:
-            bars_cache[symbol] = _load_bars(symbol)
-        bars = bars_cache[symbol]
+        ts = datetime.fromisoformat(str(row["ts"])).replace(tzinfo=None)
+        date_str = ts.strftime("%Y-%m-%d")
+        key = (symbol, date_str)
+        if key not in bars_cache:
+            bars_cache[key] = _load_bars(symbol, date_str)
+        bars = bars_cache[key]
         if not bars:
             no_bars += 1
             continue
-        ts = datetime.fromisoformat(str(row["ts"])).replace(tzinfo=None)
         bar = _bar_at_or_before(bars, ts)
         ref = float(row.get("px_at_confirm") or 0)
         if bar is None or ref <= 0:
             caliber_bad += 1
+            continue
+        # 日期守卫: 多日档只到某个历史日时, 会把今天的弃单配成几天前的 bar。
+        #   判据=所用 bar 的日期必须等于弃单日, 否则标 UNMEASURABLE 排除 (不静默凑数)。
+        if bar[0].date() != ts.date():
+            stale_bars += 1
             continue
         dev = abs(float(bar[4]) - ref) / ref
         if dev > CALIB_WARN:
@@ -311,6 +326,7 @@ def main() -> int:
             "abandoned_rows": len(abandoned),
             "episodes_with_bars": len(episodes),
             "no_bars": no_bars,
+            "stale_bars_excluded": stale_bars,
             "caliber_bad": caliber_bad,
         },
         "assumptions": {
@@ -332,8 +348,9 @@ def main() -> int:
         print(json.dumps(out, ensure_ascii=False, indent=2))
         return 0
     c = out["cohort"]
-    print(f"cohort: abandoned={c['abandoned_rows']} with_bars={c['episodes_with_bars']} "
-          f"no_bars={c['no_bars']} caliber_bad={c['caliber_bad']}")
+    print(f"cohort: abandoned={c['abandoned_rows']} usable={c['episodes_with_bars']} "
+          f"no_bars={c['no_bars']} stale_bars={c['stale_bars_excluded']} "
+          f"caliber_bad={c['caliber_bad']}")
     print(f"market arm (ignore gate): n={market['n']} win={market['win_rate']}% "
           f"avgNet={market['avg']}% sumNet={market['sum']}% "
           f"exits={market['exit_reasons']}")

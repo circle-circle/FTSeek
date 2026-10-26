@@ -105,6 +105,14 @@ DEFAULT_GRACE_VOTES = 2          # grace 内 ≥N 次逆向才 ABANDONED; 0 次 
 #   故到点直接放弃, 不进 grace。只作用于 FADE_SHORT, 其余 archetype 零改动。
 DEFAULT_FADE_SHORT_MAX_OPP_PCT = 1.0
 DEFAULT_FADE_SHORT_WINDOW_MIN = 15
+# ── RFC-170 (2026-10-26 用户裁「按性价比执行」): 确认侧追价影子 (record-only) ──
+#   实证 (n=53 已结算确认单, 2026-10-12~10-23): 确认单追价 opp 均 +0.350% / 中 +0.299%
+#   (mid-mid 尺均 +0.365%), 已越过预注册 c3 天花板 0.30%; 且 **3 笔 SL_INITIAL 全在
+#   追价最大的三笔** (opp +0.41/+1.07/+1.41%, 净 −141/−149/−148) —— 门从 pass 侧把
+#   它本要消灭的出血族放了回来。Spearman(opp, 净额)=−0.264 p=0.056。
+#   本常量只做**记录**: 确认时 opp ≥ 阈值 ⇒ 在 forward jsonl 打 would_abandon 标记 +
+#   INFO 日志, 不改任何判定。裁决日与门本体同尺比较 (禁止现在改判据 = 阈值购物)。
+CHASE_SHADOW_PCT = 0.5           # 单位 %, 与 opp_cost_pct 同尺
 _STATE_KEY = "entry_confirm"     # metadata_json 下的旗标键
 
 # 内存 pending 表: inst_id -> arm 快照。有界 (TTL 清理 + 上限防泄漏)。
@@ -221,6 +229,18 @@ def confirm_gate_config(pb_cfg=None) -> Dict[str, Any]:
                        exc_info=True)
         cfg["enabled"] = False
     return cfg
+
+
+def chase_shadow_flag(opp_cost_pct, threshold_pct: float = CHASE_SHADOW_PCT) -> bool:
+    """[RFC-170] 追价影子判定 (record-only): 确认时追价 ≥ 阈值 ⇒ 记 would_abandon。
+
+    纯记录, **不参与任何拦截**; 阈值与 opp_cost_pct 同尺 (百分数)。
+    进不了判定链的原因: 改判定 = 重新裁决 (预注册纪律), 所以先攒前向样本。
+    """
+    try:
+        return float(opp_cost_pct) >= float(threshold_pct)
+    except (TypeError, ValueError):
+        return False
 
 
 def _norm_dir(direction: str) -> str:
@@ -774,6 +794,8 @@ def _judge_one(scheduler, db, inst_id: int, arm: Dict[str, Any],
                      "quote_ts": q.get("ts")}
     _ab_cause = (None if still
                  else ("fade_short_chase_cap" if _fs_cap_hit else "reversed"))
+    # [RFC-170] 追价影子 (record-only): 只标记, 不改 still/abandon 判定
+    _chase_shadow = bool(still and chase_shadow_flag(opp))
 
     if still:
         # 确认通过: 清 pending 旗标 → 下轮 auto_execute 正常 reprice + 下单
@@ -790,6 +812,12 @@ def _judge_one(scheduler, db, inst_id: int, arm: Dict[str, Any],
             f"[EntryConfirm] ✅ {symbol} 确认通过 (锚${arm['anchor']:.2f} "
             f"现价${q['last']:.2f} opp={opp:+.3f}% ruler={ruler_used}"
             f"{' grace=' + str(_grace_trace) if _grace_trace else ''}) → 下轮执行")
+        if _chase_shadow:
+            # [RFC-170] 让追价成本在实时日志里可见 (等 n 到位再裁, 不拦)
+            logger.info(
+                f"[EntryConfirm·追价影子] {symbol} {arm['direction']} 确认时追价 "
+                f"opp={opp:+.3f}% ≥ {CHASE_SHADOW_PCT:.2f}% → would_abandon "
+                f"(record-only, 不拦)")
     else:
         # 放弃: 终态旗标 + 复用既有 guardrail SKIP 语义落库。
         #   为什么不只写 metadata 旗标: defer_pending 已能拦住 (双保险), 但库里该指令
@@ -870,6 +898,9 @@ def _judge_one(scheduler, db, inst_id: int, arm: Dict[str, Any],
         "abandon_cause": _ab_cause,
         "chase_cap_hit": _fs_cap_hit,
         "chase_cap_threshold_pct": (_cap_max if _fs_cap_hit else None),
+        # [RFC-170] 追价影子 (record-only): 结算器按该字段切「门全量 vs 门+追价上界」
+        "chase_shadow_pct": CHASE_SHADOW_PCT,
+        "chase_shadow_would_abandon": _chase_shadow,
         **_quote_fields, "grace": _grace_trace,
     })
 
