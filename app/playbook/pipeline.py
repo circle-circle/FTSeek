@@ -1185,6 +1185,76 @@ from app.playbook.instruction_generator import (
 )
 
 
+_DA_GATE_INDEX: Dict[str, Any] = {"date": "", "mtime": -1.0, "buckets": {}}
+
+
+def _da_gate_buckets(trade_date: str, path_override: Optional[str] = None) -> Dict[str, str]:
+    """[RFC-172] 当日 DA gate 归因索引: symbol → 分桶标签 (record-only)。
+
+    病灶: playbook 侧对"bridge 未提名"的候选统一写
+    `非当前通道候选(bridge未提名/无方向)`, 把四种完全不同的原因压成一句:
+    ①DA 有方向但被 signal_gate 拦 (如破位硬买) ②DA 自己给观望/SKIP
+    ③从未进入 DA 评分 (资格门/预算) ④DA 侧异常。
+    2026-10-26 复盘即因此把矛头指向"扩通道层", 实际 bridge 消费率 100%,
+    11 只全是被破位硬买门拦下。此处按 da_gate_decisions.jsonl 逐 symbol 分桶,
+    让漏斗可归因。**零行为变更**: 只改 SKIP 文案, 文案前缀保持
+    `非当前通道候选` 不变 (下游 observe_nightly_supply 等按 startswith 过滤占位行)。
+
+    取不到文件/解析失败 ⇒ 返回 {} (调用方回退原文案), 不阻断生成。
+    """
+    try:
+        path = Path(path_override) if path_override else (
+            Path(__file__).resolve().parents[2] / "data" / "da_gate_decisions.jsonl")
+        mtime = path.stat().st_mtime
+        if path_override is None and _DA_GATE_INDEX["date"] == trade_date \
+                and _DA_GATE_INDEX["mtime"] == mtime:
+            return _DA_GATE_INDEX["buckets"]
+        buckets: Dict[str, str] = {}
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line or trade_date not in line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except Exception:
+                        continue
+                    if row.get("trade_date") != trade_date:
+                        continue
+                    sym = str(row.get("symbol") or "")
+                    if not sym:
+                        continue
+                    reasons = " ".join(str(x) for x in (row.get("reasons") or []))
+                    direction = str(row.get("direction") or "")
+                    if "破位硬买拦截" in reasons:
+                        buckets[sym] = "gate:破位硬买"
+                    elif row.get("decision") == "BLOCK" and direction in ("BUY", "SELL_SHORT"):
+                        buckets[sym] = "gate:其它拦截"
+                    elif direction == "SKIP":
+                        buckets[sym] = "DA观望"
+                    else:
+                        buckets[sym] = "DA其它"
+        _DA_GATE_INDEX["date"] = trade_date
+        _DA_GATE_INDEX["mtime"] = mtime
+        _DA_GATE_INDEX["buckets"] = buckets
+        return buckets
+    except Exception as exc:
+        logger.debug(f"[playbook] DA gate 归因索引读取失败 (用原文案): {exc}")
+        return {}
+
+
+def _placeholder_skip_reason(symbol: str, buckets: Dict[str, str]) -> str:
+    """[RFC-172] 占位候选 (bridge 未提名) 的 SKIP 文案 — 带 DA 侧归因分桶。
+
+    前缀 `非当前通道候选` 必须保留 (下游 startswith 过滤占位行); 无归因时文案与旧版逐字一致。
+    """
+    bucket = (buckets or {}).get(symbol)
+    if bucket:
+        return f"非当前通道候选(bridge未提名; DA={bucket})"
+    return "非当前通道候选(bridge未提名/无方向)"
+
+
 def _build_instructions_from_votes(
     screen_results,
     voting_coordinator,
@@ -1209,6 +1279,8 @@ def _build_instructions_from_votes(
         ]
 
     instructions = []
+    # [RFC-172] 当日 DA 侧归因索引 (record-only 文案分桶; 取不到 → {} 走原文案)
+    _da_buckets = _da_gate_buckets(today or _today_et_str())
     # §2.7 修复: 统一用 _normalize_regime_str, 与 regime_mults 键空间对齐 (原 str(enum) 恒命中默认 0.5)
     regime_str = _normalize_regime_str(regime_context)
 
@@ -1264,8 +1336,11 @@ def _build_instructions_from_votes(
             #   返回 None 分别是"technical 无方向"/"无 bridge"。改为语义准确文案。
             #   零行为变更, 下游无字符串消费方 (8/18 grep 验证)。
             _filter_audit["vote_none"] = _filter_audit.get("vote_none", 0) + 1
+            # [RFC-172] 分桶文案 (record-only): 前缀 `非当前通道候选` 保持不变 —
+            #   下游 observe_nightly_supply.py 等按 startswith 过滤占位行, 改前缀=破坏消费方。
             instructions.append(Instruction(
-                symbol=symbol, direction="SKIP", skip_reason="非当前通道候选(bridge未提名/无方向)"
+                symbol=symbol, direction="SKIP",
+                skip_reason=_placeholder_skip_reason(symbol, _da_buckets),
             ))
             continue
         
