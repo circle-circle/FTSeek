@@ -135,6 +135,43 @@ class TestGetDailyKlineGate:
         assert provider._kline_req_times == []   # 零配额消耗
         assert out == bars[-30:]
 
+    def test_daily_disk_save_merges_multi_instance(self, provider, tmp_path, monkeypatch):
+        """[RFC-171] 多实例共享同一落盘文件: B 落盘不得丢掉 A 的条目。
+
+        实测背景: MarketDataRouter 每个实例自建 FutuLV3Provider (非单例), 若落盘用
+        覆盖写, 后写者会把别的实例的条目清空 ⇒ 次日盘前重新全量拉取, 配额再次被打穿。
+        """
+        import app.data.futu_lv3_provider as _fp
+        disk = tmp_path / "daily_kline_v1.json"
+        monkeypatch.setattr(_fp, "_DAILY_DISK_PATH", str(disk))
+        bar = [{"time": "2026-10-24 00:00:00", "open": 1, "high": 1, "low": 1,
+                "close": 1, "volume": 1, "turnover": 1}]
+
+        provider._daily_kline_cache = {"US.A": bar}
+        provider._daily_kline_cache_time = {"US.A": 100.0}
+        provider._daily_disk_dirty = True
+        provider._daily_disk_save(force=True)
+
+        p2 = FutuLV3Provider(host="127.0.0.1", port=1)
+        p2._daily_kline_cache = {"US.B": bar}
+        p2._daily_kline_cache_time = {"US.B": 200.0}
+        p2._daily_disk_dirty = True
+        p2._daily_disk_save(force=True)
+
+        import json as _json
+        syms = _json.load(open(disk))["symbols"]
+        assert set(syms) == {"US.A", "US.B"}          # 合并, 不互相清空
+
+        # 旧数据不覆盖新数据: A 实例再写一次 (fetched_at 更旧) 不得回退 B
+        p2._daily_kline_cache = {"US.A": bar, "US.B": bar}
+        p2._daily_kline_cache_time = {"US.A": 50.0, "US.B": 200.0}
+        provider._daily_kline_cache = {"US.A": bar}
+        provider._daily_kline_cache_time = {"US.A": 50.0}
+        provider._daily_disk_dirty = True
+        provider._daily_disk_save(force=True)
+        syms = _json.load(open(disk))["symbols"]
+        assert syms["US.A"]["fetched_at"] == 100.0   # 保留较新者
+
     def test_daily_disk_roundtrip_survives_restart(self, provider, tmp_path, monkeypatch):
         """[RFC-171] 落盘 → 清内存 → 重新装载: 跨进程重启后仍零请求。"""
         import app.data.futu_lv3_provider as _fp

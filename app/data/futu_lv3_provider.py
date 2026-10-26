@@ -1456,11 +1456,26 @@ class FutuLV3Provider:
             try:
                 import json as _json
                 import os as _os
-                payload = {"version": 1, "symbols": {
-                    sym: {"bars": bars,
-                          "fetched_at": self._daily_kline_cache_time.get(sym, 0.0)}
-                    for sym, bars in self._daily_kline_cache.items() if bars
-                }}
+                # 合并写 (2026-10-27 实测: MarketDataRouter 每个实例自建 FutuLV3Provider,
+                #   多个实例共享同一落盘文件 ⇒ 直接覆盖会互相丢条目)。按 symbol 取
+                #   fetched_at 较新者, 保证只在"本实例数据更新"时才替换。
+                merged = {}
+                try:
+                    with open(_DAILY_DISK_PATH, "r", encoding="utf-8") as fh:
+                        merged = dict((_json.load(fh) or {}).get("symbols") or {})
+                except FileNotFoundError:
+                    merged = {}
+                except Exception:
+                    merged = {}
+                for sym, bars in self._daily_kline_cache.items():
+                    if not bars:
+                        continue
+                    mine_ts = self._daily_kline_cache_time.get(sym, 0.0)
+                    prev = merged.get(sym) or {}
+                    if float(prev.get("fetched_at") or 0) > mine_ts:
+                        continue
+                    merged[sym] = {"bars": bars, "fetched_at": mine_ts}
+                payload = {"version": 1, "symbols": merged}
                 _os.makedirs(_os.path.dirname(_DAILY_DISK_PATH), exist_ok=True)
                 tmp = _DAILY_DISK_PATH + ".tmp"
                 with open(tmp, "w", encoding="utf-8") as fh:
