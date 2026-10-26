@@ -136,6 +136,8 @@ def run_playbook_auto_execute(
 
         executed_count = 0
         skipped_count = 0
+        # [RFC-169] 受理未确认 (fill=0 在途) 独立计数 — 既不是成功也不是失败
+        submitted_pending_count = 0
         live_executed_count = 0
         live_skipped_count = 0
         errors = []
@@ -1426,14 +1428,41 @@ def run_playbook_auto_execute(
                                             exc_info=True,
                                         )
                 else:
-                    skipped_count += 1
                     if result.get("ttl_expired"):
                         # [DEB-20260901 选项1②] 路由限价 TTL 到期放弃 = 设计内终态, 非执行失败
+                        skipped_count += 1
                         _audit_action = "skipped_ttl_expired"
                         logger.info(f"[playbook] ⏳ {inst['symbol']} 路由限价 TTL 到期放弃 (影子遥测已落)")
                     else:
-                        _audit_action = "skipped_fail"
-                        errors.append(f"{inst['symbol']}: {result.get('message', 'unknown')}")
+                        # [RFC-169] 三态分账: 受理未确认 ≠ 跳过, 也 ≠ 成功。
+                        #   实锤 2026-10-26 US.CAT: 21:41:02 受理 (fill=0) → 30s 确认窗走完仍
+                        #   未确认 → 原实现记成"跳过"且原因只进返回 dict (日志无痕) ⇒ 读到
+                        #   "0 成功" 而实际 21:41:23 已成交、21:41:55 由 order 回执 reconcile
+                        #   补记 BOOKED。故先读 execution_state: 仍在途 ⇒ 单列待确认;
+                        #   已回终态/无状态 ⇒ 才是真失败, 且必须落 WARNING 带上原因。
+                        _exec_state = ""
+                        try:
+                            _inst_row = db.get_instruction_by_id(inst["id"]) or {}
+                            _exec_state = str(_inst_row.get("execution_state") or "")
+                        except Exception as _es_err:
+                            logger.warning(f"[playbook] {inst['symbol']} execution_state 读取失败: {_es_err}")
+                        if _exec_state in ("SUBMITTED", "FILLED_UNBOOKED", "UNKNOWN"):
+                            submitted_pending_count += 1
+                            _audit_action = "submitted_unconfirmed"
+                            logger.warning(
+                                f"[playbook] ⏳ {inst['symbol']} 已受理待确认 "
+                                f"(execution_state={_exec_state}) — {result.get('message', 'unknown')}"
+                                f" · 不计成功也不计失败, 待 order 回执 reconcile 收口"
+                            )
+                        else:
+                            skipped_count += 1
+                            _audit_action = "skipped_fail"
+                            errors.append(f"{inst['symbol']}: {result.get('message', 'unknown')}")
+                            logger.warning(
+                                f"[playbook] ⚠️ {inst['symbol']} 自动执行未成功 "
+                                f"(execution_state={_exec_state or '-'}): "
+                                f"{result.get('message', 'unknown')}"
+                            )
             except Exception as e:
                 skipped_count += 1
                 _audit_action = "error"
@@ -1470,7 +1499,10 @@ def run_playbook_auto_execute(
                                       **_sl_clamp_meta,
                                   })
 
-        logger.info(f"[playbook] 自动执行完成: {executed_count} 成功, {skipped_count} 跳过")
+        _pending_seg = f", {submitted_pending_count} 待确认" if submitted_pending_count else ""
+        logger.info(
+            f"[playbook] 自动执行完成: {executed_count} 成功{_pending_seg}, {skipped_count} 跳过"
+        )
         # 2026-08-22 audit: 关闭 already_held 对账共享连接
         if _ah_conn is not None:
             try:
@@ -1483,6 +1515,7 @@ def run_playbook_auto_execute(
             publish_event_sync("pipeline_update", {
                 "date": today,
                 "executed": executed_count,
+                "submitted_pending": submitted_pending_count,
                 "skipped": skipped_count,
                 "errors": len(errors),
             })
@@ -1491,6 +1524,7 @@ def run_playbook_auto_execute(
         return {
             "date": today,
             "executed": executed_count,
+            "submitted_pending": submitted_pending_count,
             "skipped": skipped_count,
             "live_executed": live_executed_count,
             "live_skipped": live_skipped_count,

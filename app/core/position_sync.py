@@ -277,7 +277,9 @@ class USPositionSync:
                                         entry: float, sl: float, tp: float,
                                         trace_id: str, futu_order_id: str = "",
                                         broker_env: str = "sim", order_evidence=None,
-                                        broker_position=None) -> bool:
+                                        broker_position=None,
+                                        instruction_id: int = None,
+                                        decision_id: str = "") -> bool:
         """统一管线 #4 (2026-07-20): 恢复仓位标 playbook_sim 时补录未平 PLAYBOOK_SIM trade_record.
 
         场景: playbook 下单后 GHOST-RC1 拒绝记账但订单实际成交 → trade_records 无记录 →
@@ -331,7 +333,8 @@ class USPositionSync:
                     symbol, direction, int(dealt), price, sl, tp, trace_id, futu_order_id, broker_env,
                     order_evidence={'confirmed': True, 'order_id': futu_order_id,
                                     'dealt_qty': dealt, 'price': price},
-                    broker_position={'qty': qty, 'direction': direction})
+                    broker_position={'qty': qty, 'direction': direction},
+                    instruction_id=instruction_id, decision_id=decision_id)
             except Exception:
                 logger.exception('[US Sync] legacy order receipt unavailable %s', futu_order_id)
                 return False
@@ -392,6 +395,29 @@ class USPositionSync:
                 now_iso = datetime.now(ZoneInfo("America/New_York")).isoformat()
             # atr 从 SL 距离反推 (playbook 退出用 %-drawdown, atr 仅诊断用途)
             atr_guess = abs(entry - sl) / 2.0 if (entry and sl) else 0.0
+            # [RFC-169] 入场时段回填 — 与正常执行链 (playbook_service.py:2090) 同源同口径,
+            #   fail-closed 取不到落 ""。entry_vix 保持 0.0: 本路径没有入场时刻的 VIX 快照,
+            #   不拿 instruction.vix_at_generation (生成时刻) 冒充入场值, 否则口径静默混尺。
+            try:
+                from app.utils.timezone import get_current_session as _get_sess_p3
+                _entry_session_p3 = _get_sess_p3() or ""
+            except Exception:
+                _entry_session_p3 = ""
+            _meta_p3 = {
+                "stop_loss": sl,
+                "take_profit": tp,
+                "atr": atr_guess,
+                "peak_price": entry,
+                "trough_price": entry,
+                "entry_price_source": "sync_recovery_backfill",
+                "adopted": True,
+                "adopt_origin": "position_sync",
+            }
+            # [RFC-169] 链路回填 (2026-10-26 实锤): 缺 playbook_instruction_id ⇒ 平仓时
+            #   exit_monitor_flow 的 inst_id 为空 ⇒ close_flow 跳过 instruction outcome 结算,
+            #   已平仓单永久停在 outcome='holding' (CAT 净 +11.89 却未结算)。补上即闭环。
+            if instruction_id:
+                _meta_p3["playbook_instruction_id"] = int(instruction_id)
             record = {
                 "trace_id": trace_id,
                 "trade_date": now_iso[:10],
@@ -409,6 +435,8 @@ class USPositionSync:
                 "signal_strength": 50,
                 "signal_confidence": 0.5,
                 "futu_order_id": futu_order_id,
+                "decision_id": decision_id or "",
+                "entry_session": _entry_session_p3,
                 "source_type": "PLAYBOOK_LIVE" if broker_env == "real" else "PLAYBOOK_SIM",
                 "entry_reason": "sync_recovery_backfill",
                 "owner_strategy": "playbook_live" if broker_env == "real" else "playbook_sim",
@@ -417,16 +445,7 @@ class USPositionSync:
                 "mode": "normal",
                 "trade_mode": "live" if broker_env == "real" else "simulate",
                 "signal_id": trace_id,
-                "metadata_json": json.dumps({
-                    "stop_loss": sl,
-                    "take_profit": tp,
-                    "atr": atr_guess,
-                    "peak_price": entry,
-                    "trough_price": entry,
-                    "entry_price_source": "sync_recovery_backfill",
-                    "adopted": True,
-                    "adopt_origin": "position_sync",
-                }),
+                "metadata_json": json.dumps(_meta_p3),
             }
             from app.storage.trade_store import TradeStore
             rid = TradeStore(db_path).save_trade(record)
@@ -514,7 +533,11 @@ class USPositionSync:
                                 trace_id=f'playbook-reconcile-{iid}-{attempt}',
                                 futu_order_id=order_id, broker_env=env,
                                 order_evidence=observation,
-                                broker_position=futu_positions.get(row['symbol']))
+                                broker_position=futu_positions.get(row['symbol']),
+                                # [RFC-169] 链路必带: 平仓结算靠 metadata.playbook_instruction_id
+                                #   反查指令; 缺则已平仓单永久 outcome='holding' (2026-10-26 实锤)
+                                instruction_id=iid,
+                                decision_id=str(row['decision_id'] or ''))
                             if ok:
                                 from app.utils.timezone import now_et
                                 pdb.mark_execution_booked(
