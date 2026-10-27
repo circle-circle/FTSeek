@@ -112,7 +112,12 @@ class TestGetDailyKlineGate:
         不被 62 连发打穿 ⇒ TwelveData 回退与 10-30s 等待从路径上消失。
         """
         from datetime import timedelta as _td
-        prev = date.today() - _td(days=1)
+        from app.utils.timezone import now_et as _now_et_test
+        # [RFC-171 补] 必须用 ET 日期而非服务器 CST 日期: CST 00:00-12:00 期间 CST 日期
+        #   已比 ET 日期早一天 (对应 ET 12:00-24:00), date.today() 会把「ET 今日」当成
+        #   上一交易日 ⇒ 盘中半截 bar 被 _session_final_bar 拒收, 测试每天有半天窗口
+        #   假红 (2026-10-28 CST 00:05 实测 1 failed)。
+        prev = _now_et_test().date() - _td(days=1)
         while prev.weekday() >= 5:
             prev -= _td(days=1)
         bars = [{"time": f"{prev.isoformat()} 00:00:00", "open": 1, "high": 1,
@@ -178,7 +183,12 @@ class TestGetDailyKlineGate:
         from datetime import timedelta as _td
         disk = tmp_path / "daily_kline_v1.json"
         monkeypatch.setattr(_fp, "_DAILY_DISK_PATH", str(disk))
-        prev = date.today() - _td(days=1)
+        from app.utils.timezone import now_et as _now_et_test
+        # [RFC-171 补] 必须用 ET 日期而非服务器 CST 日期: CST 00:00-12:00 期间 CST 日期
+        #   已比 ET 日期早一天 (对应 ET 12:00-24:00), date.today() 会把「ET 今日」当成
+        #   上一交易日 ⇒ 盘中半截 bar 被 _session_final_bar 拒收, 测试每天有半天窗口
+        #   假红 (2026-10-28 CST 00:05 实测 1 failed)。
+        prev = _now_et_test().date() - _td(days=1)
         while prev.weekday() >= 5:
             prev -= _td(days=1)
         bars = [{"time": f"{prev.isoformat()} 00:00:00", "open": 1, "high": 1,
