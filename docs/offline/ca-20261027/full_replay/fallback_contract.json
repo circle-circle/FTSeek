@@ -1,0 +1,96 @@
+{
+  "cases": [
+    {
+      "case": "primary",
+      "calls": 1,
+      "models": [
+        "deepseek-v4.1-flash"
+      ],
+      "tier": "primary",
+      "fallback": false,
+      "self_debate": false,
+      "primary_error_recorded": null,
+      "max_tokens": [
+        16000
+      ],
+      "thinking": [
+        true
+      ],
+      "pass": true
+    },
+    {
+      "case": "fallback_independent",
+      "calls": 2,
+      "models": [
+        "deepseek-v4.1-flash",
+        "kimi-k2.6"
+      ],
+      "tier": "fallback_independent",
+      "fallback": true,
+      "self_debate": false,
+      "primary_error_recorded": "injected_json_failure",
+      "max_tokens": [
+        16000,
+        16000
+      ],
+      "thinking": [
+        true,
+        true
+      ],
+      "pass": true
+    },
+    {
+      "case": "fallback_independent_nonthinking",
+      "calls": 3,
+      "models": [
+        "deepseek-v4.1-flash",
+        "kimi-k2.6",
+        "glm-5.2"
+      ],
+      "tier": "fallback_independent_nonthinking",
+      "fallback": true,
+      "self_debate": false,
+      "primary_error_recorded": "injected_json_failure",
+      "max_tokens": [
+        16000,
+        16000,
+        2000
+      ],
+      "thinking": [
+        true,
+        true,
+        false
+      ],
+      "pass": true
+    },
+    {
+      "case": "self_debate",
+      "calls": 4,
+      "models": [
+        "deepseek-v4.1-flash",
+        "kimi-k2.6",
+        "glm-5.2",
+        "qwen3.7-max"
+      ],
+      "tier": "self_debate",
+      "fallback": true,
+      "self_debate": true,
+      "primary_error_recorded": "injected_json_failure",
+      "max_tokens": [
+        16000,
+        16000,
+        2000,
+        2000
+      ],
+      "thinking": [
+        true,
+        true,
+        false,
+        false
+      ],
+      "pass": true
+    }
+  ],
+  "all_pass": true,
+  "scope": "stubbed routing only; not live T2-T4 model-quality or HTTP-failure validation"
+}

@@ -1,0 +1,182 @@
+{
+  "archive_source": "/tmp/da_ca_full_replay_20261027_qoder",
+  "archived_at_utc_note": "2026-10-27",
+  "n_files": 34,
+  "excluded": {
+    "raw_checkpoints": "不复制, sha256锚定到 data/da_checkpoint/2026-10-26 (gitignored), 由 manifest.json raw_sha256 指纹可验",
+    "historical_analysis": "同上 historical_sha256",
+    "pycache": "非证据"
+  },
+  "files": [
+    {
+      "path": "docs/offline/ca-20261027/full_replay/acceptance_summary.json",
+      "sha256": "e5b3b5671d5e4bf87cd767d5a11c28e821dd84995cd639035e48e75b6bf41ce6",
+      "bytes": 12781
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/evaluation.json",
+      "sha256": "da731db566a156f94524b332c6621f4b4963cf5fd453a373273cd4f5b7f457fe",
+      "bytes": 46950
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/manual_evidence_review.json",
+      "sha256": "a71edb4c4a1b91fe9621957005de6359d152e39b507679c1a816e399c033a886",
+      "bytes": 6736
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/fallback_contract.json",
+      "sha256": "cbd3470d60a7976757e0814dd23c8738611da2a8cab0d305faa9f34a452f26de",
+      "bytes": 1906
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/manifest.json",
+      "sha256": "50de87d1d71fe7be8e888212cad932955e9957c26884a55ccfa3064f9dc7c2f6",
+      "bytes": 2394
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/full_replay.py",
+      "sha256": "0ee97195ec465bb1772c8a4eef8dded82621ae292e60b20daca3909cdc339d99",
+      "bytes": 19630
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/short_partial/pass1/initial_analysis.json",
+      "sha256": "73232d765dcf0db092c17b24d3d808973487d91ed7fb05118c8af669c1541eac",
+      "bytes": 5136
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/short_partial/pass1/record.json",
+      "sha256": "7067b0626de3d1cd33f8a801d5d6cdcd140e4e308d11b254b7f9794114534a4c",
+      "bytes": 21041
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/short_partial/pass1/request.json",
+      "sha256": "609cab94a5ad629867a24ed6e7cd44875ed9e98131320a0875b2da01c724cf53",
+      "bytes": 14892
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/short_partial/pass1/system.txt",
+      "sha256": "52f09490c62eda099ed7af7ccd00f4ef14fa53641e1ba693b3e0c6d54bf613ef",
+      "bytes": 7617
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/short_partial/pass1/user.txt",
+      "sha256": "76b8ec223355220e31f6a7adc38b3cc3bfd5cf03e2b549dc4e6168498ff7c0cf",
+      "bytes": 28911
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/short_partial/captured/baseline.system.txt",
+      "sha256": "5053e09ff2a24d5f1fe128cbd16858cbafa9aa963dd732522970bab2c77506df",
+      "bytes": 5612
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/short_partial/captured/baseline.user.txt",
+      "sha256": "19bc2da47b034a6c7486a4dd233410fbdc92bbc4b360b66878a70c2b67e8120b",
+      "bytes": 19914
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/short_partial/captured/variant.system.txt",
+      "sha256": "d429ce5a2372a8bd7da8f6e4d9bc0b512ee66a68c09eb9e1403ea8e9551d39d3",
+      "bytes": 5614
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/short_partial/captured/variant.user.txt",
+      "sha256": "be0b88d7ed756f765b0ee203b43d93fa80ad319e2a91c0dbe1070c84a0d0452b",
+      "bytes": 19998
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/short_partial/captured/manifest.json",
+      "sha256": "ac776fe2cb5d8211581c48bd8789fa60f937daaaf4ccee40116fdc6d6a799e6c",
+      "bytes": 1537
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/short_partial/challenge/baseline/run1.json",
+      "sha256": "d12fc66fcabe13ea462bdd6fcb5e78a2840a1713aacb55a32676778c65687b53",
+      "bytes": 6521
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/short_partial/challenge/baseline/run2.json",
+      "sha256": "f59af9c65b31ac60f871bfd158ca654216a920f16786d94785e2567fd3cd9fc4",
+      "bytes": 4743
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/short_partial/challenge/variant/run1.json",
+      "sha256": "f7932b3bc42e701c2d4dc1dfd6528d392dae5d43502ba997334fd86cb2aef168",
+      "bytes": 5103
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/short_partial/challenge/variant/run2.json",
+      "sha256": "bb55a9efea495e75a045194121678e100cdd7a729db972907518d1fd4c83dbd6",
+      "bytes": 5189
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/long_partial/pass1/initial_analysis.json",
+      "sha256": "9f50cee40a0c433ca6da254edf15eae4679cc9a92e1bb37307f3fa4e8dd484b4",
+      "bytes": 5941
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/long_partial/pass1/record.json",
+      "sha256": "683331f4d455752bbc8acaac750bd398ff1be9b5ff962c8159fba79f03fb9347",
+      "bytes": 21852
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/long_partial/pass1/request.json",
+      "sha256": "475ca89a711ee1a20b88896c51ac009250086cc6257a2f0c87826414afb54a5d",
+      "bytes": 14891
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/long_partial/pass1/system.txt",
+      "sha256": "52f09490c62eda099ed7af7ccd00f4ef14fa53641e1ba693b3e0c6d54bf613ef",
+      "bytes": 7617
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/long_partial/pass1/user.txt",
+      "sha256": "96c58ab2db50d50ee9ecfda715fdb005c09741eb46c0fb269ccd8ebaeed7f1cc",
+      "bytes": 30628
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/long_partial/captured/baseline.system.txt",
+      "sha256": "5053e09ff2a24d5f1fe128cbd16858cbafa9aa963dd732522970bab2c77506df",
+      "bytes": 5612
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/long_partial/captured/baseline.user.txt",
+      "sha256": "6ecfccdf3bf08322201b2068cf7660ecb798510da7297c76ede0dfebf382dede",
+      "bytes": 22288
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/long_partial/captured/variant.system.txt",
+      "sha256": "d429ce5a2372a8bd7da8f6e4d9bc0b512ee66a68c09eb9e1403ea8e9551d39d3",
+      "bytes": 5614
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/long_partial/captured/variant.user.txt",
+      "sha256": "94e75667969376eb176871a127390d115263fb40102d969592a7d048e6325193",
+      "bytes": 22372
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/long_partial/captured/manifest.json",
+      "sha256": "53102ab16e3583379f1dbc47837ae3d5022bb79664fef148f06d705389da57da",
+      "bytes": 1536
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/long_partial/challenge/baseline/run1.json",
+      "sha256": "1f5695a251fc3c70355f2cfb44b1b5839806ef5baf72cca0b20498eacb4102f3",
+      "bytes": 7069
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/long_partial/challenge/baseline/run2.json",
+      "sha256": "ffbac0636f49ae6f9a4c5ae429c86460b77e0013ce176a4dc9328ef3cbace576",
+      "bytes": 7694
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/long_partial/challenge/variant/run1.json",
+      "sha256": "1d9595c3104597401cb49dca93077816bf53cc675f48f7bb86f3165bc64702b7",
+      "bytes": 7551
+    },
+    {
+      "path": "docs/offline/ca-20261027/full_replay/long_partial/challenge/variant/run2.json",
+      "sha256": "be5fc88b8e96e1958a1f2c0aa25117e7a6d9843bb95a7e6c448f6c07b49e71a0",
+      "bytes": 7653
+    }
+  ]
+}

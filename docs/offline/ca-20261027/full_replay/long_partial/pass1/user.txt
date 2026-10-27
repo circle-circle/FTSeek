@@ -1,0 +1,385 @@
+请输出严格的JSON格式（不要markdown包裹），结构如下：
+{
+    "executive_summary": "一句话结论+核心动作（必须具体，如：Q1营收+12%但新高日量能平平，回调到81.7分2批建仓）",
+    "rating": "强烈看多/看多/持有/观望/看空/强烈看空",
+    "score_band": "HIGH/MEDIUM/LOW (conviction确信度档位, 方向无关: 高确信看空=HIGH, 禁止用LOW表达看空; 方向只由direction字段表达)。锚定判据(可判定, 逐条数, 不要凭感觉给档):
+      HIGH = 同时满足全部3条: ①bull/bear_case中至少1条claim_type为product_catalyst或earnings_beat(公司独有事件) ②核心信息未被价格反映(盘前同向异动|涨跌幅|<2%, 或盘前成交量未见放量, 以⚡盘前时段数据段为准; 注意量比/换手率是上一交易日口径, 不得用于本判据) ③数据头部标记"数据充分性: 充分 ✓"(该标记由系统按实际采集结果算好, 直接读, 禁止自行估计维度数)
+      LOW = 满足任一: ①多空证据互斥强度相当 ②数据头部标记"数据充分性: 不充分 ✗" ③全部论据均已被价格反映(盘前已放量同向异动)
+      MEDIUM = 不满足HIGH也不满足LOW
+    另: 兼容字段 "score": 0-10数字 (可留空, 系统将以score_band为准重算)",
+    "direction": "BUY/SELL_SHORT/SKIP",
+    "skip_reason": "direction=SKIP时必填: 具体写明缺哪个维度数据/哪条证据不足/双模型反向改判等观望原因; 非SKIP留空",
+    "bull_case": [
+        {"thesis": "具体论点(必须有数据)", "strength": "HIGH/MEDIUM/LOW", "evidence": "数据引证", "source_type": "technical/fundamental/news/sentiment/macro", "claim_type": "论据类型枚举"}
+    ],
+    "bear_case": [
+        {"thesis": "具体论点", "strength": "HIGH/MEDIUM/LOW", "evidence": "数据引证", "source_type": "...", "claim_type": "论据类型枚举"}
+    ],
+    "constraints": [
+        {"thesis": "强制约因素", "strength": "HIGH/MEDIUM/LOW", "evidence": "数据"}
+    ],
+    "causal_chain": "3步以上因果传导链(用→连接)",
+    "execution_plan": {
+        "entry_strategy": "具体入场策略(只写1个可执行首批: 价位+触发条件; 后续加仓只能写研究背景, 不承诺成交)",
+        "entry_archetype": "BREAKOUT / PULLBACK_LIMIT / FADE_SHORT (枚举语义与判定规则见【关键要求】)",
+        "confirmation": {
+            "price_level": "首批研究确认位数字(不是订单; 执行端按当前锚重算; 设计即市价直入时填null)",
+            "side": "研究方向条件(below=回落到确认位附近 / above=反弹到确认位附近); 执行端按当前锚复评, 不保证成交",
+            "ttl_min": "研究确认位有效分钟数(仅供研究背景; 执行端使用自己的确认窗, 不由本字段驱动)"
+        },
+        "chase_cap_price": "禁止追涨/追空的最高(买)/最低(空)价位数字(如thesis/entry_strategy写明禁止追涨/追空则填, 否则null)。⚠️方向语义: BUY填上限(必须>entry_price, 价格涨过它=追高禁买); SELL_SHORT填下限(必须<entry_price, 价格跌破它=追空禁卖)。它**不是**invalidation的突破失效位 — SHORT的上破失效位(如'放量突破$X前高')写进invalidation/stop_loss, 绝不填这里",
+        "stop_loss": "止损价位(具体数字)",
+        "take_profit": "止盈目标(具体数字)",
+        "entry_price": 具体入场价数字,
+        "stop_loss_price": 具体止损价数字,
+        "take_profit_price": 具体止盈价数字,
+        "invalidation": "使交易逻辑失效的条件(一句话总述)",
+        "tripwires": [
+            {"metric": "可观测指标(如: 下次财报EPS/NAND合约价/VIX/收盘价)", "threshold": "量化阈值(如: 低于$5B / 连两季-10% / 跌破$186.5)", "deadline": "观测截止日或事件日期", "source": "数据出处(输入数据中的哪条事实)"}
+        ],
+        "invalidation_triggers": [
+            {"metric": "限本股可判定指标(收盘价/量比/5日涨跌/盘前涨跌幅)", "operator": "<或>", "value": "纯数字", "deadline": "日期"}
+        ]
+    },
+    "key_levels": {
+        "current": 当前价,
+        "support": [支撑价位列表],
+        "resistance": [阻力价位列表]
+    },
+    "risks": ["风险1", "风险2", "风险3"],
+    "data_quality_note": "数据完整性说明(几项完整/几项缺失及影响)",
+    "evidence_gaps": ["证据缺口数组, 可空: 你需要但输入中没有的数据、无法核实的关键假设。有缺口但仍给方向时写这里(不确定性出口), 不要写进 skip_reason; 无缺口填空数组"]
+}
+
+【关键要求】
+- bull_case/bear_case的每条论据必须锚定本股: 含 ≥1 个来自输入数据的数字; 本股特有命名实体不能替代数字锚点; 纯定性通用句将被机检记为 generic 违约
+- execution_plan的价位必须是具体数字，不是"逢低买入"
+- tripwires必须≥2条且全部可量化观测: 每条写清metric+threshold+deadline, 禁止"近期走弱/情绪恶化"这类无法判定真假的修辞; 写不出量化证伪条件说明thesis本身不成立, 应降低 score_band 档
+- invalidation_triggers≥2条 [P10 第14轮, 机器可核销]: 与 tripwires 的区别是——tripwires 是叙事性观测(可为外部标的/事件), invalidation_triggers 必须是**本股、代码可判定**的失效条件: metric 限 {收盘价, 量比, 5日涨跌, 盘前涨跌幅}, operator 限 </>, value 为纯数字。收盘价单位=USD; 量比=当日累计成交量÷最近20个完整交易日平均成交量(无量纲, 如2.0); 两个涨跌幅指标单位=百分比百分点(如-5)。当前下游 tripwire_checker 仅做影子评估, `tripwire_checker_enforce=false` 时不修改指令; 恢复自动核销须另行裁决。写不出2条本股可判定条件, 说明 thesis 失效边界不清, 应降低 score_band 档
+- 如果PE<0，说明该公司亏损，必须在bear_case中提及；PE=0或缺失只能写入evidence_gaps，禁止当作"亏损/无盈利"论据
+- 如果5日涨幅>20%，必须在risks中提及追高风险
+- direction必须与rating一致：看多→BUY，看空→SELL_SHORT，持有/观望→SKIP
+- SHORT 风险三问 (2026-08-25 重构: 删除已过时的"近14日命中29%"胜率论据 — 历史胜率不是
+  方向偏见的好理由; 保留的是结构性风险核验: 空头理论亏损无上限, 挤空是独有尾部风险):
+  direction=SELL_SHORT 时必须在 thesis 内回答三问 — ①具体下跌催化剂是什么(仅"估值高/
+  涨多了"不合格) ②催化剂时效多少小时 ③逼空风险自评(拥挤空头/低流通/逼空燃料)。
+  三问答不全 → 改 SKIP 并在 skip_reason 说明缺哪问。不禁做空。
+  多空镜像义务 (对称): direction=BUY 时 bull_case 同样必须给出同等具体的上行催化剂与
+  时效 — "跌多了该反弹"与"涨多了该跌"同属不合格论据。
+- bull_case/bear_case的每条必须标注claim_type，从以下枚举中选择最匹配的：
+  product_catalyst(产品/合约/IPO/管理层变动等公司独有事件)
+  earnings_beat(营收/EPS/利润率超预期或高增长)
+  valuation_cheap(PE/PB低于行业中枢) / valuation_expensive(PE/PB高于行业中枢)
+  insider_bearish(高管净卖出/MSPR为负) / insider_bullish(高管净买入/MSPR为正)
+  technical_breakout(突破/金叉/站上均线) / technical_breakdown(破位/死叉/跌破均线)
+  sentiment_crowded(散户一边倒/反向警示)
+  macro_tailwind(降息/政策顺风) / macro_headwind(加息/政策逆风)
+
+【论据独有性——必须】(KO分级制已改为机检条件, 见系统指令, 此处保留硬约束)
+- bull_case/bear_case 每条论据必须含 ≥1 个输入数据中的数字锚点;
+  公司独有事件/独有计算为高分来源(已由 score_band 判据①激励), 无则允许基于技术面/资金面/估值给方向, 禁止为凑事件或数字编造
+- 如果提供了analyst_consensus数据(分析师评级)，必须在bull/bear_case中引用买入占比和分析师数量
+- 如果提供了insider_sentiment(MSPR)数据，必须引用具体MSPR数值并说明方向(净买入/净卖出)
+- 如果提供了earnings_calendar，必须在risks中标注"财报前3日不开仓"及具体日期
+- entry_strategy 只写1个可执行首批(价位+触发条件); 后续加仓只能作为研究背景, **不写第二个可执行触发价、不承诺成交**
+- 当前执行端只按单一首批/执行锚下单; confirmation 是研究确认位, 不是限价单; 执行价/止损/止盈会按实时行情重算
+- entry_archetype [DEB-20260901, 机器可执行语义]: 从以下枚举选一, 与entry_strategy语义必须一致 —
+  BREAKOUT=突破/放量追入(价格向上突破确认位才买, 或向下跌破才空);
+  PULLBACK_LIMIT=等回踩低吸(价格**回落**到确认位才买, 禁止追高; entry_strategy含"低吸/回踩/承接/企稳接"时必选此项);
+  FADE_SHORT=等反弹做空(价格**反弹**到确认位才空, 不接飞刀)。
+  判定以策略意图为准: "低吸/锚定XX回踩"=PULLBACK_LIMIT, "突破XX追入/放量上攻"=BREAKOUT。
+- confirmation.price_level=首批研究确认位数字(不是订单, 不是盘前现价锚; 执行端按当前锚重算, 除非设计即市价直入);
+  chase_cap_price=文中"禁止在$X以上追涨"的X(无禁追语句则null)。⚠️SHORT 对称语义 [RFC-120, 机器可执行]:
+  SHORT 的 cap = "禁止在$X以下追空"的X, 是价格**下限**, 必须 < entry_price — 执行层判定"下单价 < cap
+  = 追空违例拦截"。反例(实证9/30三条死指令): SELL_SHORT entry=298 时填 cap=302(理由"放量突破$302.35
+  前高失效") → 这是上破失效位不是禁追线, 下单价298天然<302 → 出生即违例永不可成交。上破失效位写进
+  invalidation 或 stop_loss; cap 应填如 298×0.95≈283 的追空下限。BUY 对称: cap 必须 > entry_price,
+  填成下方支撑位同样出生即违例。三字段写不出=策略语义不清, 应降低 score_band 档
+  ⚠️**cap 除外**: 无禁追语句时 **cap=null 是正确输出**, 不算"写不出"(执行层对 null 不拦, 不会因此漏风控); 但给了
+  非 null 值就必须满足下面全部几何关系。若你在"给 null"与"给个大概的数"之间犹豫, **给 null**。
+  ⚠️ 若你仍写第二腿触发价 P2, 机器只做记录、不会执行; 最安全是只写首批、不写 P2。
+- 飞刀几何一致性(下游机检, 判据见系统指令【与执行层的接口事实】第2条): LONG 且盘前涨跌<-5%时,
+  chase_cap_price 必须 ≥ 昨收×0.95(飞刀线), 否则指令在执行层结构性不可成交;
+  证据只支持飞刀区深处接货 → direction 给 SKIP + skip_reason 写右侧回补计划
+- 当前执行不执行第二腿; 建议不写第二个可执行触发价, 只保留首批。
+- data_quality_note必须量化：直接照抄数据中"数据质量审计"段的数字(完整X/降级Y/缺失Z)，禁止自行清点维度；并说明降级/缺失维度对分析结论的具体影响
+
+【数据充分性路由——硬性约束】(2026-08-14, DEB-20260814 P2, 借鉴 financial-data-query 空结果纪律)
+- 数据头部标注了本次数据覆盖统计 (X/N, N=本次采集总维度数, 非固定值) 与"数据充分性"标记。若"实时快照/现价"缺失或为0:
+  direction 只能给 SKIP, skip_reason 写"数据不足: 现价缺失", 禁止输出任何具体价位
+  (入场/止损/止盈) — 无锚定价位带开盘即失效, 宁缺毋滥
+- 若 ≥6 个维度缺失: 优先 SKIP; 仍给方向时按数据不充分处理(score_band 落入 LOW 判据②),
+  且必须在 data_quality_note 与 evidence_gaps 说明缺失维度对结论的具体影响
+- 数据充足但证据弱 ≠ 数据不足: 证据弱时按正常分析给低分方向或观望, 不得滥用
+  "数据不足"当逃生通道 (审计: SKIP 必须指明具体缺失维度)
+
+【论据溯源——硬性约束】
+- 你的输出中每个数字必须来自"论据溯源清单"或输入数据的其他字段，不得编造
+- 输入数据中没有的数字一律不写(2026-09-07 起删除"(未验证)/估算"例外 — 该例外与
+  反虚构硬规直接矛盾): 你需要但缺失的数据记入 evidence_gaps, 不要在论据中携带无出处数字,
+  证伪官会逐条核验数字出处, 来源不明数字会被记为幻觉
+- 特别注意：ROE/营收增长率/净利润率等基本面数字，必须从"基本面指标(Finnhub)"section引用，不得从新闻标题中摘取当事实
+- MSPR/内部人交易金额必须从"内部人情绪"或"内部人交易"section引用具体数值
+- 如果"论据溯源清单"中没有某项数据，说明该数据不可用，不要编造
+
+【交易经验参考——如果提供了"近期交易经验"数据，按以下原则使用】
+(2026-08-25 重写: 旧版"本股历史全亏→同方向需更强理由"已被实证证伪并删除 —
+ 标的级历史胜负对本股下一笔无预测力, 半程自相关 pearson=−0.40 且反持续 (DEB-20260825 第2轮);
+ 亏损后的再入场恰是回放证明的少数盈利行为之一 (DEB-20260825 第10轮熔断回放))
+- 这是背景事实，不是方向门禁！不要因本股或某方向的既往亏损而拒绝同方向信号，
+ 也不要因既往盈利而放松证据标准 — 历史胜负对下一笔无预测力, 多空对称适用。
+- 经验数据里只有两类信息可用:
+  ①具体失败模式的事实 (如"上次财报日跳空打止损") → 检查本次是否存在同类未定价事件,
+    存在则计入 risks; 不存在则不构成反对理由
+  ②退出机制效果统计 (如保本出场对死胎仓位的保险价值) → 只用于 execution_plan 的
+    止盈/止损松紧参考, 禁止用于方向判断
+- 如果本股无历史交易记录，照常分析，缺数据不是 SKIP 理由。
+
+---
+
+请基于以下真实数据，对该标的进行深度多空辩论分析。
+
+## 📊 数据覆盖统计: 19/19 维度有效
+- score_band 锚点③【数据充分性】: 充分 ✓ (缺失维度<6)
+
+
+## 标的基本面
+- 代码: US.CRM
+- 名称: 赛富时
+- 当前价格: $248.57 (⚠️盘前时段此值为昨收, 有效现价见盘前段)
+- 涨跌幅: +0.0%
+- 成交量: 5,843,515.0
+- 换手率: 0.737%
+- PE(TTM): 22.762
+- PE(动态): 31.867
+- PB: 5.33
+- EPS: 数据未采集(N/A)
+- 总市值: 204.6B
+- 股息率: 数据未采集(N/A)%
+- 52周最高: 267.80
+- 52周最低: 146.06
+- 振幅: 2.841%
+- 买盘/卖盘比: 80.18
+- 量比: 0.754
+- ⚠️ 口径: 上方 成交量/换手率/振幅/量比/买卖盘比 均为**上一交易日收盘**口径 (盘前/盘后不刷新 —— 此处盘前量比实为昨日量能, 不是今日放量); 今日量能只能看下方盘前段的盘前成交量。
+
+## ⚡ 盘前时段数据 (当前处于盘前, 这是今日趋势的第一个信号)
+- 盘前现价(有效价格): $247.6
+- 盘前涨跌幅(vs昨收): -0.39%
+- 隔夜涨跌幅: +0.57%
+- 盘前成交量: 16,080股
+- 昨日收盘价: $248.57
+- ⚠️ 上方"当前价格"是昨日正股收盘价, 不是今日真实价。入场/止损/止盈必须锚定盘前现价 $247.6。
+- ⚠️ 你必须对盘前波动显式表态: 趋势延续(顺势入场) 还是 过度反应(逆势博反弹, 需强证据)。
+
+## 技术面 (60日K线)
+- MA5: 245.10 | MA10: 242.08 | MA20: 235.53 | MA60: 227.66
+- 5日涨跌: +3.3% | 20日涨跌: +6.2%
+- 量比(20日均量): 0.73x
+- 近5日K线:
+  2026-10-19 00:00:00: O=238.47 H=243.01 L=236.90 C=242.45 V=7,041,194
+  2026-10-20 00:00:00: O=235.75 H=244.14 L=235.60 C=242.43 V=8,140,327
+  2026-10-21 00:00:00: O=241.40 H=244.18 L=237.23 C=241.78 V=5,432,763
+  2026-10-22 00:00:00: O=244.60 H=252.42 L=242.70 C=250.29 V=9,748,941
+  2026-10-23 00:00:00: O=248.59 H=249.41 L=242.30 C=248.57 V=5,843,515
+
+## 资金面 (分时)
+- 最新主力流入: N/A
+- 超大单流入: 0.0
+- 大单流入: 10678697.595
+
+## 异动信号
+  技术面异动: 9条 (近7个自然日)
+    - [ts 1792641600] K线出现了“W型底”形态，通过两次触底未破确认其支撑位，表明市场在该位置有强劲买盘，预示着后市可能出现反转上涨，上涨概率是94.57%，支撑位是247.78，压力位是259.04。
+    - [ts 1792728000] KDJ从中性区间升至强超买水平，暗示股价面临下行压力。
+    - [ts 1792728000] AR从中性区间进入超卖区域，暗示可能迎来反弹。
+    - [ts 1792641600] BOLL指标显示收盘价位于布林带上轨之上，表明当前价格可能超出常规范围。RSI(12)、RSI(24)和WMSR从中性区间进入超买区域，暗示价格可能面临下跌。
+    - [ts 1792641600] 收盘价上穿MA5，显示出潜在的短期看涨趋势。
+    - [ts 1792555200] 收盘价跌破MA5，暗示可能即将面临卖出压力。
+    - …另有3条未展示
+  资金面异动: 4条 (近7个自然日)
+    - [ts 1792641600] 特大单净流出1156.48万且流入流出金额相差一倍以上，小单净流入253.29万，方向相反，代表大资金和小资金存在分歧。
+    - [ts 1792555200] 特大单净流出215.56万且流入流出金额相差一倍以上，小单净流入1144.78万，方向相反，代表大资金和小资金存在分歧。
+    - [ts 1792468800] 特大单净流入242.06万且流入流出金额相差一倍以上，小单净流出18.11万，方向相反，代表大资金和小资金存在分歧。
+    - [ts 1792672329] 主力资金近5日持续净流出，当日净流出金额比前3日均值高494%，表明主力资金在加速离场。
+  衍生品异动: 14条 (近7个自然日)
+    - 10.22 21:34，出现一笔买入看涨期权交易，成交量为1238张，未平仓数为3238张，V/OI值为0.4，交易金额为247600USD，合约行权价是250，到期日为2026/10/23。
+    - 10.21 02:48，出现一笔买入看涨期权交易，成交量为402张，未平仓数为166张，V/OI值为2.5，交易金额为377880USD，合约行权价是245，到期日为2026/11/13。
+    - 10.21 02:48，出现一笔中性看涨期权交易，成交量为402张，未平仓数为738张，V/OI值为0.6，交易金额为349740USD，合约行权价是235，到期日为2026/10/23。
+    - 10.21 00:13，出现一笔买入看跌期权交易，成交量为244张，未平仓数为2554张，V/OI值为0.1，交易金额为558680USD，合约行权价是250，到期日为2026/12/18。
+    - 10.20 23:29，出现一笔买入看涨期权交易，成交量为212张，未平仓数为846张，V/OI值为0.3，交易金额为513043USD，合约行权价是300，到期日为2027/09/17。
+    - 10.20 22:42，出现一笔卖出看涨期权交易，成交量为242张，未平仓数为1939张，V/OI值为0.1，交易金额为375100USD，合约行权价是310，到期日为2027/06/17。
+    - …另有8条未展示
+
+## 最新新闻 (共10条, 时间为ET)
+  [10-26 08:16ET] 10月26日：<em>CRM</em>显示W型底，因收购m3ter和Fin加入的新员工获授27.8万份限制性股票
+  [10-24 15:15ET] 本周重点交易：Visa、伦敦证券交易所、Tradeweb Markets、<em>赛富时</em>等
+  [10-23 09:45ET] Salesforce, American Express Share Losses Lead Dow's 575-Point Drop
+  [10-23 08:17ET] 10月23日：<em>CRM</em>显示W型底，Salesforce以约56.6亿美元收购Braze
+  [10-22 14:14ET] “<em>赛富时</em>客户为在其应用中使用Claude的新费用做准备”——The Information
+  [10-22 13:03ET] 为何<em>赛富时</em>股价在周四飙升？
+  [10-22 10:34ET] 奥本海默控股维持<em>赛富时</em>(<em>CRM</em>.US)买入评级，维持目标价275美元
+  [10-22 09:50ET] 分析师首选科技股：甲骨文（ORCL）、<em>赛富时</em>（<em>CRM</em>）
+
+## Finnhub 新闻事实流 (近7天, 含摘要 — 新闻类论据必须引用此处事实)
+  [10-26] (Yahoo) Stocktwits M&A Watch: CRM, BRZE, TW, LEU Stocks In Focus
+    摘要: Salesforce’s $5.66 billion Braze deal, Tradeweb’s Trumid acquisition, and Centrus Energy’s Westerman Holdings takeover are in focus this week.
+  [10-24] (Yahoo) Salesforce (CRM) Unveils Hunter For AI Driven Sales Workflows
+    摘要: Salesforce (NYSE:CRM) introduced Hunter, an outbound AI sales agent, alongside a deeper integration with Demandbase for real-time B2B data. The partnership brings Demandbase buying group and engagemen
+  [10-23] (ChartMill) Salesforce (NYSE:CRM): A Quality Investing Candidate With Mixed Fundamentals
+    摘要: Salesforce clears the Caviar Cruise quality screen on growth, ROIC, cash flow and debt, but weak liquidity and standard ROIC warrant caution.
+  [10-21] (Yahoo) Salesforce (CRM) vs Oracle (ORCL): Which Is a Better Stock to Buy?
+    摘要: Salesforce, Inc. (NYSE:CRM) closed at $242.45 on October 19. The stock returned 30.2% over the last 6 months, compared with an 11.6% return for the Insider Monkey Billionaire Index and 8.7% for the St
+  [10-21] (Yahoo) CRM vs. ADSK: Which Stock Is the Better Value Option?
+    摘要: CRM vs. ADSK: Which Stock Is the Better Value Option?
+  [10-21] (Yahoo) CRM Stock In Focus: Jefferies Says Salesforce’s Braze Deal Could Spark More Software Takeovers
+    摘要: Jefferies says Salesforce’s $5.66 billion deal could spur software industry consolidation, boost marketing abilities and fuel Klaviyo takeover speculation.
+
+## 研报 (共5条, 去重4条与新闻同稿)
+  [10-23 08:25ET] 星展集团控股将<em>赛富时</em>的目标价从240美元上调至300美元
+
+## 社区讨论 (共30条帖子)
+
+  发帖节奏: 最近一条前5分钟内 1 条 / 全部30条跨 8356.2 分钟
+
+  帖子1: 本周前瞻&上周总结(10.26)，超级周关注美联储议息会&三大云厂财报 前言：每周一早上8点更新下周前瞻，包括未来一周重要的核心事件，及具体操作指引；每个月的第一周，则是对本月的前瞻，和上这个月的总结。分为几大类：1）宏观数据，美股重点的几
+
+  帖子2: 本周焦點消息(MSFT,GOOGLE,AMAZON,SNDK,SKHY) 【直播簡介】 美股三大指數上周表現分化。道瓊斯指數連升三周；納斯達克指數以及標準普爾500指數跌兩者均連跌兩周。展望本周，市場迎來「超級央行周」，有市場分析預期美國聯
+
+  帖子3: 10.26-10.30前瞻：科技还在挨打，美联储和大厂财报又挤到一起了 上周科技股那种跌法，看着确实心烦。周四被砸了一轮，周五本来想等个修复，最后纳指还是跌了0.21%，标普跌了0.52%，道指跌了1.23%。科技股的抛压有所缓和，其他板块
+
+  帖子4: 美國九月份PCE數據即將公布 美國本周將公布聯儲局高度關注的通脹指標——個人消費支出（PCE）物價指數。市場預期9月PCE按年升幅加快至3.6%，按月升0.5%；核心PCE按年升3.1%，按月升0.3%，兩者均較8月升幅略為加快。$Appl
+
+  帖子5: 本周焦點消息(MSFT,GOOGLE,AMAZON,SNDK,SKHY) 【直播簡介】 
+美股三大指數上周表現分化。道瓊斯指數連升三周；納斯達克指數以及標準普爾500指數跌兩者均連跌兩周。展望本周，市場迎來「超級央行周」，有市場分析預期美國
+
+## 基本面指标 (Finnhub, TTM)
+- 营收增长(YoY): 11.23%
+- 营收增长(5年CAGR): 14.34%
+- EPS增长(5年): 12.24%
+- ROE: 20.150000000000002%
+- ROA: 9.120000000000001%
+- 净利润率: 21.99%
+- 毛利率: 77.28%
+- 营业利润率: 18.78%
+- PE(标准化): 27.4337
+- PB: 3.3399
+- PS: 4.9265
+- 每股营收: 53.5177
+- 每股净资产: 63.662
+- 负债/权益比: 0.2532
+- 股息率: None%
+- 派息率: 15.68%
+- Beta: 1.2364675
+
+## 分析师评级 (Finnhub, 2026-10-01)
+- 强烈买入: 14 | 买入: 26 | 持有: 14 | 卖出: 1 | 强烈卖出: 1
+- 覆盖分析师: 56位
+- 买入占比: 71.4%
+
+## 内部人交易 (Finnhub)
+- 最近交易: 0笔买入 / 0笔卖出
+- 最近交易总额: $0
+  2026-10-22 Harris Parker None shares=None price=$0
+  2026-10-22 Harris Parker None shares=None price=$250.29
+  2026-10-22 Harris Parker None shares=None price=$0
+  2026-09-22 Harris Parker None shares=None price=$0
+  2026-09-22 Harris Parker None shares=None price=$0
+
+## 内部人情绪 (Finnhub MSPR)
+- 6个月平均MSPR: -7.64 (净卖出)
+- MSPR>0=净买入, <0=净卖出
+
+## 公司概况
+- 行业: Technology
+- 交易所: NEW YORK STOCK EXCHANGE, INC.
+- 国家: US
+
+## 大盘环境
+- 大盘趋势(代码判定, SPY/QQQ): 盘前UP (SPY +0.42%, QQQ +0.74%); 日线DOWN
+- SPY: $759.97 (MA20=770.15, 趋势=DOWN, 5日-0.4%, 20日-1.5%) [日线口径, 基准日=2026-10-23 收盘; 今日盘前 +0.42% (盘前价 763.1962 / 昨收 763.96; 快照 2026-10-26 08:27:40.572 premarket)]
+- QQQ: $704.4 (MA20=735.23, 趋势=DOWN, 5日-0.8%) [日线口径, 基准日=2026-10-23 收盘; 今日盘前 +0.74% (盘前价 709.65 / 昨收 704.47; 快照 2026-10-26 08:27:48.137 premarket)]
+- VIX: 15.23 今日+0.0% [代理值: US.VIXY×0.85 校准, VIXY=$17.92; VIX 现货无盘前交易]
+- 扫描层市况(当日候选池广度): 扫描39只候选：14涨16跌9平，平均-2.5%，震荡分化。 涨幅领涨：US.MMYT(+4.8%) 跌幅最深：US.ITUB(-26.3%) 板块表现均衡，最强Technology(+0.5%)。 多头信号：US.SLB,US.EQNR,US.NOW。 空头信号：US.KEYS,US.NOW,US.ADI。 放量股：US.BE。 盘前异动：US.ITUB(-26.7%) US.NU(-25.0%) US.PBR.A(-21.4%) US.PBR(-20.8%)。
+
+## 行业对比 (Technology)
+- 行业平均: 今日+0.1% 5日+8.3%
+- 行业趋势(代码判定, peer均值): 今日UP, 5日UP, 综合UP
+- 行业PE中位数: 951.38 (由3家peer算得)
+- peer明细 (共8只):
+  ZS: $255.15 今日+0.0% 5日+20.1% PE=-654.23
+  RBRK: $128.74 今日-0.0% 5日+13.5% PE=-101.37
+  CRWD: $257.57 今日-0.0% 5日+12.9% PE=6778.157
+  PANW: $380.55 今日-0.0% 5日+9.7% PE=951.375
+  NOW: $158.96 今日+0.0% 5日+9.4% PE=99.35
+
+## 数据质量审计
+- 数据源总数: 19
+- 完整(有信息量): 19项
+- 降级(空壳): 0项
+- 缺失: 0项
+
+## 论据溯源清单（以下为输入数据中的真实数字，LLM输出必须引用这些，不得编造）
+- last_price=248.57
+- pe_ratio=31.867
+- pe_ttm_ratio=22.762
+- pb_ratio=5.33
+- total_market_val=204573110000.0
+- highest52weeks_price=267.798862348
+- lowest52weeks_price=146.063031791
+- amplitude=2.841
+- bid_ask_ratio=80.18
+- volume_ratio=0.754
+- turnover_rate=0.737
+- revenue_growth_yoy=11.23
+- roe_ttm=20.150000000000002
+- net_profit_margin_ttm=21.99
+- pe_normalized=27.4337
+- beta=1.2364675
+- debt_to_equity=0.2532
+- avg_mspr_6m=-7.64
+- strong_buy=14
+- buy=26
+- hold=14
+- sell=1
+- total_analysts=56
+- buy_pct=71.4
+- industry_pe_median=951.38
+
+## 板块上下文（真实轮动数据, 板块层因果必须引用此处事实; 逆板块风方向须自证为何成立）
+当前快照板块ETF涨跌(弱→强): Materials(-0.74%), Utilities(-0.72%), Financials(-0.00%), Energy(+0.00%), Healthcare(-0.00%), Industrials(-0.00%), Consumer Discretionary(-0.00%), Consumer Staples(+0.00%), Communication(-0.00%), Real Estate(+0.12%), Technology(+0.49%)
+上一交易日(2026-10-23)盘中板块脉搏(15:30 ET, 弱→强): ConsStaples(-1.9%), ConsDiscretionary(-1.6%), Communication(-1.4%), Healthcare(-1.2%), Financials(-1.2%), Industrials(-1.0%), Utilities(-0.7%), Materials(-0.2%), RealEstate(+0.0%), Technology(+0.5%), Semis(+0.8%), Energy(+2.7%)
+
+## 前序回吐率（历史统计 shadow, 近1年大涨>+5%后表现）
+- 大涨样本: 7次 | 5日守成率: 57.1% | 5日后均涨幅: 0.18% → 续涨倾向
+- 3日/10日: 守成 71.4%/42.9%, 均涨 0.31%/1.5%
+- 用法: 若本次触发源于大涨, 该统计反映该标的自身的涨幅留存性格; 样本少(<10)时仅作弱参考。
+
+## 近期交易经验（背景事实, 非方向先验）
+上次分析(2026-10-23): 2026-10-23 | 看多 | 信心中 | BUY | verdict=CRM宣布56.6亿美元收购Braze强化AI营销布局，PE(TTM)22.92低于行业中枢26.83，盘前-0.72%属正常回调非趋势反转，回调至248.00附近低吸建仓。 | 核心论据=10月20日宣布以56.6亿美元全股票收购Braze，强化AI营销云布局，星展银行10月22日上调目标价至300美元，奥本海默维持275美元，构成强劲产品催化。 (news) ; 当前PE(TTM)为22.92，显著低于Technology行业中位数26.83，且营收同比增长11.23%，净利润率达 | 本股US.CRM最近4笔结局(新→旧): 10-23 LONG DEAD_SIGNAL_EXIT $13@cautious; 10-21 LONG SL_BREAKEVEN $14@cautious; 10-19 LONG SL_BREAKEVEN $12@cautious; 09-25 LONG SL_TRAIL_LOCK $29@risk_on | 本股US.CRM近30日LONG: 3笔3胜 WR=100% PnL=$27.0 最佳=$9.59 最差=$8.23 [置信度:very_low]
+赚钱pattern(近30日净额): LONG+SL_TRAIL_LOCK(70-80) 13笔 WR=100% PnL=$539.63 hold=0.9h [低置信,仅参考]; LONG+SL_TRAIL_LOCK(<50) 19笔 WR=95% PnL=$526.96 hold=1.3h [低置信,仅参考]; LONG+PRE_CLOSE_EXIT(50-60) 2笔 WR=100% PnL=$272.77 hold=6.2h [低置信,仅参考]
+亏钱pattern(近30日净额): LONG+OVERNIGHT_GAP_STOP(50-60) 2笔 PnL=$-645.67 hold=12.8h [低置信,仅参考]; SHORT+SL_INITIAL(50-60) 2笔 PnL=$-379.7 hold=0.2h [低置信,仅参考]; SHORT+SL_INITIAL(<50) 2笔 PnL=$-306.78 hold=0.3h [低置信,仅参考]
+退出效果(近30日净额): SL_TRAIL_LOCK(44笔 WR=96% PnL=$1668.78); PRE_CLOSE_EXIT(7笔 WR=100% PnL=$618.81) [低置信]; SL_BREAKEVEN(74笔 WR=85% PnL=$524.47); DEAD_SIGNAL_EXIT(10笔 WR=70% PnL=$33.08) [低置信]; SL_INITIAL(7笔 WR=0% PnL=$-1026.09) [低置信]
+近期教训:
+  [2026-10-23][low] 当日整体净盈利$25 3胜0负，市场环境有利于当前策略
+  [2026-10-23][medium] SHORT+SL_BREAKEVEN 净赚$12 持1.4h US.TMUS
+
+## 历史负向论据警示
+以下为历史上(全时段口径)验证为负超额收益的论据类型 — 仅作背景参考, 不是否决:
+若将其作为核心依据, 需当日数据给出更强证据, 并在 risks 中显式标注该论据历史表现为负。
+  - theme_momentum:+0.65: T+1 alpha -1.43% (n=15)
+  - theme_wind:+0.65: T+1 alpha -1.43% (n=15)
+  - macro_tailwind: T+1 alpha -1.06% (n=93)
+  - rsi_overbought: T+1 alpha -0.62% (n=95)
+  - insider_net_buy: T+1 alpha -0.53% (n=15)
+  - technical_breakout: T+1 alpha -0.40% (n=333)
+  - earnings_beat_streak: T+1 alpha -0.32% (n=41)
+  - theme_momentum:+0.30: T+1 alpha -0.22% (n=42)
+  - theme_wind:+0.30: T+1 alpha -0.22% (n=42)
+(口径: 剥离大盘 beta 的方向调整超额, 与执行门事后警告同源; 历史统计不保证未来)
+
+## 本系统成交档案（背景事实）
+以下为 US.CRM 本系统实际成交与行为档案 (背景事实, 非方向先验):
+- 本系统成交样本不足 (insufficient(n=23), 不读倾向): n=23 净=-238.62
+- 开盘15min动量留存率=72% (204日)
+注: 此为该股在本系统的历史成交摘要, 仅作背景事实; 样本不足项禁止外推为该股倾向。

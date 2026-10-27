@@ -1,0 +1,371 @@
+【证伪任务 — 第14轮 P9】候选方向 = BUY。
+
+第一步【假设它错了】:
+仅根据以下原始数据, 假设 BUY 方向会亏损, 找出最可能导致亏损的具体证据。
+把你在"不看分析师结论"下独立倾向的方向填入 independent_direction (作为防锚定观测)。
+
+原始数据:
+## 📊 数据覆盖统计: 19/19 维度有效
+- score_band 锚点③【数据充分性】: 充分 ✓ (缺失维度<6)
+
+
+## 标的基本面
+- 代码: US.CRM
+- 名称: 赛富时
+- 当前价格: $248.57 (⚠️盘前时段此值为昨收, 有效现价见盘前段)
+- 涨跌幅: +0.0%
+- 成交量: 5,843,515.0
+- 换手率: 0.737%
+- PE(TTM): 22.762
+- PE(动态): 31.867
+- PB: 5.33
+- EPS: 数据未采集(N/A)
+- 总市值: 204.6B
+- 股息率: 数据未采集(N/A)%
+- 52周最高: 267.80
+- 52周最低: 146.06
+- 振幅: 2.841%
+- 买盘/卖盘比: 80.18
+- 量比: 0.754
+- ⚠️ 口径: 上方 成交量/换手率/振幅/量比/买卖盘比 均为**上一交易日收盘**口径 (盘前/盘后不刷新 —— 此处盘前量比实为昨日量能, 不是今日放量); 今日量能只能看下方盘前段的盘前成交量。
+
+## ⚡ 盘前时段数据 (当前处于盘前, 这是今日趋势的第一个信号)
+- 盘前现价(有效价格): $247.6
+- 盘前涨跌幅(vs昨收): -0.39%
+- 隔夜涨跌幅: +0.57%
+- 盘前成交量: 16,080股
+- 昨日收盘价: $248.57
+- ⚠️ 上方"当前价格"是昨日正股收盘价, 不是今日真实价。入场/止损/止盈必须锚定盘前现价 $247.6。
+- ⚠️ 你必须对盘前波动显式表态: 趋势延续(顺势入场) 还是 过度反应(逆势博反弹, 需强证据)。
+
+## 技术面 (60日K线)
+- MA5: 245.10 | MA10: 242.08 | MA20: 235.53 | MA60: 227.66
+- 5日涨跌: +3.3% | 20日涨跌: +6.2%
+- 量比(20日均量): 0.73x
+- 近5日K线:
+  2026-10-19 00:00:00: O=238.47 H=243.01 L=236.90 C=242.45 V=7,041,194
+  2026-10-20 00:00:00: O=235.75 H=244.14 L=235.60 C=242.43 V=8,140,327
+  2026-10-21 00:00:00: O=241.40 H=244.18 L=237.23 C=241.78 V=5,432,763
+  2026-10-22 00:00:00: O=244.60 H=252.42 L=242.70 C=250.29 V=9,748,941
+  2026-10-23 00:00:00: O=248.59 H=249.41 L=242.30 C=248.57 V=5,843,515
+
+## 资金面 (分时)
+- 最新主力流入: N/A
+- 超大单流入: 0.0
+- 大单流入: 10678697.595
+
+## 异动信号
+  技术面异动: 9条 (近7个自然日)
+    - [ts 1792641600] K线出现了“W型底”形态，通过两次触底未破确认其支撑位，表明市场在该位置有强劲买盘，预示着后市可能出现反转上涨，上涨概率是94.57%，支撑位是247.78，压力位是259.04。
+    - [ts 1792728000] KDJ从中性区间升至强超买水平，暗示股价面临下行压力。
+    - [ts 1792728000] AR从中性区间进入超卖区域，暗示可能迎来反弹。
+    - [ts 1792641600] BOLL指标显示收盘价位于布林带上轨之上，表明当前价格可能超出常规范围。RSI(12)、RSI(24)和WMSR从中性区间进入超买区域，暗示价格可能面临下跌。
+    - [ts 1792641600] 收盘价上穿MA5，显示出潜在的短期看涨趋势。
+    - [ts 1792555200] 收盘价跌破MA5，暗示可能即将面临卖出压力。
+    - …另有3条未展示
+  资金面异动: 4条 (近7个自然日)
+    - [ts 1792641600] 特大单净流出1156.48万且流入流出金额相差一倍以上，小单净流入253.29万，方向相反，代表大资金和小资金存在分歧。
+    - [ts 1792555200] 特大单净流出215.56万且流入流出金额相差一倍以上，小单净流入1144.78万，方向相反，代表大资金和小资金存在分歧。
+    - [ts 1792468800] 特大单净流入242.06万且流入流出金额相差一倍以上，小单净流出18.11万，方向相反，代表大资金和小资金存在分歧。
+    - [ts 1792672329] 主力资金近5日持续净流出，当日净流出金额比前3日均值高494%，表明主力资金在加速离场。
+  衍生品异动: 14条 (近7个自然日)
+    - 10.22 21:34，出现一笔买入看涨期权交易，成交量为1238张，未平仓数为3238张，V/OI值为0.4，交易金额为247600USD，合约行权价是250，到期日为2026/10/23。
+    - 10.21 02:48，出现一笔买入看涨期权交易，成交量为402张，未平仓数为166张，V/OI值为2.5，交易金额为377880USD，合约行权价是245，到期日为2026/11/13。
+    - 10.21 02:48，出现一笔中性看涨期权交易，成交量为402张，未平仓数为738张，V/OI值为0.6，交易金额为349740USD，合约行权价是235，到期日为2026/10/23。
+    - 10.21 00:13，出现一笔买入看跌期权交易，成交量为244张，未平仓数为2554张，V/OI值为0.1，交易金额为558680USD，合约行权价是250，到期日为2026/12/18。
+    - 10.20 23:29，出现一笔买入看涨期权交易，成交量为212张，未平仓数为846张，V/OI值为0.3，交易金额为513043USD，合约行权价是300，到期日为2027/09/17。
+    - 10.20 22:42，出现一笔卖出看涨期权交易，成交量为242张，未平仓数为1939张，V/OI值为0.1，交易金额为375100USD，合约行权价是310，到期日为2027/06/17。
+    - …另有8条未展示
+
+## 最新新闻 (共10条, 时间为ET)
+  [10-26 08:16ET] 10月26日：<em>CRM</em>显示W型底，因收购m3ter和Fin加入的新员工获授27.8万份限制性股票
+  [10-24 15:15ET] 本周重点交易：Visa、伦敦证券交易所、Tradeweb Markets、<em>赛富时</em>等
+  [10-23 09:45ET] Salesforce, American Express Share Losses Lead Dow's 575-Point Drop
+  [10-23 08:17ET] 10月23日：<em>CRM</em>显示W型底，Salesforce以约56.6亿美元收购Braze
+  [10-22 14:14ET] “<em>赛富时</em>客户为在其应用中使用Claude的新费用做准备”——The Information
+  [10-22 13:03ET] 为何<em>赛富时</em>股价在周四飙升？
+  [10-22 10:34ET] 奥本海默控股维持<em>赛富时</em>(<em>CRM</em>.US)买入评级，维持目标价275美元
+  [10-22 09:50ET] 分析师首选科技股：甲骨文（ORCL）、<em>赛富时</em>（<em>CRM</em>）
+
+## Finnhub 新闻事实流 (近7天, 含摘要 — 新闻类论据必须引用此处事实)
+  [10-26] (Yahoo) Stocktwits M&A Watch: CRM, BRZE, TW, LEU Stocks In Focus
+    摘要: Salesforce’s $5.66 billion Braze deal, Tradeweb’s Trumid acquisition, and Centrus Energy’s Westerman Holdings takeover are in focus this week.
+  [10-24] (Yahoo) Salesforce (CRM) Unveils Hunter For AI Driven Sales Workflows
+    摘要: Salesforce (NYSE:CRM) introduced Hunter, an outbound AI sales agent, alongside a deeper integration with Demandbase for real-time B2B data. The partnership brings Demandbase buying group and engagemen
+  [10-23] (ChartMill) Salesforce (NYSE:CRM): A Quality Investing Candidate With Mixed Fundamentals
+    摘要: Salesforce clears the Caviar Cruise quality screen on growth, ROIC, cash flow and debt, but weak liquidity and standard ROIC warrant caution.
+  [10-21] (Yahoo) Salesforce (CRM) vs Oracle (ORCL): Which Is a Better Stock to Buy?
+    摘要: Salesforce, Inc. (NYSE:CRM) closed at $242.45 on October 19. The stock returned 30.2% over the last 6 months, compared with an 11.6% return for the Insider Monkey Billionaire Index and 8.7% for the St
+  [10-21] (Yahoo) CRM vs. ADSK: Which Stock Is the Better Value Option?
+    摘要: CRM vs. ADSK: Which Stock Is the Better Value Option?
+  [10-21] (Yahoo) CRM Stock In Focus: Jefferies Says Salesforce’s Braze Deal Could Spark More Software Takeovers
+    摘要: Jefferies says Salesforce’s $5.66 billion deal could spur software industry consolidation, boost marketing abilities and fuel Klaviyo takeover speculation.
+
+## 研报 (共5条, 去重4条与新闻同稿)
+  [10-23 08:25ET] 星展集团控股将<em>赛富时</em>的目标价从240美元上调至300美元
+
+## 社区讨论 (共30条帖子)
+
+  发帖节奏: 最近一条前5分钟内 1 条 / 全部30条跨 8356.2 分钟
+
+  帖子1: 本周前瞻&上周总结(10.26)，超级周关注美联储议息会&三大云厂财报 前言：每周一早上8点更新下周前瞻，包括未来一周重要的核心事件，及具体操作指引；每个月的第一周，则是对本月的前瞻，和上这个月的总结。分为几大类：1）宏观数据，美股重点的几
+
+  帖子2: 本周焦點消息(MSFT,GOOGLE,AMAZON,SNDK,SKHY) 【直播簡介】 美股三大指數上周表現分化。道瓊斯指數連升三周；納斯達克指數以及標準普爾500指數跌兩者均連跌兩周。展望本周，市場迎來「超級央行周」，有市場分析預期美國聯
+
+  帖子3: 10.26-10.30前瞻：科技还在挨打，美联储和大厂财报又挤到一起了 上周科技股那种跌法，看着确实心烦。周四被砸了一轮，周五本来想等个修复，最后纳指还是跌了0.21%，标普跌了0.52%，道指跌了1.23%。科技股的抛压有所缓和，其他板块
+
+  帖子4: 美國九月份PCE數據即將公布 美國本周將公布聯儲局高度關注的通脹指標——個人消費支出（PCE）物價指數。市場預期9月PCE按年升幅加快至3.6%，按月升0.5%；核心PCE按年升3.1%，按月升0.3%，兩者均較8月升幅略為加快。$Appl
+
+  帖子5: 本周焦點消息(MSFT,GOOGL
+…(原文截断, 挑战者仅需主旨)
+## 基本面指标 (Finnhub, TTM)
+- 营收增长(YoY): 11.23%
+- 营收增长(5年CAGR): 14.34%
+- EPS增长(5年): 12.24%
+- ROE: 20.150000000000002%
+- ROA: 9.120000000000001%
+- 净利润率: 21.99%
+- 毛利率: 77.28%
+- 营业利润率: 18.78%
+- PE(标准化): 27.4337
+- PB: 3.3399
+- PS: 4.9265
+- 每股营收: 53.5177
+- 每股净资产: 63.662
+- 负债/权益比: 0.2532
+- 股息率: None%
+- 派息率: 15.68%
+- Beta: 1.2364675
+
+## 分析师评级 (Finnhub, 2026-10-01)
+- 强烈买入: 14 | 买入: 26 | 持有: 14 | 卖出: 1 | 强烈卖出: 1
+- 覆盖分析师: 56位
+- 买入占比: 71.4%
+
+## 内部人交易 (Finnhub)
+- 最近交易: 0笔买入 / 0笔卖出
+- 最近交易总额: $0
+  2026-10-22 Harris Parker None shares=None price=$0
+  2026-10-22 Harris Parker None shares=None price=$250.29
+  2026-10-22 Harris Parker None shares=None price=$0
+  2026-09-22 Harris Parker None shares=None price=$0
+  2026-09-22 Harris Parker None shares=None price=$0
+
+## 内部人情绪 (Finnhub MSPR)
+- 6个月平均MSPR: -7.64 (净卖出)
+- MSPR>0=净买入, <0=净卖出
+
+## 公司概况
+- 行业: Technology
+- 交易所: NEW YORK STOCK EXCHANGE, INC.
+- 国家: US
+
+## 大盘环境
+- 大盘趋势(代码判定, SPY/QQQ): 盘前UP (SPY +0.42%, QQQ +0.74%); 日线DOWN
+- SPY: $759.97 (MA20=770.15, 趋势=DOWN, 5日-0.4%, 20日-1.5%) [日线口径, 基准日=2026-10-23 收盘; 今日盘前 +0.42% (盘前价 763.1962 / 昨收 763.96; 快照 2026-10-26 08:27:40.572 premarket)]
+- QQQ: $704.4 (MA20=735.23, 趋势=DOWN, 5日-0.8%) [日线口径, 基准日=2026-10-23 收盘; 今日盘前 +0.74% (盘前价 709.65 / 昨收 704.47; 快照 2026-10-26 08:27:48.137 premarket)]
+- VIX: 15.23 今日+0.0% [代理值: US.VIXY×0.85 校准, VIXY=$17.92; VIX 现货无盘前交易]
+- 扫描层市况(当日候选池广度): 扫描39只候选：14涨16跌9平，平均-2.5%，震荡分化。 涨幅领涨：US.MMYT(+4.8%) 跌幅最深：US.ITUB(-26.3%) 板块表现均衡，最强Technology(+0.5%)。 多头信号：US.SLB,US.EQNR,US.NOW。 空头信号：US.KEYS,US.NOW,US.ADI。 放量股：US.BE。 盘前异动：US.ITUB(-26.7%) US.NU(-25.0%) US.PBR.A(-21.4%) US.PBR(-20.8%)。
+
+## 行业对比 (Technology)
+- 行业平均: 今日+0.1% 5日+8.3%
+- 行业趋势(代码判定, peer均值): 今日UP, 5日UP, 综合UP
+- 行业PE中位数: 951.38 (由3家peer算得)
+- peer明细 (共8只):
+  ZS: $255.15 今日+0.0% 5日+20.1% PE=-654.23
+  RBRK: $128.74 今日-0.0% 5日+13.5% PE=-101.37
+  CRWD: $257.57 今日-0.0% 5日+12.9% PE=6778.157
+  PANW: $380.55 今日-0.0% 5日+9.7% PE=951.375
+  NOW: $158.96 今日+0.0% 5日+9.4% PE=99.35
+
+## 数据质量审计
+- 数据源总数: 19
+- 完整(有信息量): 19项
+- 降级(空壳): 0项
+- 缺失: 0项
+
+## 论据溯源清单（以下为输入数据中的真实数字，LLM输出必须引用这些，不得编造）
+- last_price=248.57
+- pe_ratio=31.867
+- pe_ttm_ratio=22.762
+- pb_ratio=5.33
+- total_market_val=204573110000.0
+- highest52weeks_price=267.798862348
+- lowest52weeks_price=146.063031791
+- amplitude=2.841
+- bid_ask_ratio=80.18
+- volume_ratio=0.754
+- turnover_rate=0.737
+- revenue_growth_yoy=11.23
+- roe_ttm=20.150000000000002
+- net_profit_margin_ttm=21.99
+- pe_normalized=27.4337
+- beta=1.2364675
+- debt_to_equity=0.2532
+- avg_mspr_6m=-7.64
+- strong_buy=14
+- buy=26
+- hold=14
+- sell=1
+- total_analysts=56
+- buy_pct=71.4
+- industry_pe_median=951.38
+
+## 板块上下文（真实轮动数据, 板块层因果必须引用此处事实; 逆板块风方向须自证为何成立）
+当前快照板块ETF涨跌(弱→强): Materials(-0.74%), Utilities(-0.72%), Financials(-0.00%), Energy(+0.00%), Healthcare(-0.00%), Industrials(-0.00%), Consumer Discretionary(-0.00%), Consumer Staples(+0.00%), Communication(-0.00%), Real Estate(+0.12%), Technology(+0.49%)
+上一交易日(2026-10-23)盘中板块脉搏(15:30 ET, 弱→强): ConsStaples(-1.9%), ConsDiscretionary(-1.6%), Communication(-1.4%), Healthcare(-1.2%), Financials(-1.2%), Industrials(-1.0%), Utilities(-0.7%), Materials(-0.2%), RealEstate(+0.0%), Technology(+0.5%), Semis(+0.8%), Energy(+2.7%)
+
+## 前序回吐率（历史统计 shadow, 近1年大涨>+5%后表现）
+- 大涨样本: 7次 | 5日守成率: 57.1% | 5日后均涨幅: 0.18% → 续涨倾向
+- 3日/10日: 守成 71.4%/42.9%, 均涨 0.31%/1.5%
+- 用法: 若本次触发源于大涨, 该统计反映该标的自身的涨幅留存性格; 样本少(<10)时仅作弱参考。
+
+## 近期交易经验（背景事实, 非方向先验）
+上次分析(2026-10-23): 2026-10-23 | 看多 | 信心中 | BUY | verdict=CRM宣布56.6亿美元收购Braze强化AI营销布局，PE(TTM)22.92低于行业中枢26.83，盘前-0.72%属正常回调非趋势反转，回调至248.00附近低吸建仓。 | 核心论据=10月20日宣布以56.6亿美元全股票收购Braze，强化AI营销云布局，星展银行10月22日上调目标价至300美元，奥本海默维持275美元，构成强劲产品催化。 (news) ; 当前PE(TTM)为22.92，显著低于Technology行业中位数26.83，且营收同比增长11.23%，净利润率达 | 本股US.CRM最近4笔结局(新→旧): 10-23 LONG DEAD_SIGNAL_EXIT $13@cautious; 10-21 LONG SL_BREAKEVEN $14@cautious; 10-19 LONG SL_BREAKEVEN $12@cautious; 09-25 LONG SL_TRAIL_LOCK $29@risk_on | 本股US.CRM近30日LONG: 3笔3胜 WR=100% PnL=$27.0 最佳=$9.59 最差=$8.23 [置信度:very_low]
+赚钱pattern(近30日净额): LONG+SL_TRAIL_LOCK(70-80) 13笔 WR=100% PnL=$539.63 hold=0.9h [低置信,仅参考]; LONG+SL_TRAIL_LOCK(<50) 19笔 WR=95% PnL=$526.96 hold=1.3h [低置信,仅参考]; LONG+PRE_CLOSE_EXIT(50-60) 2笔 WR=100% PnL=$272.77 hold=6.2h [低置信,仅参考]
+亏钱pattern(近30日净额): LONG+OVERNIGHT_GAP_STOP(50-60) 2笔 PnL=$-645.67 hold=12.8h [低置信,仅参考]; SHORT+SL_INITIAL(50-60) 2笔 PnL=$-379.7 hold=0.2h [低置信,仅参考]; SHORT+SL_INITIAL(<50) 2笔 PnL=$-306.78 hold=0.3h [低置信,仅参考]
+退出效果(近30日净额): SL_TRAIL_LOCK(44笔 WR=96% PnL=$1668.78); PRE_CLOSE_EXIT(7笔 WR=100% PnL=$618.81) [低置信]; SL_BREAKEVEN(74笔 WR=85% PnL=$524.47); DEAD_SIGNAL_EXIT(10笔 WR=70% PnL=$33.08) [低置信]; SL_INITIAL(7笔 WR=0% PnL=$-1026.09) [低置信]
+近期教训:
+  [2026-10-23][low] 当日整体净盈利$25 3胜0负，市场环境有利于当前策略
+  [2026-10-23][medium] SHORT+SL_BREAKEVEN 净赚$12 持1.4h US.TMUS
+
+
+
+---
+
+第二步【对照分析师的论据】:
+分析师的结论与论据如下。逐条核验其数字是否与上方原始数据一致:
+
+{
+  "direction": "BUY",
+  "rating": "看多",
+  "score": 8.0,
+  "score_band": "HIGH",
+  "executive_summary": "CRM以56.6亿美元收购Braze并推出Hunter AI强化营销布局，PE(TTM)22.76倍显著低于行业中枢951.38倍，盘前-0.39%属正常缩量回调，依托246.5美元支撑位低吸建仓。",
+  "execution_plan": {
+    "entry_strategy": "盘前微跌-0.39%且成交量仅16080股，属正常缩量回调非趋势反转；依托MA5(245.10)与W型底支撑位(247.78)附近，在246.5美元研究确认位低吸建仓首批。",
+    "entry_archetype": "PULLBACK_LIMIT",
+    "confirmation": {
+      "price_level": 246.5,
+      "side": "below",
+      "ttl_min": 120
+    },
+    "chase_cap_price": 252.0,
+    "stop_loss": 241.0,
+    "take_profit": 265.0,
+    "entry_price": 247.6,
+    "stop_loss_price": 241.0,
+    "take_profit_price": 265.0,
+    "invalidation": "放量跌破MA10(242.08)且主力资金持续大幅流出，或并购整合不及预期导致AI产品ARR增速放缓。",
+    "tripwires": [
+      {
+        "metric": "Braze并购整合进度/AI产品ARR贡献",
+        "threshold": "下季度财报AI相关ARR增速低于15%",
+        "deadline": "2027-02-28",
+        "source": "Finnhub新闻事实流/财报"
+      },
+      {
+        "metric": "核心分析师目标价调整",
+        "threshold": "星展或奥本海默下调目标价至250美元以下",
+        "deadline": "2026-12-31",
+        "source": "研报/新闻"
+      }
+    ],
+    "invalidation_triggers": [
+      {
+        "metric": "收盘价",
+        "operator": "<",
+        "value": 242.0,
+        "deadline": "2026-11-15"
+      },
+      {
+        "metric": "5日涨跌",
+        "operator": "<",
+        "value": -5.0,
+        "deadline": "2026-11-15"
+      }
+    ]
+  },
+  "key_levels": {
+    "current": 247.6,
+    "support": [
+      245.1,
+      242.08,
+      235.53
+    ],
+    "resistance": [
+      252.42,
+      259.04,
+      267.8
+    ]
+  },
+  "bull_case": [
+    {
+      "thesis": "估值显著低于行业中枢且基本面扎实：当前PE(TTM)为22.762倍，远低于Technology行业中位数951.38倍；同时营收同比增长11.23%，净利润率达21.99%，ROE为20.15%，具备极强的估值修复弹性。",
+      "strength": "HIGH",
+      "evidence": "PE(TTM)=22.762, industry_pe_median=951.38, revenue_growth_yoy=11.23, net_profit_margin_ttm=21.99, roe_ttm=20.15",
+      "source_type": "fundamental",
+      "claim_type": "valuation_cheap"
+    },
+    {
+      "thesis": "并购与AI产品双重催化：公司宣布以56.6亿美元全股票收购Braze强化AI营销云布局，并推出Hunter AI销售代理集成Demandbase数据；星展集团上调目标价至300美元，奥本海默维持275美元，56位分析师中买入占比达71.4%。",
+      "strength": "HIGH",
+      "evidence": "收购Braze金额56.6亿美元，星展目标价300美元，奥本海默275美元，分析师买入占比71.4% (40/56)",
+      "source_type": "news",
+      "claim_type": "product_catalyst"
+    }
+  ],
+  "bear_case": [
+    {
+      "thesis": "内部人情绪偏空：6个月平均MSPR为-7.64，显示高管处于净卖出状态，需警惕内部人对短期估值修复空间的谨慎态度及潜在抛压。",
+      "strength": "MEDIUM",
+      "evidence": "avg_mspr_6m=-7.64",
+      "source_type": "fundamental",
+      "claim_type": "insider_bearish"
+    },
+    {
+      "thesis": "短期技术超买与主力资金分歧：KDJ与RSI指标进入超买区域，且主力资金近5日持续净流出，特大单与小单资金方向相反，短期存在技术性回调与震荡洗盘风险。",
+      "strength": "MEDIUM",
+      "evidence": "KDJ/RSI超买，主力资金近5日持续净流出，特大单净流出1156.48万与小单净流入253.29万方向相反",
+      "source_type": "technical",
+      "claim_type": "technical_breakdown"
+    }
+  ],
+  "constraints": [
+    {
+      "thesis": "大盘日线级别逆风：SPY与QQQ日线趋势均为DOWN，科技股上周面临抛压，若宏观流动性收紧或大盘继续调整，可能拖累CRM估值修复节奏。",
+      "strength": "MEDIUM",
+      "evidence": "SPY趋势DOWN(5日-0.4%)，QQQ趋势DOWN(5日-0.8%)，Technology板块上周盘中表现分化",
+      "source_type": "macro",
+      "claim_type": "macro_headwind"
+    }
+  ],
+  "causal_chain": "Salesforce 56.6亿美元收购Braze并推出Hunter AI代理 → 强化B2B营销与AI销售工作流，提升客户粘性与ARPU → 营收增速(11.23%)与净利润率(21.99%)获支撑，PE(TTM) 22.76倍显著低于行业中枢951.38倍 → 估值修复驱动股价向分析师目标价均值(275-300美元)靠拢。",
+  "risks": [
+    "内部人情绪偏空：6个月平均MSPR为-7.64，显示高管净卖出，需警惕内部人对短期估值修复空间的谨慎态度。",
+    "短期技术超买与资金分歧：KDJ/RSI进入超买区域，且主力资金近5日持续净流出，特大单与小单方向相反，短期存在技术性回调风险。",
+    "宏观与大盘日线逆风：SPY与QQQ日线趋势DOWN，科技股上周面临抛压，若大盘继续调整可能拖累CRM估值修复节奏。"
+  ],
+  "data_quality_note": "数据源总数19项，完整19项，降级0项，缺失0项。数据充分性充分，所有维度均有效支撑分析结论，无缺失维度影响。",
+  "skip_reason": "",
+  "evidence_gaps": []
+}
+
+---
+
+第三步【裁决 verdict】:
+- 你找到了≥2条有数据出处的具体反证, 且足以推翻方向 → DISAGREE, my_direction 给反方向
+- 找到反证但不足以推翻方向(只够降低确信度) → PARTIAL_AGREE, 指明哪条论据与哪条数据矛盾
+- 找不到≥2条有出处的具体反证 → AGREE, 并在 missed_risks 写 "无实质反证" (诚实, 不编造)
+
+无论 verdict 为何, falsification_target 与 flip_condition 必填 (AGREE 也不例外) —
+"证伪失败"不等于零信息: 你必须指出这笔交易最可能的亏损机制, 以及什么数据出现会让你翻向。
+
+【反虚构硬规】: 你的每条 challenged_claims 的 counter_evidence 与 missed_risks 里若含数字,
+该数字必须能在上方原始数据中找到。找不到来源的数字 = 你的幻觉, 会被记录。
+validation 五维照常核验(数据/逻辑/市场/风险/价位), 每维给 通过/不通过+一句证据。
+
+my_score / my_score_band: 表达你对"自己my_direction"的确信度档位 (HIGH/MEDIUM/LOW,
+锚定判据与分析师相同)。若你 AGREE (证伪失败), my_direction = 分析师方向, my_score_band 给分析师论据的实际强度档位。
+
+返回JSON。

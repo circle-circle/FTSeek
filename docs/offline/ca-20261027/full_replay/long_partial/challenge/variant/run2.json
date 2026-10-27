@@ -1,0 +1,73 @@
+{
+  "label": "long_partial",
+  "arm": "variant",
+  "repeat": 2,
+  "http_attempts": 1,
+  "latency_ms": 101686,
+  "model_parameters": {
+    "temperature": 0.0,
+    "model": "deepseek-v4.1-flash",
+    "max_tokens": 16000,
+    "extra_body": {
+      "enable_thinking": true
+    },
+    "timeout": 300
+  },
+  "result": {
+    "independent_direction": "BUY",
+    "validation": {
+      "data": "通过 — 分析师引用数字均可溯源: PE(TTM)=22.762、revenue_growth_yoy=11.23、net_profit_margin_ttm=21.99、roe_ttm=20.15、avg_mspr_6m=-7.64、特大单净流出1156.48万/小单净流入253.29万、Buy占比71.4%(14+26=40/56)、星展300/奥本海默275均在输入数据中；无来源不明数字。",
+      "logic": "不通过 — 以 industry_pe_median=951.38 作'行业中枢'论证'估值极低、修复弹性极强'属因果断裂: 该中位数系'由3家peer算得', peer含 ZS PE=-654.23、RBRK PE=-101.37、CRWD PE=6778.157，是失真基准而非行业中枢；且'56.6亿全股票收购Braze→支撑营收增速'未计入全股票交易的股本摊薄。",
+      "market": "通过 — 盘前 SPY +0.42%/QQQ +0.74%、Technology 板块 +0.49% 领涨、行业综合UP，与BUY方向一致；但SPY/QQQ日线趋势均为DOWN(SPY 5日-0.4%、QQQ 5日-0.8%)，方向属逆日线趋势顺势盘前。",
+      "risk": "不通过 — 硬日期风险未覆盖: 社区帖子1/2/3明确'超级央行周'含美联储议息会与三大云厂(MSFT/GOOG/AMZN)财报，帖子4给出9月PCE预期同比升至3.6%，而分析师 risks/tripwires/invalidation 中无任何日期锚定的宏观事件；主力资金'当日净流出金额比前3日均值高494%'这一具体加速信号亦未写入invalidation阈值。",
+      "levels": "通过 — entry 247.6 = 盘前现价；stop 241.0 距盘前-2.66%，位于10-23最低242.30之下且贴近invalidation 242.0，几何自洽；TP 265.0 位于阻力259.04与52周高267.80之间；盘前-0.39%不触发飞刀规则(需<-5%)，chase_cap 252.0 无结构性不可成交问题；仅 confirmation 246.5 构成第二腿，执行端不执行，应删除或降级为研究背景。"
+    },
+    "agreed": true,
+    "my_direction": "BUY",
+    "my_score_band": "MEDIUM",
+    "my_score": 6,
+    "skip_reason": "独立选边BUY: 价格247.6站上全部均线(MA5 245.10/MA10 242.08/MA20 235.53/MA60 227.66)、20日+6.2%趋势向上、盘前仅-0.39%且盘前量16,080股属噪声、板块与盘前大盘同向(Technology +0.49%, QQQ盘前+0.74%)、分析师结构71.4%买入(14强买+26买)且有星展300/奥本海默275目标价支撑。不给HIGH的原因: 催化(56.6亿收购Braze)已于10-22放量冲高至250.29后于10-23回吐至248.57，属'已被价格部分反映'；且主力资金近5日持续净流出、当日流出比前3日均值高494%，确信度只能给MEDIUM。",
+    "falsification_target": "最可能亏损机制=硬日期宏观风险落地而非个股逻辑: 本周FOMC与9月PCE(市场预期同比加速至3.6%)、三大云厂财报(MSFT/GOOG/AMZN)连发，在CRM主力资金近5日持续净流出(当日净流出比前3日均值高494%)的分布格局下，若QQQ延续日线DOWN、CRM收盘有效跌破MA10 242.08并触发分析师自设invalidation(收盘<242.0)，则241.0止损被机械扫出。观测窗口: 2026-10-26至10-30；确认条件: 单日成交量放大至10-22水平(9,748,941股)以上的下跌日收盘<242。",
+    "flip_condition": "若CRM在FOMC/PCE落地前以放量(量比>1.0x或单日成交量>9,748,941股)跌破MA10 242.08并收盘<242，或星展/奥本海默将目标价下调至250美元以下，则从BUY翻向SKIP/SELL_SHORT。",
+    "challenged_claims": [
+      {
+        "original_thesis": "PE(TTM)为22.762倍，远低于Technology行业中位数951.38倍，具备极强的估值修复弹性(bull_case #1, strength=HIGH)",
+        "weakness": "基准失真导致因果断裂: 951.38并非行业中枢，输入数据自述'industry_pe_median=951.38 (由3家peer算得)'，其成分含亏损/极端倍数peer(ZS PE=-654.23、RBRK PE=-101.37、CRWD PE=6778.157)，用它论证'极度低估'会高估修复弹性，属逻辑瑕疵而非数据失实。",
+        "counter_evidence": "行业对比段落: ZS PE=-654.23, RBRK PE=-101.37, CRWD PE=6778.157, PANW PE=951.375, 行业PE中位数951.38'由3家peer算得'; 而同页 peer NOW PE=99.35，说明该中位数不可作估值锚。"
+      },
+      {
+        "original_thesis": "'盘前微跌-0.39%且成交量仅16080股，属正常缩量回调非趋势反转'(execution_plan.entry_strategy)",
+        "weakness": "定性偏乐观: 盘前16,080股确实无信息量，但方向上把'10-23 CRM领跌道指'与'主力资金净流出加速'一并归为正常回调，忽略了同日分布迹象。",
+        "counter_evidence": "新闻[10-23 09:45ET]'Salesforce, American Express Share Losses Lead Dow's 575-Point Drop'；K线10-22 C=250.29(量9,748,941) → 10-23 C=248.57(量5,843,515，量比0.754/0.73x缩量回落)；资金面异动'主力资金近5日持续净流出，当日净流出金额比前3日均值高494%'。"
+      },
+      {
+        "original_thesis": "风险完备性: risks仅列内部人偏空、技术超买与资金分歧、SPY/QQQ日线DOWN三条，causal_chain与tripwires均无日期锚定宏观事件",
+        "weakness": "关键硬日期风险未定价 — 交易窗口(TTL 120min至invalidation deadline 2026-11-15)完全覆盖FOMC、9月PCE与三大云厂财报，Beta=1.2364675 放大宏观冲击。",
+        "counter_evidence": "社区帖子1'超级周关注美联储议息会&三大云厂财报'、帖子2'本周迎來「超級央行周」'、帖子3'美联储和大厂财报又挤到一起了'、帖子4'市場預期9月PCE按年升幅加快至3.6%，按月升0.5%；核心PCE按年升3.1%'；对照分析师 risks 三条中无任何一条提及上述事件。"
+      }
+    ],
+    "missed_risks": [
+      "主力资金净流出加速未被量化为失效条件: 资金面异动明示'主力资金近5日持续净流出，当日净流出金额比前3日均值高494%'，而invalidation只写'主力资金持续大幅流出'无阈值，建议改为'单日主力净流出>1156.48万(即10-22特大单净流出量级)且连续2日'。",
+      "全股票并购的股本摊薄未定价: Finnhub事实流'Salesforce's $5.66 billion Braze deal'与新闻'以约56.6亿美元收购Braze'为全股票交易，叠加10-26新闻'因收购m3ter和Fin加入的新员工获授27.8万份限制性股票'，摊薄因素在causal_chain中被单向解读为纯利好。",
+      "催化已被部分反映: 10-22放量(9,748,941股)冲高至252.42后收250.29，10-23即回落至248.57，'收购Braze'当日即price in，分析师未做'利好兑现后回落'的对称校验。",
+      "第二腿执行价: confirmation.price_level=246.5 属第二个可执行触发价，当前执行端不执行第二腿，应删除或明确标注为研究背景，避免与 entry_price=247.6 冲突。",
+      "内部人记录与文字口径张力(弱): 内部人交易段显示'最近交易: 0笔买入 / 0笔卖出'，但同段列出2026-10-22 Harris Parker price=$250.29 三条记录，引用 avg_mspr_6m=-7.64 时应说明其为滚动6个月口径而非近期成交。"
+    ],
+    "verdict": "PARTIAL_AGREE",
+    "_model_reported": "deepseek-v4.1-flash",
+    "_finish_reason": "stop",
+    "_usage": {
+      "completion_tokens": 7536,
+      "completion_tokens_details": {
+        "reasoning_tokens": 5368,
+        "text_tokens": 2167
+      },
+      "prompt_tokens": 9014,
+      "prompt_tokens_details": {
+        "cached_tokens": 8960,
+        "text_tokens": 9014
+      },
+      "total_tokens": 16550
+    }
+  }
+}

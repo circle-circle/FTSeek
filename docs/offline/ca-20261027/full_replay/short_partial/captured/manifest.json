@@ -1,0 +1,40 @@
+{
+  "label": "short_partial",
+  "symbol": "US.AMD",
+  "arms": {
+    "baseline": {
+      "system_fingerprint": "bd4f78da4ac7",
+      "system_sha256": "5053e09ff2a24d5f1fe128cbd16858cbafa9aa963dd732522970bab2c77506df",
+      "user_sha256": "19bc2da47b034a6c7486a4dd233410fbdc92bbc4b360b66878a70c2b67e8120b",
+      "kwargs": {
+        "temperature": 0.0,
+        "model": "deepseek-v4.1-flash",
+        "max_tokens": 16000,
+        "extra_body": {
+          "enable_thinking": true
+        },
+        "timeout": 300
+      },
+      "data_text_sha256": "b75a95e661e0ccda348a5b51fa77861792abb971c7ce9467bdeaf9f19fca485a",
+      "analysis_view_sha256": "58322f1d33601d679f30a5da7462a6fcfcc0fb368589d6445d71bcdcbc00cebc"
+    },
+    "variant": {
+      "system_fingerprint": "40e9681c9661",
+      "system_sha256": "d429ce5a2372a8bd7da8f6e4d9bc0b512ee66a68c09eb9e1403ea8e9551d39d3",
+      "user_sha256": "be0b88d7ed756f765b0ee203b43d93fa80ad319e2a91c0dbe1070c84a0d0452b",
+      "kwargs": {
+        "temperature": 0.0,
+        "model": "deepseek-v4.1-flash",
+        "max_tokens": 16000,
+        "extra_body": {
+          "enable_thinking": true
+        },
+        "timeout": 300
+      },
+      "data_text_sha256": "b75a95e661e0ccda348a5b51fa77861792abb971c7ce9467bdeaf9f19fca485a",
+      "analysis_view_sha256": "58322f1d33601d679f30a5da7462a6fcfcc0fb368589d6445d71bcdcbc00cebc"
+    }
+  },
+  "pass1_sha256": "73232d765dcf0db092c17b24d3d808973487d91ed7fb05118c8af669c1541eac",
+  "pass1_source": "fresh single generation; no inverse reconstruction"
+}

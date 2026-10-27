@@ -1,5 +1,67 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-27 C-A fresh Pass1三项验收（限定通过，未改生产）
+
+- **用户要求**：「核验证据真实性、JSON稳定性及gate/conf变化」— 仅做这三项离线验收；不进入生产影子、C-B或并发。有效母体仅主线程 `/tmp/da_ca_full_replay_20261027_qoder/` 的2样本/10次调用；额外扩样任务已停止，不纳入其他目录。
+- **fresh输入**：AMD/CRM各生成一次Pass1并冻结，双臂各2次共用同一原文，不再逆变换。AMD为SKIP、22/22数字有源；CRM为BUY、33/33；契约均零违规，双臂数据/视图/参数一致。
+- **证据**：20条challenged_claims全核，13直接来源、4推导复算正确、2有效负证据、1有源但证明力有限，所审范围0编造；未穷举validation/missed_risks，不把该结果扩成全部散文无误。
+- **JSON/重复**：2份Pass1+8次挑战均契约有效、finish=stop；各臂verdict/direction重复稳定。AMD challenged数为baseline 3→0、C-A 2→3，故不宣称论据内容稳定。
+- **gate/conf**：AMD两臂均ANALYST_SKIP/BLOCK/0.50不可发布；CRM两臂均PARTIAL/WARN/0.35可发布，repeat一致。纯公式复算，未写库或执行；fresh样本未显示C-A相对baseline的下游差异。
+- **运行与故障**：10次逻辑调用/10次HTTP、0错误/重试/fallback，合计161,951 tokens、907,138ms。T1–T4仅以stub验证路由/身份/参数，非实模质量或真实HTTP故障。
+- **verdict＝OFFLINE_CHECK_PASS_LIMITED**：三项指定验收在限定范围通过，独立复核一致；仍无反向单反证实模、T2–T4实模、生产排序或盈利证据，不自动申请生产影子。
+- **下一步**：如继续扩大验证，反向单反证、T2–T4实模与真实故障须另批；当前不调用更多模型、不进入C-B或并发。完整结果见DEB §15及临时目录acceptance_summary/evaluation/manual_evidence_review/fallback_contract；该结论层与8份逐次挑战响应已归档 `docs/offline/ca-20261027/`（34文件+ARCHIVE_INDEX逐文件sha256，归档后复算10次调用/161,951 tokens与verdict一致，复验入口以归档为准）。
+
+最后更新：2026-10-27（本条）
+
+## 2026-10-27 C-A挑战者Prompt隔离回放（REPLAY_LIMITED，未改生产）
+
+- **用户裁决**：前条审查后「继续」— 仅执行C-A“反证条数→实质”的隔离验证；未进入C-B、worker/pullback、门槛、名单、仓位或退出。
+- **隔离与静态**：变体仅system/user两个文案块，基线hash `bd4f78da4ac7`、C-A `40e9681c9661`；双臂data_text、分析师视图、temp=0/16k/thinking/timeout=300等参数一致。静态契约与下游5状态真值全过，生产 `llm_synth.py` SHA256前后不变。
+- **实模**：2样本×双臂，primary串行4次/HTTP4次，0错误/重试/fallback，finish均stop；合计82,751 tokens、661,135ms。10/08 AMD：AGREE/BUY→PARTIAL/BUY（challenged 0→2）；10/26 AMD：PARTIAL/SHORT不变（3→3）。
+- **下游纯公式**：10/08两臂均可发布，但baseline良/PASS/0.70→C-A中/WARN/0.35，可能改变执行排序，不是零行为变更；10/26均WARN/0.35。未写DB、checkpoint、bridge或记忆，未重启。
+- **verdict＝REPLAY_LIMITED**：静态及已观察行为未触发反例，但原挑战请求未存、Pass1为逆变换重建，10/08是历史输入+当前基线；仅两对/无重复/仅T1，SKIP/BLOCK/失败/T2–T4及反向单反证实模未覆盖，证据仅做字符串抽查。独立复核同意：不支持申请生产影子，不是FAIL或盈利证据。
+- **产物**：`/tmp/da_ca_replay_20261027_qoder/`（static/capture/evaluation及逐臂响应）；完整结果与限制见DEB §14。临时产物不是生产影子，未新增注册项。
+- **下一步**：若再次获授权，仅用同一冻结data_text重新生成并冻结一次Pass1，再双臂共用该Pass1，补齐反例、失败/身份、重复与完整事实核验；新增模型调用另批。当前不调用更多模型、不进入生产影子、C-B或并发。
+
+最后更新：2026-10-27（本条）
+
+## 2026-10-27 未实施Prompt与并发方案审查（仅文档，不推荐直接上线）
+
+- **用户要求**：审查未实施的Prompt与并发优化方案；本轮只读，未改Prompt／代码／配置，未调LLM/API、启动影子或重启。
+- **Prompt C-A（优先离线候选）**：挑战者system与user均有“≥2条反证”约束，和“一条实质硬伤即PARTIAL／反向可DISAGREE”冲突。建议只改“严重性优先于条数”，不改方向、模型、score/conf映射或门；不设AGREE/conf/成交目标。既有B11未找到正式收口，B12/C12及旧p0_shadow不得视为已授权。
+- **Prompt C-B（下一独立子批）**：只修G1发布前BLOCK却承诺同指令自动复评；已入库B门和chase_cap逐轮复评属实，confirmation非限价、单一首批、cap几何等正确文案保留。两项不得合批，不新增复评/重确认/撤单/再入场。
+- **并发D1（暂缓5→8）**：5日deadline余量16.1/1.7/14.0/6.8/17.9分钟，压力真实；10/21首raw比10/26晚约9分钟，前置扫描是重要慢段，OpenD=4与嵌套调用使worker收益不可线性外推。历史日志未见真实HTTP429，但8并发及账户QPS未测，不能据此扩。
+- **并发D2（现况不做）**：pullback实际只阻塞约90–110秒，且逐标注入Prompt；并行会产生同批新旧输入混版，并增加未测OpenD竞争。原子写不保证批次一致。
+- **建议门禁**：C-A冻结输入单变量离线回放→独立验收／批准→C-B另批；Prompt缓存与供给稳定后再评估worker。任何后续模型调用、token成本及影子须另批准；工程一致性不等于净bps改善。完整文案建议、反例和停止条件见DEB §13。
+- **下一步**：若用户选择继续，仅先做C-A隔离验证，不直接改生产Prompt；worker=5与串行pullback保持不变，新carrier事件仍待下一DA批活体触发。
+
+最后更新：2026-10-27（本条）
+
+## 2026-10-27 DA 审计／仲裁／批次完整性最小修复（已重载，冒烟7/7）
+
+- **用户裁决**：「按建议执行修复」— 按前条DEB §11推荐实施第1—4项及第7项只读反馈核查；第5/6项Prompt实验、门槛、名单、并发、仓位和退出均未改。
+- **审计**：`da_scope_confidence_audit.py` 支持指定日期／batch_id，按decision_id识别DA；分列分析19方向、8过发布门、8 DB行、1成交，展示WARN前语义分／调整／最终分、发布方向／当前状态／成交。重叠率与Jaccard按窗口分开，同日多批或缺证据标unknown。
+- **仲裁**：`db.py` 留痕补skip_reason、保留指令id与写入结果，不改优先级、返回值或已执行保护；carrier新增 `batch_observation`，区分complete/partial/failed/unknown与合法零候选，旧bridge不再单独证明当批完整，旧ok/returncode不变。
+- **反馈**：`da_chain_contract_audit.py` 新增feedback_clock只读视图，区分入场／ET退出／SQLite退出日、DA/EXT/UE、naive时间、A9 unknown与A10。10/26时钟并集151（DA129/EXT17/UE5），不能当作入场窗148或DA-only；7/3窗确认UTC/ET差异2笔、naive 14笔，未改记忆回灌。
+- **真实产物重算**：10/26 `DA:639b6fc4…` 为complete（28选中／28分析／8可发布／缺失0）；声明窗5对mean_retention=0.61、Jaccard=0.46。仅重算，尚未产生新生产仲裁／carrier事件。
+- **验证**：定向契约61 passed；双副本同步3 passed；Playbook DB邻近49 passed；`tests/playbook` 1158 passed（测试器报告既有登记豁免的7次生产库写入）；py_compile与diff检查通过。独立终审发现A9空串/整列缺失误当可确认，已修为unknown并补测试。未跑全仓pytest。
+- **部署**：仓内carrier与 `/root/.hermes/scripts/da_main_carrier.py` 已逐字节同步；重启前MSFT模拟仓9股、非BOOKED出场0，`app/ scripts/`仅本批。09:35:36 CST重启ftseek-us，PID39188，启动冒烟7/7，重启后持仓／在途出场不变。
+- **下一步**：下一DA批后核新仲裁skip_reason／保留id及batch_observation完整性与合法零候选，区分TOO_EARLY和漏记；第5/6项各自单变量离线验证后另裁，不自动改Prompt、名单或并发。完整记录见DEB §12；工作树未提交，Obsidian改动非本批勿混入。
+
+最后更新：2026-10-27（本条）
+
+## 2026-10-27 DA 范围／置信 DEB 全链路复核（仅文档，实施待裁）
+
+- **用户要求**：检查 `DEB-20261027-da-scope-and-confidence-coupling.md`，确保产出链路与优化指令有质量、逻辑合理。
+- **交付**：原 DEB 新增 §11 与首页阅读指引，保留 §0–§10 历史论证；代码／Prompt、原始产物与只读 DB 交叉核验，不以模型投票裁决。
+- **关键更正**：Prompt 已明确提到破位硬买，不能用字面零命中证明不知规则；7条方向票的35来自 adapter 0.50 经 WARN 减0.15，且10/23两侧Prompt均换版；8行含VZ原SKIP；confidence仍影响预算排序；raw早于首analysis落盘；Jaccard与当日留存率不可互换。挑战者“一条实质硬伤即PARTIAL”与“不足两条反证即AGREE”存在真实指令冲突。
+- **推荐**：先A批修复算器的日期／批次／来源／分母，再B批补生成尝试→仲裁→实际执行对账；字段观测拆分**不得捆绑置信门重标**。C批从挑战者判据冲突／执行能力误述中选一个变量离线验证；D批仅在容量瓶颈有实证后提案。现有PARTIAL 0.60影子须先查，不重复立项；C12等已裁轴不重开。
+- **验证**：独立复算7个只读审计子命令及原始材料，仲裁隔离测试3 passed，carrier双副本hash一致；文档diff检查通过。复算新增更正：现存DB已5条SKIP，不能冒充08:39发布状态；Jaccard 0.37实际取9/28起20对，声明窗10/19起5对为0.46，均不得替换原留存率判据。详见DEB §11.8。
+- **边界**：本轮仅改 DEB 与本条；未改代码、配置、生产数据或Prompt，未调用生产DA模型、重启、提交、启动影子或部署。新增遥测的真实触发、Prompt A/B、端到端故障注入及收益因果尚未完成，不宣称全链路已验证或盈利改善。
+- **下一步**：用户批准A批后按 DEB §11.5／§11.7执行，A验收后另提B，不自动进入C/D；下一DA批生成后核新遥测与DB，区分TOO_EARLY与漏记。绩效主估计量仍按既有执行契约待裁澄清，不能混用名义加权／逐笔等权CI。
+
+最后更新：2026-10-27（本条）
+
 ## 2026-10-26 P0 安全闸门批 (RFC-168): Dashboard 写路径统一 + 交易热路径 fail-close + 生产库写闸
 
 - **用户裁决**: 「按照建议执行」— 指 2026-10-26 全系统审计 (8 项 P0 + P1/P2 分级建议) 的第一段 (5 项) 全量落地; 其中 "WIP 先归档为 baseline commit" / "reaper 先影子不自动补 ack" / "密钥只清日志不代持" 三项由用户逐项选定。

@@ -1,0 +1,73 @@
+{
+  "label": "long_partial",
+  "arm": "baseline",
+  "repeat": 1,
+  "http_attempts": 1,
+  "latency_ms": 74182,
+  "model_parameters": {
+    "temperature": 0.0,
+    "model": "deepseek-v4.1-flash",
+    "max_tokens": 16000,
+    "extra_body": {
+      "enable_thinking": true
+    },
+    "timeout": 300
+  },
+  "result": {
+    "independent_direction": "BUY",
+    "validation": {
+      "data": "通过 — 关键数字均可溯源：PE(TTM)=22.762、pe_ratio(动态)=31.867、MA5=245.10/MA10=242.08、盘前现价247.6、盘前成交量16,080股、行业PE中位数951.38、MSPR=-7.64、buy_pct=71.4(14强买+26买=40/56)均与原始数据一致，未发现来源不明数字。",
+      "logic": "不通过 — 'PE(TTM)22.762远低于行业中枢951.38→估值修复弹性'的因果链断裂：industry_pe_median=951.38仅由3家peer算得，其中CRWD PE=6778.157、ZS PE=-654.23、PANW=951.375，中位数被异常值主导，非有效估值锚；且pe_ratio(动态)=31.867高于PE(TTM)=22.762，隐含前瞻EPS低于TTM，与'修复弹性'叙事相悖。",
+      "market": "通过（带保留） — 今日盘前SPY+0.42%/QQQ+0.74%，Technology板块+0.49%为当日最强板块、行业5日+8.3%综合UP，方向与板块一致；但SPY $759.97低于MA20 770.15、QQQ $704.4低于MA20 735.23，日线均为DOWN，属逆日线风顺势、须承认日线逆风。",
+      "risk": "不通过 — 本周硬日期风险未定价：社区前瞻明确列出'超级央行周'FOMC议息会 + 9月PCE（预期按年3.6%）+ 三大云厂财报，而分析师risks仅泛泛写'宏观与大盘日线逆风'，无任何硬日期/tripwire绑定；同时主力资金'近5日持续净流出、当日净流出比前3日均值高494%'仅在bear_case一笔带过，未进入执行计划的失效条件。",
+      "levels": "通过 — 入场锚定有效盘前现价247.6（非昨收248.57），研究确认位246.5、止损241.0（-2.66%，位于MA10 242.08下方）、止盈265.0（低于52周高267.80），R:R≈2.6:1；盘前-0.39%不触发飞刀线（<-5%），chase_cap_price 252.0合理；无第二腿可执行触发价。"
+    },
+    "agreed": true,
+    "my_direction": "BUY",
+    "my_score_band": "MEDIUM",
+    "my_score": 6,
+    "skip_reason": "独立判断为BUY（顺势做多但降档）：价格247.6站上MA5 245.10/MA10 242.08/MA20 235.53/MA60 227.66，20日+6.2%，并购催化（Braze 56.6亿美元）+Hunter AI+星展上调目标价至300美元/奥本海默275美元+56位分析师买入占比71.4%，Technology为当日最强板块(+0.49%)。但反证足以降低确信度而非推翻方向：主力资金近5日净流出加速(较前3日均值高494%)、KDJ/RSI/布林上轨超买、内部人MSPR-7.64净卖出、SPY/QQQ日线DOWN且10-23 CRM领跌道指575点、动态PE 31.867高于TTM 22.762、本周FOMC+PCE+三大云厂财报硬日期密集。故给BUY但MEDIUM，而非分析师的HIGH。",
+    "falsification_target": "最可能的单一机械亏损原因：本周FOMC/PCE/云厂财报窗口内，CRM(Beta 1.2364675)跟随日线DOWN的科技股回调，主力资金净流出加速（较前3日均值高494%）使246.5挂单成交后无法反弹。可观测条件：任一交易日收盘价跌破MA10 242.08（并触发5日涨跌<-5%的invalidation_triggers）→ 止损241.0被打，或财报落地后并购/AI利好出尽、股价冲252.42阻力位失败回落。",
+    "flip_condition": "若CRM收盘跌破MA10 242.08 或5日涨跌<-5%，或本周PCE按年≥3.6%/FOMC偏鹰导致QQQ跌破盘前+0.74%转跌，则翻为SKIP/SELL_SHORT；反之若收盘站稳252.42阻力位上方且主力资金转为净流入，则确信度升至HIGH。",
+    "challenged_claims": [
+      {
+        "original_thesis": "估值显著低于行业中枢且基本面扎实：当前PE(TTM)为22.762倍，远低于Technology行业中位数951.38倍，具备极强的估值修复弹性。",
+        "weakness": "因果链断裂——参照系本身失效，且前瞻估值方向与'修复弹性'相反。",
+        "counter_evidence": "industry_pe_median=951.38由3家peer算得，peer明细中CRWD PE=6778.157、ZS PE=-654.23、PANW=951.375，中位数被极端值主导，不构成有效估值锚；同时原始数据pe_ratio(动态)=31.867 > pe_ttm_ratio=22.762，隐含前瞻EPS低于TTM，与'估值修复弹性'相矛盾。"
+      },
+      {
+        "original_thesis": "盘前微跌-0.39%且成交量仅16080股，属正常缩量回调非趋势反转。",
+        "weakness": "用盘前时段常态低量作为'回调健康'的证据，证据力近零；量能方向上反而偏空。",
+        "counter_evidence": "盘前成交量16,080股出现在08:27时段，属常态微量，无法证明'缩量企稳'；昨日volume_ratio=0.754、20日量比0.73x为缩量，同时资金面异动记录'主力资金近5日持续净流出，当日净流出金额比前3日均值高494%'、特大单净流出1156.48万而小单净流入253.29万，量能与资金方向均不支持'健康缩量回调'。"
+      },
+      {
+        "original_thesis": "风险已覆盖：宏观与大盘日线逆风（SPY/QQQ趋势DOWN）为MEDIUM约束。",
+        "weakness": "关键硬日期风险未定价——泛泛的'宏观逆风'无法替代本周事件窗口的对冲安排。",
+        "counter_evidence": "社区讨论帖子1/2/3/4明确列出本周为'超级央行周'：FOMC议息会 + 美國九月份PCE（市場預期按年升幅加快至3.6%、核心3.1%）+ 三大云厂（MSFT/GOOGL/AMZN）财报；新闻[10-23]'Salesforce, American Express Share Losses Lead Dow's 575-Point Drop'显示CRM在Beta=1.2364675下放大市场下行，而执行计划中无任何事件日期绑定。"
+      }
+    ],
+    "missed_risks": [
+      "本周事件密集窗口未进入执行计划：FOMC议息会 + 9月PCE（预期按年3.6%）+ MSFT/GOOGL/AMZN财报（社区前瞻帖1-4），CRM Beta=1.2364675会放大指数波动。",
+      "资金面与HIGH信心不匹配：主力资金近5日持续净流出，当日净流出比前3日均值高494%，特大单净流出1156.48万 vs 小单净流入253.29万方向相反。",
+      "内部人持续净卖出未定价：avg_mspr_6m=-7.64，且内部人交易记录显示2026-10-22 Harris Parker 成交价price=$250.29（高点区域）。",
+      "动态估值与TTM估值背离：pe_ratio(动态)=31.867 > pe_ttm_ratio=22.762，隐含市场预期前瞻EPS下行，与'估值修复'多头论据方向相反。",
+      "短期技术超买未被入场条件约束：KDJ升至强超买、RSI(12)/RSI(24)/WMSR进入超买、BOLL收盘价位于上轨之上，而研究确认位246.5仅低于现价1.1美元，回调缓冲不足。"
+    ],
+    "verdict": "PARTIAL_AGREE",
+    "_model_reported": "deepseek-v4.1-flash",
+    "_finish_reason": "stop",
+    "_usage": {
+      "completion_tokens": 5563,
+      "completion_tokens_details": {
+        "reasoning_tokens": 3612,
+        "text_tokens": 1951
+      },
+      "prompt_tokens": 9001,
+      "prompt_tokens_details": {
+        "cached_tokens": 0,
+        "text_tokens": 9001
+      },
+      "total_tokens": 14564
+    }
+  }
+}
