@@ -21,6 +21,7 @@ from pathlib import Path
 import json
 
 from app.core.paths import get_trade_records_db
+from app.playbook.db import ROW_KIND_EXCLUDE_PLACEHOLDER_SQL
 from app.review.source_attribution import aggregate_source_direction, playbook_source_sql
 
 logger = logging.getLogger("ftseek_us.review.weekly")
@@ -185,7 +186,11 @@ class WeeklyReviewGenerator:
                 "SELECT date, direction, executed, "
                 f"({playbook_source_sql()}) AS source, COUNT(*) as cnt "
                 "FROM playbook_instructions "
-                "WHERE date >= ? AND date <= ? GROUP BY date, direction, executed, source",
+                # [DEB-20261027 B] 排除供给占位行 (被筛过但 DA bridge 未提名的候选):
+                #   它们 direction='SKIP' 且占比位行总数 ~50-70/日, 不排除 ⇒
+                #   total_decisions 虚胖约 4 倍, by_direction_strength 出现巨型 SKIP 桶。
+                f"WHERE date >= ? AND date <= ? AND {ROW_KIND_EXCLUDE_PLACEHOLDER_SQL} "
+                "GROUP BY date, direction, executed, source",
                 (week_start, week_end)
             )
             total = sum(r['cnt'] for r in rows)

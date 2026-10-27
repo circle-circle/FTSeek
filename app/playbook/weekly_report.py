@@ -256,7 +256,13 @@ class WeeklyReportGenerator:
         return combined
 
     def _analyze_user_skips(self, trade_date: str) -> Dict[str, Any]:
-        """分析用户跳过的指令"""
+        """分析用户跳过的指令
+
+        [DEB-20261027 B] 排除**供给占位行** (被筛过但 DA bridge 未提名的候选):
+          占位行 direction='SKIP' 但**不是用户跳过** —— 它是系统自己筛掉后留的
+          供给痕迹。旧口径把它们计入 total_skips (每日 ~50-70 条) ⇒ "用户跳过数"
+          完全失真。口径变更已登记 (本 DEB §口径变更表)。
+        """
         try:
             dt = date.fromisoformat(trade_date)
         except ValueError:
@@ -270,6 +276,8 @@ class WeeklyReportGenerator:
             day = (monday + timedelta(days=i)).isoformat()
             instructions = self.db.get_instructions_by_date(day)
             for inst in instructions:
+                if inst.get("row_kind") == "supply_placeholder":
+                    continue
                 if inst.get("direction") == "SKIP" or inst.get("outcome") == "skipped":
                     total_skips += 1
                     shadow = inst.get("shadow_pnl", 0) or 0

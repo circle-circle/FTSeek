@@ -189,12 +189,15 @@ def run_premarket_check() -> dict:
     # ── 5c. 当日指令统计 (decision_id 前缀归因; UE 21:10注入, 预检时点通常为0属正常) ──
     try:
         import sqlite3 as _sq
+        from app.playbook.db import ROW_KIND_EXCLUDE_PLACEHOLDER_SQL as _RK
         _con = _sq.connect(f"file:{BASE_DIR / 'data' / 'ftseek_us.db'}?mode=ro", uri=True)
         _r = _con.execute(
             "SELECT COUNT(*), "
             "COALESCE(SUM(CASE WHEN decision_id LIKE 'UE%' THEN 1 ELSE 0 END),0), "
             "COALESCE(SUM(CASE WHEN decision_id LIKE 'DA%' THEN 1 ELSE 0 END),0) "
-            "FROM playbook_instructions WHERE date=?", (today_et,)).fetchone()
+            # [DEB-20261027 B] 排除供给占位行: "当日指令统计"报的是**指令**数,
+            #   占位行 (被筛过但 DA bridge 未提名) 不是指令 ⇒ 报 72 实为 17。
+            f"FROM playbook_instructions WHERE date=? AND {_RK}", (today_et,)).fetchone()
         _con.close()
         results["checks"].append({"name": "当日指令统计", "status": "PASS" if (_r[0] or 0) > 0 else "WARN",
                                   "detail": f"{today_et}: 共{_r[0] or 0}条 | DA={_r[2] or 0} | UE={_r[1] or 0} (UE 21:10注入)"})
@@ -207,16 +210,18 @@ def run_premarket_check() -> dict:
     #   两者同报告不同段曾是自相矛盾无人点出 (IC 段的 regime 段是历史成交统计)。
     try:
         import sqlite3 as _sq
+        from app.playbook.db import ROW_KIND_EXCLUDE_PLACEHOLDER_SQL as _RK
         _con5 = _sq.connect(f"file:{BASE_DIR / 'data' / 'ftseek_us.db'}?mode=ro", uri=True)
         _dirs = _con5.execute(
             "SELECT COALESCE(direction,'?') d, COUNT(*) n FROM playbook_instructions "
-            "WHERE date=? GROUP BY 1 ORDER BY n DESC", (today_et,)).fetchall()
+            f"WHERE date=? AND {_RK} GROUP BY 1 ORDER BY n DESC", (today_et,)).fetchall()
         _rg = _con5.execute(
             "SELECT COALESCE(market_regime,'?') g, COUNT(*) n FROM playbook_instructions "
-            "WHERE date=? GROUP BY 1 ORDER BY n DESC", (today_et,)).fetchall()
+            f"WHERE date=? AND {_RK} GROUP BY 1 ORDER BY n DESC", (today_et,)).fetchall()
         _sk = _con5.execute(
             "SELECT COALESCE(NULLIF(TRIM(skip_reason),''),'?') s, COUNT(*) n FROM playbook_instructions "
-            "WHERE date=? AND COALESCE(direction,'')='SKIP' GROUP BY 1 ORDER BY n DESC LIMIT 3",
+            f"WHERE date=? AND COALESCE(direction,'')='SKIP' AND {_RK} "
+            "GROUP BY 1 ORDER BY n DESC LIMIT 3",
             (today_et,)).fetchall()
         _con5.close()
         _dir_str = " ".join(f"{r[0]}={r[1]}" for r in _dirs if r[0] != 'SKIP') or "无"

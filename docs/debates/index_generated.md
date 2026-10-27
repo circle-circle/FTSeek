@@ -3,7 +3,7 @@
 > **本文件由 `scripts/build_debate_index.py` 生成** (2026-10-27), 请勿手改。
 > 决策摘要以 [README.md](README.md) 手工索引为准; 本页只做全量清单与漏登对账。
 
-共 **206** 个 DEB 文件。
+共 **207** 个 DEB 文件。
 
 ## 漏登对账
 
@@ -399,3 +399,4 @@
 | [DEB-20261025-futu-live-safety-shadow](DEB-20261025-futu-live-safety-shadow.md) | 2026-10-25 | 已执行（P0 最小补丁 + P1 只读观测） | - | 97 |
 | [DEB-20261027-da-disagree-abstain-tier-fix](DEB-20261027-da-disagree-abstain-tier-fix.md) | 2026-10-27 | (未标注) | - | 287 |
 | [DEB-20261027-da-scope-and-confidence-coupling](DEB-20261027-da-scope-and-confidence-coupling.md) | 2026-10-27 | (未标注) | - | 726 |
+| [DEB-20261027-open-position-sl-and-placeholder-row-kind](DEB-20261027-open-position-sl-and-placeholder-row-kind.md) | 2026-10-27 | (未标注) | - | 255 |

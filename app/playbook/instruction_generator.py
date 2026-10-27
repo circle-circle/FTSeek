@@ -164,6 +164,10 @@ class Instruction:
     entry_archetype: Optional[str] = None
     confirmation: Optional[Dict[str, Any]] = None
     chase_cap_price: Optional[float] = None
+    # [DEB-20261027 B] 行类型: 'instruction'(真指令, 默认) | 'supply_placeholder'(供给占位行)
+    #   占位行 = 被筛过但 DA bridge 未提名的候选 (direction=SKIP + skip_reason 前缀
+    #   「非当前通道候选」)。结构化标记让读数面按列过滤, 不必靠字符串前缀。
+    row_kind: str = "instruction"
 
 
 # ========== 数值计算引擎 (纯 Python, 确定性) ==========

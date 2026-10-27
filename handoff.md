@@ -1,5 +1,20 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-27 open_positions 止损/时区一致性 + 供给占位行结构化（三批已落地，零交易行为变更）
+
+- **用户要求**：「按照建议执行」—— 承接上一轮审计的建议：修 P3 补录路径 + 做占位 skip 的设计优化；并**明确划出范围**：「重启守卫不要限死了，暂不动」⇒ 上一轮 P0-1（把 `restart_ftseek_us_guarded.py` 变成唯一重启路径）**本批不做**。
+- **批次A（open_positions 同源）**：`position_sync.py` 的 `_is_pb_sim` 分支曾硬写 `initial_sl=0/current_sl=0/initial_tp=0` 且 `entry_time=datetime.now()`(naive CST) ⇒ 同仓两表两个止损（活例 10/27 `US.DYN` open_positions SL=0 vs trade_records stop_loss=15.17）+ 时区差 12h。**根因定位自我更正**：不是「P3 补录路径」（它只写 trade_records，从不写 open_positions），真根因是 `position_sync.py:1533` 的 INSERT；**R-12 先例（DEB-20260823）早已统一 `entry_time` 到 ET 口径，只是当年漏掉本分支**。修法：新增 `_playbook_position_fields()`，SL/TP/entry_time 真源 = 该 symbol 未平 PLAYBOOK `trade_records` 的 `metadata_json` 与 `entry_time`（**与出场链同一真源**，出场链读 trade_records ⇒ 止损一直是活的），只补空不覆盖。**放弃运行期兜底分支**：`open_positions` 的 SL 唯一消费方 `risk/engine.py:333` 只是算「距止损 20%」的**告警阈值**（非止损门），为一个告警加常驻分支不值（YAGNI）⇒ 改用一次性回填脚本。
+- **批次B（占位行结构化 `row_kind`）**：生成轮每天写 ~50-70 行「供给占位行」（被筛过但 DA bridge 未提名，direction=SKIP / skip_reason 前缀「非当前通道候选」/ model_used=deterministic / entry_price=0）。**先纠正前提：它是承重的**（漏斗审计唯一 DB 级证据 / `outcome='skipped'` 写回来源 / 45 日标的全集）⇒ **不删行**。硬约束：`startswith` 是文案契约（`observe_nightly_supply.py:109` + `deb20261007_fee_gap_forward.py:73` + 两个钉死前缀的测试）⇒ **文本逐字保留**。改法：新增 `row_kind` 列（'instruction'|'supply_placeholder'）把「占位」从文案变成**结构**，写路径结构化赋值，读数面统一用 `ROW_KIND_EXCLUDE_PLACEHOLDER_SQL` 过滤；归属地已有 `playbook_signal_context`（实测今日 72 行与当日 72 条指令完全对齐、55 个占位 symbol 55/55 命中，无需新表）。
+- **批次C（读数面收口 4+1）**：周报漏斗 `total_decisions` / `pre_market_check` 当日指令数 / `decision_view` 幽灵条目 / `get_summary_stats.conf_stats` OTHER 桶 / 周报 `total_skips`（占位行被当「用户跳过」）—— 逐项登记口径变更。**顺手修**：`decision_view` 打印 `pnl={o['realized_pnl']:>8}` 对空值崩溃（HEAD 原版同样崩 ⇒ 既有 bug，但它挡住本读数面出输出，故一并修）。
+- **读数面实测（部署后）**：`pre_market_check` 当日指令 **72 → 17 条**（DA=17），方向构成 BUY=11/SELL_SHORT=3，跳过成因从恒为「非当前通道候选」变为真实 `entry_confirm_reversed×3`；`conf_stats` 的 OTHER 桶（~1400 行 avg_conf=0）**消失**，只剩 DA n=291 avg_conf=50.6 / UE n=10 avg_conf=56.8；`decision_view --days 3` **25 决策**（幽灵条目消失）。
+- **部署**：`systemctl restart ftseek-us` → 23:22:46 CST，PID **185826**；**启动冒烟 7/7 全过**；迁移日志 `已补列 playbook_instructions.row_kind`。回填：`row_kind` **2704 行 / 49 个交易日**（再跑 0 行，幂等）；`open_position SL` 0 行（早前已修）。**重启前核对**：在途出场 238 全 BOOKED（non-booked=0）；持仓 4 个；`app/` 改动 7 个全属本批，`scripts/da_*` 2 个为**他人 WIP 不提交**（cron 独立脚本，服务不 import）。
+- **验证**：新契约 `test_open_position_sl_tp_contract.py` **9 passed**（生产回归项由红转绿）+ `test_instruction_row_kind_contract.py` **9 passed**（迁移+回填后由 skip 转 pass）+ 相关回归 **168 passed**；`tests/playbook` 全量 1336 passed / **4 failed + 5 errors = 既有红点**（证明方式：HEAD 原版检出到独立 worktree 挂同一份生产 data 跑同一条命令 ⇒ **14 failed / 27 errors，比本批更差**，且两次失败集合不同 ⇒ 非确定性顺序污染；这些用例单独跑全绿）。
+- **落档**：`docs/debates/DEB-20261027-open-position-sl-and-placeholder-row-kind.md`（含 §7 复查清单9条）；`docs/debates/README.md` 补索引；`index_generated.md` 重建（207 文件）。
+- **仍未落地 / 待裁**：① **重启守卫**（用户已划出范围，本批不做）；② L2 其余读数面（`okr_status`/`unified_trade_metrics` 的 `include_skip=True` opt-in、`short_supply_funnel_report`、`playbook_chain_audit`、dashboard `chain.py`、`da_chain_health_report`、`feishu_push` 的「跳过 N 只」展示口径）逐个登记后再改；③ L3 数据搬家（占位行迁出主表）另立批；④ `upsert_position_simple` **不写 `initial_tp`**（**另一条**写入路径的既有缺口，出场链用 `trade_records.metadata_json.take_profit` ⇒ 止盈判定不受影响，仅记录不一致）；⑤ `US.MSFT` EXT 仓已携 5 个交易日（无券商侧止损，另案）；⑥ `tests/playbook` 既有顺序污染红点。
+- **下一步**：明日起核新批台账的 `row_kind` 分布（真指令数应与 DA 发布数一致、占位行应带 `supply_placeholder`）；按 §7 复查清单请独立复核；L2 其余读数面与 L3 请给方向后再动。**本批未改任何交易门/仓位/退出/Prompt/名单/并发，未改 `skip_reason` 文案，未动 `restart_ftseek_us_guarded.py`。**
+
+最后更新：2026-10-27（本条）
+
 ## 2026-10-27 DA 盘前链路 + DA 链路审计，以及「明确反对被当弃权抬升」缺陷修复（已落地，带回滚）
 
 - **用户要求**：先「检查盘前交易链路以及当前的DA链路逻辑是否合理正常」，后「按照建议执行优化修复」。审计为只读，修复经用户授权落地。

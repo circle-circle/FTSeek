@@ -581,6 +581,10 @@ def _instruction_to_db_dict(inst, regime_ctx, today: str) -> Dict[str, Any]:
         #   确定性链 (无 LLM), 原恒 NULL (NVDA 08-04 topup_pool 缺口实例). UE 路径由
         #   llm_universe_scan 记录级写真实模型名, DA skill 写 config.LLM_MODEL, 互不覆盖.
         "model_used": None if is_da_instruction else (getattr(inst, "model_used", None) or "deterministic"),
+        # [DEB-20261027 B] 行类型落库: 'instruction' | 'supply_placeholder'。
+        #   供给占位行 (被筛过但 DA bridge 未提名) 显式标记, 读数面按列过滤。
+        #   缺省 'instruction' ⇒ DA skill 直写的行 (未传该字段) 语义不变。
+        "row_kind": getattr(inst, "row_kind", "instruction") or "instruction",
         "horizon": getattr(inst, "horizon", "short"),
         "horizon_confidence": getattr(inst, "horizon_confidence", 0.0),
         "horizon_reasoning": getattr(inst, "horizon_reasoning", {}),

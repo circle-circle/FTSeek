@@ -35,6 +35,92 @@ EXTERNAL_CLOSE_DUP_SQL = (
 )
 
 
+def _playbook_position_fields(cursor, symbol: str):
+    """算 Playbook SIM 仓位的 open_positions 写入值 (initial_sl / initial_tp / entry_time)。
+
+    真源 = 该 symbol **未平** PLAYBOOK trade_record 的 ``metadata_json.stop_loss`` /
+    ``take_profit`` 与 ``entry_time`` —— 与出场链同一来源
+    (``app/playbook/pipeline_parts/exit_monitor_flow.py:88`` 读的是 trade_records),
+    杜绝"同一笔仓两表两个止损"。
+
+    合并语义 (只补空, 不覆盖已有的权威值):
+      - open_positions 已有 ``initial_sl > 0`` ⇒ 保留 (更早的权威写入);
+      - 已有 ``entry_time`` 带时区 ⇒ 保留 (R-12 / DEB-20260823 已裁的 ET 口径);
+      - 否则取 trade_record 的值; trade_record 也没有 ⇒ SL/TP=0, entry_time=now_et()。
+
+    量纲: initial_sl / initial_tp 为**绝对价格** (USD), 与 open_positions 既有列一致
+    (playbook_service.upsert_position_simple 同口径)。
+    回滚: 调用点还原为硬写 0/0/0 + datetime.now() 即可。
+    """
+    try:
+        from app.utils.timezone import now_et as _now_et_fields
+    except Exception:
+        _now_et_fields = None
+
+    def _fallback_entry() -> str:
+        try:
+            if _now_et_fields is not None:
+                return _now_et_fields().isoformat()
+        except Exception:
+            pass
+        try:
+            from zoneinfo import ZoneInfo
+            return datetime.now(ZoneInfo("America/New_York")).isoformat()
+        except Exception:
+            return datetime.now().isoformat()
+
+    def _has_tz(value) -> bool:
+        try:
+            return datetime.fromisoformat(str(value)).tzinfo is not None
+        except Exception:
+            return False
+
+    # 1) 现存 open_positions 行 (只补空 ⇒ 不覆盖已有权威值)
+    cur_sl = cur_tp = 0.0
+    cur_entry = ""
+    try:
+        _row = cursor.execute(
+            "SELECT COALESCE(initial_sl,0), COALESCE(initial_tp,0), COALESCE(entry_time,'') "
+            "FROM open_positions WHERE symbol=?", (symbol,)).fetchone()
+        if _row:
+            cur_sl = float(_row[0] or 0)
+            cur_tp = float(_row[1] or 0)
+            cur_entry = str(_row[2] or "")
+    except Exception:
+        pass
+
+    # 2) trade_record 真源 (未平, 按 id 倒序取最新一条)
+    tr_sl = tr_tp = 0.0
+    tr_entry = ""
+    try:
+        _trow = cursor.execute(
+            "SELECT entry_time, metadata_json FROM trade_records "
+            "WHERE symbol=? AND source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') "
+            "AND (exit_time IS NULL OR exit_time='') ORDER BY id DESC LIMIT 1",
+            (symbol,)).fetchone()
+        if _trow:
+            tr_entry = str(_trow[0] or "")
+            try:
+                _md = json.loads(_trow[1]) if _trow[1] else {}
+                if isinstance(_md, dict):
+                    tr_sl = float(_md.get("stop_loss") or 0)
+                    tr_tp = float(_md.get("take_profit") or 0)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    sl = cur_sl if cur_sl > 0 else tr_sl
+    tp = cur_tp if cur_tp > 0 else tr_tp
+    if cur_entry and _has_tz(cur_entry):
+        entry = cur_entry
+    elif tr_entry and _has_tz(tr_entry):
+        entry = tr_entry
+    else:
+        entry = _fallback_entry()
+    return sl, tp, entry
+
+
 def _parse_entry_ts(entry_ts) -> Optional[datetime]:
     """把券商订单时间解析成 ET-aware datetime; 不可解析返回 None.
 
@@ -1529,6 +1615,23 @@ class USPositionSync:
                     pass
                 if _is_pb_sim:
                     logger.debug(f"[US Sync·P0] 跳过 Playbook SIM 仓位 {symbol} 25% cap (由 playbook sizing 管理)")
+                    # [DEB-20261027 A] Playbook SIM 仓位的 open_positions 行必须与出场链**同源**。
+                    #   病灶: 本分支硬写 initial_sl=0, current_sl=0, initial_tp=0 且
+                    #   entry_time=datetime.now().isoformat() (宿主 CST、naive) ⇒
+                    #     ① 同一笔仓在 open_positions 里"没有止损", 而出场链实际用的
+                    #        trade_records.metadata_json.stop_loss 有值 (两表两个止损);
+                    #        实测 2026-10-27 US.DYN/UNH: open_positions.initial_sl=0 vs
+                    #        trade_records.metadata_json.stop_loss=15.17 / 392.92;
+                    #     ② entry_time 口径与 R-12 (DEB-20260823) 已裁的 ET 口径不一致
+                    #        (trade_records.entry_time=ET-aware, 本行=naive CST, 差 12h);
+                    #        R-12 只覆盖了 trade_store.upsert_position_simple, 本分支被漏掉。
+                    #   处置: SL/TP/entry_time 一律取该 symbol 未平 PLAYBOOK trade_record 的
+                    #   metadata_json.stop_loss / take_profit 与 entry_time (与出场链同一真源);
+                    #   取不到 → 回退旧行为 (0 / now_et), 不猜值。
+                    #   零交易行为变更: 出场链读 trade_records (exit_monitor_flow.py:88),
+                    #   本改动只让 open_positions 与它一致 (open_positions 的 SL 仅被
+                    #   重启恢复路径与只读审计消费)。回滚: 还原本段即可。
+                    _pb_sl, _pb_tp, _pb_entry = _playbook_position_fields(cursor, symbol)
                     cursor.execute(
                         """INSERT INTO open_positions (
                             symbol, direction, size, avg_entry_price,
@@ -1539,9 +1642,13 @@ class USPositionSync:
                         ON CONFLICT(symbol) DO UPDATE SET
                             direction=excluded.direction, size=excluded.size,
                             avg_entry_price=excluded.avg_entry_price, updated_at=excluded.updated_at,
-                            sync_status='synced'""",
+                            sync_status='synced',
+                            initial_sl=excluded.initial_sl,
+                            current_sl=excluded.current_sl,
+                            initial_tp=excluded.initial_tp,
+                            entry_time=excluded.entry_time""",
                         (symbol, info['direction'], info['qty'], info['cost'],
-                         0, 0, 0, datetime.now().isoformat(), datetime.now().isoformat(),
+                         _pb_sl, _pb_sl, _pb_tp, _pb_entry, _pb_entry,
                          'playbook_sim', 'AUTO', 'playbook_sim', 'auto'))
                     continue
                 # 1. 仓位占比验证

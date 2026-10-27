@@ -53,7 +53,11 @@ def build(days: int) -> list[dict]:
     insts = {r["decision_id"]: dict(r) for r in c.execute(
         "SELECT decision_id, date, symbol, direction, confidence, entry_low, entry_high, "
         "executed, triggered, skip_reason, vol_bucket, atr_pct FROM playbook_instructions "
-        "WHERE date >= ? AND decision_id IS NOT NULL", (since,))}
+        # [DEB-20261027 B] 排除供给占位行, 并修 decision_id='' 幽灵条目:
+        #   占位行 decision_id 是**空串**(非 NULL) ⇒ 旧的 `decision_id IS NOT NULL`
+        #   把它们全收进来 ⇒ 每天 55-70 条 decision_id="" 的幽灵"未成交指令"。
+        "WHERE date >= ? AND decision_id IS NOT NULL AND decision_id <> '' "
+        "AND COALESCE(row_kind, 'instruction') <> 'supply_placeholder'", (since,))}
     trades = c.execute(
         "SELECT decision_id, id, symbol, direction, trade_date, entry_price, exit_price, "
         "realized_pnl, pnl_pct, mfe_pct, mae_pct, exit_reason, entry_time, exit_time, "
@@ -120,7 +124,12 @@ def main() -> int:
         if r["action"]:
             o = r["outcome"]
             print(f"  {r['date']} {r['symbol'][3:]:<6} {r['direction'][:5]:<5} "
-                  f"pnl={o['realized_pnl']:>8} {(o['exit_reason'] or '')[:14]:<14} "
+                  # [DEB-20261027 C 顺手修] realized_pnl 可空 (未结算/无 pnl 的成交行)
+                  #   ⇒ `None:>8` 抛 "unsupported format string passed to NoneType".
+                  #   该崩溃在 HEAD 原版同样存在 (与占位行过滤无关), 但它让本读数面根本
+                  #   产不出输出, 无法验证收口效果 ⇒ 一并修。零行为变更 (只影响打印)。
+                  f"pnl={(o['realized_pnl'] if o['realized_pnl'] is not None else 0):>8} "
+                  f"{(o['exit_reason'] or '')[:14]:<14} "
                   f"path={'✓' if r['path_file'] else '✗'} shadows={len(r['shadows'])} {r['decision_id'][:36]}")
         else:
             print(f"  {r['date']} {r['symbol'][3:]:<6} {r['direction'][:5]:<5} [未成交] "

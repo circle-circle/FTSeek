@@ -35,6 +35,18 @@ from app.utils.timezone import now_utc
 logger = logging.getLogger(__name__)
 
 
+# ── 行类型 row_kind [DEB-20261027 B] ─────────────────────────────────────────
+#   playbook_instructions 混着两类行: 真指令 与 "供给占位行" (被筛过但 DA bridge
+#   未提名的候选, direction='SKIP' / skip_reason 前缀「非当前通道候选」/
+#   model_used='deterministic' / entry_price=0)。占位行是漏斗审计的证据, 不是指令。
+#   读数面统一用下面这个 SQL 片段排除, 别再靠 direction='SKIP' (会误伤真跳过)
+#   或 skip_reason 前缀 (那是文案契约, observe_nightly_supply.py:109 在用)。
+ROW_KIND_INSTRUCTION = "instruction"
+ROW_KIND_SUPPLY_PLACEHOLDER = "supply_placeholder"
+ROW_KIND_EXCLUDE_PLACEHOLDER_SQL = (
+    "COALESCE(row_kind, 'instruction') <> 'supply_placeholder'")
+
+
 # ── [DEB-20260902-stale-bridge P1-② 2026-09-02] 陈旧 decision_id 覆盖守卫 ────────
 #   RFC-066 覆盖仲裁按源类分级 (DA-/universe_expansion/intraday_reentry=3), 对
 #   decision_id 内嵌的决策日期无感 → 同 prio "同源类替换" 允许 T-1 决策覆盖当日决策。
@@ -97,6 +109,18 @@ def _estimate_admission_qty(inst: Dict[str, Any]) -> Optional[int]:
 
 
 class PlaybookDB:
+    """Playbook 指令库 (唯一下单指令的持久化入口).
+
+    ── 行类型 row_kind [DEB-20261027 B] ─────────────────────────────────────
+    `playbook_instructions` 里混着两类行:
+      · `instruction`        —— 真指令 (可执行), 默认值;
+      · `supply_placeholder` —— **供给占位行**: 被筛过但 DA bridge 未提名的候选
+        (direction='SKIP' / skip_reason 前缀「非当前通道候选」/ model_used='deterministic'
+        / entry_price=0)。它们是漏斗审计的证据, 但**不是指令**。
+
+    读数面请用 `ROW_KIND_EXCLUDE_PLACEHOLDER_SQL` 过滤, 不要靠
+    `direction='SKIP'` 或 skip_reason 前缀 (前者会误伤真跳过, 后者是文案契约)。
+    """
     """Playbook 数据库操作"""
 
     def __init__(self, db_name: str = "ftseek_research", conn: sqlite3.Connection = None):
@@ -245,7 +269,9 @@ class PlaybookDB:
                     fwd_return_intraday_open REAL, fwd_return_t1_open REAL, fwd_return_t3_open REAL,
                     entry_low REAL, entry_high REAL, fwd_proxy INTEGER, anchor_dev_pct REAL,
                     model_used TEXT, is_ab_test INTEGER, metadata_json TEXT, decision_conf REAL,
-                    fwd_return_t1_adj REAL, fwd_return_t3_adj REAL, fwd_return_t5_adj REAL
+                    fwd_return_t1_adj REAL, fwd_return_t3_adj REAL, fwd_return_t5_adj REAL,
+                    -- [DEB-20261027 B] 行类型: 'instruction' | 'supply_placeholder'
+                    row_kind TEXT NOT NULL DEFAULT 'instruction'
                 )
             """)
             # 列集合校验: 现有表列必须全部在新表中 (缺列 → 中止, 防数据丢失)
@@ -359,6 +385,22 @@ class PlaybookDB:
             "broker_order_id": "TEXT",
             "broker_env": "TEXT",
             "broker_order_status": "TEXT",
+            # [DEB-20261027 B] 行类型: 区分"真指令"与"供给占位行"。
+            #   病灶: 生成轮每天写 ~50-70 行 direction='SKIP' / skip_reason 前缀
+            #   「非当前通道候选」/ model_used='deterministic' / entry_price=0 的**占位行**
+            #   (含义=被筛过但 DA bridge 未提名)。它们与真指令混在同一张表里, 靠
+            #   **字符串前缀**识别 ⇒ ① 12+ 个读数面把占位行当真指令/真跳过计数
+            #   (周报 total_decisions ×4、pre_market_check 报"当日指令 72 条"实为 17、
+            #   dashboard 跳过段、decision_view 每天 55-70 条 decision_id='' 幽灵条目、
+            #   get_stats 的 conf 分布被 OTHER 桶摧毁); ② 任何"按 direction='SKIP' 一刀切"
+            #   的读数要么漏过滤要么误过滤。
+            #   处置: 把"占位"从**文案**变成**结构** —— 新增 row_kind 列, 读数方按列过滤。
+            #   枚举: 'instruction' (真指令, 默认) / 'supply_placeholder' (供给占位行)。
+            #   ⚠ skip_reason 文本**逐字保留** (observe_nightly_supply.py:109 与
+            #   deb20261007_fee_gap_forward.py:73 按 startswith/子串判定, 改了会静默失配);
+            #   本列只做**增量**结构化, 不改任何既有语义。
+            #   量纲: 枚举字符串 (无量纲)。
+            "row_kind": "TEXT NOT NULL DEFAULT 'instruction'",
         }
         safety_columns = {
             "execution_state", "execution_attempt", "broker_order_id",
@@ -424,15 +466,18 @@ class PlaybookDB:
                 if row is None:
                     return None
                 if isinstance(row, dict):
-                    return {"did": row.get("decision_id"),
+                    return {"id": row.get("id"), "did": row.get("decision_id"),
                             "direction": row.get("direction"),
-                            "confidence": row.get("confidence")}
+                            "confidence": row.get("confidence"),
+                            "skip_reason": row.get("skip_reason")}
                 # tuple/Row: (id, decision_id, executed, outcome, direction,
                 #             skip_reason, entry, sl, tp, confidence)
                 return {"id": row[0], "did": row[1], "executed": row[2],
-                        "direction": row[4], "confidence": row[9]}
+                        "direction": row[4], "skip_reason": row[5],
+                        "confidence": row[9]}
             rec = {"ts": now_utc().isoformat(), "date": trade_date,
-                   "symbol": symbol, "reason": reason,
+                   "symbol": symbol, "stage": "save_instruction",
+                   "write_outcome": "rejected_kept_existing", "reason": reason,
                    "attempted": _brief(attempted), "kept": _brief(kept)}
             os.makedirs(os.path.dirname(cls._ARBITRATION_SHADOW), exist_ok=True)
             with open(cls._ARBITRATION_SHADOW, "a", encoding="utf-8") as fh:
@@ -682,6 +727,7 @@ class PlaybookDB:
             inst.get("is_ab_test"),
             _to_json(inst.get("metadata") if inst.get("metadata") is not None else inst.get("metadata_json")),
             inst.get("decision_conf"),
+            inst.get("row_kind") or "instruction",
         )
 
         if _do_insert:
@@ -698,8 +744,8 @@ class PlaybookDB:
                     raw_instruction_json, decision_id,
                     horizon, horizon_confidence, horizon_reasoning,
                     created_at, updated_at, config_version, invalidation, anchor_dev_pct,
-                    model_used, is_ab_test, metadata_json, decision_conf
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v2', ?, ?, ?, ?, ?, ?)
+                    model_used, is_ab_test, metadata_json, decision_conf, row_kind
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v2', ?, ?, ?, ?, ?, ?, ?)
             """, _params)
             conn.commit()
             return cur.lastrowid
@@ -719,6 +765,7 @@ class PlaybookDB:
                 is_ab_test=COALESCE(?, is_ab_test),
                 metadata_json=COALESCE(?, metadata_json),
                 decision_conf=COALESCE(?, decision_conf),
+                row_kind=COALESCE(?, row_kind),
                 updated_at=?
             WHERE id=? AND COALESCE(executed, 0) = 0
         """, (
@@ -730,6 +777,7 @@ class PlaybookDB:
             _params[26], _params[27], _params[28],
             _params[31],
             _params[32], _params[33], _params[34], _params[35], _params[36],
+            _params[37],
             now, _target_id,
         ))
         if cur.rowcount == 0:
@@ -1644,6 +1692,9 @@ class PlaybookDB:
                 "MIN(confidence) AS mn, MAX(confidence) AS mx "
                 "FROM playbook_instructions "
                 "WHERE date >= date('now', '-30 day') "
+                # [DEB-20261027 B] 排除供给占位行: 它们 confidence 恒 0 (占位行
+                #   没有真实指令), 全落 'OTHER' 桶 ⇒ avg_conf 被压到 0, 该分布失去意义。
+                f"AND {ROW_KIND_EXCLUDE_PLACEHOLDER_SQL} "
                 "GROUP BY src"
             ).fetchall()
             conf_stats = [
@@ -1966,7 +2017,10 @@ CREATE TABLE IF NOT EXISTS playbook_instructions (
     execution_attempt INTEGER NOT NULL DEFAULT 0,
     broker_order_id TEXT,
     broker_env TEXT,
-    broker_order_status TEXT
+    broker_order_status TEXT,
+
+    -- [DEB-20261027 B] 行类型: 'instruction'(真指令, 默认) | 'supply_placeholder'(供给占位行)
+    row_kind TEXT NOT NULL DEFAULT 'instruction'
 
     -- RFC-066 (2026-08-25): 移除 UNIQUE(date, symbol)。
     --   旧约束强制每标的每日单行: 盘中再入场重武装的 UPSERT 整行覆盖并复位

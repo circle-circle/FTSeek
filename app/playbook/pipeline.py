@@ -1338,9 +1338,13 @@ def _build_instructions_from_votes(
             _filter_audit["vote_none"] = _filter_audit.get("vote_none", 0) + 1
             # [RFC-172] 分桶文案 (record-only): 前缀 `非当前通道候选` 保持不变 —
             #   下游 observe_nightly_supply.py 等按 startswith 过滤占位行, 改前缀=破坏消费方。
+            # [DEB-20261027 B] 同时打**结构**标记 row_kind='supply_placeholder' —
+            #   这些行是"被筛过但 DA bridge 未提名"的供给占位行, 不是真指令;
+            #   读数面据此按列过滤 (不再靠字符串前缀), 文本本身逐字不变。
             instructions.append(Instruction(
                 symbol=symbol, direction="SKIP",
                 skip_reason=_placeholder_skip_reason(symbol, _da_buckets),
+                row_kind="supply_placeholder",
             ))
             continue
         
