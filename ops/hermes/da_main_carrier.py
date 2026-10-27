@@ -112,10 +112,32 @@ def _checkpoint_count(date: str) -> int:
 
 
 def _heartbeat(date: str, base_event: dict, stop: threading.Event) -> None:
+    """[DEB-20261027 N5-B] 心跳追加阶段可见性 (record-only, 不改任何等待/超时行为):
+
+    - `remaining_sec`: 距 deadline 的剩余秒数 (可判「还剩多少预算」);
+    - `first_checkpoint`: 首个 checkpoint 落地时刻 — 2026-10-26 实测前 18 分钟为 0,
+      该窗口内崩溃=整批归零, 没有这条事件就只能从 heartbeats 里数 0 才能看出;
+    - `deadline_approaching`: 剩余 <600s 且仍未完成时发一次 (此前超顶会静默 finalize,
+      报告仍写成功)。
+    """
+    seen_first = False
+    warned = False
     while not stop.wait(max(5, HEARTBEAT_SEC)):
-        append_event({**base_event, "status": "heartbeat",
-                      "analyses_done": _checkpoint_count(date),
-                      "at": now_et().isoformat()})
+        done = _checkpoint_count(date)
+        stamp = now_et()
+        remaining = int(_deadline_seconds(stamp))
+        append_event({**base_event, "status": "heartbeat", "analyses_done": done,
+                      "remaining_sec": remaining, "at": stamp.isoformat()})
+        if done > 0 and not seen_first:
+            seen_first = True
+            append_event({**base_event, "status": "first_checkpoint",
+                          "analyses_done": done, "remaining_sec": remaining,
+                          "at": stamp.isoformat()})
+        if not warned and remaining <= 600:
+            warned = True
+            append_event({**base_event, "status": "deadline_approaching",
+                          "analyses_done": done, "remaining_sec": remaining,
+                          "at": stamp.isoformat()})
 
 
 def _deadline_seconds(stamp: datetime) -> float:

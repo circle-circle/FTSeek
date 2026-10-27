@@ -68,7 +68,7 @@ def cmd_funnel(args):
 
 
 def cmd_debate(args):
-    print("date | n | states | agreed=True | DB conf (model_used!=deterministic)")
+    print("date n states agreed_true db_conf(model_used!=deterministic)")
     db = _db()
     for day in sorted(os.listdir(CKPT)):
         if day < args.since or not day.startswith("2026-"):
@@ -92,7 +92,8 @@ def cmd_debate(args):
         conf = collections.Counter(r[0] for r in db.execute(
             "select confidence from playbook_instructions "
             "where date=? and model_used!='deterministic'", (day,)))
-        print("%s | %d | %s | %d | %s" % (day, len(files), dict(states), agreed, dict(conf)))
+        print("%s n=%d states=%s agreed=%d conf=%s" % (
+            day, len(files), dict(states), agreed, dict(conf)))
 
 
 def cmd_trend(args):
@@ -151,18 +152,89 @@ def cmd_confgate(args):
             "Y" if sym in refused else "-"))
 
 
+def _funnel_batches():
+    """batch → 其候选行, 按 candidates[0].observed_at 的 ET 日期归档。"""
+    out = {}
+    for line in open(FUNNEL, encoding="utf-8"):
+        if not line.strip():
+            continue
+        batch = json.loads(line)
+        cands = batch.get("candidates") or []
+        if not cands:
+            continue
+        day = str(cands[0].get("observed_at") or "")[:10]
+        if day:
+            out[day] = cands
+    return out
+
+
+def cmd_overlap(args):
+    """[N1-B] 分析名单跨日重叠率 + 自选池席位占比 (record-only, 零生产注入)。"""
+    days = sorted(d for d in os.listdir(CKPT)
+                  if d.startswith("2026-") and _ckpts(d))
+    sets = {}
+    for d in days:
+        sets[d] = {os.path.basename(p)[3:-5] for p in _ckpts(d)}
+    print("date | n_analyzed | extras_share | jaccard_vs_prev | overlap_vs_prev")
+    batches = _funnel_batches()
+    for i, d in enumerate(days):
+        cur = sets[d]
+        cands = batches.get(d) or []
+        sel = [c for c in cands if c.get("selection_status") == "selected"]
+        extras = sum(1 for c in sel if c.get("stage") == "da_extra_watchlist")
+        share = ("%.1f%%" % (100.0 * extras / len(sel))) if sel else "n/a"
+        if i == 0:
+            print("%s | %d | %s | - | -" % (d, len(cur), share))
+            continue
+        prev = sets[days[i - 1]]
+        inter = len(cur & prev)
+        jac = inter / float(len(cur | prev) or 1)
+        print("%s | %d | %s | %.2f | %d/%d" % (d, len(cur), share, jac,
+                                               inter, len(cur)))
+    if len(days) >= 3:
+        jacs = []
+        for i in range(1, len(days)):
+            a, b = sets[days[i]], sets[days[i - 1]]
+            jacs.append(len(a & b) / float(len(a | b) or 1))
+        print("mean_jaccard_last%d=%.2f" % (len(jacs), sum(jacs) / len(jacs)))
+
+
+def cmd_arbitration(args):
+    """[N4-C 消费面] 装饰门比率: 生成轮 attempted 被仲裁拒绝的条数 vs 当日 DA 行数。"""
+    path = os.path.join(REPO, "data", "shadow", "instruction_arbitration.jsonl")
+    if not os.path.exists(path):
+        print("no arbitration shadow yet: %s" % path)
+        return
+    rows = [json.loads(l) for l in open(path, encoding="utf-8") if l.strip()]
+    if args.date:
+        rows = [r for r in rows if str(r.get("date")) == args.date]
+    by_reason = collections.Counter(r.get("reason") for r in rows)
+    by_day = collections.Counter(str(r.get("date")) for r in rows)
+    print("rows=%d reasons=%s" % (len(rows), dict(by_reason)))
+    print("by_date=%s" % dict(sorted(by_day.items())))
+    for r in rows[-10:]:
+        print("  %s %-9s reason=%-20s attempted=%s/%s kept=%s/%s" % (
+            str(r.get("ts"))[:19], r.get("symbol"), r.get("reason"),
+            (r.get("attempted") or {}).get("direction"),
+            (r.get("attempted") or {}).get("confidence"),
+            (r.get("kept") or {}).get("direction"),
+            (r.get("kept") or {}).get("confidence")))
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("funnel")
-    for name in ("debate", "trend", "capacity", "confgate"):
+    for name in ("debate", "trend", "capacity", "confgate", "overlap",
+                 "arbitration"):
         p = sub.add_parser(name)
         p.add_argument("--date", default="")
         p.add_argument("--since", default="2026-10-01")
         p.add_argument("--log", default="")
     args = ap.parse_args()
     return {"funnel": cmd_funnel, "debate": cmd_debate, "trend": cmd_trend,
-            "capacity": cmd_capacity, "confgate": cmd_confgate}[args.cmd](args)
+            "capacity": cmd_capacity, "confgate": cmd_confgate,
+            "overlap": cmd_overlap, "arbitration": cmd_arbitration}[args.cmd](args)
 
 
 if __name__ == "__main__":

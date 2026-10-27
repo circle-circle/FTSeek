@@ -22,6 +22,7 @@ Usage:
 """
 import json
 import logging
+import os
 import re
 import sqlite3
 from typing import Dict, List, Optional, Any
@@ -407,6 +408,38 @@ class PlaybookDB:
 
     # ========== playbook_instructions ==========
 
+    # [DEB-20261027 N4-C, 2026-10-27] record-only: 写库被覆盖仲裁拒绝的留痕。
+    #   病灶: 生成轮打印 `confidence < 门槛 → SKIP`, 但 DA 行由 bridge 先写且优先级更高,
+    #   save_instruction 直接拒绝写入并返回现存行 —— 门"判了"却"没生效", 日志上看不出,
+    #   复盘会把装饰门当成真拦截 (2026-10-26 实测: 6 条 conf SKIP / 7 条仲裁拒绝 / 8 行存活)。
+    #   本埋点只追加 jsonl: 不改返回值、不改仲裁阶梯、不改任何判据; 写失败仅 debug, 绝不影响入库。
+    _ARBITRATION_SHADOW = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "data", "shadow", "instruction_arbitration.jsonl")
+
+    @classmethod
+    def _emit_arbitration(cls, trade_date, symbol, attempted, kept, reason):
+        try:
+            def _brief(row):
+                if row is None:
+                    return None
+                if isinstance(row, dict):
+                    return {"did": row.get("decision_id"),
+                            "direction": row.get("direction"),
+                            "confidence": row.get("confidence")}
+                # tuple/Row: (id, decision_id, executed, outcome, direction,
+                #             skip_reason, entry, sl, tp, confidence)
+                return {"id": row[0], "did": row[1], "executed": row[2],
+                        "direction": row[4], "confidence": row[9]}
+            rec = {"ts": now_utc().isoformat(), "date": trade_date,
+                   "symbol": symbol, "reason": reason,
+                   "attempted": _brief(attempted), "kept": _brief(kept)}
+            os.makedirs(os.path.dirname(cls._ARBITRATION_SHADOW), exist_ok=True)
+            with open(cls._ARBITRATION_SHADOW, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except Exception as exc:  # 审计降级: 绝不影响写入
+            logger.debug(f"[save_instruction] 仲裁留痕失败 (忽略): {exc}")
+
     def save_instruction(self, inst: Dict[str, Any]) -> int:
         """
         写入/更新一条交易指令 (UPSERT by date+symbol)
@@ -559,6 +592,7 @@ class PlaybookDB:
                     f"[save_instruction] 覆盖仲裁拒绝: {_symbol} ({_date}) "
                     f"UE 浅指令不得覆盖/并存 DA 深度内容 (did={_did_new})"
                 )
+                self._emit_arbitration(_date, _symbol, inst, _existing[-1], "ue_vs_da")
                 return _existing[-1][0]
             else:
                 _max_prio = max(_prio(r[1]) for r in _existing)
@@ -567,6 +601,8 @@ class PlaybookDB:
                         f"[save_instruction] 覆盖仲裁拒绝: {_symbol} ({_date}) "
                         f"新 did={_did_new} 优先级 {_prio(_did_new)} < 现存 {_max_prio}, 不写入"
                     )
+                    self._emit_arbitration(_date, _symbol, inst,
+                                           _existing[-1], "lower_priority")
                     return _existing[-1][0]
                 _best = [r for r in _existing if _prio(r[1]) == _max_prio][-1]
                 # [DEB-20260902-stale-bridge P1-② 2026-09-02] 同源类"新鲜度" tiebreaker:
@@ -583,6 +619,7 @@ class PlaybookDB:
                         f"新 did={_did_new} (决策日 {_new_did_date}) < 现存行#{_best[0]} "
                         f"did={_best[1]} (决策日 {_old_did_date}) → 保留当日决策, 不写入"
                     )
+                    self._emit_arbitration(_date, _symbol, inst, _best, "stale_did")
                     return _best[0]
                 if _best[2] == 1:
                     logger.info(
@@ -600,6 +637,8 @@ class PlaybookDB:
                     f"[save_instruction] 覆盖仲裁拒绝: {_symbol} "
                     f"({_date}) 现存行有源, 空 decision_id 写入不覆盖"
                 )
+                self._emit_arbitration(_date, _symbol, inst,
+                                       _existing[-1], "empty_did_vs_sourced")
                 return _existing[-1][0]
 
         if _target_id is not None:

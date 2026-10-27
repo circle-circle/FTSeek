@@ -2,7 +2,7 @@
 
 ## 状态
 
-- [x] 进行中（首轮实测完成，方案待裁）
+- [x] 进行中（首轮实测完成；**四项零行为变更已落地 2026-10-27，见 §10**，F2–F5 待裁）
 - [ ] 已决策
 - [ ] 已验证
 - [ ] 已关闭
@@ -22,7 +22,7 @@
 
 四件事各自都能跑，但**彼此接反了**：
 
-1. **范围不由信号决定** —— 28 个分析名额里 18 个（64%）给了静态自选池（无上限、无排序），按 conviction 排序的动态信号池只有 7 个（25%）；
+1. **范围不由信号决定（已按 §8-7 降级口径）** —— 28 个分析名额里 18 个（64%）给了静态自选池（无上限、无排序），按 conviction 排序的动态信号池只有 7 个（25%）；分析名单**跨日重叠 19/28（68%）**、近 20 对平均 Jaccard **0.37** ⇒ 范围是「半锚定」：六成来自静态名单，其余由扫描器轮换；
 2. **判据不在输入里** —— 下游用「空头排列 + BUY → 丢弃」判单，而 `空头排列` 在 prompt 里出现 **0 次**；当日 15 只空头排列标的 11 只给了 BUY，即 **39% 的分析预算产出被结构性丢弃**（该轴已立案于 DEB-20261008，本提案不重裁）；
 3. **一致度不进置信** —— 10/23 的状态机语义修正（正确）之后，「同向 + PARTIAL_AGREE」不再算一致，而挑战者几乎恒给 PARTIAL ⇒ `confidence=70`（唯一能过 0.7 档）从 5 条/日掉到 **0 条/日**，置信阶梯整体下移一档，而门槛 55/70 未重标定；
 4. **置信不进决策** —— 生成轮当日打印 6 条 `confidence=35 < 门槛=55 → SKIP`，但 **7 条被写入仲裁拒绝**（`现存行有源, 空 decision_id 写入不覆盖`），8 行 DB 全部存活并按 DA 方向进入盘中。**置信门对 DA 行零效力**，真正把关的是盘中三道门。
@@ -84,7 +84,7 @@ grep -rln "min_confidence" docs/debates docs/decisions | head
 | E2 | 28 只入选 = 7+18+1+2 | 同上 | `selection={'selected': 28, 'rejected_ineligible': 31, 'budget_cut': 4, 'duplicate': 4}` |
 | E3 | 资格门拒了 31 只，主因低 ATR | 同上 | `reasons={'low_atr': 30, 'price_floor': 1}` |
 | E4 | 自选池占 18/28 席位且无上限，信号池仅 7/28 | 同上 | `{('da_extra_watchlist','selected'): 18, ('da_main_pool','selected'): 7, ('da_ue_feed','selected'): 1, ('da_premarket_mover','selected'): 2}` |
-| E5 | 10/23 语义修正后 AGREE 归零、conf=70 灭绝 | `./venv/bin/python scripts/da_scope_confidence_audit.py debate --since 2026-10-19` | `10-22 | 28 | {'PARTIAL_AGREE': 13, 'ANALYST_SKIP': 9, 'ABSTAIN': 4, 'AGREE': 2} | 16 | {35: 8, 50: 2, 70: 5}` / `10-23 | 31 | {..., 'AGREE': 2} | 2 | {35: 13, 70: 1, 50: 1}` / `10-26 | 28 | {'PARTIAL_AGREE': 13, 'ABSTAIN': 6, 'ANALYST_SKIP': 9} | 0 | {35: 7, 50: 1}` |
+| E5 | 10/23 语义修正后 AGREE 归零、conf=70 灭绝 | `./venv/bin/python scripts/da_scope_confidence_audit.py debate --since 2026-10-19` | `2026-10-22 n=28 states={'ANALYST_SKIP': 9, 'PARTIAL_AGREE': 13, 'ABSTAIN': 4, 'AGREE': 2} agreed=16 conf={35: 8, 50: 2, 70: 5}` / `2026-10-23 n=31 ... agreed=2 conf={35: 13, 70: 1, 50: 1}` / `2026-10-26 n=28 states={'PARTIAL_AGREE': 13, 'ABSTAIN': 6, 'ANALYST_SKIP': 9} agreed=0 conf={35: 7, 50: 1}` |
 | E6 | 生成轮前 18 分钟零 checkpoint | `./venv/bin/python scripts/da_scope_confidence_audit.py capacity --date 2026-10-26` | `checkpoints=28 first=20:19:03 US.PBR.A.json last=20:39:07 US.NU.json` + `heartbeat_analyses_done=[0 ×18, 2, 2, 2, 2, 2, 9, ..., 27]` |
 | E7 | 单标分析师侧延迟 p50≈72s | 同上 | `analyst_latency_ms n=28 p50=72273 p90=90665 max=95676` |
 | E8 | 空头排列 15 只中 11 只给 BUY | `./venv/bin/python scripts/da_scope_confidence_audit.py trend --date 2026-10-26` | `空头排列 BUY -> 11` / `空头排列 SELL_SHORT -> 3` / `空头排列 SKIP -> 1` |
@@ -92,6 +92,10 @@ grep -rln "min_confidence" docs/debates docs/decisions | head
 | E10 | prompt 全文不含「空头排列」 | `grep -c "空头排列" /root/.hermes/skills/deep-stock-analysis/scripts/llm_synth.py` | `0` |
 | E11 | 判据只活在门代码里 | `grep -c "空头排列" /root/.hermes/skills/deep-stock-analysis/scripts/signal_gate.py` | `3` |
 | E12 | 门与写入是两条路径（行由 bridge 先写） | `./venv/bin/python -c "import sqlite3;c=sqlite3.connect('file:data/ftseek_us.db?mode=ro',uri=True);[print(r) for r in c.execute(\"select symbol,direction,confidence,decision_id,created_at from playbook_instructions where date='2026-10-26' and model_used!='deterministic' order by symbol\")]"` | 8 行全部 `decision_id LIKE 'DA-%'`、`created_at=2026-10-26T12:39:07`（= 08:39 ET，早于 09:06 生成轮） |
+| E13 | 分析名单跨日半锚定（N1 降级依据） | `./venv/bin/python scripts/da_scope_confidence_audit.py overlap` | `2026-10-26 \| 28 \| 64.3% \| 0.47 \| 19/28` + `mean_jaccard_last20=0.37` |
+| E14 | 仲裁留痕已接线且不改行为 | `./venv/bin/python -m pytest tests/test_playbook_instruction_arbitration_shadow.py -q` | `3 passed`（含「拒绝仍返回现存行 id」「正常写入零留痕」「四处拒绝点均接管」） |
+| E15 | carrier 心跳新增阶段字段且双副本一致 | `sha256sum ops/hermes/da_main_carrier.py /root/.hermes/scripts/da_main_carrier.py` | `2 617bc28c1ed416aa7c0d35f322d3de918c8b2350a48f9026ae456c35d1f82fcc`（两行同值） |
+| E16 | 留痕产物尚未产生（落地≠活体） | `./venv/bin/python scripts/da_scope_confidence_audit.py arbitration` | `no arbitration shadow yet: /opt/ftseek/FTSeek-US/data/shadow/instruction_arbitration.jsonl` |
 
 ---
 
@@ -100,8 +104,9 @@ grep -rln "min_confidence" docs/debates docs/decisions | head
 ### N1 范围：预算层级倒挂
 
 - **观测**：E1/E2/E4。主池 `_select_eligible(_pool_screened, top_n + 2)` ⇒ 7 席（`pipeline.py:1235`）；自选池 extras `_select_eligible(_extra_screened, len(_extra_rows))` ⇒ **无上限**（`pipeline.py:1247`）。
-- **推理**：唯一带 conviction 排序的通道配额最小，不做排序的通道配额等于候选数 ⇒ 分析集的构成由**静态名单**决定，信号强度只决定「前 7 名额归谁」。所以「DA 每天分析 28 只」在结构上更接近「把自选池里够波动的都分析一遍 + 扫描器 Top7 附加」，而不是「按当日信号择优」。
-- **反例判据**：若跨日分析名单重叠率 < 50%，则「由静态名单决定」不成立（说明扫描器侧贡献了大部分名单）。**该重叠率本提案未实测**（见 §8 自曝），复查者可用 `ls data/da_checkpoint/<date>/` 两日交集复算。
+- **推理**：唯一带 conviction 排序的通道配额最小，不做排序的通道配额等于候选数 ⇒ 分析集的构成**主要由静态名单决定**，信号强度只决定「前 7 名额归谁」。
+- **实测补正（E13，2026-10-27 落地打点时补）**：分析名单跨日重叠 **19/28（68%）**、近 20 对平均 Jaccard **0.37**（`mean_jaccard_last20=0.37`）。⇒ 「主要由静态名单决定」应降级为「**半锚定**」：当日 2/3 的名字与昨日重复，但整体集合仍有三成以上轮换。**按本 DEB 预注册的反例判据（Jaccard < 0.50 即降级），本条已降级**，见 §8-7。
+- **反例判据**：若跨日分析名单重叠率 < 50%，则「由静态名单决定」不成立（说明扫描器侧贡献了大部分名单）。**该判据已实跑，结论为降级**（E13）。
 
 ### N2 输入：判据没进 prompt（归 DEB-20261008，本段只量化预算成本）
 
@@ -202,6 +207,8 @@ grep -rln "min_confidence" docs/debates docs/decisions | head
 4. **N5 上限是推算**：由「38.4 min / 28 只」外推，非实测；并发实际生效值、pullback 实际耗时尚需实测。
 5. **N2 不重裁**：`空头排列→BUY` 的处理方案属 DEB-20261008，本提案不提供第五个方案，避免形成第二套判据。
 6. **未做的事**：没有改任何代码/prompt/门槛；没有重启服务；本提案的两个脚本（复算器）只读 DB 与产物。
+7. **N1 被自己的实测部分证伪（2026-10-27 落地时补）**：原文写「分析集的构成**主要由静态名单**决定」，并按预注册反例判据承诺「重叠率 < 50% 则降级」。落地打点实测 E13：跨日重叠 19/28、平均 Jaccard **0.37 < 0.50** ⇒ **按预注册判据降级**为「半锚定」（六成名字重复，集合仍有三成以上轮换）。§0-1 与 §4-N1 已就地改并留指针，本条为原说法与降级依据。
+8. **落地过程中发现的旁支**：`save_instruction` 内部的 admission 预判会**改写入参**（实测把 `$100×1` 的指令改成 `direction=SKIP` + `skip_reason=admission: NOTIONAL_TOO_SMALL(100<2500)`），即「写库函数」本身也是判据修改点之一。这不在本提案范围（属 admission 域），但会让「测试用的合成指令」被静默降级 —— 本批测试因此改用 ≥$2500 的名义额。登记备查，不提案。
 
 ---
 
@@ -217,3 +224,39 @@ cd /opt/ftseek/FTSeek-US
 ```
 
 约束：全部只读（sqlite `mode=ro`、json 读、日志读），零写入零下单；日志路径按日期传入（轮转后文件名会变）。
+---
+
+## 10. 执行记录（追加，不改上文提案与判据）
+
+### 10.1 本批落地：四项**零交易行为变更**（2026-10-27）
+
+| 项 | 落地形态 | 文件 | 是否改判据 | 验证 |
+|---|---|---|---|---|
+| N4-C | 覆盖仲裁留痕：四个拒绝点（`ue_vs_da` / `lower_priority` / `stale_did` / `empty_did_vs_sourced`）各落一行 `data/shadow/instruction_arbitration.jsonl`，字段 `{ts,date,symbol,reason,attempted,kept}`；**返回值与仲裁阶梯逐字不变**，写失败仅 debug | `app/playbook/db.py` | 否 | E14（3 passed，含「拒绝仍返回现存行 id」「正常写入零留痕」）+ 源码契约（四处均接管） |
+| N5-B | carrier 心跳追加 `remaining_sec`；新增 `first_checkpoint` 一次性事件（首个 checkpoint 落地时刻）与 `deadline_approaching`（剩余 ≤600s 仍未完成时一次） | `ops/hermes/da_main_carrier.py` + 线上副本 `/root/.hermes/scripts/da_main_carrier.py` | 否（不改任何等待/超时/截止行为） | E15（双副本 sha256 同值）+ `tests/test_ops_scripts_sync.py` 3 passed |
+| N1-B | 分析名单跨日重叠率 + 自选池席位占比：以只读子命令实现（**不注入生产热路径**），把「半锚定」变成可日更读数 | `scripts/da_scope_confidence_audit.py overlap` | 否 | E13（实跑得 19/28、Jaccard 0.37），并据此把 N1 降级（§8-7） |
+| N3-C | 辩论状态分列读数 + 「conf=70 自 10/23 起为 0」标注：同脚本 `debate` 子命令按 `state` 与 DB conf 分列打印 | `scripts/da_scope_confidence_audit.py debate` | 否 | E5（六日序列，含 10-23 后 AGREE=2→0、70=1→0） |
+
+**为什么不把 N1-B/N3-C 注入生产**：两者都只需要「读取已有产物」，注入生成热路径会扩大 DA 关键路径（当前已 38.4 min/28 只，见 N5），收益为零。只读子命令同样满足「可日更」——由复查者/日报调用即可。
+
+### 10.2 部署与活体状态（Gate 6 三态纪律）
+
+- 服务已重启（`systemctl restart ftseek-us`，2026-10-27 08:01:49 CST 启动，晚于代码 mtime），启动后 **0 ERROR/CRITICAL/Traceback**；持仓对账正常（`US.MSFT` 9 股在册）。
+- `instruction_arbitration.jsonl` **当前尚未产生**（E16）⇒ 按 Gate 6 记 **TOO_EARLY（不可判）**，不是「接线死」也不是「已生效」。
+  首个可判时点 = 下一次 DA 生成轮（ET 09:0x）之后的 `save_instruction` 仲裁拒绝；届时用
+  `./venv/bin/python scripts/da_scope_confidence_audit.py arbitration --date <YYYY-MM-DD>` 判读：
+  `rows>0` = LIVE；`rows=0` 且当日确有「生成轮 SKIP + DA 行并存」= 接线死，排查序为
+  ①进程启动时刻晚于 db.py mtime ②`grep -c _emit_arbitration app/playbook/db.py` ≥4 ③目录 `data/shadow/` 可写。
+- carrier 心跳新字段同理：下一次生成轮后 `grep '"status": "first_checkpoint"' data/shadow/da_main_schedule.jsonl` 应有行。
+
+### 10.3 回滚（逐项独立，均一行级）
+
+| 项 | 回滚法子 | 回滚触发条件 |
+|---|---|---|
+| N4-C | 删 `db.py` 的 `_emit_arbitration` 定义与四处调用（或 `git revert` 该提交） | 若留痕写失败开始影响入库（日志出现 `仲裁留痕失败` 且有指令未落库） |
+| N5-B | 心跳还原本函数（删 3 个事件/字段） | 若 carrier 因新事件写盘异常退出，或 `da_main_schedule.jsonl` 增长过快（>10x） |
+| N1-B/N3-C | 删两个子命令（不影响任何生产路径） | 无（只读） |
+
+### 10.4 仍未落地（等裁决）
+
+F2（conf 字段拆分）、F3（PARTIAL 中间档）、F4（自选池上限）、F5（并发 5→8）四项均**改变供给或延迟**，不在本批；其中 F2 是本批四项读数能真正「接上决策」的前提。
