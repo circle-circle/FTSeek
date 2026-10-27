@@ -483,7 +483,9 @@ class PlaybookDB:
             with open(cls._ARBITRATION_SHADOW, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
         except Exception as exc:  # 审计降级: 绝不影响写入
-            logger.debug(f"[save_instruction] 仲裁留痕失败 (忽略): {exc}")
+            # 2026-10-28 W4 清剿: 原 logger.debug 在 LOG_LEVEL=INFO 下完全不可见,
+            # 留痕失败会被静默吞掉 (守卫 test_w456_log_hygiene_ratchet 报 new_file)。
+            logger.warning(f"[save_instruction] 仲裁留痕失败 (忽略): {exc}", exc_info=True)
 
     def save_instruction(self, inst: Dict[str, Any]) -> int:
         """

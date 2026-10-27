@@ -1240,7 +1240,8 @@ def _da_gate_buckets(trade_date: str, path_override: Optional[str] = None) -> Di
         _DA_GATE_INDEX["buckets"] = buckets
         return buckets
     except Exception as exc:
-        logger.debug(f"[playbook] DA gate 归因索引读取失败 (用原文案): {exc}")
+        # 2026-10-28 W4 清剿: 归因索引读取失败改为可见 + 带栈 (原 debug 被 INFO 级藏掉)。
+        logger.warning(f"[playbook] DA gate 归因索引读取失败 (用原文案): {exc}", exc_info=True)
         return {}
 
 

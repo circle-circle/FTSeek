@@ -1445,7 +1445,7 @@ def run_playbook_auto_execute(
                             _inst_row = db.get_instruction_by_id(inst["id"]) or {}
                             _exec_state = str(_inst_row.get("execution_state") or "")
                         except Exception as _es_err:
-                            logger.warning(f"[playbook] {inst['symbol']} execution_state 读取失败: {_es_err}")
+                            logger.warning(f"[playbook] {inst['symbol']} execution_state 读取失败: {_es_err}", exc_info=True)
                         if _exec_state in ("SUBMITTED", "FILLED_UNBOOKED", "UNKNOWN"):
                             submitted_pending_count += 1
                             _audit_action = "submitted_unconfirmed"

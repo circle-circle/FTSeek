@@ -1448,7 +1448,7 @@ class FutuLV3Provider:
             except FileNotFoundError:
                 return
             except Exception as exc:
-                logger.warning(f"[FutuLV3·DailyK] 落盘缓存读取失败 (忽略): {exc}")
+                logger.warning(f"[FutuLV3·DailyK] 落盘缓存读取失败 (忽略): {exc}", exc_info=True)
                 return
             loaded = 0
             for sym, entry in (payload.get("symbols") or {}).items():
@@ -1512,7 +1512,7 @@ class FutuLV3Provider:
                     _json.dump(payload, fh, ensure_ascii=False, separators=(",", ":"))
                 _os.replace(tmp, _DAILY_DISK_PATH)
             except Exception as exc:
-                logger.warning(f"[FutuLV3·DailyK] 落盘缓存写入失败 (忽略): {exc}")
+                logger.warning(f"[FutuLV3·DailyK] 落盘缓存写入失败 (忽略): {exc}", exc_info=True)
 
     def _acquire_daily_kline_quota(self, symbol_key: str, max_wait: float = 30.0) -> bool:
         """日K配额门闸 (2026-08-27 ret=-1根因修): 复用 _wait_kline_quota 的全局60/30s窗口+单标的冷却.
