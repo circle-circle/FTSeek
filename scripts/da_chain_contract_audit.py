@@ -30,6 +30,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CKPT_ROOT = ROOT / "data" / "da_checkpoint"
@@ -694,6 +695,146 @@ def memory_audit(memory_db: Path, db_path: Path, trade_date: str,
     return out
 
 
+def compare_feedback_clocks(trade_rows: Iterable[Dict[str, Any]],
+                            trade_date: str, window_days: int = 30,
+                            metadata_available: bool = True) -> Dict[str, Any]:
+    """Compare clocks and missing inputs, not returns or a replacement memory.
+
+    The window is explicitly inclusive [D-(N-1), D]. Naive exit timestamps
+    have a SQLite calendar date but no provable ET date. Source labels use
+    the actual decision_id prefix, never PLAYBOOK_SIM or strategy_id as DA.
+    """
+    end = date.fromisoformat(trade_date)
+    start = (end - timedelta(days=window_days - 1)).isoformat()
+    et = ZoneInfo("America/New_York")
+    groups = defaultdict(list)
+    sources = defaultdict(list)
+    fees = Counter()
+    for row in trade_rows:
+        rid = row["id"]
+        entry_day = str(row.get("trade_date") or "")
+        exit_value = row.get("exit_time")
+        sqlite_day = et_day = None
+        time_unknown = False
+        try:
+            stamp = datetime.fromisoformat(str(exit_value).replace("Z", "+00:00"))
+            if stamp.tzinfo is None or stamp.utcoffset() is None:
+                sqlite_day, time_unknown = stamp.date().isoformat(), True
+            else:
+                sqlite_day = stamp.astimezone(timezone.utc).date().isoformat()
+                et_day = stamp.astimezone(et).date().isoformat()
+        except (TypeError, ValueError):
+            time_unknown = True
+        in_entry = start <= entry_day <= trade_date
+        in_et = bool(et_day and start <= et_day <= trade_date)
+        in_sqlite = bool(sqlite_day and start <= sqlite_day <= trade_date)
+        if not (in_entry or in_et or in_sqlite):
+            continue
+        groups["scope_ids"].append(rid)
+        if in_entry:
+            groups["entry_window_ids"].append(rid)
+        if in_et:
+            groups["exit_et_window_ids"].append(rid)
+        if in_sqlite:
+            groups["exit_sqlite_window_ids"].append(rid)
+        if entry_day == trade_date:
+            groups["entry_day_ids"].append(rid)
+        if et_day == trade_date:
+            groups["exit_et_day_ids"].append(rid)
+        # Reproduce the active query's NULL-time fallback separately; do not
+        # promote an imputed day into an observed exit event.
+        fallback = exit_value is None and entry_day == trade_date and row.get("exit_price") is not None
+        if sqlite_day == trade_date or fallback:
+            groups["live_exit_day_ids"].append(rid)
+        if fallback:
+            groups["live_missing_time_fallback_ids"].append(rid)
+        if time_unknown:
+            groups["exit_time_unknown_ids"].append(rid)
+        if et_day and sqlite_day != et_day:
+            groups["exit_utc_et_date_mismatch_ids"].append(rid)
+        if et_day and et_day > trade_date:
+            groups["entry_cohort_exited_after_asof_ids"].append(rid)
+        if _f(row.get("pnl_net")) is None:
+            groups["net_missing_ids"].append(rid)
+        if _f(row.get("fees_est")) is None:
+            groups["fees_missing_ids"].append(rid)
+        fees[str(row.get("fees_source") or "unknown")] += 1
+        did = str(row.get("decision_id") or "")
+        source = ("DA" if did.startswith("DA-") else
+                  "EXT" if did.startswith(("EXT-", "EXT:")) else
+                  "UE" if did.startswith(("universe_expansion", "UE-", "UE:")) else
+                  "OTHER" if did else "UNKNOWN")
+        sources[source].append(rid)
+        if not metadata_available:
+            groups["a9_metadata_unknown_ids"].append(rid)
+        else:
+            try:
+                raw_metadata = row.get("metadata_json")
+                meta = {} if raw_metadata is None else json.loads(raw_metadata)
+                if not isinstance(meta, dict):
+                    raise ValueError("metadata is not an object")
+                if meta.get("exclusion_reason") not in (None, ""):
+                    groups["a9_excluded_ids"].append(rid)
+            except (TypeError, ValueError):
+                groups["a9_metadata_unknown_ids"].append(rid)
+        # Diagnostic mirror of ERA_CLEAN_PERFORMANCE_WHERE, not a new filter.
+        if (entry_day < CURRENT_ERA_START or row.get("data_quality") not in ("clean", "real")
+                or row.get("source_type") in ("POSITION_SYNC", "MANUAL")):
+            groups["a10_excluded_ids"].append(rid)
+    keys = ("scope_ids", "entry_window_ids", "exit_et_window_ids", "exit_sqlite_window_ids",
+            "entry_day_ids", "exit_et_day_ids", "live_exit_day_ids", "exit_time_unknown_ids",
+            "live_missing_time_fallback_ids", "entry_cohort_exited_after_asof_ids",
+            "exit_utc_et_date_mismatch_ids", "net_missing_ids", "fees_missing_ids", "a9_excluded_ids",
+            "a9_metadata_unknown_ids", "a10_excluded_ids")
+    views = {key: sorted(groups[key]) for key in keys}
+    live, actual = set(views["live_exit_day_ids"]), set(views["exit_et_day_ids"])
+    return {
+        "status": "ok", "read_only": True, "date": trade_date,
+        "window_start": start, "window_end": trade_date, "window_days": window_days,
+        "scope": "active_feedback_source_filters; clock-window union; not performance",
+        "source_basis": "trade_records.decision_id_prefix_only; missing_is_unknown",
+        "views": views, "counts": {key.removesuffix("_ids"): len(v) for key, v in views.items()},
+        "live_day_not_observed_et_ids": sorted(live - actual),
+        "observed_et_day_missing_live_ids": sorted(actual - live),
+        "source_ids": dict(sorted(sources.items())),
+        "fees_source_counts": dict(sorted(fees.items())),
+        "a9_including_count": len(views["scope_ids"]),
+        "a9_excluding_count": (len(views["scope_ids"]) - len(views["a9_excluded_ids"])
+                               - len(views["a9_metadata_unknown_ids"])),
+        "a9_unknown_count": len(views["a9_metadata_unknown_ids"]),
+        "memory_written": False, "prompt_changed": False,
+    }
+
+
+def feedback_clock_audit(db_path: Path, trade_date: str) -> Dict[str, Any]:
+    """Read trade records directly; importing/calling feedback writers is forbidden."""
+    conn = _db_ro(db_path)
+    if conn is None:
+        return {"status": "trade_db_missing_or_unreadable", "read_only": True}
+    fields = ("id", "trade_date", "exit_time", "exit_price", "realized_pnl", "pnl_net",
+              "fees_est", "fees_source", "data_quality", "source_type", "decision_id",
+              "metadata_json")
+    try:
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(trade_records)")}
+        required = {"id", "trade_date", "exit_time", "realized_pnl", "strategy_id", "source_type"}
+        if not required <= columns:
+            return {"status": "trade_schema_incomplete", "read_only": True,
+                    "missing_columns": sorted(required - columns)}
+        select = ", ".join(f if f in columns else f"NULL AS {f}" for f in fields)
+        rows = [dict(r) for r in conn.execute(
+            f"SELECT {select} FROM trade_records WHERE realized_pnl IS NOT NULL "
+            "AND strategy_id NOT IN ('manual','manual_sync','reconciler','futu_sync','broker_reconcile') "
+            "AND source_type NOT IN ('SCALPING','ORB_ENGINE','PLAYBOOK_SHADOW','MAIN_PIPELINE')")]
+        out = compare_feedback_clocks(
+            rows, trade_date, metadata_available="metadata_json" in columns)
+        out["missing_columns"] = sorted(set(fields) - columns)
+        return out
+    except sqlite3.Error as exc:
+        return {"status": "trade_schema_error", "read_only": True, "error": str(exc)}
+    finally:
+        conn.close()
+
+
 def summarize(price: Dict[str, Dict[str, Any]], debate: Dict[str, Any],
               stages: Dict[str, Any], memory: Dict[str, Any]) -> List[Dict[str, Any]]:
     findings: List[Dict[str, Any]] = []
@@ -804,6 +945,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     base = audit_checkpoints(raw_dir, args.date)
     stages = stage_audit(base["analyses"], Path(args.db), args.date)
     memory = memory_audit(Path(args.memory_db), Path(args.db), args.date)
+    feedback_clock = feedback_clock_audit(Path(args.db), args.date)
     findings = summarize(base["price"], base, stages, memory)
     report = {
         "schema": "da_chain_contract_audit/v1",
@@ -819,6 +961,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "debates": base["debates"],
         "stages": stages,
         "memory": memory,
+        "feedback_clock": feedback_clock,
         "findings": findings,
     }
 
@@ -858,6 +1001,21 @@ def main(argv: Optional[List[str]] = None) -> int:
             "old_era_rows", "net_missing_rows")}, ensure_ascii=False))
     else:
         print("memory:", memory.get("status"))
+    if feedback_clock.get("status") == "ok":
+        counts = feedback_clock["counts"]
+        print("feedback_clock:", json.dumps({
+            "window": [feedback_clock["window_start"], feedback_clock["window_end"]],
+            "sources": {k: len(v) for k, v in feedback_clock["source_ids"].items()},
+            "live_day_not_observed_et": len(feedback_clock["live_day_not_observed_et_ids"]),
+            "exit_time_unknown": counts["exit_time_unknown"],
+            "utc_et_date_mismatch": counts["exit_utc_et_date_mismatch"],
+            "net_missing": counts["net_missing"],
+            "a9_excluded": counts["a9_excluded"],
+            "a9_unknown": feedback_clock["a9_unknown_count"],
+            "a10_excluded": counts["a10_excluded"],
+        }, ensure_ascii=False))
+    else:
+        print("feedback_clock:", feedback_clock.get("status"))
     print("findings:")
     for f in findings:
         print(f"  [{f['severity']}] {f['area']}: {f['message']} n={f.get('count')}")

@@ -58,8 +58,54 @@ def test_empty_did_skip_against_da_row_is_logged_and_kept(db, tmp_path):
     assert rec["symbol"] == "US.TEST" and rec["date"] == "2026-10-27"
     assert rec["attempted"]["did"] in ("", None)
     assert rec["attempted"]["direction"] == "SKIP"
+    assert rec["attempted"]["skip_reason"] == "low_confidence"
+    assert rec["stage"] == "save_instruction"
+    assert rec["write_outcome"] == "rejected_kept_existing"
     assert str(rec["kept"]["did"]).startswith("DA-")
     assert rec["kept"]["direction"] == "BUY"
+    assert rec["kept"]["id"] == kept_id
+
+
+@pytest.mark.parametrize("reason,incoming", [
+    ("ue_vs_da", {"decision_id": "universe_expansion-test"}),
+    ("lower_priority", {"decision_id": "TFB-test"}),
+    ("stale_did", {"decision_id": "DA-20261026120000-US.TEST-old"}),
+])
+def test_each_arbitration_reason_preserves_existing_row(db, reason, incoming):
+    kept_id = db.save_instruction(dict(
+        BASE, decision_id="DA-20261027120000-US.TEST-current"))
+    attempted = dict(BASE, direction="SKIP", skip_reason=reason, **incoming)
+    assert db.save_instruction(attempted) == kept_id
+    rows = db._conn().execute(
+        "SELECT direction,confidence,decision_id FROM playbook_instructions").fetchall()
+    assert rows == [("BUY", 35, "DA-20261027120000-US.TEST-current")]
+    recs = _row(db._ARBITRATION_SHADOW)
+    assert len(recs) == 1
+    assert recs[0]["reason"] == reason
+    assert recs[0]["attempted"]["skip_reason"] == reason
+    assert recs[0]["kept"]["id"] == kept_id
+
+
+def test_executed_instruction_is_not_rewritten(db):
+    did = "DA-20261027120000-US.TEST-abc"
+    kept_id = db.save_instruction(dict(BASE, decision_id=did))
+    db._conn().execute(
+        "UPDATE playbook_instructions SET executed=1,outcome='win' WHERE id=?", (kept_id,))
+    db._conn().commit()
+    assert db.save_instruction(dict(BASE, decision_id=did, direction="SELL_SHORT",
+                                    confidence=90)) == kept_id
+    row = db._conn().execute(
+        "SELECT direction,confidence,executed,outcome FROM playbook_instructions").fetchone()
+    assert row == ("BUY", 35, 1, "win")
+
+
+def test_arbitration_logging_failure_does_not_change_write_result(db, tmp_path, monkeypatch):
+    blocked = tmp_path / "blocked"
+    blocked.mkdir()
+    monkeypatch.setattr(PlaybookDB, "_ARBITRATION_SHADOW", str(blocked))
+    kept_id = db.save_instruction(dict(BASE, decision_id="DA-test"))
+    skipped = dict(BASE, decision_id="", direction="SKIP", skip_reason="low_confidence")
+    assert db.save_instruction(skipped) == kept_id
 
 
 def test_plain_insert_writes_no_arbitration_row(db, tmp_path):

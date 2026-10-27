@@ -184,3 +184,73 @@ def test_stage_audit_keeps_plan_submitted_filled_distinct(tmp_path):
     assert row["filled"]["tp_swallowed"] is True
     assert r["plan_vs_filled_rr_mismatch_gt_0_05"] == 1
     assert r["tp_swallowed"] == 1
+
+
+def _feedback_row(rid=1, **changes):
+    row = {
+        "id": rid, "trade_date": "2026-10-26", "exit_time": "2026-10-26T12:00:00-04:00",
+        "exit_price": 10.0, "realized_pnl": 1.0, "pnl_net": 0.9,
+        "fees_est": 0.1, "fees_source": "est", "data_quality": "real",
+        "source_type": "PLAYBOOK_SIM", "decision_id": "DA-test", "metadata_json": "{}",
+    }
+    row.update(changes)
+    return row
+
+
+def test_feedback_clock_distinguishes_sqlite_utc_day_from_et_day():
+    row = _feedback_row(trade_date="2026-07-02", exit_time="2026-07-02T23:27:40-04:00")
+    result = M.compare_feedback_clocks([row], "2026-07-03")
+    assert result["views"]["live_exit_day_ids"] == [1]
+    assert result["views"]["exit_et_day_ids"] == []
+    assert result["live_day_not_observed_et_ids"] == [1]
+    assert result["views"]["exit_et_window_ids"] == [1]
+    assert result["views"]["exit_utc_et_date_mismatch_ids"] == [1]
+
+
+def test_feedback_clock_marks_naive_time_unknown_and_splits_source():
+    row = _feedback_row(exit_time="2026-10-26T23:00:00", decision_id="EXT-test")
+    result = M.compare_feedback_clocks([row], "2026-10-26")
+    assert result["views"]["live_exit_day_ids"] == [1]
+    assert result["views"]["exit_time_unknown_ids"] == [1]
+    assert result["source_ids"] == {"EXT": [1]}
+
+
+def test_feedback_a9_unknown_is_not_counted_as_clean():
+    rows = [_feedback_row(1), _feedback_row(2, metadata_json="{invalid"),
+            _feedback_row(3, metadata_json="")]
+    result = M.compare_feedback_clocks(rows, "2026-10-26")
+    assert result["a9_including_count"] == 3
+    assert result["a9_excluding_count"] == 1
+    assert result["a9_unknown_count"] == 2
+
+
+def test_feedback_missing_metadata_column_is_unknown(tmp_path):
+    db = tmp_path / "old.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE trade_records (id INTEGER, trade_date TEXT, exit_time TEXT, "
+                 "realized_pnl REAL, strategy_id TEXT, source_type TEXT)")
+    conn.execute("INSERT INTO trade_records VALUES "
+                 "(1,'2026-10-26','2026-10-26T12:00:00-04:00',1,'deep_analysis','PLAYBOOK_SIM')")
+    conn.commit()
+    conn.close()
+    result = M.feedback_clock_audit(db, "2026-10-26")
+    assert result["status"] == "ok"
+    assert result["a9_unknown_count"] == 1
+    assert result["a9_excluding_count"] == 0
+    assert "metadata_json" in result["missing_columns"]
+
+
+def test_main_includes_feedback_clock_in_readonly_report(tmp_path, monkeypatch, capsys):
+    day = "2026-10-26"
+    (tmp_path / day).mkdir()
+    base = {"analyses": {}, "price": {}, "source_aggregate": {}, "sources": {},
+            "debate_states": {}, "partial_agreed_true": [], "debates": {}}
+    monkeypatch.setattr(M, "audit_checkpoints", lambda *_: base)
+    monkeypatch.setattr(M, "stage_audit", lambda *_: {"status": "ok"})
+    monkeypatch.setattr(M, "memory_audit", lambda *_: {"status": "ok"})
+    monkeypatch.setattr(M, "feedback_clock_audit", lambda *_: {"status": "sentinel"})
+    monkeypatch.setattr(M, "summarize", lambda *_: [])
+    assert M.main(["--date", day, "--checkpoint-root", str(tmp_path), "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["feedback_clock"] == {"status": "sentinel"}
+    assert report["read_only"] is True

@@ -115,10 +115,10 @@ def _heartbeat(date: str, base_event: dict, stop: threading.Event) -> None:
     """[DEB-20261027 N5-B] 心跳追加阶段可见性 (record-only, 不改任何等待/超时行为):
 
     - `remaining_sec`: 距 deadline 的剩余秒数 (可判「还剩多少预算」);
-    - `first_checkpoint`: 首个 checkpoint 落地时刻 — 2026-10-26 实测前 18 分钟为 0,
-      该窗口内崩溃=整批归零, 没有这条事件就只能从 heartbeats 里数 0 才能看出;
-    - `deadline_approaching`: 剩余 <600s 且仍未完成时发一次 (此前超顶会静默 finalize,
-      报告仍写成功)。
+    - `first_checkpoint`: 首个完整 analysis 的轮询观测时刻，raw 采集材料不计入；
+      它是 heartbeat 观测时间，不是文件精确落盘时间；
+    - `deadline_approaching`: 剩余 <600s 且仍未完成时发一次，终态批次完整性另见
+      `batch_observation`，不以 artifacts.ok 冒充完整。
     """
     seen_first = False
     warned = False
@@ -205,6 +205,135 @@ def _verify_artifacts(date: str) -> dict:
     out["ok"] = bool(out["bridge_current"]
                      or (out["db_instruction_count"] or 0) > 0)
     return out
+
+
+def _batch_observation(event: dict, result=None) -> dict:
+    """Record-only coverage; same-day artifacts alone never prove this run complete.
+
+    A parsed result supplies this run's selected/analysed symbols (including
+    validated resume hits). Without it, fresh files only prove progress, not
+    membership or completeness. Raw inputs are not publishable verdicts.
+    """
+    started = datetime.fromisoformat(event["started_at"]).timestamp()
+    date = event["date"]
+
+    def symbol(value):
+        return str(value or "").removeprefix("US.")
+
+    fresh = {"raw": set(), "analysis": set()}
+    unreadable = []
+    for path in (BRIDGE_DIR / "da_checkpoint" / date).glob("*.json"):
+        if path.stat().st_mtime < started:
+            continue
+        try:
+            row = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(row, dict):
+                raise ValueError("checkpoint is not an object")
+            key = "raw" if path.name.endswith(".raw.json") else "analysis"
+            if key == "analysis" and row.get("rating") == "错误":
+                continue
+            name = symbol(row.get("symbol"))
+            if name:
+                fresh[key].add(name)
+        except (OSError, ValueError):
+            unreadable.append(path.name)
+
+    stages = (result or {}).get("stages") or {}
+    selection = stages.get("filter") or {}
+    expected = selection.get("selected_symbols")
+    expected = ({symbol(s) for s in expected}
+                if isinstance(expected, list)
+                and all(isinstance(s, str) and symbol(s) for s in expected)
+                and len({symbol(s) for s in expected}) == len(expected) else None)
+    rows = (stages.get("output") or {}).get("analyses")
+    output_known = isinstance(rows, list)
+    rows = rows if output_known else []
+    analysed = {symbol(a.get("symbol")) for a in rows
+                if isinstance(a, dict) and a.get("rating") != "错误"
+                and a.get("action") in ("BUY", "SELL_SHORT", "SKIP")
+                and symbol(a.get("symbol"))}
+    gate_unknown = {symbol(a.get("symbol")) for a in rows
+                    if isinstance(a, dict) and symbol(a.get("symbol"))
+                    and a.get("rating") != "错误"
+                    and a.get("action") in ("BUY", "SELL_SHORT")
+                    and (a.get("_signal_gate") or {}).get("decision")
+                    not in ("PASS", "WARN", "BLOCK")}
+    publishable = {symbol(a.get("symbol")) for a in rows
+                   if isinstance(a, dict) and symbol(a.get("symbol"))
+                   and a.get("rating") != "错误"
+                   and a.get("action") in ("BUY", "SELL_SHORT")
+                   and (a.get("_signal_gate") or {}).get("decision") in ("PASS", "WARN")}
+
+    bridge = BRIDGE_DIR / f"opportunity_scan_{date}.json"
+    bridge_fresh = False
+    bridge_symbols = set()
+    bridge_error = None
+    try:
+        if bridge.exists():
+            data = json.loads(bridge.read_text(encoding="utf-8"))
+            bridge_fresh = (bridge.stat().st_mtime >= started
+                            and data.get("trade_date") == date
+                            and isinstance(data.get("candidates"), list))
+            bridge_symbols = {symbol(c.get("symbol")) for c in data.get("candidates", [])
+                              if isinstance(c, dict) and symbol(c.get("symbol"))}
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
+        bridge_error = type(exc).__name__
+
+    missing = sorted(expected - analysed) if expected is not None else None
+    unexpected = sorted(analysed - expected) if expected is not None else None
+    failed_statuses = {"deadline_missed", "pipeline_timeout_finalized",
+                       "pipeline_spawn_failed", "pipeline_failed", "pipeline_json_parse_failed"}
+    signal = stages.get("signal") or {}
+    signal_failed = (signal.get("error") or
+                     str(signal.get("market_condition") or "").startswith("扫描失败"))
+    if signal_failed:
+        state, reason = ("partial" if analysed else "failed"), "upstream_signal_failed"
+    elif expected is None:
+        state = ("partial" if fresh["raw"] or fresh["analysis"] else
+                 "failed" if event.get("status") in failed_statuses else "unknown")
+        reason = "current_selection_unavailable"
+    elif not output_known:
+        state, reason = "unknown", "analysis_output_unavailable"
+    elif missing or unexpected or len(rows) != len(analysed):
+        state = "partial" if analysed or fresh["raw"] or fresh["analysis"] else "failed"
+        reason = "analysis_coverage_mismatch"
+    elif gate_unknown:
+        state, reason = "unknown", "gate_decision_unknown"
+    elif not bridge_fresh or bridge_symbols != publishable:
+        state, reason = "partial", "current_bridge_unverified"
+    else:
+        state = "complete"
+        reason = "complete_zero_candidates" if not publishable else "complete"
+    return {
+        "state": state, "reason": reason,
+        "batch_id": selection.get("screen_batch_id"),
+        "selection_policy_version": selection.get("screen_policy_version"),
+        "analysis_checkpoint_policies": sorted({
+            str(a.get("_ckpt_policy")) for a in rows
+            if isinstance(a, dict) and a.get("_ckpt_policy")}),
+        "selected_count": len(expected) if expected is not None else None,
+        "analysed_count": len(analysed) if expected is not None else None,
+        "publishable_count": len(publishable) if expected is not None else None,
+        "missing_symbols": missing, "unexpected_symbols": unexpected,
+        "gate_unknown_symbols": sorted(gate_unknown),
+        "fresh_raw_count": len(fresh["raw"]),
+        "fresh_analysis_count": len(fresh["analysis"]),
+        "file_identity_basis": "mtime_since_carrier_start_only",
+        "unreadable_checkpoints": unreadable,
+        "bridge_fresh": bridge_fresh, "bridge_error": bridge_error,
+        "legal_zero_candidates": state == "complete" and not publishable,
+        "legacy_status": event.get("status"),
+    }
+
+
+def _append_terminal_event(event: dict, result=None) -> None:
+    """Observation failure must not change legacy status, artifact ok, or exit code."""
+    try:
+        observation = _batch_observation(event, result)
+    except Exception as exc:
+        observation = {"state": "unknown", "reason": "observation_error",
+                       "error": type(exc).__name__}
+    append_event({**event, "batch_observation": observation})
 
 
 def _finalize(date: str) -> dict:
@@ -304,7 +433,7 @@ def main() -> int:
 
         remaining = _deadline_seconds(now_et())
         if remaining < 60:
-            append_event({**base_event, "status": "deadline_missed",
+            _append_terminal_event({**base_event, "status": "deadline_missed",
                           "finished_at": now_et().isoformat()})
             print(f"[DA-main] {date} past deadline {DEADLINE_ET_HHMM:04d} ET; "
                   f"pipeline not started")
@@ -328,7 +457,7 @@ def main() -> int:
         except subprocess.TimeoutExpired:
             finalized = _finalize(date)
             artifacts = _verify_artifacts(date)
-            append_event({**base_event, "status": "pipeline_timeout_finalized",
+            _append_terminal_event({**base_event, "status": "pipeline_timeout_finalized",
                           "finished_at": now_et().isoformat(),
                           "finalize_rc": finalized.get("returncode"),
                           "artifacts": artifacts})
@@ -338,7 +467,7 @@ def main() -> int:
         except OSError as exc:
             finalized = _finalize(date)
             artifacts = _verify_artifacts(date)
-            append_event({**base_event, "status": "pipeline_spawn_failed",
+            _append_terminal_event({**base_event, "status": "pipeline_spawn_failed",
                           "error": str(exc)[:300],
                           "finalize_rc": finalized.get("returncode"),
                           "artifacts": artifacts})
@@ -358,7 +487,7 @@ def main() -> int:
         if completed.returncode in (124, 137, 143):
             finalized = _finalize(date)
             artifacts = _verify_artifacts(date)
-            append_event({**base_event, "status": "pipeline_timeout_finalized",
+            _append_terminal_event({**base_event, "status": "pipeline_timeout_finalized",
                           "returncode": completed.returncode,
                           "finished_at": finished_at,
                           "finalize_rc": finalized.get("returncode"),
@@ -369,7 +498,7 @@ def main() -> int:
         if completed.returncode != 0:
             finalized = _finalize(date)
             artifacts = _verify_artifacts(date)
-            append_event({**base_event, "status": "pipeline_failed",
+            _append_terminal_event({**base_event, "status": "pipeline_failed",
                           "returncode": completed.returncode,
                           "finished_at": finished_at,
                           "finalize_rc": finalized.get("returncode"),
@@ -384,13 +513,13 @@ def main() -> int:
             artifacts = _verify_artifacts(date)
             if artifacts.get("ok"):
                 # 10/12 precedent: stdout noise must not turn a real batch into failure.
-                append_event({**base_event, "status": "complete_unparsed_stdout",
+                _append_terminal_event({**base_event, "status": "complete_unparsed_stdout",
                               "finished_at": finished_at,
                               "artifacts": artifacts})
                 print(f"[DA-main] {date} stdout unparsed but artifacts ok: "
                       f"{artifacts}")
                 return 0
-            append_event({**base_event, "status": "pipeline_json_parse_failed",
+            _append_terminal_event({**base_event, "status": "pipeline_json_parse_failed",
                           "finished_at": finished_at,
                           "artifacts": artifacts})
             print(f"[DA-main] {date} pipeline JSON parse failed; artifacts={artifacts}")
@@ -398,7 +527,7 @@ def main() -> int:
             return 1
 
         if result.get("skipped"):
-            append_event({**base_event, "status": "pipeline_skipped",
+            _append_terminal_event({**base_event, "status": "pipeline_skipped",
                           "skip_reason": result.get("skip_reason"),
                           "finished_at": finished_at})
             print(f"[DA-main] {date} pipeline skipped: {result.get('skip_reason')}")
@@ -415,12 +544,12 @@ def main() -> int:
               f"candidates={stages.get('signal', {}).get('candidates_total', 0)} "
               f"analyses={len(analyses)} directions={directions} "
               f"output={output_path} artifacts={artifacts}")
-        append_event({**base_event, "status": "complete",
-                      "candidates_total": stages.get("signal", {}).get(
-                          "candidates_total", 0),
-                      "analyses_count": len(analyses),
-                      "artifacts": artifacts,
-                      "finished_at": finished_at})
+        _append_terminal_event({**base_event, "status": "complete",
+                                "candidates_total": stages.get("signal", {}).get(
+                                    "candidates_total", 0),
+                                "analyses_count": len(analyses),
+                                "artifacts": artifacts,
+                                "finished_at": finished_at}, result=result)
         return 0
     finally:
         heartbeat_stop.set()
