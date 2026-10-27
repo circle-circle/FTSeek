@@ -5,10 +5,11 @@ module: playbook
 related_code:
   - app/core/position_sync.py
   - app/playbook/pipeline_parts/auto_execute_flow.py
+  - app/execution/dual_broker.py
   - tests/test_rfc169_reconcile_linkage.py
 related_okr: OKR-2026-11
 tags: [bookkeeping, observability, reconcile, entry-confirm, no-behavior-change]
-updated: 2026-10-26
+updated: 2026-10-27
 ---
 
 # RFC-169: 慢成交 (fill=0 在途) 的链路闭环 + 三态分报
@@ -51,7 +52,7 @@ updated: 2026-10-26
 
 - `_backfill_playbook_trade_record()` 新增可选参 `instruction_id` / `decision_id`
   （legacy 递归同参透传）；`record` 写入 `decision_id`、`entry_session`
-  （`get_current_session()`，与 `playbook_service.py:2090` 同源，fail-closed 落 `""`），
+  （**2026-10-27 复查改为按券商订单入场时间，见下节**；无时间戳落 `""`），
   `metadata.playbook_instruction_id` 仅在拿到 id 时写（legacy 路径不伪造链路）。
 - `entry_vix` 保持 `0.0`，**不拿 `instruction.vix_at_generation`（生成时刻）冒充入场值**，
   避免口径静默混尺；符合 7/11 约定的「取不到落 0」。
@@ -77,6 +78,20 @@ updated: 2026-10-26
   `exit_monitor_flow.py:289/424`），改镜像等于把 REAL 臂 broker 侧止损参考值放宽，
   属行为变更，需单独裁决。
 - entry_confirm v2 的弃单阈值（预注册观察期，n=34<60）——不碰。
+
+## 2026-10-27 复查修订（S1）
+
+- **entry_session / entry_time / trade_date 改按入场时刻**：补录优先取券商订单
+  `updated_time`（成交）→ `create_time`（建单）；`entry_session` 用
+  `get_market_session(入场 dt)`，词表 `pre_market / regular / after_hours / closed`。
+  两者都缺失时才按既有行为回退 `now_et` 写 `entry_time/trade_date`，但
+  `entry_session` 落 `""`（unknown）——不再用 reconcile 时刻冒充。
+- **测试改为时间无关**：固定 ET 时间戳覆盖四个时段；原枚举
+  `premarket/afterhours` 与真实词表不符且不含 `closed`，盘后/夜间跑必红
+  （2026-10-27 02:13 ET 复跑实锤）。
+- **历史行不重写**：仅修未来写入；如需修正已落库的 `sync_recovery_backfill` 行，
+  另做只读审计后单独裁决。
+- 交易门/仓位/止损止盈/频率零改动。
 
 ## 验证
 

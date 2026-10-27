@@ -34,6 +34,64 @@ EXTERNAL_CLOSE_DUP_SQL = (
     "AND exit_price > 0"
 )
 
+
+def _parse_entry_ts(entry_ts) -> Optional[datetime]:
+    """把券商订单时间解析成 ET-aware datetime; 不可解析返回 None.
+
+    富途委托 create_time/updated_time 是 ET 墙钟字符串 (DEB-20260917 实测).
+    缺失/坏值返回 None — 调用方**不得**用 reconcile 时刻兜底, 否则盘后/跨日
+    补录会把 entry_session/entry_time 标到错误时段或错误日期。
+    """
+    if entry_ts is None or entry_ts == "":
+        return None
+    try:
+        from app.utils.timezone import ET
+        if isinstance(entry_ts, datetime):
+            dt = entry_ts
+        else:
+            text = str(entry_ts).strip().replace("T", " ")
+            try:
+                dt = datetime.fromisoformat(text)
+            except ValueError:
+                dt = datetime.strptime(text[:19], "%Y-%m-%d %H:%M:%S")
+        if dt.tzinfo is None:
+            dt = ET.localize(dt) if hasattr(ET, "localize") else dt.replace(tzinfo=ET)
+        return dt.astimezone(ET)
+    except Exception:
+        return None
+
+
+def _entry_session_from_ts(entry_ts) -> str:
+    """按**入场时刻**取时段 (get_market_session 词表: pre_market/regular/after_hours/closed).
+
+    取不到入场时间 → "" (unknown), 不拿补录时刻冒充.
+    """
+    dt = _parse_entry_ts(entry_ts)
+    if dt is None:
+        return ""
+    try:
+        from app.utils.timezone import get_market_session
+        return get_market_session(dt) or ""
+    except Exception:
+        return ""
+
+
+def _pick_order_ts(order: Dict) -> Optional[str]:
+    """从券商订单行取入场时间: updated_time(成交) → create_time(建单).
+
+    过滤 NaN/NaT/空串, 避免 pandas 缺值占住 `or` 链导致 create_time 不被采用.
+    """
+    if not isinstance(order, dict):
+        return None
+    for key in ("updated_time", "create_time"):
+        value = order.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text and text.lower() not in ("nan", "nat", "none"):
+            return text
+    return None
+
 # ── [RFC-080 2026-09-09] 系统委托 remark 白名单 — AUTO 认领的唯一凭证 ──────────
 # 病灶: _query_today_futu_orders 返回当日 env 内**所有**已成交委托, AUTO/MANUAL 分类
 # 此前只看 "symbol in _today_orders" ⇒ 切实盘后 (AUTO_TRADE_ACCOUNT=real), 用户在富途
@@ -279,7 +337,8 @@ class USPositionSync:
                                         broker_env: str = "sim", order_evidence=None,
                                         broker_position=None,
                                         instruction_id: int = None,
-                                        decision_id: str = "") -> bool:
+                                        decision_id: str = "",
+                                        entry_ts=None) -> bool:
         """统一管线 #4 (2026-07-20): 恢复仓位标 playbook_sim 时补录未平 PLAYBOOK_SIM trade_record.
 
         场景: playbook 下单后 GHOST-RC1 拒绝记账但订单实际成交 → trade_records 无记录 →
@@ -334,7 +393,10 @@ class USPositionSync:
                     order_evidence={'confirmed': True, 'order_id': futu_order_id,
                                     'dealt_qty': dealt, 'price': price},
                     broker_position={'qty': qty, 'direction': direction},
-                    instruction_id=instruction_id, decision_id=decision_id)
+                    instruction_id=instruction_id, decision_id=decision_id,
+                    # [RFC-169 复查] 入场时间优先用显式传入值, 否则用券商订单时间;
+                    #   两者都缺失 → "" (不用 reconcile 时刻兜底).
+                    entry_ts=(entry_ts or _pick_order_ts(snapshot)))
             except Exception:
                 logger.exception('[US Sync] legacy order receipt unavailable %s', futu_order_id)
                 return False
@@ -395,14 +457,13 @@ class USPositionSync:
                 now_iso = datetime.now(ZoneInfo("America/New_York")).isoformat()
             # atr 从 SL 距离反推 (playbook 退出用 %-drawdown, atr 仅诊断用途)
             atr_guess = abs(entry - sl) / 2.0 if (entry and sl) else 0.0
-            # [RFC-169] 入场时段回填 — 与正常执行链 (playbook_service.py:2090) 同源同口径,
-            #   fail-closed 取不到落 ""。entry_vix 保持 0.0: 本路径没有入场时刻的 VIX 快照,
-            #   不拿 instruction.vix_at_generation (生成时刻) 冒充入场值, 否则口径静默混尺。
-            try:
-                from app.utils.timezone import get_current_session as _get_sess_p3
-                _entry_session_p3 = _get_sess_p3() or ""
-            except Exception:
-                _entry_session_p3 = ""
+            # [RFC-169 复查 2026-10-27] entry_time/entry_session 以**入场时刻**为准:
+            #   券商订单 updated_time(成交) → create_time(建单) 依次取值; 两者都缺失
+            #   才回退 now_et(既有行为) 记 entry_time, 但 entry_session 落 "" (unknown),
+            #   **不再**用 reconcile 时刻冒充 (盘后/跨日补录会标错时段/日期)。
+            _entry_dt = _parse_entry_ts(entry_ts)
+            _entry_iso = _entry_dt.isoformat() if _entry_dt is not None else now_iso
+            _entry_session_p3 = _entry_session_from_ts(entry_ts)
             _meta_p3 = {
                 "stop_loss": sl,
                 "take_profit": tp,
@@ -420,10 +481,10 @@ class USPositionSync:
                 _meta_p3["playbook_instruction_id"] = int(instruction_id)
             record = {
                 "trace_id": trace_id,
-                "trade_date": now_iso[:10],
+                "trade_date": _entry_iso[:10],
                 "symbol": symbol,
                 "direction": direction,
-                "entry_time": now_iso,
+                "entry_time": _entry_iso,
                 "exit_time": "",
                 "entry_price": entry,
                 "exit_price": 0,
@@ -537,7 +598,10 @@ class USPositionSync:
                                 # [RFC-169] 链路必带: 平仓结算靠 metadata.playbook_instruction_id
                                 #   反查指令; 缺则已平仓单永久 outcome='holding' (2026-10-26 实锤)
                                 instruction_id=iid,
-                                decision_id=str(row['decision_id'] or ''))
+                                decision_id=str(row['decision_id'] or ''),
+                                # [RFC-169 复查] 入场时间取券商订单成交/建单时间,
+                                #   不用 reconcile 时刻 (跨时段/跨日补录会标错)。
+                                entry_ts=_pick_order_ts(snapshot))
                             if ok:
                                 from app.utils.timezone import now_et
                                 pdb.mark_execution_booked(
@@ -1947,6 +2011,8 @@ class USPositionSync:
                     trace_id=_sync_trace,
                     futu_order_id=str(_order_info.get('order_id', '')),
                     broker_env=_auto_acc,
+                    # [RFC-169 复查] 当日委托时间 (create_time, ET) 作为入场时间
+                    entry_ts=_order_info.get('time'),
                 )
             else:
                 logger.warning(

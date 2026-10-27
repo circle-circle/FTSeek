@@ -557,6 +557,8 @@ class DualBrokerAdapter:
                 "order_id", "code", "trd_side", "order_type", "order_status",
                 "qty", "dealt_qty", "dealt_avg_price", "price", "aux_price",
                 "time_in_force", "fill_outside_rth", "remark",
+                # [RFC-169 复查] 入场时段回填需要券商订单时间 (ET 墙钟)
+                "create_time", "updated_time",
             )
             return {
                 "success": True,

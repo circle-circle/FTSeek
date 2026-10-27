@@ -9,6 +9,10 @@
    `自动执行完成: 0 成功` 与当场真实成交矛盾, pending 与真失败不可分。
 
 本文件只钉这两处契约, 不测交易决策语义 (本批零交易行为变更)。
+
+2026-10-27 复查 (S1): `entry_session` 改为按**券商订单入场时间**推导, 测试固定
+ET 时间戳覆盖 pre_market/regular/after_hours/closed, 不再依赖运行时刻; 无入场
+时间戳时落 "" (unknown), 不拿 reconcile 时刻冒充。
 """
 import sqlite3
 from pathlib import Path
@@ -52,25 +56,69 @@ def _backfill(tmp_path, monkeypatch, **linkage):
     conn.row_factory = sqlite3.Row
     try:
         return dict(conn.execute(
-            "SELECT decision_id, entry_session, metadata_json FROM trade_records"
+            "SELECT decision_id, entry_session, entry_time, trade_date, metadata_json "
+            "FROM trade_records"
         ).fetchone())
     finally:
         conn.close()
 
 
 def test_reconcile_backfill_keeps_instruction_linkage(tmp_path, monkeypatch):
-    """补录必须带 playbook_instruction_id / decision_id / entry_session。"""
+    """补录必须带 playbook_instruction_id / decision_id / entry_session。
+
+    2026-10-27 复查: entry_session 以**入场时刻**取, 测试固定 ET 时间戳,
+    不再依赖运行时刻 (原枚举 premarket/afterhours 与真实词表不符, 盘后必红)。
+    """
     import json
     row = _backfill(tmp_path, monkeypatch,
-                    instruction_id=4725, decision_id="DA-20261026202638-US.CAT-b1dd")
+                    instruction_id=4725, decision_id="DA-20261026202638-US.CAT-b1dd",
+                    entry_ts="2026-10-26 10:14:00")
     meta = json.loads(row["metadata_json"])
     assert meta["playbook_instruction_id"] == 4725, (
         "缺该键 ⇒ 平仓时 inst_id 为空 ⇒ instruction outcome 永不结算 (CAT 实锤)")
     assert row["decision_id"] == "DA-20261026202638-US.CAT-b1dd"
-    # entry_session 与正常执行链同源 (取不到落 "", fail-closed 不抛)
-    assert row["entry_session"] in ("", "premarket", "regular", "afterhours")
+    assert row["entry_session"] == "regular"
+    assert row["trade_date"] == "2026-10-26"
+    assert row["entry_time"].startswith("2026-10-26T10:14")
     # 原有 SL/TP 口径不许被本次改动带偏
     assert meta["stop_loss"] == 722.95 and meta["take_profit"] == 628.73
+
+
+@pytest.mark.parametrize("entry_ts,expected", [
+    ("2026-10-26 08:00:00", "pre_market"),
+    ("2026-10-26 10:14:00", "regular"),
+    ("2026-10-26 17:00:00", "after_hours"),
+    ("2026-10-26 23:00:00", "closed"),
+])
+def test_entry_session_from_entry_time(tmp_path, monkeypatch, entry_ts, expected):
+    """entry_session 词表必须与 get_market_session 一致, 且按入场时间而非补录时间。"""
+    row = _backfill(tmp_path, monkeypatch, entry_ts=entry_ts)
+    assert row["entry_session"] == expected
+    assert row["trade_date"] == "2026-10-26"
+
+
+def test_entry_session_unknown_without_entry_ts(tmp_path, monkeypatch):
+    """拿不到入场时间 → "" (unknown), 不拿 reconcile 时刻冒充时段。"""
+    from datetime import datetime
+    row = _backfill(tmp_path, monkeypatch)
+    assert row["entry_session"] == ""
+    # entry_time 仍按既有行为回退 now_et (必须带偏移)
+    assert datetime.fromisoformat(row["entry_time"]).tzinfo is not None
+
+
+def test_pick_order_ts_prefers_fill_and_skips_missing():
+    """updated_time(成交) 优先; NaN/NaT/空值不得占住 or 链挡住 create_time。"""
+    assert ps._pick_order_ts({
+        "updated_time": "2026-10-26 09:41:23",
+        "create_time": "2026-10-26 09:41:02",
+    }) == "2026-10-26 09:41:23"
+    assert ps._pick_order_ts({
+        "updated_time": float("nan"),
+        "create_time": "2026-10-26 09:41:02",
+    }) == "2026-10-26 09:41:02"
+    assert ps._pick_order_ts({"create_time": ""}) is None
+    assert ps._pick_order_ts({}) is None
+    assert ps._pick_order_ts(None) is None
 
 
 def test_reconcile_backfill_without_linkage_is_unchanged(tmp_path, monkeypatch):
@@ -80,6 +128,7 @@ def test_reconcile_backfill_without_linkage_is_unchanged(tmp_path, monkeypatch):
     meta = json.loads(row["metadata_json"])
     assert "playbook_instruction_id" not in meta
     assert row["decision_id"] == ""
+    assert row["entry_session"] == ""
 
 
 def test_auto_execute_three_state_accounting_source():
