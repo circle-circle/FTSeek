@@ -1,0 +1,199 @@
+{
+  "pairs": [
+    {
+      "label": "single_challenged",
+      "arms": {
+        "baseline": {
+          "verdict": "AGREE",
+          "my_direction": "BUY",
+          "independent_direction": "BUY",
+          "raw_agreed": true,
+          "canonical_state": "AGREE",
+          "challenged_count": 0,
+          "missed_risks_count": 5,
+          "finish_reason": "stop",
+          "error": null,
+          "http_attempts": 1,
+          "latency_ms": 147636,
+          "usage": {
+            "completion_tokens": 10362,
+            "completion_tokens_details": {
+              "reasoning_tokens": 9039,
+              "text_tokens": 1322
+            },
+            "prompt_tokens": 8875,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "text_tokens": 8875
+            },
+            "total_tokens": 19237
+          },
+          "downstream": {
+            "canonical_state": "AGREE",
+            "adapter_conf": 0.7,
+            "gate_decision_conf": 0.7,
+            "tier": "良",
+            "gate_decision": "PASS",
+            "bridge_conf_after_warn": 0.7,
+            "publishable": true
+          }
+        },
+        "variant": {
+          "verdict": "PARTIAL_AGREE",
+          "my_direction": "BUY",
+          "independent_direction": "BUY",
+          "raw_agreed": false,
+          "canonical_state": "PARTIAL_AGREE",
+          "challenged_count": 2,
+          "missed_risks_count": 5,
+          "finish_reason": "stop",
+          "error": null,
+          "http_attempts": 1,
+          "latency_ms": 153457,
+          "usage": {
+            "completion_tokens": 12061,
+            "completion_tokens_details": {
+              "reasoning_tokens": 10166,
+              "text_tokens": 1894
+            },
+            "prompt_tokens": 8888,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "text_tokens": 8888
+            },
+            "total_tokens": 20949
+          },
+          "downstream": {
+            "canonical_state": "PARTIAL_AGREE",
+            "adapter_conf": 0.5,
+            "gate_decision_conf": 0.5,
+            "tier": "中",
+            "gate_decision": "WARN",
+            "bridge_conf_after_warn": 0.35,
+            "publishable": true
+          }
+        }
+      },
+      "direction_stable": true,
+      "verdict_changed": true
+    },
+    {
+      "label": "same_direction_partial",
+      "arms": {
+        "baseline": {
+          "verdict": "PARTIAL_AGREE",
+          "my_direction": "SELL_SHORT",
+          "independent_direction": "SELL_SHORT",
+          "raw_agreed": true,
+          "canonical_state": "PARTIAL_AGREE",
+          "challenged_count": 3,
+          "missed_risks_count": 4,
+          "finish_reason": "stop",
+          "error": null,
+          "http_attempts": 1,
+          "latency_ms": 202974,
+          "usage": {
+            "completion_tokens": 14427,
+            "completion_tokens_details": {
+              "reasoning_tokens": 12472,
+              "text_tokens": 1954
+            },
+            "prompt_tokens": 8262,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "text_tokens": 8262
+            },
+            "total_tokens": 22689
+          },
+          "downstream": {
+            "canonical_state": "PARTIAL_AGREE",
+            "adapter_conf": 0.5,
+            "gate_decision_conf": 0.5,
+            "tier": "中",
+            "gate_decision": "WARN",
+            "bridge_conf_after_warn": 0.35,
+            "publishable": true
+          }
+        },
+        "variant": {
+          "verdict": "PARTIAL_AGREE",
+          "my_direction": "SELL_SHORT",
+          "independent_direction": "SELL_SHORT",
+          "raw_agreed": true,
+          "canonical_state": "PARTIAL_AGREE",
+          "challenged_count": 3,
+          "missed_risks_count": 4,
+          "finish_reason": "stop",
+          "error": null,
+          "http_attempts": 1,
+          "latency_ms": 157068,
+          "usage": {
+            "completion_tokens": 11601,
+            "completion_tokens_details": {
+              "reasoning_tokens": 9747,
+              "text_tokens": 1853
+            },
+            "prompt_tokens": 8275,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "text_tokens": 8275
+            },
+            "total_tokens": 19876
+          },
+          "downstream": {
+            "canonical_state": "PARTIAL_AGREE",
+            "adapter_conf": 0.5,
+            "gate_decision_conf": 0.5,
+            "tier": "中",
+            "gate_decision": "WARN",
+            "bridge_conf_after_warn": 0.35,
+            "publishable": true
+          }
+        }
+      },
+      "direction_stable": true,
+      "verdict_changed": false
+    }
+  ],
+  "totals_by_arm": {
+    "baseline": {
+      "prompt_tokens": 17137,
+      "completion_tokens": 24789,
+      "total_tokens": 41926
+    },
+    "variant": {
+      "prompt_tokens": 17163,
+      "completion_tokens": 23662,
+      "total_tokens": 40825
+    }
+  },
+  "run": {
+    "logical_calls": 4,
+    "http_attempts": 4,
+    "errors": 0,
+    "fallbacks": 0,
+    "total_tokens": 82751,
+    "latency_ms": 661135
+  },
+  "evidence_string_spot_check": {
+    "single_challenged": {
+      "May Be Fully Valued": true,
+      "5.732%": true,
+      "高于5.8%": true,
+      "突破6.0%": true
+    },
+    "same_direction_partial": {
+      "192,213": true,
+      "530.05": true,
+      "3.064%": true
+    }
+  },
+  "limitations": [
+    "Pass1 reconstructed by documented inverse; original challenge request was not persisted",
+    "2026-10-08 uses historical input with current baseline, not historical prompt reproduction",
+    "Two pairs only; stochastic model behavior and no repeated samples",
+    "Evidence spot check is string presence, not full numeric/factual validation"
+  ],
+  "profit_evidence": false,
+  "downstream_note": "Pure existing merge/adapter/gate formulas; no DB write or execution. WARN remains publishable; ordering impact is potential, not observed."
+}

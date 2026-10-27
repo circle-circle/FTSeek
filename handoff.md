@@ -20,7 +20,7 @@
 - **实模**：2样本×双臂，primary串行4次/HTTP4次，0错误/重试/fallback，finish均stop；合计82,751 tokens、661,135ms。10/08 AMD：AGREE/BUY→PARTIAL/BUY（challenged 0→2）；10/26 AMD：PARTIAL/SHORT不变（3→3）。
 - **下游纯公式**：10/08两臂均可发布，但baseline良/PASS/0.70→C-A中/WARN/0.35，可能改变执行排序，不是零行为变更；10/26均WARN/0.35。未写DB、checkpoint、bridge或记忆，未重启。
 - **verdict＝REPLAY_LIMITED**：静态及已观察行为未触发反例，但原挑战请求未存、Pass1为逆变换重建，10/08是历史输入+当前基线；仅两对/无重复/仅T1，SKIP/BLOCK/失败/T2–T4及反向单反证实模未覆盖，证据仅做字符串抽查。独立复核同意：不支持申请生产影子，不是FAIL或盈利证据。
-- **产物**：`/tmp/da_ca_replay_20261027_qoder/`（static/capture/evaluation及逐臂响应）；完整结果与限制见DEB §14。临时产物不是生产影子，未新增注册项。
+- **产物**：初轮static/capture/evaluation及逐臂响应已归档 `docs/offline/ca-20261027/initial_replay/`，变体补丁 `docs/offline/ca-20261027/ca_variant.patch`；完整结果与限制见DEB §14。归档不是生产影子，未新增注册项；原 `/tmp/da_ca_replay_20261027_qoder/` 仅作临时工作目录。
 - **下一步**：若再次获授权，仅用同一冻结data_text重新生成并冻结一次Pass1，再双臂共用该Pass1，补齐反例、失败/身份、重复与完整事实核验；新增模型调用另批。当前不调用更多模型、不进入生产影子、C-B或并发。
 
 最后更新：2026-10-27（本条）

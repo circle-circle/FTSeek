@@ -1,0 +1,53 @@
+{
+  "label": "challenger_abstain",
+  "date": "2026-10-26",
+  "symbol": "US.VZ",
+  "arms": {
+    "baseline": {
+      "system_fingerprint": "bd4f78da4ac7",
+      "system_sha256": "5053e09ff2a24d5f1fe128cbd16858cbafa9aa963dd732522970bab2c77506df",
+      "user_sha256": "b962b80f45ce4d3f6a0eab8044914e09d896e0e3f485266654247f631a5345ec",
+      "kwargs": {
+        "temperature": 0.0,
+        "model": "deepseek-v4.1-flash",
+        "max_tokens": 16000,
+        "extra_body": {
+          "enable_thinking": true
+        },
+        "timeout": 300
+      },
+      "data_text_sha256": "5d58496c7b694f6b651926a4675ba0cefd6670ddbacbf683b54286dd49b24075",
+      "data_tail_exact": true,
+      "analysis_view_sha256": "fa3099d1403bdcba36f05818eb5a30dce0271877547b02c0490e436e398e05c1"
+    },
+    "variant": {
+      "system_fingerprint": "40e9681c9661",
+      "system_sha256": "d429ce5a2372a8bd7da8f6e4d9bc0b512ee66a68c09eb9e1403ea8e9551d39d3",
+      "user_sha256": "8e8223ed51ebfd0b1973c60a0189a067f899cefb0120ed256f6fc566cf09a6b9",
+      "kwargs": {
+        "temperature": 0.0,
+        "model": "deepseek-v4.1-flash",
+        "max_tokens": 16000,
+        "extra_body": {
+          "enable_thinking": true
+        },
+        "timeout": 300
+      },
+      "data_text_sha256": "5d58496c7b694f6b651926a4675ba0cefd6670ddbacbf683b54286dd49b24075",
+      "data_tail_exact": true,
+      "analysis_view_sha256": "fa3099d1403bdcba36f05818eb5a30dce0271877547b02c0490e436e398e05c1"
+    }
+  },
+  "historical_challenger_hash": "bd4f78da4ac7",
+  "historical_model": "kimi-k2.6",
+  "historical_tier": "fallback_independent",
+  "pass1_reconstruction": "documented_inverse; original request not persisted",
+  "postprocessing_removed": [
+    "debate_outcome",
+    "symbol",
+    "name",
+    "confidence(post-merge)",
+    "challenger_risks:4",
+    "claim_markers:0"
+  ]
+}

@@ -671,6 +671,8 @@ ORDER BY symbol, id;
 
 结果汇总：`static_contract.json`、`capture_contract.json`、`evaluation.json`；完整逐臂响应在 `results/`。临时目录清理后，以上命令需先按本节hash与差异重新构建夹具，不得从生产最新数据补造历史输入。
 
+**持久归档（2026-10-27补充）**：初轮原始输入、捕获、逐臂响应与评估已归档 `docs/offline/ca-20261027/initial_replay/`；C-A变体补丁为 `docs/offline/ca-20261027/ca_variant.patch`，生产基线由外部提交 `f29a9d37722d16d626cab6f7898f02689994d26d` 与本节SHA256锚定。`ARCHIVE_INDEX.json` 统一登记初轮与fresh文件哈希；复核以归档为准。
+
 ---
 
 ## 15. C-A fresh Pass1证据／JSON／gate-conf验收：OFFLINE_CHECK_PASS_LIMITED（2026-10-27）
