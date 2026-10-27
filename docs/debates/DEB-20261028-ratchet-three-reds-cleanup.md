@@ -106,8 +106,13 @@
 | 三守卫 | `test_except_pass_ratchet` / `test_pipeline_size_ratchet` / `test_w456_log_hygiene_ratchet` = **20 passed** |
 | except:pass 实测 | **900**（`app 599 + scripts 267 + ops 26 + main 6 + config 2`），基线 900，tight 检查通过 |
 | pipeline.py | **3,664** ≤ 3,700 |
-| 回归 | `tests/playbook` **1,158 passed**（与改动前同数）；非 playbook 面用 HEAD worktree 等基对比，新增失败 0（`tests/coordinator/test_coordinator_phase_a.py::test_capital_allocator_persists_asynchronously_outside_hot_path` 在基线上同样失败 = 既有红，非本批引入） |
+| 回归 | `tests/playbook` **1,158 passed**（与改动前同数）；相关面 49 个测试文件（覆盖 19 个改动模块 + 6 条棘轮 + 4 个 LIVE STOP 契约）= **667 passed / 1 skipped**，同集合在 HEAD worktree 等基跑 = 663 passed + 4 failed，逐个查明：1 个是「旧基线 × 旧代码」的设计性红（`test_except_pass_not_growing`）、3 个是裸 worktree 缺 `data/` 生产库的环境性红（`test_open_position_sl_tp_contract` / `test_extended_hours_entry_executor` / `test_da_bridge_dingtalk_push`，均报 `no such table: open_positions`）⇒ **相关面新增失败 0**。另核一处既有红：`tests/coordinator/test_coordinator_phase_a.py::test_capital_allocator_persists_asynchronously_outside_hot_path` 在 HEAD 上同样失败 = 非本批引入 |
 | 编译/静态 | 19 个改动文件 `py_compile` 全过；`pyflakes` 无 undefined name（仅存量 unused/f-string 提示） |
+
+**未证（诚实边界）**：非 playbook 全量 6,892 例**没有**跑完等基对比 —— 单次 >10 min 被中止，两次并行还互相抢 I/O。
+故本 DEB 只主张「相关面 49 文件新增失败 0 + 已核 1 处既有红」，**不主张**「全仓无新增失败」。
+若后续要补这条，做法：`git worktree add --detach /tmp/wt_x <改动前提交>`，两侧同一 `pytest tests/ -q --ignore=tests/playbook`
+各跑一次（**串行，勿并行**），`comm -13` 比 FAILED 列表；裸 worktree 缺 `data/` 的条目须能解释成环境原因。
 
 ## 边界声明（不许被后续批悄悄扩大）
 
