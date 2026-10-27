@@ -201,7 +201,12 @@ class TestGetDailyKlineGate:
         assert calls == []
         assert out == bars[-30:]
 
-    def test_quota_free_path_fetches_and_caches(self, provider):
+    def test_quota_free_path_fetches_and_caches(self, provider, tmp_path, monkeypatch):
+        # [RFC-171 补] 生产落盘缓存 data/cache/daily_kline_v1.json 已含 US.GOOG 上一交易日
+        #   定稿 bar ⇒ _daily_disk_load 命中后会直接返回缓存, OpenD 一次都不打 (非产品 bug,
+        #   而是测试非封闭)。这里把落盘路径钉到 tmp ⇒ 装载为空, 才真正测到"取数"分支。
+        import app.data.futu_lv3_provider as _fp
+        monkeypatch.setattr(_fp, "_DAILY_DISK_PATH", str(tmp_path / "daily_kline_v1.json"))
         real_today = date.today().isoformat()
         df = pd.DataFrame({
             "time_key": [f"{real_today} 00:00:00"] * 100,
