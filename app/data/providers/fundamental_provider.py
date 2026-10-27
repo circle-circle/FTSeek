@@ -2,9 +2,12 @@
 基本面数据 Provider
 
 聚合多个数据源，按优先级降级：
-  1. Finnhub (主) - 财务指标 + 分析师评级 + 新闻 + 财报日历
-  2. Yahoo Finance (备) - 补充财务数据
-  3. Alpha Vantage (备) - 最终降级
+  1. Futu market_snapshot (主) - 财务指标 (pe/市值/52w/ROE/股息)
+  2. Finnhub (备) - 财务指标 + 分析师评级 + 新闻 + 财报日历
+
+2026-10-27: Yahoo / AlphaVantage 两腿已删除 —— 均为恒不产出分支
+(Yahoo 的取值条件 market_data["fundamentals"] 全历史从未存在; AlphaVantage 是 return None 桩)。
+真实降级链 = Futu → Finnhub, 两者皆失败时返回 status=failed (下游 → data_quality=missing)。
 
 对外接口统一，下游不关心具体数据源。
 """
@@ -88,19 +91,13 @@ class FundamentalProvider(BaseDataProvider):
             self._fundamental_cache[symbol] = (result, now_ts)  # P1-3 缓存写入
             return result
 
-        # 降级 2: Yahoo Finance
-        logger.info(f"[FundamentalProvider] Finnhub failed, trying Yahoo: {symbol}")
-        result = self._fetch_yahoo(symbol)
-        if result and result.get("status") == "ok":
-            self._fundamental_cache[symbol] = (result, now_ts)  # P1-3 缓存写入
-            return result
-
-        # 降级 3: Alpha Vantage
-        logger.info(f"[FundamentalProvider] Yahoo failed, trying AlphaVantage: {symbol}")
-        result = self._fetch_alphavantage(symbol)
-        if result and result.get("status") == "ok":
-            self._fundamental_cache[symbol] = (result, now_ts)  # P1-3 缓存写入
-            return result
+        # 2026-10-27 [RFC-XXX 待补]: 删除两条恒不产出的死腿 (Yahoo / AlphaVantage)
+        #   Yahoo: _fetch_yahoo 的成立条件 market_data["fundamentals"] 在
+        #     yahoo_provider.get_market_data() 里从未存在 (git log -S 全历史 0 命中)
+        #     ⇒ 即便 yfinance 可用也恒返回 None; 45 天日志 5 次触达 0 次成功,
+        #     且每次空转 6-11s (yfinance 库 crumb 链路 429/空体)。
+        #   AlphaVantage: 该腿本身即 `return None` 桩。
+        #   ⇒ 真实降级链只剩 Futu → Finnhub (A10 期 fundamental 质量 ok 135/135)。
 
         # 全部失败
         return {
@@ -325,49 +322,3 @@ class FundamentalProvider(BaseDataProvider):
             "data_source": "finnhub",
             "fetched_at": now_iso,
         }
-
-    def _fetch_yahoo(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """从 Yahoo Finance 获取（降级数据源）"""
-        try:
-            from app.data.yahoo_provider import YahooFinanceProvider
-            yf = YahooFinanceProvider()
-            bare = symbol.replace("US.", "").replace("HK.", "").upper()
-            
-            market_data = yf.get_market_data(bare)
-            
-            if market_data and market_data.get("fundamentals"):
-                now_iso = now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
-                fund = market_data["fundamentals"]
-                return {
-                    "status": "ok",
-                    "data": {
-                        "financials": {
-                            "market_cap": fund.get("market_cap", 0),
-                            "pe_ttm": fund.get("pe_ratio", 0),
-                            "eps_ttm": fund.get("eps", 0),
-                            "source": "yahoo",
-                            "fetched_at": now_iso,
-                        },
-                        "_sources": {"financials": "ok"},
-                    },
-                    "data_source": "yahoo",
-                    "fetched_at": now_iso,
-                }
-        except Exception as e:
-            logger.debug(f"[FundamentalProvider] Yahoo error: {e}")
-        
-        return None
-
-    def _fetch_alphavantage(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """从 Alpha Vantage 获取（最终降级）"""
-        try:
-            from app.data.alphavantage_provider import AlphaVantageProvider
-            av = AlphaVantageProvider()
-            bare = symbol.replace("US.", "").replace("HK.", "").upper()
-            
-            # AlphaVantage 没有直接的基本面 API，跳过
-            return None
-        except Exception as e:
-            logger.debug(f"[FundamentalProvider] AlphaVantage error: {e}")
-        
-        return None

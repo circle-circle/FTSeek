@@ -278,12 +278,21 @@ class RiskStateMachine:
             except Exception:
                 pass
         
-        # 降级: Yahoo Finance
+        # 降级: VIXMonitor (FRED→AlphaVantage→Finnhub VIXY→Yahoo REST)
+        # 2026-10-27: 原走 YahooFinanceProvider().get_vix(), 该方法只是纯转发到
+        #   VIXMonitor().get_vix() ⇒ 直连, 行为逐字不变, 去掉 yfinance 依赖。
         if vix is None:
             try:
-                from app.data.yahoo_provider import YahooFinanceProvider
-                yf = YahooFinanceProvider()
-                vix = yf.get_vix()
+                from app.risk.vix_monitor import VIXMonitor
+                vix = VIXMonitor().get_vix()
+                if vix is None:
+                    # 保留原 provider 的降级留痕 (键名/文案逐字不变, 看板口径不漂)
+                    try:
+                        from app.core.degradation_monitor import get_degradation_monitor
+                        get_degradation_monitor().record(
+                            "yahoo_vix_fallback", "VIXMonitor returned None")
+                    except Exception:
+                        pass
             except Exception:
                 pass
         

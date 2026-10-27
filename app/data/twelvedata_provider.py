@@ -624,7 +624,8 @@ class TwelveDataProvider:
     def get_vix(self) -> float:
         """获取 VIX（免费计划不支持 VIX 查询，直接返回默认值 20.0）"""
         # TwelveData 免费计划不支持 VIX 指数，调用会返回 symbol invalid 错误
-        # VIX 由 FinnhubProvider 或 YahooFinanceProvider 提供
+        # VIX 由 VIXMonitor 提供 (Finnhub VIXY 代理 / FRED / AlphaVantage / Yahoo REST 兜底)
+        # 2026-10-27: 原文案写 "FinnhubProvider 或 YahooFinanceProvider", 后者已退役
         logger.debug("[TwelveData] VIX 查询跳过（免费计划不支持），返回默认值 20.0")
         return 20.0
 
