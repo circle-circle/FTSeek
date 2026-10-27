@@ -3,6 +3,7 @@ import json
 import sqlite3
 
 from app.playbook import pipeline
+from app.playbook.pipeline_parts import live_stop_guard as _lsg
 
 
 def _db(tmp_path):
@@ -93,7 +94,9 @@ def _patch_halt(monkeypatch):
         calls.append((symbol, reason, detail, stop_order_id))
         return {"action": "halted", "reason": reason, "detail": detail}
 
-    monkeypatch.setattr(pipeline, "_halt_live_stop_protection_gap", fake_halt)
+    # [阶段15 2026-10-28] 本体迁 live_stop_guard ⇒ 锚点钉到真源模块 (pipeline 只 re-export,
+    # 对 pipeline 打补丁不再穿透到本族内部调用)。
+    monkeypatch.setattr(_lsg, "_halt_live_stop_protection_gap", fake_halt)
     return calls
 
 
@@ -285,7 +288,7 @@ class _StopStatusBroker:
 def test_partial_stop_fill_only_emits_aggregate_alert(monkeypatch):
     alerts = []
     monkeypatch.setattr(
-        pipeline, "_alert_broker_stop_partial_fill",
+        _lsg, "_alert_broker_stop_partial_fill",
         lambda *args: alerts.append(args),
     )
     meta = {"sl_broker_order_id": "STOP-1"}
@@ -305,7 +308,7 @@ def test_protection_gap_alerts_once_and_halts_without_sell(monkeypatch):
         def push_text(self, *args, **kwargs):
             pushes.append((args, kwargs))
 
-    monkeypatch.setattr(pipeline, "_LIVE_GUARD_ALERTED", set())
+    monkeypatch.setattr(_lsg, "_LIVE_GUARD_ALERTED", set())
     monkeypatch.setattr("app.push.get_push_hub", lambda: _Hub())
     halts = []
     monkeypatch.setattr(

@@ -19,6 +19,7 @@ from app.playbook.live_arm_gate import (
     read_live_arm_halt,
 )
 from app.playbook import pipeline
+from app.playbook.pipeline_parts import live_stop_guard as _lsg
 from app.playbook.playbook_service import PlaybookService
 from app.storage.trade_store import TradeStore
 
@@ -397,7 +398,8 @@ def test_live_rule_exit_books_raced_stop_fill_instead_of_closing_twice(monkeypat
         reconciled.append((dual, conn, reconcile_row, reconcile_meta))
         return True
 
-    monkeypatch.setattr(pipeline, "_reconcile_broker_stop_exit", fake_reconcile)
+    # [阶段15 2026-10-28] 本体迁 live_stop_guard ⇒ 锚点钉真源模块。
+    monkeypatch.setattr(_lsg, "_reconcile_broker_stop_exit", fake_reconcile)
 
     release = pipeline._release_live_broker_stop_for_rule_exit(
         broker, connection, row, meta
