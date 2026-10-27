@@ -117,6 +117,35 @@ def test_untimestamped_error_lines_skipped_and_counted(env):
     assert env["pushed"] == [], "无时间戳行被计入 ⇒ 恒告警 (原缺陷 3)"
 
 
+def test_benign_yfinance_throttle_noise_does_not_trigger(env):
+    """外部库瞬时限流「假 ERROR」(yfinance 降级路径): 不计入、不告警 (2026-10-27 增)。
+
+    实证 10-27: Yahoo 限速使 yfinance 自身打 ERROR, 但调用侧已捕获 (None → data_quality
+    missing, 下轮重试), 4 只失败票中 3 只本不入选、CVLT 仍 ok_dims=19 入场 ⇒ 零交易影响。
+    """
+    ts = env["now"] - timedelta(minutes=5)
+    _write(env, "ftseek_us.log", [
+        _line(ts, "yfinance", "ERROR",
+              "Failed to get ticker 'CVE' reason: ('Connection aborted.', ConnectionResetError(104, 'Connection reset by peer'))"),
+        _line(ts, "yfinance", "ERROR", "$CVE: possibly delisted; no price data found  (period=60d)"),
+        _line(ts, "yfinance", "ERROR", "$DIS: no price data found (period=60d)"),
+    ])
+    assert _run(env) == 0
+    assert env["pushed"] == [], "yfinance 降级路径瞬时限流噪音不应触发 P0 告警"
+
+
+def test_benign_filter_does_not_mask_real_error(env):
+    """窄豁免不得误伤: 同文件里的真 ERROR 仍必须触发。"""
+    ts = env["now"] - timedelta(minutes=5)
+    _write(env, "ftseek_us.log", [
+        _line(ts, "yfinance", "ERROR", "Failed to get ticker 'CVE' reason: reset"),
+        _line(ts, "app.data.router", "ERROR", "所有数据源均失败: US.GPN"),
+    ])
+    assert _run(env) == 0
+    assert len(env["pushed"]) == 1, "真 ERROR 必须仍触发 (窄豁免误伤)"
+    assert "所有数据源均失败" in env["pushed"][0]["body"]
+
+
 # ─────────────────── 判据 3: JSON 健壮性 / 正文可读 ───────────────────
 
 def test_message_with_quote_and_newline_stays_pushable(env):

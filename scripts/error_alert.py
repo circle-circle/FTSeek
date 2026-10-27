@@ -85,6 +85,23 @@ TB_HEADER = "Traceback (most recent call last):"
 _TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}")
 _TAIL_BYTES = 2_000_000    # 当前档只读尾部 2MB (15min 窗实测 ~12KB; 轮转档全读)
 
+# 外部库瞬时限流「假 ERROR」窄豁免 (2026-10-27 增):
+#   yahoo/yfinance 逐票取数在**降级路径**上被 Yahoo 限速时, yfinance 库会打自己的 ERROR
+#   日志 ("Failed to get ticker ..." / "possibly delisted; no price data found")。但调用侧
+#   (_fetch_yahoo) 已捕获异常返回 None (→ data_quality=missing, 下轮重试), **不反映本系统
+#   故障**; 实证: 10-27 4 只失败票中 3 只本就不入选, CVLT 仍 ok_dims=19 正常入场。
+#   只按「[yfinance] ∧ 明确瞬时限流文案」窄豁免 —— 真断供/其它来源失败仍会经别的 ERROR 暴露。
+BENIGN_EXTERNAL = (
+    ("[yfinance]", "Failed to get ticker"),
+    ("[yfinance]", "possibly delisted"),
+    ("[yfinance]", "no price data found"),
+)
+
+
+def _is_benign(line: str) -> bool:
+    """True = 已知外部库降级路径噪音, 不计入 ERROR 突增 (行仍留在日志里供诊断)。"""
+    return any(all(tok in line for tok in pair) for pair in BENIGN_EXTERNAL)
+
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 # logger 名用 `ftseek.<module>` (DEB §5 建议的 SSOT 约定), **不用裸名** —— 裸名 logger 是
@@ -223,6 +240,8 @@ def scan(sources, since: str = None, until: str = None, tail_bytes: int = 0) -> 
             if since and ts16 < since:
                 continue
             if until and ts16 >= until:
+                continue
+            if _is_benign(line):
                 continue
             res["count"] += 1
             res["covered"].add(ts16[:10])
