@@ -93,7 +93,7 @@ def _load_state():
         if isinstance(s, dict) and s.get('date') == today:
             return s
     except FileNotFoundError:
-        pass  # 首日无 state 属正常 (本文件唯一存量 except:pass, 棘轮基线内)
+        return {}  # 首日无 state 属正常; 显式 return 而非 pass (2026-10-28 清剿)
     except Exception as _e:
         print(f"[warn] state 读取失败 (fail-open 照发): {_e}", file=sys.stderr)
     return {}

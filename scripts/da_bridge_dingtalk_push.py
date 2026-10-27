@@ -107,7 +107,9 @@ def _da_terminal_today(date: str) -> bool:
                 continue
             try:
                 row = json.loads(line)
-            except Exception:
+            except Exception as _led_e:
+                # 2026-10-28 except:pass 清剿: 账本坏行 ⇒ 终态判定可能漏, 会重复推送。
+                print(f"[warn] DA 排期账本坏行跳过: {_led_e} | {line[:120]}", file=sys.stderr)
                 continue
             if row.get("date") == date and row.get("status") in _DA_TERMINAL:
                 return True

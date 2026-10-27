@@ -66,7 +66,9 @@ def _already_settled():
                 continue
             try:
                 r = json.loads(line)
-            except ValueError:
+            except ValueError as _bad_e:
+                # 2026-10-28 except:pass 清剿: 坏行静默跳 ⇒ 去重集合少算, 结算会重复写。
+                print(f"[skip] settled 账本坏行: {_bad_e} | {line[:120]}", file=sys.stderr)
                 continue
             if r.get("settled"):
                 done.add("%s|%s|%s" % (r.get("et_date"), r.get("session"), r.get("symbol")))
@@ -232,7 +234,9 @@ def main():
             continue
         try:
             doc = json.loads(path.read_text())
-        except (OSError, ValueError):
+        except (OSError, ValueError) as _rd_e:
+            # 2026-10-28 except:pass 清剿: 影子档读不出 = 该日永远结不了, 必须可见。
+            print(f"[skip] 影子档读取/解析失败 {path.name}: {_rd_e}", file=sys.stderr)
             continue
         for key, row in (doc.get("rows") or {}).items():
             if "%s|%s|%s" % (et_date, row.get("session"), row.get("symbol")) in settled_ids:
@@ -258,7 +262,9 @@ def main():
             for line in fh:
                 try:
                     r = json.loads(line)
-                except ValueError:
+                except ValueError as _bad2_e:
+                    # 2026-10-28 except:pass 清剿: 同上, 结算账本坏行留痕。
+                    print(f"[skip] settled 账本坏行(main): {_bad2_e} | {line[:120]}", file=sys.stderr)
                     continue
                 if r.get("settled"):
                     all_rows.append(r)

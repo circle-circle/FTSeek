@@ -198,8 +198,10 @@ class TradeStore:
                 # OperationalError. 补 ALTER 使 _init_db 对任意历史 schema 幂等.
                 try:
                     conn.execute("ALTER TABLE trade_records ADD COLUMN futu_order_id TEXT")
-                except Exception:
-                    pass  # 列已存在 (绝大多数 DB 由 CREATE TABLE 创建时即有)
+                except Exception as _ddl_e:
+                    # 2026-10-28 except:pass 清剿: 绝大多数是"列已存在", 但若是锁/权限类
+                    # 失败则下游 INSERT 才会炸 — 留痕以区分两者。
+                    logger.info("[trade_store] futu_order_id 迁移跳过 (多为列已存在): %s", _ddl_e)
 
                 # Karpathy 统一记录: 添加来源分类 + 理由字段 (2026-04-29)
                 # Phase A (2026-05-14): 加 owner_strategy 列, 与 source_type 互补

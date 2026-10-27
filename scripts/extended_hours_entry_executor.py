@@ -468,7 +468,9 @@ def _research_source_candidates(session, qctx, existing):
             price = float(item.get("px") or 0)
             change = float(item.get("chg") or 0)
             volume = float(item.get("vol") or 0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as _px_e:
+            # 2026-10-28 except:pass 清剿: 坏报价行静默跳 ⇒ 候选池少票却无痕迹。
+            print(f"[warn] 研究臂候选坏报价行跳过: {_px_e} | {str(item)[:100]}", file=sys.stderr)
             continue
         item["_source"] = source_of.get(item.get("symbol"), "research")
         # 源头预过滤: 价格下限 + 独立财报涨幅带 + 有量; 其余闸交给研究臂下游。

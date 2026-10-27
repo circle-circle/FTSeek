@@ -328,8 +328,9 @@ class FinnhubProvider:
             _cutoff = (datetime.now() - timedelta(days=2)).timestamp()
             news_list = [a for a in news_list
                          if not a.get("datetime") or float(a.get("datetime")) >= _cutoff]
-        except Exception:
-            pass
+        except Exception as _cut_e:
+            # 2026-10-28 except:pass 清剿: 时间过滤失败 ⇒ 新闻不过滤(噪声进 sentiment), 留痕即可。
+            logger.info("[Finnhub] %s 新闻时间过滤失败, 保留全量: %s", symbol, _cut_e)
 
         keywords = _SYMBOL_KEYWORDS.get(symbol, [self._to_ticker(symbol)])
         score = 0.0

@@ -661,8 +661,10 @@ class PlaybookDataCollector:
                         try:
                             next_dt = _dt.datetime.strptime(next_date, "%Y-%m-%d")
                             days_until = (next_dt.date() - today).days
-                        except Exception:
-                            pass
+                        except Exception as _du_e:
+                            # 2026-10-28 except:pass 清剿: 财报日格式漂移 ⇒ days_until 缺失
+                            # (下游按"未知"处理), 必须可见否则日历质量无从判断。
+                            logger.info("[data_collector] 财报日解析失败 date=%s: %s", next_date, _du_e)
                     quality = "ok"
             except Exception as e:
                 logger.debug(f"Finnhub earnings calendar failed for {symbol}: {e}")

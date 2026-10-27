@@ -52,14 +52,18 @@ def _bars(symbol: str, date_str: str) -> Optional[list[tuple]]:
             continue
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as _raw_e:
+            # 2026-10-28 except:pass 清剿: 候选档坏 ⇒ 回放少一个臂却看不出来。
+            print(f"[skip] 回放候选档解析失败 {path.name}: {_raw_e}", file=sys.stderr)
             continue
         out = []
         for row in raw:
             try:
                 out.append((datetime.strptime(str(row[0]), "%Y-%m-%d %H:%M:%S"),
                             float(row[1]), float(row[2]), float(row[3]), float(row[4])))
-            except Exception:
+            except Exception as _row_e:
+                # 2026-10-28 except:pass 清剿: 坏 bar 行静默跳 ⇒ 该 arm 的 bars 变短。
+                print(f"[skip] bar 行解析失败: {_row_e} | {str(row)[:100]}", file=sys.stderr)
                 continue
         if out:
             return out

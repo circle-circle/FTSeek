@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import json
 import re
 import sqlite3
@@ -164,8 +165,9 @@ def classify_price_basis(
     stale_days = None
     try:
         stale_days = (date.fromisoformat(trade_date) - date.fromisoformat(bar_date)).days
-    except ValueError:
-        pass
+    except ValueError as _sd_e:
+        # 2026-10-28 except:pass 清剿: 日期坏 ⇒ stale_days 缺项, 审计结论会乐观。
+        print(f"[warn] stale_days 计算失败 ({trade_date} / {bar_date}): {_sd_e}", file=sys.stderr)
 
     result: Dict[str, Any] = {
         "session": session,
@@ -221,7 +223,9 @@ def _pub_date(v: Any, trade_date: str) -> Optional[date]:
                 if d > date.fromisoformat(trade_date):
                     d = d.replace(year=d.year - 1)
             return d
-        except ValueError:
+        except ValueError as _pd_e:
+            # 2026-10-28 except:pass 清剿: 格式不匹配的候选静默跳, 留痕以免"没找到"被误读。
+            print(f"[warn] 发布日期解析失败, 试下一种格式: {_pd_e} | {s!r}", file=sys.stderr)
             continue
     return None
 

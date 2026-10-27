@@ -61,8 +61,9 @@ def _playbook_position_fields(cursor, symbol: str):
         try:
             if _now_et_fields is not None:
                 return _now_et_fields().isoformat()
-        except Exception:
-            pass
+        except Exception as _fee:
+            # 2026-10-28 except:pass 清剿: 时间戳降级必须留痕 (后续还有 zoneinfo 兜底)。
+            logger.info("[position_sync] ET 时间戳生成失败, 回落 zoneinfo: %s", _fee)
         try:
             from zoneinfo import ZoneInfo
             return datetime.now(ZoneInfo("America/New_York")).isoformat()
@@ -86,8 +87,11 @@ def _playbook_position_fields(cursor, symbol: str):
             cur_sl = float(_row[0] or 0)
             cur_tp = float(_row[1] or 0)
             cur_entry = str(_row[2] or "")
-    except Exception:
-        pass
+    except Exception as _cur_e:
+        # 2026-10-28 except:pass 清剿: 读失败 ⇒ 下面的 SL/TP 会静默降级成 0/0,
+        # 最终落库的是"没有止损"的仓 — 这属于真值降级, 必须可见。
+        logger.warning("[position_sync] %s open_positions 现值读取失败 (SL/TP 降级): %s",
+                       symbol, _cur_e, exc_info=True)
 
     # 2) trade_record 真源 (未平, 按 id 倒序取最新一条)
     tr_sl = tr_tp = 0.0
@@ -105,10 +109,14 @@ def _playbook_position_fields(cursor, symbol: str):
                 if isinstance(_md, dict):
                     tr_sl = float(_md.get("stop_loss") or 0)
                     tr_tp = float(_md.get("take_profit") or 0)
-            except Exception:
-                pass
-    except Exception:
-        pass
+            except Exception as _md_e:
+                # 2026-10-28 except:pass 清剿: metadata 坏 ⇒ 真源 SL/TP 缺失。
+                logger.warning("[position_sync] %s trade_records.metadata 解析失败 (真源 SL/TP 缺失): %s",
+                               symbol, _md_e, exc_info=True)
+    except Exception as _tr_e:
+        # 2026-10-28 except:pass 清剿: 真源整条查询失败 (表/列缺失?) 同样是 SL/TP 降级。
+        logger.warning("[position_sync] %s trade_records 真源查询失败 (真源 SL/TP 缺失): %s",
+                       symbol, _tr_e, exc_info=True)
 
     sl = cur_sl if cur_sl > 0 else tr_sl
     tp = cur_tp if cur_tp > 0 else tr_tp

@@ -1003,7 +1003,9 @@ class DailyReviewGenerator:
                 for line in handle:
                     try:
                         row = json.loads(line)
-                    except (TypeError, ValueError):
+                    except (TypeError, ValueError) as _bad_e:
+                        # 2026-10-28 except:pass 清剿: 坏行跳过后方向映射会静默缺样本。
+                        logger.info("[daily_review] entry_confirm 坏行跳过: %s", _bad_e)
                         continue
                     if row.get('date') != date or not row.get('decision_id'):
                         continue

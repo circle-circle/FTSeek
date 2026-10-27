@@ -2034,8 +2034,9 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
                 symbol, f"HIGH_VOL gate check failed: {_hv_err}",
                 "HIGH_VOL_CHECK_ERROR", strength=signal.strength,
                 confidence=None, direction=direction_str)
-        except Exception:
-            pass
+        except Exception as _rj_e:
+            # 2026-10-28 except:pass 清剿: 拒单账本写失败 ≠ 主流程失败 (上面已 ERROR 落日志)。
+            logger.info("[HIGH_VOL门禁] %s 拒单记账失败: %s", symbol, _rj_e)
         return False
 
 

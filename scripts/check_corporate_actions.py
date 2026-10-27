@@ -117,7 +117,9 @@ def fetch_corporate_actions(ctx: Any, symbols: Iterable[str], *,
             for row in ([] if getattr(data, "empty", True) else data.to_dict("records")):
                 try:
                     ex_date = date.fromisoformat(str(row.get("ex_div_date", ""))[:10])
-                except (TypeError, ValueError):
+                except (TypeError, ValueError) as _ex_e:
+                    # 2026-10-28 except:pass 清剿: 除权日坏 ⇒ 该事件被静默丢弃, 可能漏风控。
+                    print(f"[warn] 除权日解析失败跳过: {_ex_e} | {str(row)[:100]}", file=sys.stderr)
                     continue
                 if not (start_date <= ex_date <= end_date):
                     continue

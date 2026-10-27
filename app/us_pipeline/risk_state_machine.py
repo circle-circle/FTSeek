@@ -291,8 +291,10 @@ class RiskStateMachine:
                         from app.core.degradation_monitor import get_degradation_monitor
                         get_degradation_monitor().record(
                             "yahoo_vix_fallback", "VIXMonitor returned None")
-                    except Exception:
-                        pass
+                    except Exception as _dm_e:
+                        # 2026-10-28 except:pass 清剿: 降级留痕本身失败必须可见, 否则
+                        # 看板会显示"未降级"而实际已降级。
+                        logger.info("[risk_state] 降级留痕写入失败: %s", _dm_e)
             except Exception:
                 pass
         

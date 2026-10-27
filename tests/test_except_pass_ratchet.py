@@ -14,7 +14,22 @@ import pathlib
 import re
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-BASELINE = 921  # 2026-10-08 棘轮清剿批调低 (924→921): 9/30 基线后 +20 处全量就地清剿
+BASELINE = 900  # 2026-10-28 日志卫生批调低 (921→900), 用户裁「按建议执行」。两件事同一批:
+                  #   ① **扫描面收敛到生产可见面** — 新增 "docs" 排除。9/30 基线后 +40 处
+                  #      全部来自 `docs/analysis/2026-10-27-da-ca-offline-replay/` 里两个
+                  #      一次性离线回放程序 (baseline.py / variant.py 各 20 处)。它们不是
+                  #      生产代码 (无 import 引用、无调度载体), 是 DEB-20261027 的证据归档包
+                  #      (带 README + SHA256SUMS) — 改它们等于篡改证据校验和。判据与本仓
+                  #      W4/W6 日志卫生棘轮的扫描面 (_HYGIENE_ROOTS = app/scripts/ops/config
+                  #      + main.py) 对齐; 边界声明: docs/ 下不得再放生产逻辑, 否则逃出本棘轮。
+                  #   ② **清剿基线后真实新增 29 处** (剔除 10-09 拆分搬家 51 处), 分布:
+                  #      position_sync 4 (SL/TP 真值降级→warning) / push/health 2 (锁清理) /
+                  #      finnhub 1 / order_executor 1 / data_collector 1 / pipeline 1 /
+                  #      daily_review 1 / trade_store 1 / risk_state_machine 1 /
+                  #      ops/intraday_diagnose 1 (首日无 state 改显式 return) /
+                  #      scripts 15 (坏行/坏bar/坏日期 → stderr 留痕或 logger.debug)。
+                  #      全部零控制流变更 (pass→留痕, continue→留痕+continue)。
+                  #   921 + 40(docs) − 40(排除) − 29(清剿) = 900 — 实测复核过。只降不升。
                   #   (pipeline 4: 双锚影子 band 沿反推/patient_exit 跨日守卫/EOD 兜底/arm 连接关闭;
                   #    intraday_diagnose_late 1: 去重指纹 fail-open 留痕 stderr;
                   #    scripts 15: da_fresh_event_batch/reprice×2/ttm×3/deb20261008×5/
@@ -60,7 +75,11 @@ BASELINE = 921  # 2026-10-08 棘轮清剿批调低 (924→921): 9/30 基线后 +
                   #   pre_trade_check 系统熔断 fail-open / DEGRADED 门槛折扣 fail-open,
                   #   data_freshness_watchdog 冷却状态写失败 (重复告警根因) — 只降不升
 _EXCLUDE_PARTS = {"venv", "node_modules", ".git", "tests", "archive",
-                  "__pycache__", ".backup_premigration", "obsidian_vault"}
+                  "__pycache__", ".backup_premigration", "obsidian_vault",
+                  # 2026-10-28 扫描面收敛到生产可见面 (用户裁「按建议执行」): docs/ 是文档与
+                  # 证据归档面 (含一次性离线回放程序), 无 import 引用、无调度载体; 纳入会
+                  # 让每次分析交付都染红棘轮。判据与 W4/W6 的 _HYGIENE_ROOTS 对齐。
+                  "docs"}
 _PATTERN = re.compile(r"except[^:\n]*:\s*\n\s*(pass|continue)\s*(?:#.*)?$", re.MULTILINE)
 
 

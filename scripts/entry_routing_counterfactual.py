@@ -101,7 +101,9 @@ def simulate_limit(
     for bar in bars:
         try:
             bar_dt = datetime.strptime(str(bar[0]), "%Y-%m-%d %H:%M:%S")
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as _bar_e:
+            # 2026-10-28 except:pass 清剿: 坏 bar 静默跳 ⇒ 反事实成交判定样本被削。
+            logger.info("[entry_routing] 坏 bar 跳过: %s (%s)", _bar_e, bar[0])
             continue
         if bar_dt <= start:
             continue
@@ -199,7 +201,10 @@ def compute(instructions: list[dict], trades: dict[str, dict]) -> dict:
             entry_dt = datetime.fromisoformat(str(trade["entry_time"]))
             if entry_dt.tzinfo is not None:
                 entry_dt = entry_dt.astimezone(ET).replace(tzinfo=None)
-        except Exception:
+        except Exception as _edt_e:
+            # 2026-10-28 except:pass 清剿: 入场时刻坏 ⇒ 该笔反事实被静默剔除。
+            logger.info("[entry_routing] entry_time 解析失败跳样本: %s (%s)",
+                        _edt_e, trade.get("entry_time"))
             continue
         bars = _load_bars(trade["symbol"], entry_dt.strftime("%Y-%m-%d"))
         if bars is None:

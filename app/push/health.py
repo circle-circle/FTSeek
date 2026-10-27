@@ -122,12 +122,13 @@ class HealthMonitor:
                 try:
                     if acquired:
                         fcntl.flock(fd, fcntl.LOCK_UN)
-                except Exception:
-                    pass
+                except Exception as _unlock_e:
+                    # 2026-10-28 except:pass 清剿: 解锁/关闭失败会让后续心跳"假独占", 留痕。
+                    logger.info("[PushHealth] 共享锁解锁失败: %s", _unlock_e)
                 try:
                     os.close(fd)
-                except Exception:
-                    pass
+                except Exception as _close_e:
+                    logger.info("[PushHealth] 共享锁 fd 关闭失败: %s", _close_e)
 
     def _read_shared_state(self) -> Dict:
         if not self.shared_state_path:

@@ -52,7 +52,9 @@ def latest_scan(path: Path = SCAN_PATH) -> Optional[Dict[str, Any]]:
     for line in path.read_text(encoding="utf-8").splitlines():
         try:
             record = json.loads(line)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as _rec_e:
+            # 2026-10-28 except:pass 清剿: 链路健康读数靠这份账本, 坏行必须可见。
+            print(f"[warn] 链路账本坏行跳过: {_rec_e} | {line[:120]}", file=sys.stderr)
             continue
         if record.get("type") == "scan":
             latest = record

@@ -48,6 +48,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import signal
 import subprocess
 import sys
@@ -206,8 +207,10 @@ def _started_ts_from_text(text: str):
         parts = text.split()
         if len(parts) >= 4:
             return datetime.strptime(" ".join(parts[1:3]), "%Y-%m-%d %H:%M:%S").timestamp()
-    except Exception:
-        pass
+    except Exception as _ts_e:
+        # 2026-10-28 except:pass 清剿: 启动时刻读不出 ⇒ 后续"是否已在生产 N 小时"判定失据。
+        print(f"[warn] systemd 启动时刻解析失败 (返回 None): {_ts_e} | {text[:80]!r}",
+              file=sys.stderr)
     return None
 
 
@@ -373,8 +376,9 @@ def hard_restart(pid: int, ts: str) -> tuple:
             return f"跳过硬停: 单元 {state}/{sub} (在途 job={pending_job})", inproc
         try:
             os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        except ProcessLookupError as _gone_e:
+            # 2026-10-28 except:pass 清剿: 目标已自行退出 (预期), 但硬停结论仍要能复盘。
+            print(f"[info] SIGKILL 目标已不存在 (自行退出) pid={pid}: {_gone_e}", file=sys.stderr)
         except Exception as e:
             return f"SIGKILL 失败, 需人工: {e}", inproc
         deadline = time.time() + HARD_KILL_WAIT_S

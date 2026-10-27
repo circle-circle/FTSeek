@@ -1236,7 +1236,9 @@ def _da_gate_buckets(trade_date: str, path_override: Optional[str] = None) -> Di
                         continue
                     try:
                         row = json.loads(line)
-                    except Exception:
+                    except Exception as _ln_e:
+                        # 2026-10-28 except:pass 清剿: 坏行静默跳 ⇒ 归因分桶少算却看不出来。
+                        logger.info("[playbook] DA gate 归因索引坏行跳过: %s (%s)", line[:120], _ln_e)
                         continue
                     if row.get("trade_date") != trade_date:
                         continue
