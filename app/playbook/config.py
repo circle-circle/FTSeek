@@ -29,6 +29,33 @@ logger = logging.getLogger(__name__)
 #   meta 无 _be_cushion_fee_aware 标记, 改其回退=变更在仓实时行为。
 BE_FALLBACK_FEE_CUSHION_PCT = 0.15
 
+# 退出参数指纹的**标注类豁免键** (2026-10-28, DEB-20261028 §15.8):
+#   这些键只记录口径出处/可达性, 不改变已实现 PnL ⇒ 不得进入 exit_config_version。
+#   登记条件: 全仓无运行时消费者 (grep 只有审计脚本/测试读) 且值不参与任何 SL/TP 计算。
+_EXIT_CONFIG_ANNOTATION_KEYS = ("bucket_schema_version", "deprecated_unreachable")
+
+
+def _strip_annotation_keys(node: Any) -> Any:
+    """Recursively drop annotation-only keys before hashing exit parameters.
+
+    2026-10-28 (DEB-20261028 §15.8): `bucket_schema_version` / `deprecated_unreachable`
+    只描述口径出处与桶可达性, 不改变任何已实现 PnL; 但它们住在整本
+    playbook_horizon.yaml 里, 整文件哈希会把"纯标签"当成"参数变更", 从而把
+    exit_config_version 推进一格 —— 实测后果是 scripts/okr_status.py 的
+    versioned_stats 按当前版本过滤, 样本从 98 笔直接归零 (假断代)。
+    纪律: 往 YAML 加**纯标注**键时必须登记进 `_EXIT_CONFIG_ANNOTATION_KEYS`,
+    否则会再造一次口径断点; 新键若真的影响退出行为, 不得登记。
+    """
+    if isinstance(node, dict):
+        return {
+            key: _strip_annotation_keys(value)
+            for key, value in node.items()
+            if key not in _EXIT_CONFIG_ANNOTATION_KEYS
+        }
+    if isinstance(node, list):
+        return [_strip_annotation_keys(item) for item in node]
+    return node
+
 
 class PlaybookConfig:
     """Playbook 配置包装器, 提供点号访问和默认值."""
@@ -151,7 +178,7 @@ class PlaybookConfig:
                 #   且未来新增退出键还会再漏 —— 整文件哈希让覆盖问题永久闭合。
                 #   过宽的代价仅是无关键变更多打一次版本号 (冻结期本就不该改任何键);
                 #   漏键的代价是 KR2 判分假绿。入场/仓位参数仍不纳入 (unified_config 侧)。
-                "horizon_config": self._horizon_config,
+                "horizon_config": _strip_annotation_keys(self._horizon_config),
                 "cooldown_sl_pct": self.get("cooldown_sl_pct", 4.0),
                 "early_tight_sl_enabled": self.get("early_tight_sl_enabled", False),
                 "early_tight_sl_minutes": self.get("early_tight_sl_minutes", 30),

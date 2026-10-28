@@ -1,13 +1,13 @@
 # 辩论库机器索引 (index_generated.md)
 
-> **本文件由 `scripts/build_debate_index.py` 生成** (2026-10-27), 请勿手改。
+> **本文件由 `scripts/build_debate_index.py` 生成** (2026-10-28), 请勿手改。
 > 决策摘要以 [README.md](README.md) 手工索引为准; 本页只做全量清单与漏登对账。
 
-共 **207** 个 DEB 文件。
+共 **210** 个 DEB 文件。
 
 ## 漏登对账
 
-⚠️ 以下 **8** 个近 14 天新文件未在 README 索引收录 (需补登):
+⚠️ 以下 **9** 个近 14 天新文件未在 README 索引收录 (需补登):
 
 - `DEB-20261014-geometry-restart-preregistration.md`
 - `DEB-20261016-strategy-attribution-confidence-ic-gates.md`
@@ -17,6 +17,7 @@
 - `DEB-20261023-ue-intraday-side-channel-adjudication.md`
 - `DEB-20261025-futu-live-safety-shadow.md`
 - `DEB-20261027-da-scope-and-confidence-coupling.md`
+- `DEB-20261028-ratchet-three-reds-cleanup.md`
 
 📦 历史归档 **168** 个未登文件 (执行记录类, 不强制登记, 本页全量清单可查):
 
@@ -399,4 +400,7 @@
 | [DEB-20261025-futu-live-safety-shadow](DEB-20261025-futu-live-safety-shadow.md) | 2026-10-25 | 已执行（P0 最小补丁 + P1 只读观测） | - | 97 |
 | [DEB-20261027-da-disagree-abstain-tier-fix](DEB-20261027-da-disagree-abstain-tier-fix.md) | 2026-10-27 | (未标注) | - | 287 |
 | [DEB-20261027-da-scope-and-confidence-coupling](DEB-20261027-da-scope-and-confidence-coupling.md) | 2026-10-27 | (未标注) | - | 726 |
-| [DEB-20261027-open-position-sl-and-placeholder-row-kind](DEB-20261027-open-position-sl-and-placeholder-row-kind.md) | 2026-10-27 | (未标注) | - | 255 |
+| [DEB-20261027-open-position-sl-and-placeholder-row-kind](DEB-20261027-open-position-sl-and-placeholder-row-kind.md) | 2026-10-27 | (未标注) | - | 293 |
+| [DEB-20261028-bucket-layering-and-tiered-exit](DEB-20261028-bucket-layering-and-tiered-exit.md) | 2026-10-28 | 进行中 / 第一批（P0+E1+A0）已实施并通过只读审计；A1/A2/B/C/E3 待裁 | 3 | 1250 |
+| [DEB-20261028-observability-and-ssot-batch](DEB-20261028-observability-and-ssot-batch.md) | 2026-10-28 | (未标注) | - | 220 |
+| [DEB-20261028-ratchet-three-reds-cleanup](DEB-20261028-ratchet-three-reds-cleanup.md) | 2026-10-28 | (未标注) | - | 136 |

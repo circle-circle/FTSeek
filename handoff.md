@@ -1,5 +1,49 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-28 晚 接管在途问题：口径修复 + 独立复核（已落地，零交易行为变更）
+
+- **用户裁决**：「确认 请直接根据接管在途问题做处理修复 重启」—— 独立复核方接手前两批在途改动，修口径缺陷并重启。
+- **复核结论**：前两批核心数字逐项复现（708 写入/43 无锚/幂等 708、CRM 1729 全字段、cap 610/185/4.1bps/101.6、近 20 日 124/124、E1 1159/1005/154/8、A0 structured 262/112/115/35）；`metadata_json` 重写未污染其他键（708 行语义 diff 除 `bucket_lineage` 外 0 处变化）。复盘 JOIN 扇出精确复现 12,282→390、9/16 5,962→18。
+- **修 3 项（均零交易行为变更）**：
+  ① `app/playbook/config.py` 新增标注键豁免（`bucket_schema_version`/`deprecated_unreachable` 不进 `exit_config_version`）⇒ 版本回到 **exit-ca4487172a6f**，OKR `versioned_stats` 的 30 天窗口不再被清零（修前该块 98 笔 → 0）；
+  ② `app/playbook/invalidation_contract.py` 文本价改为**方向感知 + 离入场锚最近 + ±30% 预注册带**，剔除百分比/日期/MA 窗口/跨资产数字；文本可用 279→**383**、规则 777→**881**、最大偏离 833%→**25.4%**，structured 三组逐字未变；
+  ③ `app/playbook/bucket_lineage.py` 桶选择对齐生产语义（缺边界按 999 兜底）+ 逐点对撞测试。
+- **数据**：血缘按新口径重算，**113 行** source_hash 变更后回填，二遍 708 unchanged/0 written/0 errors；CRM 的 243.45 / −0.45% / −0.1285×ATR 不变。备份 `data/backups/ftseek_us.db.backup.20261028_pre_textprice_fix`。
+- **测试**：本轮面 **86 passed**（含新 3 文件 25 例）；`test_invalidation_contract.py` 两个把旧解析器缺陷当不变量的用例已改语义并留痕（DEB §15.8.3）。
+- **部署**：`systemctl restart ftseek-us`。重启前置：未平仓仅 US.CRM、`exit_intents` 全 BOOKED、工作树仅本批文件。
+- **登记边界（不做）**：历史标签回溯（§15.9-1）、文本价"止损位 vs 取消条件"语义（A1 前必读 `text_price_basis`）、>30% 真实失效位判退化（A1 单列人工）、TP-RR 降噪依赖 meta 跨轮持久（下时段实测）。
+- **落档**：`DEB-20261028-bucket-layering-and-tiered-exit.md` §15.8（复核+修复）/§15.9（边界），§15.5 表加"口径变更留痕"，两口径不可混引。
+
+最后更新：2026-10-28 晚（本条）
+
+## 2026-10-28 分桶血缘 + 桶版本化 + 失效契约 A0（已落地，零交易行为变更）
+
+- **用户要求**：「按照建议先执行」——只做 DEB 第一批 **P0 口径冻结 + E1 桶版本化 + A0 契约编译**；不改入场/出场、仓位、止损止盈、trail、隔夜豁免、频率，不新开影子，不接 A2 自动平仓。
+- **实改（5 个新文件 + 1 个配置 + 3 个测试）**：新增 `app/playbook/bucket_lineage.py`（`bucket_lineage_v1` 纯函数）、`app/playbook/invalidation_contract.py`（`invalidation_contract_v1`，动作硬约束 `REVIEW_ONLY`）、`scripts/enrich_bucket_lineage.py`（默认只读、`--write` 仅合并 `trade_records.metadata_json.bucket_lineage`、幂等）、`scripts/invalidation_contract_audit.py`（只读全窗口审计）；`config/playbook_horizon.yaml` 加 `short_v1`/`long_v1`，两个 `low` 桶标 `deprecated_unreachable: true`，**数值边界与 fallback 全未改**；新增 3 个契约测试文件。
+- **P0 实证**：全历史 708 笔成交写入 lineage（43 笔无有效锚，不猜补）；二次跑 **708 unchanged / 0 written / 0 errors**。主窗口 670 笔 join，最近 20 个 ET 日 124/124 有有效桶、生成桶对齐 124/124、无空桶。CRM trade id=1729：生成/repriced/有效桶 `medium`/`high`/`high`，fill 后 SL **5.098%**、cap 穿透 **9.8 bps**、文本失效 243.45 对锚价 **−0.45% / −0.1285×ATR**。708 笔完整血缘中 610 笔可比 cap，185 笔 fill 后超 cap（中位 4.1 bps、>10 bps 35 笔、最大 101.6 bps）；只记录不拦截。
+- **E1 实证**：最近 20 日 175 条可执行指令 175/175 有 ATR/桶、重算不一致 0、`low` 命中 0；主窗口 8 条 `low` 全部 `SKIP/TRIPWIRE_INVALIDATED`、`executed=0`、无成交。主窗口 154 条缺 ATR 的可执行指令全在 2026-06/07 旧数据，8 月后为 0。
+- **A0 实证**：主窗口 670 笔契约全部 `REVIEW_ONLY`、校验错误 0；结构化 262、纯文本 260、无输入 148。旧正则文本命中 **291**，其中 12 笔为退化价格（如“跌破10-21”误读 `10.0`）已剔除，契约可用 **279**、不可解析 231、空 148；规则 777 条、拒收结构化条目 9。stop-vs-invalidation 仍为 **112 / 115 / 35**，`invalidation_before_stop` 净 **−$832.15**。10-27 单日 10 笔也全部 `REVIEW_ONLY`，仅旁证。
+- **验证**：新测试 **31 passed**；`test_stop_invalidation_audit` + `test_config_key_census` **30 passed**；热重载快照 **5 passed**；`py_compile`、`check_undefined_names`、`git diff --check` 通过。
+- **部署与数据**：**未重启**，`ftseek-us` 仍 PID **334442**（2026-10-28 12:25:08 CST）；YAML 由 mtime 自动重载，新模块无 runtime import。备份 `data/backups/ftseek_us.db.backup.20261028_bucket_lineage_pre`；审计 `data/audits/bucket_lineage_20261028T095537Z.jsonl`（写）、`...095545Z.jsonl`（幂等）、`data/audits/invalidation_contracts_20261028T095616Z.jsonl`。`exit_config_version` 因整本 YAML 哈希前进到 `exit-0590b8359fd6`，属口径断点而非数值变更。
+- **边界**：A1 离线回放、A2 动作级别、B EOD-MFE、C ATR trail、E3 重划均未做；当前生产仍统一 trail/止损，不能把本批说成“分层退出已实现”。新成交暂靠离线脚本补 lineage，下一批可加 runtime 写入或每日任务。
+- **落档**：`DEB-20261028-bucket-layering-and-tiered-exit.md` §15、README 索引与 `index_generated.md` 已更新。工作树含其他 AGENT 的 observability WIP，提交前按文件白名单筛选，禁止整体 `git add`。
+
+最后更新：2026-10-28（本条）
+
+## 2026-10-28 交易/过程日志审计后的低风险优化（已落地，零交易行为变更）
+
+- **用户要求**：「按建议优化执行」——承接上一轮交易/过程日志审计，只做读数正确性、记录一致性、异常可见性与日志降噪；不改入场/出场、仓位、止损止盈、频率、隔夜豁免或 DA Prompt。
+- **实改代码（8 个）**：`app/review/review_orchestrator.py` 复盘 JOIN 改为 `metadata_json.playbook_instruction_id` 权威锚 + 全表唯一非空 `decision_id` 回退；`app/storage/trade_store.py` + `app/playbook/playbook_service.py` 补齐 Playbook 直写 `open_positions` 的 `initial_tp/take_profit_json`；`scripts/backfill_open_position_sl_tp.py` 增加 TP 回填且只补空；`scripts/short_funnel_shadow_tag.py` 0 字节 stderr 静默、非空低解析每日仅告警一次；`app/playbook/exit_engine.py` TP-RR 仅首次或几何变化 INFO；`app/data/futu_lv3_provider.py` 订阅异常补 `exc_info`；`app/playbook/pipeline.py` 节假日异常改 WARNING 并保留 fail-open。
+- **读数证据**：复盘 2026-08-01..09-30 窗口由 **12,282 行降至 390 行**，与 390 笔唯一成交一致；2026-09-16 由 **5,962 行降至 18 行**，18 个 id 全唯一。390 笔中 380 笔有 `playbook_instruction_id`，其余 10 笔无唯一锚的成交保留且 `pi.*` 为 NULL，不再猜测关联。
+- **数据回填**：`US.CRM`（`trade_records.id=1729`）的 `open_positions.initial_tp` 由 NULL 补为 **262.89**，`take_profit_json=[{"ratio": 1.0, "price": 262.89}]`；审计 `data/audits/open_position_sl_tp_20261028T042104Z.jsonl`，再跑返回 0 行，幂等成立。出场链仍以 `trade_records` 为真源，故无交易判定变化。
+- **验证**：本批 5 个定向测试 **20 passed**；相关回归 135 / 16 / 35 passed+1 skipped / 98 / 123 / 4 passed；`py_compile` 与 `git diff --check` 通过。新增测试覆盖 JOIN 扇出、TP 落库与不覆盖、回填干跑/写入/幂等、假告警与 TP-RR 降噪。
+- **部署**：重启前未平仓仅 `US.CRM`、`exit_intents` 241/241 BOOKED、`app/ scripts/` 仅本批文件；2026-10-28 12:25:08 CST `systemctl restart ftseek-us`，PID **334442**，启动冒烟 **7/7**。重启后仅改测试与文档，无需再次重启。
+- **暂缓**：`chase_cap` 违例遥测/拦截各约 2,823 条，含越线价、禁追线和轮次计数，是裁决证据；本批不聚合、不吞行，下一批若做只能预注册“首次/更差值/摘要”纯展示聚合。
+- **落档与边界**：新增 `docs/debates/DEB-20261028-observability-and-ssot-batch.md`，README 索引与 `index_generated.md` 已更新；工作树未提交。`obsidian_vault/` 与 `docs/analysis/2026-10-27-da-ca-offline-replay/` 为既有/他人产物，不属本批。
+- **下一步**：观察下一交易时段 `US.CRM` 的 TP-RR INFO 是否只在首轮/几何变化出现，以及 `short_funnel_shadow` 下一次 AFTER_HOURS 轮询不再报 0 字节 WARNING；提交前按文件白名单筛选。
+
+最后更新：2026-10-28（本条）
+
 ## 2026-10-27 open_positions 止损/时区一致性 + 供给占位行结构化（三批已落地，零交易行为变更）
 
 - **用户要求**：「按照建议执行」—— 承接上一轮审计的建议：修 P3 补录路径 + 做占位 skip 的设计优化；并**明确划出范围**：「重启守卫不要限死了，暂不动」⇒ 上一轮 P0-1（把 `restart_ftseek_us_guarded.py` 变成唯一重启路径）**本批不做**。

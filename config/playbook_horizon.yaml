@@ -389,6 +389,12 @@ market_state_overlay:
 # 短线参数
 short_horizon:
   label: "SHORT_HORIZON"
+  # P0/E1 (2026-10-28): 桶口径版本化。本键只用于审计/归因标签，不参与 SL/TP 计算；
+  #   历史成交由 scripts/enrich_bucket_lineage.py 按当时配置补血缘。
+  #   注意: 本键已登记进 app/playbook/config._EXIT_CONFIG_ANNOTATION_KEYS ——
+  #   不进 exit_config_version 指纹 (否则会让版本号空转、OKR 版本窗口归零)。
+  #   新增同类标注键必须同步登记该豁免表，并保持"零运行时消费者"。
+  bucket_schema_version: short_v1
   fixed_stop_loss_pct: 2.0
   buy_fixed_stop_loss_pct: 2.5  # fallback only (vol_buckets未命中时); 7/7全部走vol_buckets路径
   sell_fixed_stop_loss_pct: 2.0
@@ -414,6 +420,9 @@ short_horizon:
   #   调整: low floor 1.5→2.0, high ceil 8.0→5.0, 收紧到2-5%最优区
   vol_buckets:
     low:
+      # E1: 3% ATR 准入下该桶实际不可达；保留定义并显式标记，禁止直接删除
+      #   （删除会让越界输入回退固定 2.5%/2.0% 或沿用原始 SL，反而变成行为变更）。
+      deprecated_unreachable: true
       atr_pct_max: 0.015
       sl_multiplier: 1.2
       sl_floor_pct: 2.0         # 1.5→2.0: 避免落入<2%的噪声扫损区
@@ -446,6 +455,8 @@ short_horizon:
 # 长线参数
 long_horizon:
   label: "LONG_HORIZON"
+  # P0/E1: 长线桶单独版本化；当前可执行样本少，不据小样本重划边界。
+  bucket_schema_version: long_v1
   # 2026-07-08: rr_ratio 999→2.0 (波段需要止盈目标, 不能完全靠EOD)
   # 数据: T3 WR最优(55-60%), T5回落(43-44%) → max_hold=3天
   rr_ratio: 2.0
@@ -459,6 +470,8 @@ long_horizon:
   # 2026-07-08 DEB: sl_ceil+0.5% (3天持仓波动>日内, 给趋势发展空间)
   vol_buckets:
     low:
+      # E1: 与 short 同理，保留定义、标记不可达，不删除。
+      deprecated_unreachable: true
       atr_pct_max: 0.015
       sl_multiplier: 1.2
       sl_floor_pct: 1.5
