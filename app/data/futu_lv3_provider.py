@@ -984,7 +984,7 @@ class FutuLV3Provider:
         except Exception as e:
             # 根因修复 (2026-06-05): 订阅失败时自动重连并重试
             # 典型场景: Futu SDK CallClose 后 _quote_ctx 假活
-            logger.error(f"[FutuLV3] 订阅失败: {e} — 尝试重连后重试")
+            logger.error(f"[FutuLV3] 订阅失败: {e} — 尝试重连后重试", exc_info=True)
             if self.force_reconnect():
                 try:
                     # 重连后 _subscribed_symbols 已清空，全部视为 new

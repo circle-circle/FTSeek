@@ -675,7 +675,7 @@ def _is_trading_day_today() -> bool:
         return cal.is_trading_day("US", datetime.now(_now_et()).date())
     except Exception as e:
         # 节假日日历不可用时按"是交易日"处理 (与 run_premarket_planning 一致, 宁可跑不可漏)
-        logger.debug(f"[playbook] 节假日检查异常, 按交易日处理: {e}")
+        logger.warning(f"[playbook] 节假日检查异常, 按交易日处理: {e}", exc_info=True)
         return True
 
 

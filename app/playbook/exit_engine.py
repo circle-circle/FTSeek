@@ -736,14 +736,24 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
             #   近30日 82/223 笔 (36.8%) 被本门禁吞掉固定TP, 其中临界带 [1.4,1.5) 61 笔。
             #   本块零行为变更: 只升级日志可见性 + meta 记账 (随 trade_records.metadata_json
             #   持久化, 供复盘按三时点RR切片)。回滚: 还原 DEBUG + 删 meta 写入。
-            logger.info(f"[TP-RR门禁] {_symbol} {direction} TP RR={_tp_rr:.6f}<{_MIN_TP_RR}, "
-                        f"忽略指令TP(交给trailing/EOD锁利)")
-            meta["_tp_rr_gate"] = {
+            # 2026-10-28 (DEB-20261028): 监控循环每 ~10s 重算同一几何，原 INFO 会
+            # 每轮刷一条。首次吞 TP，或 TP/SL/RR/阈值变化时才 INFO；重复轮询降为
+            # DEBUG。meta 写入内容与原实现逐字一致，仅日志级别按变化收敛。
+            _gate_now = {
                 "rr_at_execution": round(_tp_rr, 6),   # 实际成交价几何 (本函数口径)
                 "min_tp_rr": _MIN_TP_RR,
                 "swallowed": True,
                 "tp": _tp, "initial_sl": initial_sl,
             }
+            _gate_prev = meta.get("_tp_rr_gate")
+            _gate_changed = not isinstance(_gate_prev, dict) or any(
+                _gate_prev.get(_k) != _v
+                for _k, _v in _gate_now.items()
+            )
+            _gate_log = logger.info if _gate_changed else logger.debug
+            _gate_log(f"[TP-RR门禁] {_symbol} {direction} TP RR={_tp_rr:.6f}<{_MIN_TP_RR}, "
+                      f"忽略指令TP(交给trailing/EOD锁利)")
+            meta["_tp_rr_gate"] = _gate_now
             # ── 再入场快TP门禁吞掉影子 (2026-08-31, DEB-20260831-reentry-quick-tp-gate-conflict, record-only) ──
             # 8/7 裁决的再入场快收 TP (几何 RR≈0.58) 恰被本门禁吞掉 — 13 笔实弹 0 笔
             # TAKE_PROFIT 出场, 两次裁决互杀。本块只在价格触及被吞 TP 时把反事实触达

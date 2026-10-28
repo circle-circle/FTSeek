@@ -75,9 +75,18 @@ class ReviewDataCollector:
         P0 修复 (2026-07-07): JOIN playbook_instructions 注入 MFE/MAE/conditions/thesis，
         让 LLM 复盘能看到"信号方向正确率"而非只看到 pnl/exit_reason。
         """
-        # JOIN trade_records + playbook_instructions (通过 decision_id 关联)
+        # JOIN trade_records + playbook_instructions
         # playbook_instructions 含 max_favorable_excursion/max_adverse_excursion/
         # conditions_json/thesis/matched_patterns_json/pattern_verdict/fwd_return_t1/t3/t5
+        #
+        # 2026-10-28 (DEB-20261028-observability-and-ssot-batch): 原按
+        # `tr.decision_id = pi.decision_id` 关联。playbook_instructions 有 2,978 条
+        # `decision_id=''` 的供给占位行 ⇒ 任一无 decision_id 的成交会与全部占位行做
+        # 笛卡尔匹配。实测 2026-08–09 的 390 笔成交在当前 JOIN 下膨胀为 12,282 行
+        # (31.5×)，复盘统计/LLM 上下文全部失真。
+        # 修复: 权威锚 = trade_records.metadata_json.playbook_instruction_id (= pi.id);
+        # 仅当该锚缺失/失效时，才回退到 **全表唯一且非空** 的 decision_id。
+        # 两个分支都最多命中 1 行 ⇒ 每笔 trade_record 恒只产 1 行，禁止重新扇出。
         trades = self._query(
             """SELECT
                 tr.*,
@@ -97,7 +106,23 @@ class ReviewDataCollector:
                 pi.stop_loss               AS pb_stop_loss,
                 pi.take_profit             AS pb_take_profit
                FROM trade_records tr
-               LEFT JOIN playbook_instructions pi ON tr.decision_id = pi.decision_id
+               LEFT JOIN playbook_instructions pi
+                 ON pi.id = COALESCE(
+                      -- ① 权威锚: metadata_json.playbook_instruction_id
+                      (SELECT p1.id FROM playbook_instructions p1
+                        WHERE p1.id = CAST(
+                          CASE WHEN json_valid(tr.metadata_json)
+                               THEN json_extract(tr.metadata_json,
+                                                 '$.playbook_instruction_id')
+                          END AS INTEGER)),
+                      -- ② 回退: decision_id 非空且全表唯一 (多行即放弃, 不猜)
+                      (SELECT MIN(p2.id) FROM playbook_instructions p2
+                        WHERE p2.decision_id = tr.decision_id
+                          AND p2.decision_id IS NOT NULL
+                          AND p2.decision_id <> ''
+                        GROUP BY p2.decision_id
+                       HAVING COUNT(*) = 1)
+                 )
                -- DEB-20260903 #131: 原仅按 trade_date(开仓日) 归集, 多日持仓在出场日
                -- 复盘不可见 — 补出场日匹配 (exit_time 为 ET ISO, substr 取前 10 字符避免
                -- SQLite date() 对带时区 ISO 转 UTC 造成日期错位)

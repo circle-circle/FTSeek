@@ -1007,7 +1007,7 @@ class TradeStore:
                                owner: str = 'auto', account_type: str = 'simulate',
                                source_type: str = '', futu_order_id: str = '',
                                stop_loss: float = 0, sync_status: str = 'synced',
-                               entry_time: str = '') -> None:
+                               entry_time: str = '', take_profit: float = 0) -> None:
         """简单UPSERT open_positions — 不需要Position对象 (2026-07-02)
 
         用途: playbook_service下单后立即写open_positions, 使其成为SSOT.
@@ -1020,6 +1020,11 @@ class TradeStore:
         entry_time (2026-09-06 R-12b 裁决): 传入权威成交时刻 (如 trade_records 的
         entry_time), 两表同源消除结构漂移; 空串 = 旧行为 (自取 now_et()).
         注意 ON CONFLICT 分支本就不刷新 entry_time, 该语义不变.
+
+        take_profit (2026-10-28 DEB-20261028): 指令/成交快照的绝对止盈价 (USD).
+        2026-10-28 前本函数列清单不含 initial_tp/take_profit_json ⇒ Playbook 直写
+        open_positions 时 TP 恒 NULL (实测 US.CRM: trade_records 有 262.89,
+        open_positions 为空). 新行写入; 冲突时只补空, 不覆盖已有权威值.
         """
         from datetime import datetime as _dt
         # ── R-12 (2026-08-23 DEB-20260823): entry_time 统一 ET 口径 ──
@@ -1036,20 +1041,29 @@ class TradeStore:
             _now = _dt.now().isoformat()
         # R-12b (2026-09-06): 优先用调用方传入的成交时刻; updated_at 恒为写入时刻.
         _entry_ts = entry_time or _now
+        try:
+            _tp = float(take_profit or 0)
+        except (TypeError, ValueError):
+            _tp = 0.0
+        _tp_json = json.dumps([{"ratio": 1.0, "price": _tp}]) if _tp > 0 else "[]"
         conn = self._get_conn()
         try:
             conn.execute("""
                 INSERT INTO open_positions
                 (symbol, direction, size, avg_entry_price, initial_sl, current_sl,
-                 entry_time, updated_at, strategy_id, trader_type, owner_strategy,
+                 initial_tp, take_profit_json, entry_time, updated_at, strategy_id, trader_type, owner_strategy,
                  owner, sync_status, is_filled, mode, account_type,
                  entry_broker_order_id, sl_broker_order_id,
                  stop_loss_price)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
                 ON CONFLICT(symbol) DO UPDATE SET
                     direction=excluded.direction, size=excluded.size,
                     avg_entry_price=excluded.avg_entry_price,
                     current_sl=excluded.current_sl, updated_at=excluded.updated_at,
+                    initial_tp=CASE WHEN COALESCE(open_positions.initial_tp, 0) = 0
+                                    THEN excluded.initial_tp ELSE open_positions.initial_tp END,
+                    take_profit_json=CASE WHEN COALESCE(open_positions.initial_tp, 0) = 0
+                                          THEN excluded.take_profit_json ELSE open_positions.take_profit_json END,
                     owner_strategy=excluded.owner_strategy, owner=excluded.owner,
                     sync_status=excluded.sync_status, account_type=excluded.account_type,
                     entry_broker_order_id=excluded.entry_broker_order_id,
@@ -1057,6 +1071,7 @@ class TradeStore:
                     trader_type=excluded.trader_type,
                     strategy_id=excluded.strategy_id
             """, (symbol, direction, size, entry_price, stop_loss, stop_loss,
+                  _tp, _tp_json,
                   _entry_ts, _now, owner_strategy, 'AUTO', owner_strategy,
                   owner, sync_status, 'normal', account_type, futu_order_id,
                   None, stop_loss))

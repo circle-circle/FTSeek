@@ -36,6 +36,11 @@ LOG_DIR = ROOT / "logs"
 #   消息正文保持逐字不变, 以免打断既有 grep 口径。
 logger = logging.getLogger("ftseek.short_funnel_shadow")
 
+# 2026-10-28 (可观测性批): 同一交易日的输入链告警每个进程只发一次。
+# scheduler 每 ~2 分钟复用本模块；原实现每次轮询都 WARNING 0 字节当前日志，
+# 噪声会把真正的输入链异常埋掉。空文件本身不算异常（见主循环）。
+_INSUFFICIENT_WARNED_DATES: set[str] = set()
+
 
 def run_check(scheduler=None):
     try:
@@ -99,15 +104,31 @@ def main():
         if trade_date in existing_dates:
             continue
 
+        # 当前 stderr 日志在 carrier 尚未写入时会是 0 字节。空文件没有可解析
+        # 内容，也不能据此判断采集链断掉；静默跳过，非空但评级不足才告警。
+        try:
+            if lf.stat().st_size == 0:
+                logger.debug("[short_funnel_shadow] %s 为空, 跳过 (%s)", trade_date, lf.name)
+                continue
+        except OSError as _stat_err:
+            logger.warning("[short_funnel_shadow] 读取日志大小失败 %s: %s", lf.name, _stat_err,
+                           exc_info=True)
+            continue
+
         ratings, consistency_flagged = _parse_da_log(lf)
         if len(ratings) < 3:
             # 2026-10-16 (推送面巡检 P0-2): 原静默 continue ⇒ carrier 接管后 stderr 不落盘
             # (10-08 起) 整整 8 天零采集无任何告警, 看板还把停摆归因错指写方。
             # 有日志文件但解析 <3 条 = 输入链异常, 必须留痕可见。
             insufficient.append((trade_date, lf.name, len(ratings)))
-            logger.warning("[short_funnel_shadow] %s 日志 %s 仅解析出 %d 条评级 (<3) "
-                           "⇒ 当日跳过 — 查 DA stderr 采集链 (da_main_carrier 落盘)",
-                           trade_date, lf.name, len(ratings))
+            if trade_date not in _INSUFFICIENT_WARNED_DATES:
+                _INSUFFICIENT_WARNED_DATES.add(trade_date)
+                logger.warning("[short_funnel_shadow] %s 日志 %s 仅解析出 %d 条评级 (<3) "
+                               "⇒ 当日跳过 — 查 DA stderr 采集链 (da_main_carrier 落盘)",
+                               trade_date, lf.name, len(ratings))
+            else:
+                logger.debug("[short_funnel_shadow] %s 输入链异常已告警过, 本轮静默 (%s, %d 条)",
+                             trade_date, lf.name, len(ratings))
             continue
 
         # 评级分布

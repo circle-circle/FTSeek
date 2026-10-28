@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 from app.core.position_sync import _playbook_position_fields
+from app.storage.trade_store import TradeStore
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -123,6 +124,58 @@ def test_source_no_longer_hardcodes_zero_sl_in_pb_sim_branch():
     assert "_playbook_position_fields(cursor, symbol)" in seg
     # 旧的硬写形态不得复现
     assert "0, 0, 0, datetime.now().isoformat(), datetime.now().isoformat()," not in seg
+
+
+# ── Playbook 直写路径: TP 必须随 open_positions 落库 (2026-10-28) ─────────
+
+def test_upsert_position_simple_persists_take_profit(tmp_path):
+    """TradeStore 直写路径必须把指令 TP 写入 initial_tp/take_profit_json。
+
+    历史缺口: playbook_service 下单后调用 upsert_position_simple 时没有 TP 参数，
+    导致 open_positions 永远为空 (US.CRM 实测: trade_records=262.89 vs open=null)。
+    量纲: TP 为绝对价格 (USD)；take_profit_json 与 Position.take_profit_levels
+    的结构一致，单档 ratio=1.0。
+    """
+    store = TradeStore(str(tmp_path / "tp.db"))
+    store.upsert_position_simple(
+        "US.CRM", "LONG", 24, 244.8,
+        stop_loss=232.32, take_profit=262.89,
+    )
+    store.upsert_position_simple("US.NOTP", "LONG", 1, 10.0, stop_loss=9.0)
+    conn = store._get_conn()
+    row = conn.execute(
+        "SELECT initial_tp, take_profit_json FROM open_positions WHERE symbol='US.CRM'"
+    ).fetchone()
+    no_tp = conn.execute(
+        "SELECT initial_tp, take_profit_json FROM open_positions WHERE symbol='US.NOTP'"
+    ).fetchone()
+    conn.close()
+    assert row[0] == pytest.approx(262.89)
+    assert json.loads(row[1]) == [{"ratio": 1.0, "price": pytest.approx(262.89)}]
+    assert no_tp[0] == 0
+    assert json.loads(no_tp[1]) == []
+
+
+def test_upsert_position_simple_does_not_overwrite_existing_take_profit(tmp_path):
+    """重复 upsert 只补空，不把已存在的权威 TP 覆盖成后来的值。"""
+    store = TradeStore(str(tmp_path / "tp-keep.db"))
+    store.upsert_position_simple("US.CRM", "LONG", 24, 244.8,
+                                 stop_loss=232.32, take_profit=262.89)
+    store.upsert_position_simple("US.CRM", "LONG", 25, 245.0,
+                                 stop_loss=232.32, take_profit=999.0)
+    conn = store._get_conn()
+    row = conn.execute(
+        "SELECT initial_tp, take_profit_json FROM open_positions WHERE symbol='US.CRM'"
+    ).fetchone()
+    conn.close()
+    assert row[0] == pytest.approx(262.89)
+    assert json.loads(row[1]) == [{"ratio": 1.0, "price": pytest.approx(262.89)}]
+
+
+def test_playbook_service_passes_take_profit_to_open_positions():
+    """防接线遗漏: playbook_service 的直写调用必须传 take_profit。"""
+    src = (REPO / "app" / "playbook" / "playbook_service.py").read_text(encoding="utf-8")
+    assert "take_profit=float(take_profit) if take_profit else 0" in src
 
 
 # ── 生产回归 (只读): open_positions SL 与出场链真源一致 ─────────────────────

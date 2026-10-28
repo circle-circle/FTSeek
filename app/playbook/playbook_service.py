@@ -2264,6 +2264,7 @@ class PlaybookService:
                     source_type=_source_type,
                     futu_order_id=_futu_id or _order_id,
                     stop_loss=float(stop_loss) if stop_loss else 0,
+                    take_profit=float(take_profit) if take_profit else 0,
                     sync_status='synced',
                     entry_time=_now_iso,
                 )
