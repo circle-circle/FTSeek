@@ -242,6 +242,16 @@ class PlaybookDataCollector:
     def collect_batch(self, symbols: List[str], max_workers: int = 5) -> List[PlaybookData]:
         """批量收集，使用 ThreadPoolExecutor 并行"""
         results = []
+        # 2026-10-28 (T2): 先做一次批量快照预取 (N 只逐只 → 1 批)。
+        #   原先 5 并发逐只 get_market_snapshot 撞 Futu "每30秒最多60次"(实测 9 次/批),
+        #   撞了之后该只立刻向 Finnhub 连发 5 次 ⇒ 跨源放大成 96 次 429。
+        #   fail-open: 预取失败/不支持就照旧逐只, 不改任何语义。
+        try:
+            _prefetch = getattr(self.fundamental, "prefetch_snapshots", None)
+            if callable(_prefetch):
+                _prefetch(symbols)
+        except Exception as _pf:
+            logger.warning(f"[Playbook] 批量快照预取异常, 回退逐只: {_pf}", exc_info=True)
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             future_to_symbol = {
                 pool.submit(self.collect, symbol): symbol for symbol in symbols

@@ -12,15 +12,18 @@
 对外接口统一，下游不关心具体数据源。
 """
 import os
+import json
+import time
 import logging
 import requests
 import urllib3
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 
 from app.data.providers.base import BaseDataProvider
+from app.data import finnhub_limiter as fh_quota
 from app.utils.symbol_utils import to_dotted_class_share
 from app.utils.timezone import now_utc
 
@@ -41,18 +44,68 @@ class FundamentalProvider(BaseDataProvider):
         self.api_key = os.getenv("FINNHUB_API_KEY", "")
         self.base_url = "https://finnhub.io/api/v1"
 
+    # ── T1 (2026-10-28): industry 落盘缓存 ────────────────────────────────
+    # `stock/profile2` 只用到一个字段 finnhubIndustry —— 行业分类是**静态**的, 永不 daily 变化,
+    # 却原来在 Futu happy path 上逐只拉一次 (盘前 76 只/天; 今天这一项独占 28 次 429)。
+    # 改为进程共享 + 落盘缓存(跨重启), 默认 30 天。
+    _PROFILE_CACHE_PATH = Path(__file__).resolve().parents[3] / "data" / "finnhub_profile_cache.json"
+    _PROFILE_TTL_SEC = 30 * 86400
+    _profile_cache: Dict[str, Dict[str, Any]] = {}
+    _profile_cache_loaded = False
+
+    def _load_profile_cache(self) -> None:
+        if FundamentalProvider._profile_cache_loaded:
+            return
+        FundamentalProvider._profile_cache_loaded = True
+        try:
+            if self._PROFILE_CACHE_PATH.exists():
+                raw = json.loads(self._PROFILE_CACHE_PATH.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    FundamentalProvider._profile_cache = raw
+        except Exception as e:
+            logger.debug(f"[FundamentalProvider] profile 缓存读取失败(忽略): {e}")
+
+    def _save_profile_cache(self) -> None:
+        try:
+            self._PROFILE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._PROFILE_CACHE_PATH.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self._profile_cache, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(self._PROFILE_CACHE_PATH)
+        except Exception as e:
+            logger.debug(f"[FundamentalProvider] profile 缓存写入失败(忽略): {e}")
+
+    def _get_profile(self, bare: str) -> Optional[Dict[str, Any]]:
+        """industry 静态字段: 落盘缓存(30d) 优先, 未命中才请求 profile2。"""
+        self._load_profile_cache()
+        ent = self._profile_cache.get(bare)
+        if ent and (time.time() - float(ent.get("ts", 0))) < self._PROFILE_TTL_SEC:
+            return ent.get("data") or {}
+        profile = self._finnhub_get("stock/profile2", {"symbol": bare})
+        if profile and isinstance(profile, dict):
+            self._profile_cache[bare] = {"ts": time.time(), "data": profile}
+            self._save_profile_cache()
+            return profile
+        return None
+
     def _finnhub_get(self, endpoint: str, params: Dict, timeout: int = 15) -> Optional[Any]:
-        """低层 Finnhub GET"""
+        """低层 Finnhub GET（2026-10-28: 走进程级共享配额桶）"""
         if not self.api_key or self.api_key == "***":
             return None
         headers = {"X-Finnhub-Token": self.api_key}
+        # 原实现裸 requests 无限速: 盘前 5 并发 × 逐只降级 5 连击 = 429 主来源之一
+        if not fh_quota.acquire(n=1, timeout=20.0):
+            logger.warning(f"[FundamentalProvider] Finnhub 配额排队超时, 跳过 {endpoint}")
+            return None
         try:
             # C3 (2026-08-24, 体检 E2): verify=True 收口 (实测握手正常)
             resp = requests.get(
                 f"{self.base_url}/{endpoint}",
                 params=params, headers=headers, timeout=timeout, verify=True,
             )
+            # 校准: 服务端自报剩余额度（跨进程共用 key 时唯一可见的真值）
+            fh_quota.observe(getattr(resp, "headers", None))
             if resp.status_code == 429:
+                fh_quota.on_429(endpoint)
                 logger.warning(f"[FundamentalProvider] Finnhub 429 on {endpoint}")
                 return None
             resp.raise_for_status()
@@ -107,6 +160,84 @@ class FundamentalProvider(BaseDataProvider):
             "fetched_at": now_iso,
         }
 
+    # ── T2 (2026-10-28): 批量快照预取 ──────────────────────────────────────
+    # Futu get_market_snapshot 限 60 次/30 秒。原链路逐只 1 次 × 5 并发 ⇒ 今天实测
+    # `获取市场快照频率太高` 9 次, 且撞了之后该只**立刻向 Finnhub 连发 5 次**(降级腿),
+    # 把 Futu 的限流放大成 Finnhub 风暴(96 次 429 的入口)。
+    # 同仓 `premarket_enrichment._fetch_mcap_map` 已证明 `get_market_snapshot(list)` 可用,
+    # 这里复用同一手法(含整批失败时二分隔离坏票), 76 只 → 1 批。
+    PREFETCH_TTL_SEC = 180
+    SNAPSHOT_BATCH_SIZE = 200
+    _prefetched: Dict[str, Dict[str, Any]] = {}
+    _prefetch_ts = 0.0
+
+    @staticmethod
+    def _snap_key(symbol: str) -> str:
+        """US.BRK-B → US.BRK.B（Futu OpenD 只认点号写法）"""
+        _market, _, _base = str(symbol).partition(".")
+        return f"{_market}.{to_dotted_class_share(_base)}" if _base else str(symbol)
+
+    @staticmethod
+    def _is_throttle(msg: Any) -> bool:
+        s = str(msg)
+        return ("频率" in s) or ("最多" in s) or ("too frequent" in s.lower())
+
+    def _snapshot_bisect(self, ctx, batch: List[str], out: Dict[str, Dict[str, Any]], depth: int = 0) -> None:
+        """整批失败时二分隔离坏票（与 premarket_enrichment 同手法）；单只失败即放弃该只。"""
+        from futu import RET_OK
+        if not batch or depth > 8:
+            return
+        try:
+            ret, df = ctx.get_market_snapshot(batch)
+        except Exception:
+            ret, df = -1, None
+        if ret == RET_OK and df is not None and not df.empty:
+            for _, r in df.iterrows():
+                out[str(r.get("code", ""))] = r.to_dict()
+            return
+        if len(batch) == 1:
+            logger.debug(f"[FundamentalProvider] 批量快照单只失败: {batch[0]} — 该只回退 Finnhub")
+            return
+        mid = len(batch) // 2
+        self._snapshot_bisect(ctx, batch[:mid], out, depth + 1)
+        self._snapshot_bisect(ctx, batch[mid:], out, depth + 1)
+
+    def prefetch_snapshots(self, symbols: List[str]) -> int:
+        """一批拉全部候选的快照, 供 _fetch_futu 复用。返回命中只数（失败返回 0，调用方回退逐只）。"""
+        symbols = [s for s in (symbols or []) if s]
+        if not symbols:
+            return 0
+        try:
+            from app.web_dashboard.manual_order_service import get_manual_order_service
+            svc = get_manual_order_service()
+            if not svc.connect():
+                logger.warning("[FundamentalProvider] 批量快照预取跳过: Futu connect failed")
+                return 0
+            codes = list(dict.fromkeys(self._snap_key(s) for s in symbols))
+            got: Dict[str, Dict[str, Any]] = {}
+            for i in range(0, len(codes), self.SNAPSHOT_BATCH_SIZE):
+                if i > 0:
+                    time.sleep(0.3)  # 批次间隔流保护（与 premarket_enrichment 一致）
+                self._snapshot_bisect(svc._quote_ctx, codes[i:i + self.SNAPSHOT_BATCH_SIZE], got)
+            if got:
+                FundamentalProvider._prefetched = got
+                FundamentalProvider._prefetch_ts = time.time()
+            logger.info(
+                f"[FundamentalProvider] 批量快照预取 {len(got)}/{len(codes)} 只 "
+                f"({len(codes)} 只逐只调用 → {-(-len(codes) // self.SNAPSHOT_BATCH_SIZE)} 批)"
+            )
+            return len(got)
+        except Exception as e:
+            logger.warning(f"[FundamentalProvider] 批量快照预取失败, 回退逐只: {e}", exc_info=True)
+            return 0
+
+    def _prefetched_row(self, snap_symbol: str) -> Optional[Dict[str, Any]]:
+        if not self._prefetched:
+            return None
+        if (time.time() - self._prefetch_ts) > self.PREFETCH_TTL_SEC:
+            return None
+        return self._prefetched.get(snap_symbol)
+
     def _fetch_futu(self, symbol: str) -> Optional[Dict[str, Any]]:
         """从 Futu get_market_snapshot 获取基本面（主数据源 — 真实数据）"""
         now_iso = now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -125,16 +256,21 @@ class FundamentalProvider(BaseDataProvider):
             from futu import RET_OK
             # 2026-09-18 类股修正: Futu OpenD 只认点号写法 — 传 US.BRK-B 返回
             #   ret=-1 "未知股票 BRK-B" (实测), 改传 US.BRK.B 后 ret=0。
-            _market, _, _base = str(symbol).partition(".")
-            _snap_symbol = f"{_market}.{to_dotted_class_share(_base)}" if _base else symbol
-            ret, data = svc._quote_ctx.get_market_snapshot([_snap_symbol])
-            # 注意: 单例连接常驻, 绝不在此 disconnect (会断掉 dashboard 手动交易的共享连接)
+            _snap_symbol = self._snap_key(symbol)
+            # T2: 优先用批量预取的行（76 只逐只调用 → 1 批）
+            row = self._prefetched_row(_snap_symbol)
+            if row is None:
+                ret, data = svc._quote_ctx.get_market_snapshot([_snap_symbol])
+                # 注意: 单例连接常驻, 绝不在此 disconnect (会断掉 dashboard 手动交易的共享连接)
+                # T4: 上游限流时单只延迟重试一次, 不要立刻降级到 Finnhub 5 连击（跨源放大链）
+                if ret != RET_OK and self._is_throttle(data):
+                    time.sleep(1.2)
+                    ret, data = svc._quote_ctx.get_market_snapshot([_snap_symbol])
+                if ret != RET_OK or data.empty:
+                    logger.warning(f"[FundamentalProvider] Futu snapshot failed: {data}")
+                    return None
+                row = data.iloc[0].to_dict()
 
-            if ret != RET_OK or data.empty:
-                logger.warning(f"[FundamentalProvider] Futu snapshot failed: {data}")
-                return None
-
-            row = data.iloc[0].to_dict()
             eps = row.get("earning_per_share", 0)
             net_asset = row.get("net_asset", 0)
             net_profit = row.get("net_profit", 0)
@@ -176,8 +312,9 @@ class FundamentalProvider(BaseDataProvider):
             }
 
             # 2026-06-29: Futu snapshot 无 industry 字段, 从 Finnhub profile2 补充
+            # T1 (2026-10-28): 走 30 天落盘缓存（industry 静态，逐只每日拉 = 纯浪费 + 429 大户）
             bare = symbol.replace("US.", "").replace("HK.", "").upper()
-            profile = self._finnhub_get("stock/profile2", {"symbol": bare})
+            profile = self._get_profile(bare)
             if profile and isinstance(profile, dict):
                 financials["industry"] = profile.get("finnhubIndustry") or ""
 
@@ -219,16 +356,21 @@ class FundamentalProvider(BaseDataProvider):
         now_iso = now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
         
         # 并行获取 4 个维度（串行实现，可优化为 ThreadPoolExecutor）
+        # 2026-10-28 (T4): metric 是这条腿的"总闸"—— 它失败(429/空)整只即失败,
+        #   原来仍继续请求其余 4 个端点, 在限流时把 1 次失败放大成 5 次。现先取 metric 并早退。
         metric = self._finnhub_get("stock/metric", {"symbol": bare, "metric": "all"})
+        if not metric or "metric" not in metric:
+            return None  # Finnhub 失败（429/无数据）⇒ 不再追加 4 个请求
+
         recommendations = self._finnhub_get("stock/recommendation", {"symbol": bare})
-        profile = self._finnhub_get("stock/profile2", {"symbol": bare})
-        
+        profile = self._get_profile(bare)   # T1: 30 天落盘缓存
+
         end_d = now_utc().strftime("%Y-%m-%d")
         start_d = (now_utc() - timedelta(days=7)).strftime("%Y-%m-%d")
         news = self._finnhub_get("company-news", {
             "symbol": bare, "from": start_d, "to": end_d,
         })
-        
+
         today = now_utc().date()
         end = today + timedelta(days=90)
         earnings = self._finnhub_get("calendar/earnings", {

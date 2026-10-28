@@ -54,7 +54,12 @@ _CACHE_TTL = 3600  # 1 小时
 
 
 def _get_finnhub_client():
-    """获取 Finnhub 客户端 (懒加载)"""
+    """获取 Finnhub 客户端 (懒加载)
+
+    2026-10-28 (T5): 返回值套了一层**进程级配额代理** —— 同一个 API key 在本进程里
+    原本有 3 套互不知情的额度视图(本 SDK 客户端 / FinnhubProvider 每实例桶 / fundamental 裸 requests),
+    实际速率 = N × 60/min。代理让每次 SDK 调用先向共享桶要令牌, 429 时触发全局退避。
+    """
     try:
         from dotenv import load_dotenv
         from pathlib import Path
@@ -69,7 +74,33 @@ def _get_finnhub_client():
         return None
 
     import finnhub
-    return finnhub.Client(api_key=api_key)
+    return _QuotaLimitedClient(finnhub.Client(api_key=api_key))
+
+
+class _QuotaLimitedClient:
+    """把 finnhub SDK 客户端纳入进程级配额桶（薄代理，只拦调用不改编排）。"""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def __getattr__(self, name):
+        attr = getattr(self._inner, name)
+        if not callable(attr):
+            return attr
+
+        def _wrapped(*args, **kwargs):
+            from app.data import finnhub_limiter as fh_quota
+            if not fh_quota.acquire(n=1, timeout=30.0):
+                # 抛异常而不是返回 None: 调方均有 try/except, None 会在 .get() 上炸成无关的 AttributeError
+                raise RuntimeError(f"Finnhub 配额排队超时 ({name})")
+            try:
+                return attr(*args, **kwargs)
+            except Exception as e:
+                if "429" in str(e):
+                    fh_quota.on_429(name)
+                raise
+
+        return _wrapped
 
 
 def collect_premarket_data(watchlist_symbols: Optional[List[str]] = None) -> Dict[str, Any]:

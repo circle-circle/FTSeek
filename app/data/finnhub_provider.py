@@ -14,12 +14,15 @@ Finnhub 行情 & 新闻情绪提供商
 import os
 import time
 import logging
-import threading
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 import requests
 
 from app.utils.timezone import now_utc
+# 2026-10-28: Finnhub 配额 SSOT — 进程级共享令牌桶（按 key，不按实例）。
+#   原实现每 new 一个 FinnhubProvider 就多一份 60/min 的额度视图, 而 fundamental_provider
+#   与 premarket_enrichment 的 SDK 客户端各自另一份/无限速 ⇒ 盘前 76 只批次打出 ~96 次 429。
+from app.data import finnhub_limiter as fh_quota
 
 # P1 (2026-05-02): 抑制 urllib3 TLS 警告 (verify=False 是 Finnhub 免费 API 的已知问题)
 # C3 (2026-08-24): 已切 verify=True 收口 (实测握手正常), 本抑制保留为无害兜底.
@@ -44,42 +47,8 @@ except Exception as e:
 
 
 BASE_URL = "https://finnhub.io/api/v1"
-# 免费计划：60 次/分钟
-FREE_CALLS_PER_MINUTE = 60
-REFILL_INTERVAL_SEC = 60.0 / FREE_CALLS_PER_MINUTE  # 1s/call
-
-
-class _RateLimiter:
-    """令牌桶限速器（线程安全）"""
-
-    def __init__(self, capacity: int, refill_interval_sec: float):
-        self._capacity = capacity
-        self._tokens = float(capacity)
-        self._refill_interval = refill_interval_sec
-        self._last_refill = time.monotonic()
-        self._lock = threading.Lock()
-
-    def acquire(self, n: int = 1, timeout: float = 30.0) -> bool:
-        deadline = time.monotonic() + timeout
-        while True:
-            with self._lock:
-                self._refill()
-                if self._tokens >= n:
-                    self._tokens -= n
-                    return True
-            wait = self._refill_interval * n
-            if time.monotonic() + wait > deadline:
-                logger.warning(f"[Finnhub] 限速等待超时 ({n} calls)")
-                return False
-            time.sleep(min(wait, 1.0))
-
-    def _refill(self):
-        now = time.monotonic()
-        elapsed = now - self._last_refill
-        new_tokens = elapsed / self._refill_interval
-        if new_tokens >= 1:
-            self._tokens = min(self._capacity, self._tokens + new_tokens)
-            self._last_refill = now
+# 2026-10-28: 限速器已上收到 `app/data/finnhub_limiter.py`（进程级共享桶，按 key 而非按实例）。
+#   原处每实例 `_RateLimiter` 已删除 —— 它让同一个 API key 在进程里出现多份 60/min 额度视图。
 
 
 # 预设股票情绪关键词（用于新闻评分）
@@ -149,11 +118,8 @@ class FinnhubProvider:
         self._cache: Dict[str, Any] = {}
         self._cache_time: Dict[str, datetime] = {}
 
-        # 免费计划：60 calls/分钟
-        self._limiter = _RateLimiter(
-            capacity=FREE_CALLS_PER_MINUTE,
-            refill_interval_sec=REFILL_INTERVAL_SEC,
-        )
+        # 2026-10-28: 改用进程级共享桶（配额按 key 算，原 per-instance 桶等于额度 × 实例数）
+        self._limiter = fh_quota.get_limiter()
 
     # ── 内部工具 ──────────────────────────────────────────────────
 
@@ -172,10 +138,16 @@ class FinnhubProvider:
         return symbol.replace("US.", "").replace("HK.", "")
 
     def _get(self, endpoint: str, params: Dict) -> Optional[Any]:
-        """GET 请求（含限速，Header-based auth 防止 token 泄露）"""
+        """GET 请求（含限速，Header-based auth 防止 token 泄露）
+
+        2026-10-28: 限速改为**进程级共享桶**（`app/data/finnhub_limiter.py`）。
+        原来这里是每实例桶 + 撞 429 后本线程 sleep(5)：前者让 3 个客户端各算一份额度，
+        后者只让撞墙的线程等、其余线程继续轰 ⇒ 盘前批次稳定 429。
+        现在撞 429 → 全局冻结补令牌（所有客户端一起退避），并**逐请求记账**（含 429）。
+        """
         if not self.api_key:
             return None
-        if not self._limiter.acquire(n=1):
+        if not self._limiter.acquire(n=1, timeout=45.0):
             return None
         # P1-8 修复 (2026-05-03): 使用 Header 传递 API Key，避免 token 出现在 URL 日志中
         headers = {"X-Finnhub-Token": self.api_key}
@@ -183,9 +155,13 @@ class FinnhubProvider:
             # C3 (2026-08-24, 体检 E2): verify=True 收口 — 2026-08-24 实测
             # finnhub.io TLS 握手 verify=True 正常 (原 5/2 "免费 API 已知问题" 已不成立).
             resp = requests.get(f"{BASE_URL}/{endpoint}", params=params, headers=headers, timeout=30, verify=True)
+            # 校准: 服务端自报剩余额度（跨进程共用 key 时唯一可见的真值）
+            self._limiter.observe(getattr(resp, "headers", None))
+            # 记账: 真实请求数（原实现只记 get_quote 的成功调用 ⇒ 新闻/指标/429 全漏记, 计数假低）
+            if API_LIMIT_MONITOR_ENABLED:
+                record_finnhub_call(1)
             if resp.status_code == 429:
-                logger.warning("[Finnhub] 触发 429 限速，等待 5s")
-                time.sleep(5)
+                self._limiter.on_429(endpoint)
                 return None
             resp.raise_for_status()
             return resp.json()
@@ -241,9 +217,7 @@ class FinnhubProvider:
         if not data:
             return None
 
-        # 记录 API 调用
-        if API_LIMIT_MONITOR_ENABLED:
-            record_finnhub_call(1)
+        # 2026-10-28: 记账已下沉到 _get()（逐请求，含 429），此处不再重复计数
 
         try:
             price = float(data.get("c") or 0)
