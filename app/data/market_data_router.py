@@ -187,23 +187,37 @@ class MarketDataRouter:
         if not symbol:
             return None
 
-        # P1 (2026-06-29): 日K线共享缓存 — 同标的5分钟内不重复调API
+        # [RFC-176] 缓存键从 f"{symbol}:{count}" 改为 symbol — 同一条日线被 5 类消费者
+        #   以 count=10/25/30/40/50/60 分别请求, 按 count 分键 ⇒ 同一标的每条日线被解析
+        #   多次(实测 10-29 21:08 一轮 NCLH 先 60 后 30 各打一次 Futu+TwelveData, 每轮
+        #   7 只无数据票 = 14 个 Futu 配额槽 + 2 次 TwelveData 解析)。改单键 + 取数地板
+        #   60 根 + 按需切片: 一次取够, 多种 count 共享。返回口径不变(仍返回 bars[-count:])。
         import time as _time
-        cache_key = f"{symbol}:{count}"
-        cached = self._daily_bars_cache.get(cache_key)
+        _COUNT_FLOOR = 60
+        try:
+            _count = int(count or 30)
+        except (TypeError, ValueError):
+            _count = 30
+        fetch_count = max(_count, _COUNT_FLOOR)
+
+        cached = self._daily_bars_cache.get(symbol)
         if cached:
             bars, ts = cached
             if (_time.time() - ts) < self._daily_bars_cache_ttl:
-                return bars
+                if len(bars) >= _count:
+                    return bars[-_count:]
+                if len(bars) >= fetch_count:
+                    # 已按地板取过(源侧上限更短), 只能给到这些
+                    return bars
 
         # 1. Futu (主): 历史日K, 盘后也可用 (不依赖实时连接)
         if self.futu:
             try:
-                bars = self.futu.get_daily_kline(symbol, count=count)
+                bars = self.futu.get_daily_kline(symbol, count=fetch_count)
                 bars = self._normalize_bar_times(bars)
                 if bars:
-                    self._daily_bars_cache[cache_key] = (bars, _time.time())
-                    return bars
+                    self._daily_bars_cache[symbol] = (bars, _time.time())
+                    return bars[-_count:]
             except Exception as e:
                 logger.warning(f"[Router] get_daily_bars {symbol} Futu 失败, 尝试 TwelveData: {e}")
 
@@ -211,11 +225,11 @@ class MarketDataRouter:
         #    Finnhub /stock/candle 免费版 403, 不能作日线 fallback.
         if self.td and self.td.enabled:
             try:
-                bars = self.td.get_daily_bars(symbol, count=count)
+                bars = self.td.get_daily_bars(symbol, count=fetch_count)
                 if bars:
                     logger.info(f"[Router] get_daily_bars {symbol} 走 TwelveData fallback: {len(bars)} bars")
-                    self._daily_bars_cache[cache_key] = (bars, _time.time())
-                    return bars
+                    self._daily_bars_cache[symbol] = (bars, _time.time())
+                    return bars[-_count:]
             except Exception as e:
                 logger.warning(f"[Router] get_daily_bars {symbol} TwelveData fallback 失败: {e}")
 

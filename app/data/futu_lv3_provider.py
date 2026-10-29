@@ -1526,12 +1526,26 @@ class FutuLV3Provider:
         factor_analyzer) — 有界等待比拒绝更合理: 让富途新数据在批次内自然流完, 而不是成批溢到
         TwelveData 打爆免费版 8次/分钟 → 10分钟熔断 → "所有数据源均失败".
         symbol_key 带 "D::" 前缀, 与分钟K冷却分键空间, 避免日线拉取把同标的分钟K挡进30s冷却.
+
+        2026-10-29 [RFC-176]: 补"实际等待"埋点 — 慢轮里的 5 个 ~30s 空档无法从日志归因
+        (窗口争抢 vs 调用方间隙), 而这里正是唯一能等 30s 的地方, 打一条即可定因。
         """
         deadline = time.time() + max_wait
+        _started = time.time()
         while True:
             if self._wait_kline_quota(symbol_key):
+                _waited = time.time() - _started
+                if _waited >= 1.0:
+                    logger.info(
+                        f"[FutuLV3][K线配额] {symbol_key} 等待 {_waited:.1f}s 才拿到窗口槽位 "
+                        f"(60次/30s 窗口, max_wait={max_wait:.0f}s)"
+                    )
                 return True
             if time.time() >= deadline:
+                _waited = time.time() - _started
+                logger.warning(
+                    f"[FutuLV3][K线配额] {symbol_key} 等满 {_waited:.1f}s 仍未拿到槽位 → 降级"
+                )
                 return False
             time.sleep(0.5)
 
