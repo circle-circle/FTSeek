@@ -227,6 +227,7 @@ def test_background_reconnect_is_not_in_calling_thread(provider, workers):
     reconnect_threads = []
     provider._kline_fail_count = 2
     provider._kline_last_reconnect = 0.0
+    provider._kline_ok_symbols.add("US.AAPL")  # 有数据的标的失败才算断线证据
     provider._quote_ctx.request_history_kline.return_value = (-1, None, "failure")
 
     def reconnect():
@@ -246,9 +247,11 @@ def test_background_reconnect_is_not_in_calling_thread(provider, workers):
     assert len(workers.threads) == 1
 
 
-def test_default_path_unchanged_counts_failures_and_reconnects(provider, workers):
+def test_known_symbol_failures_count_toward_reconnect(provider, workers):
+    """曾成功过(有数据)的标的失败 = 断线证据 → 连续 3 次触发重连, 计数器归零。"""
     sdk = provider._quote_ctx.request_history_kline
     sdk.return_value = (-1, None, "failure")
+    provider._kline_ok_symbols.add("US.AAPL")  # 该标的本进程内曾成功返回过 K 线
     reconnect_threads = []
     provider.force_reconnect.side_effect = lambda: reconnect_threads.append(threading.current_thread())
     for _ in range(3):
@@ -263,6 +266,40 @@ def test_default_path_unchanged_counts_failures_and_reconnects(provider, workers
     provider.force_reconnect.assert_called_once_with()  # 120s 重连冷却未变
     assert sdk.call_count == 6
     assert not workers.threads
+
+
+def test_never_succeeded_symbol_cools_down_without_reconnect(provider, workers):
+    """从未成功过的标的是数据面缺口(快照仍有价) → 不重连健康连接, 冷却后直接降级。"""
+    sdk = provider._quote_ctx.request_history_kline
+    sdk.return_value = (-1, None, "failure")
+    before = time.time()
+    for _ in range(3):
+        assert provider.get_kline("US.NCLH", autype="NONE") is None
+    provider.force_reconnect.assert_not_called()
+    assert provider._kline_fail_count == 0
+    assert provider._kline_nodata_strikes["US.NCLH"] == 3
+    assert provider._kline_nodata_until["US.NCLH"] >= before + 300
+    # 冷却期内不再打到 OpenD, 也不再耗配额
+    quota_calls = provider._wait_kline_quota.call_count
+    assert provider.get_kline("US.NCLH", autype="NONE") is None
+    assert provider._wait_kline_quota.call_count == quota_calls
+    assert sdk.call_count == 3
+    assert not workers.threads
+
+
+def test_nodata_cooldown_cleared_by_success(provider, workers):
+    """同一标的恢复有数据后必须立即解除冷却并重新纳入断线判据。"""
+    sdk = provider._quote_ctx.request_history_kline
+    sdk.return_value = (-1, None, "failure")
+    for _ in range(3):
+        provider.get_kline("US.HLN", autype="NONE")
+    assert "US.HLN" in provider._kline_nodata_until
+    sdk.return_value = (0, pd.DataFrame(_rows()), "")
+    provider._kline_nodata_until.clear()  # 冷却到期后重试
+    assert provider.get_kline("US.HLN", autype="NONE")
+    assert "US.HLN" not in provider._kline_nodata_until
+    assert "US.HLN" not in provider._kline_nodata_strikes
+    assert "US.HLN" in provider._kline_ok_symbols
 
 
 def test_success_clears_sick_window_on_default_path(provider, workers):

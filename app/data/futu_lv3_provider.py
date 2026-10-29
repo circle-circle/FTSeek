@@ -400,6 +400,11 @@ class FutuLV3Provider:
         self._ticker_cache_ttl = 300
         self._kline_symbol_cooldown: dict = {}  # symbol -> last_request_time (防同一标的重复请求)
         self._kline_symbol_cooldown_sec = 30    # 同一标的最小请求间隔30秒 (10→30 降低配额压力)
+        # 2026-10-29: 数据面缺口与连接断连分离 — 快照同连接实时有价、历史K线却恒 ret=-1
+        #   的标的(NCLH/HLN/INSM/IOVA/ILPT/MNRO/GGLL 实测), 不能当作"Push 断了"的证据。
+        self._kline_ok_symbols: set = set()      # 曾成功返回过K线的标的
+        self._kline_nodata_strikes: dict = {}    # symbol -> 连续失败次数(仅从未成功者累计)
+        self._kline_nodata_until: dict = {}      # symbol -> 冷却截止(time)
 
         # Daily K线缓存 (24hr TTL, 日线每天只变一次)
         self._daily_kline_cache: Dict[str, List[Dict]] = {}   # futu_symbol -> kline list
@@ -1601,6 +1606,10 @@ class FutuLV3Provider:
             self._refresh_kline_async(symbol, ktype, count, autype)
             return cached[-count:] if cached else push_data
 
+        # ②b 已判定无历史K线数据的标的: 冷却期内直接降级, 不占配额窗口
+        if self._kline_nodata_until.get(futu_symbol, 0.0) > time.time():
+            return cached[-count:] if cached else push_data
+
         # ③ 配额允许才发 HTTP 请求
         if not self._wait_kline_quota(symbol):
             # 配额满/冷却中 → 返回已有缓存(哪怕不足)
@@ -1695,6 +1704,11 @@ class FutuLV3Provider:
                         self._push_kline_cache[futu_symbol] = klines
                 self._set_cached_kline(_cache_sym, klines)
                 self._kline_sick_until = 0.0  # 2026-10-22: 成功即出生病窗
+                # 2026-10-29: "连续失败"计数原实现从不重置(名不副实的累计计数), 此处补重置。
+                self._kline_fail_count = 0
+                self._kline_ok_symbols.add(futu_symbol)
+                self._kline_nodata_strikes.pop(futu_symbol, None)
+                self._kline_nodata_until.pop(futu_symbol, None)
                 return klines
             else:
                 logger.warning(f"[FutuLV3] {symbol} K 线获取失败: ret={ret} msg={_err}")
@@ -1705,7 +1719,20 @@ class FutuLV3Provider:
                 if not hasattr(self, '_kline_fail_count'):
                     self._kline_fail_count = 0
                     self._kline_last_reconnect = 0.0
-                self._kline_fail_count += 1
+                # 2026-10-29 根因修复: 只有"曾成功过"的标的失败才算断线证据。
+                #   从未成功的标的属数据面缺口 → 累计3次后冷却10min, 不再烧配额/触发重连。
+                #   原实现无视标的来源统一计数 ⇒ 每轮扫到3只无数据标的就重连一次健康连接。
+                if futu_symbol in self._kline_ok_symbols:
+                    self._kline_fail_count += 1
+                else:
+                    _n = self._kline_nodata_strikes.get(futu_symbol, 0) + 1
+                    self._kline_nodata_strikes[futu_symbol] = _n
+                    if _n >= 3:
+                        self._kline_nodata_until[futu_symbol] = time.time() + 300
+                        logger.info(
+                            f"[FutuLV3][K线] {symbol} 无历史K线数据(ret=-1, 快照仍有价) "
+                            f"— 冷却5min, 不计入断线判据"
+                        )
                 if self._kline_fail_count >= 3:
                     import time as _t
                     if _t.time() - self._kline_last_reconnect > 120:  # 2min 冷却
@@ -2133,6 +2160,10 @@ class FutuLV3Provider:
 
         # 重连成功 — 重置计数器
         self._reconnect_attempts = 0
+        # 2026-10-29: 连接状态可能已变(真实断连期间攒下的失败), 清空数据面冷却以便复测
+        self._kline_nodata_strikes.clear()
+        self._kline_nodata_until.clear()
+        self._kline_ok_symbols.clear()
         return True
 
     def ensure_healthy(self) -> bool:
