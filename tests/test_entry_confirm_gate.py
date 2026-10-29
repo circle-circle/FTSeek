@@ -535,6 +535,55 @@ def test_orphan_with_window_restores_pending_instead_of_executing():
     assert db.merged[-1][1]["entry_confirm"]["status"] == ecg.ST_CONFIRMED
 
 
+def test_orphan_without_window_rearms_instead_of_executing():
+    """[RFC-178] 窗口不可重建但有现价 ⇒ 不立即放行, 按现价补一轮确认窗口 → defer。"""
+    db = _FakeDB()
+    t0 = _now()
+    stale = {"status": ecg.ST_PENDING}          # 旧旗标: 无锚/无方向/无 armed_at
+    inst = _inst(meta={"entry_confirm": stale})
+    act = ecg.gate_at_execute(inst, db, {"entry_price": 100.0}, t0, CFG_ON,
+                              scheduler=_FakeSched(103.5))
+    assert act == "defer", "没经过确认不得因为'窗口不可重建'就放行"
+    assert ecg.pending_count() == 1
+    arm = ecg._PENDING[1]
+    assert arm["anchor"] == 103.5, "补 arm 必须用补 arm 时刻的现价, 不得用计划锚充数"
+    assert arm["delay_sec"] == 120
+    st = db.merged[-1][1]["entry_confirm"]
+    assert st["status"] == ecg.ST_PENDING and st["orphan_rearms"] == 1
+    assert st["rearmed_from_orphan_at"]
+    # 补出来的窗口照常走 sweep 判定 (不绕过确认门)
+    assert ecg.defer_pending(_inst(meta={"entry_confirm": st}), t0) is True
+    r = ecg.sweep_entry_confirmations(_FakeSched(103.6), db, t0 + timedelta(seconds=121))
+    assert r["confirmed"] == 1
+
+
+def test_orphan_rearm_exhausted_falls_back_to_execute():
+    """[RFC-178] 已补过 1 次 arm 仍不可重建 ⇒ 放行 (兜底不摘, 防永久卡死)。"""
+    db = _FakeDB()
+    t0 = _now()
+    stale = {"status": ecg.ST_PENDING, "orphan_rearms": 1,
+             "armed_at": (t0 - timedelta(seconds=900)).isoformat(),
+             "anchor": 100.0, "direction": "LONG", "delay_sec": 120, "ttl_sec": 600}
+    act = ecg.gate_at_execute(_inst(meta={"entry_confirm": stale}), db,
+                              {"entry_price": 100.0}, t0, CFG_ON,
+                              scheduler=_FakeSched(103.5))
+    assert act == "execute"
+    assert ecg.pending_count() == 0
+    assert db.merged[-1][1]["entry_confirm"]["status"] == ecg.ST_HEALED
+
+
+def test_orphan_rearm_without_quote_still_executes():
+    """[RFC-178] 补 arm 需要现价: 取不到价 ⇒ 维持放行 (无报价不得卡死指令)。"""
+    db = _FakeDB()
+    t0 = _now()
+    stale = {"status": ecg.ST_PENDING}
+    act = ecg.gate_at_execute(_inst(meta={"entry_confirm": stale}), db,
+                              {"entry_price": 100.0}, t0, CFG_ON,
+                              scheduler=_FakeSched(None))
+    assert act == "execute"
+    assert db.merged[-1][1]["entry_confirm"]["status"] == ecg.ST_HEALED
+
+
 def test_orphan_with_expired_window_heals_to_execute():
     """重启时窗口已整体超 TTL ⇒ 不在过期锚上补判定, 转 HEALED 照常执行。"""
     db = _FakeDB()

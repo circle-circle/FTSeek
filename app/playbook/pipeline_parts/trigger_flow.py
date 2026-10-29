@@ -842,6 +842,14 @@ def check_intraday_trigger(
     _gate_block = False
     if not _vwap_populated:
         _gate_reason = "vwap_missing"  # fail-open: 无 VWAP 数据不拦
+        # [RFC-178] 补可观测性: 原分支完全静默 ⇒ 事后无法区分"门放行(顺侧)"与
+        #   "门失效(fail-open)". 实证: 2026-10-09 AMD 10:31 (dev-0.16%) 与
+        #   SNDK 09:41 (dev-0.17%) 按 1M bar 重算入场分钟仍是逆侧 (tol=0.1%) 却成交,
+        #   日志里既无拦截也无任何提示 —— 只能靠猜。仅在真触发时打, 不刷屏。
+        if triggered:
+            logger.info(
+                f"[playbook] VWAP门·无数据放行: {symbol} price=${current_price:.2f} "
+                f"(vwap_missing, fail-open 不拦; RFC-178)")
     else:
         if is_short:
             _gate_block = _vwap_dev > _gate_tol   # 价在 VWAP 上侧 → 逆 SHORT

@@ -95,6 +95,13 @@ DEFAULT_DELAY_SEC = 120          # 影子裁过的腿: DELAYS_MIN=(2,5) 中的 2
 DEFAULT_HOLDOUT_PCT = 20         # 对照臂比例 — ⚠️ 仅「缺键回落」默认, 生产已置 0
                                  # (2026-10-10 用户裁全量走门, 见 config 注释与 RFC §2)
 DEFAULT_TTL_SEC = 600            # pending 超期即弃 (防跨日/卡死)
+# [RFC-178] 孤儿 (旗标 PENDING 但内存无记录, 且窗口不可重建) 允许补 arm 的次数。
+#   原行为是直接转 HEALED 照常执行 = 确认门在最需要它的时刻被跳过 (fail-open)。
+#   证据: 2026-09-15→10-30 全库仅 3 次孤儿自愈, 其中 2 次最终 OVERNIGHT_GAP_STOP
+#   (US.CAT 10-14 -302.5 / US.CRM 10-27 -356.1), 1 次 +13.6 —— n=3 不足以定因,
+#   但"没确认就放行"逻辑上不成立。补 1 轮 (delay_sec 后重估) 仍无报价才放行,
+#   既有兜底不摘 (不能让无报价标的把指令永久卡死)。
+ORPHAN_REARM_MAX = 1
 # ── v2 (2026-10-15 用户裁, RFC-141 §5.10): 判尺 + 持续性 ──
 DEFAULT_RULER = "mid"            # mid-vs-mid 同尺; "legacy" = v1 混尺 (锚 ask/bid × last)
 DEFAULT_GRACE_SWEEPS = 3         # 到点首见逆向后的 grace 复核次数 (10s 间隔)
@@ -443,9 +450,36 @@ def _gate_inner(inst, db, reprice_params, now_et, cfg, scheduler):
                 f"(重启) → 按旗标重建门控窗口: arm={_restored['armed_at'].isoformat()} "
                 f"delay={_restored['delay_sec']}s 锚=${_restored['anchor']:.2f} → defer")
             return "defer"
+        _rearms = int(state.get("orphan_rearms") or 0)
+        if _rearms < ORPHAN_REARM_MAX:
+            _q = _current_quotes(scheduler, inst.get("symbol")) if scheduler is not None else None
+            _px = float((_q or {}).get("last") or 0)
+            _dir = _norm_dir(inst.get("direction")) or str(state.get("direction") or "")
+            if _px > 0 and _dir in ("LONG", "SHORT"):
+                _fresh = _restore_arm(inst, {**state, "anchor": _px, "direction": _dir,
+                                             "armed_at": now_et.isoformat(),
+                                             "ttl_sec": int(cfg.get("ttl_sec") or DEFAULT_TTL_SEC)},
+                                      now_et, cfg, reprice_params)
+                if _fresh is not None:
+                    if len(_PENDING) >= _PENDING_MAX:
+                        _evict_expired(now_et)
+                    _PENDING[inst_id] = _fresh
+                    _write_state(db, inst_id, {
+                        **state, "status": ST_PENDING,
+                        "armed_at": now_et.isoformat(), "anchor": _px, "direction": _dir,
+                        "delay_sec": _fresh["delay_sec"],
+                        "ttl_sec": int(cfg.get("ttl_sec") or DEFAULT_TTL_SEC),
+                        "orphan_rearms": _rearms + 1,
+                        "rearmed_from_orphan_at": now_et.isoformat(),
+                    })
+                    logger.warning(
+                        f"[EntryConfirm] {inst.get('symbol')} 旗标 PENDING 且窗口不可重建 "
+                        f"(重启/超期/无锚) → 不立即放行, 按现价补一轮确认窗口 锚=${_px:.2f} "
+                        f"delay={_fresh['delay_sec']}s → defer (RFC-178)")
+                    return "defer"
         logger.warning(
             f"[EntryConfirm] {inst.get('symbol')} 旗标 PENDING 但内存无记录且窗口不可重建 "
-            f"(重启/超期/无锚) → 转 HEALED 并照常执行 (孤儿自愈)")
+            f"(重启/超期/无锚, 已补 arm {_rearms} 次或无报价) → 转 HEALED 并照常执行 (孤儿自愈)")
         _write_state(db, inst_id, {**state, "status": ST_HEALED,
                                    "healed_at": now_et.isoformat()})
         return "execute"
