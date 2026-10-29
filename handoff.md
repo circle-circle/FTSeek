@@ -1,5 +1,61 @@
 # FTSeek-US · HANDOFF
 
+## 2026-10-29 RFC-141 v2 复核 + 预裁决归因（用户令「请确认无误后优化执行」）
+
+**复核结论**（独立 SQL 逐字段对账，非结算器单方读数）:
+- 裸 SQL n=66 vs 结算器 n=55 的差 11 行 = **10-20 P0 修订 `EXCLUDE_RESEARCH_ARM_SQL`**（排除 10-19 启用的 EXT 研究臂，不过本门、不在冻结基线人群）⇒ 结算器口径正确，初核是我量错人群。复核期间还撞上补录写入抖动（10-19/20 行 mid-query 落地）——审计须先确认写入静止。
+- v2 机制面达标：弃单率 61%→41%、opp 中位 0.36%→0.22%、grace 救回 4 笔、弃单后分解真避免 11/误杀 5。
+- 裁决面四判据轨迹：① SL_INITIAL 5 笔净均 −$120.4 ❌（**5 笔全部 CONFIRMED 过门后仍出血**，两笔确认时 opp +1.1~1.7%——+2min 时点还在冲高，恶化在确认之后，2 分钟持续性尺量不到该族死法）② 开盘窗 −$12.09 ❌（比基线 −2.26 更差；SPY v2 窗 −0.12% 平盘，市况不能开脱；n=20/t=−0.52 噪声域，已并陈）③ opp 均值 0.3197% ❌ 差 0.02pp ④ 剔费 +$23.08 ✅ 大超 +8.79。
+**当前 verdict=INSUFFICIENT**（n=55<60 且 9 交易日<10）；样本门 10-30 早晨（ET 10-29 收盘+cron 06:37）到齐。**今日未动任何交易行为**（预注册：FAIL 须 n 达标，提前关停=违 §4）；归因草稿+明日动作清单在 `docs/analysis/2026-10-29-rfc141-v2-preverdict-attribution.md`（含治理回流/注册表 KILLED 回写/测试断言反转五项清单）。
+**延后项**（不污染最后采样日，裁决后再议）: 46% 判定回落 legacy 尺（LV3 push 缓存间歇缺 bid/ask，根因未完全隔离）；弃单后观测因重启丢 18/37（修法候选=jsonl 尾部自愈重建）。
+
+## 2026-10-28 晚 C 类 ATR trail/SL 预注册 + C0 保真门 FIDELITY_FAIL（离线只读，零交易行为）
+
+- **用户指令**：「C」——执行 C 类 ATR 归一化 trail/SL 离线回放；不接 LIVE、不改生产 trail/SL/硬 SL/5% 硬顶、不新开影子、不重启。
+- **交付（3 个新文件 + DEB §17）**：`app/playbook/atr_trail_replay.py`（纯函数，无 runtime import）、`scripts/atr_trail_replay_c.py`（只读 DB `mode=ro`，bars 只用缓存，复用官方 `replay_trade`，不改引擎本体）、`tests/test_atr_trail_replay.py`（16 例）；DEB `DEB-20261028-bucket-layering-and-tiered-exit.md` §17 预注册 + §17.11 结果。**未重启、未提交。**
+- **预注册窗口（读数前写死）**：2026-09-18 → 2026-10-27（adaptive trailing 9/18 上线后单一退出参数时代；含 10/27 DYN 案例）；6/26–9/17 因参数时代混算**不作裁决**。样本：`PLAYBOOK_SIM`、已平仓、RTH、ATR 可用、实盘出场原因可被引擎建模；剔除 `DEAD_SIGNAL_EXIT`/`OVERNIGHT_GAP_STOP`/`SL_CERT_LOCK`/缺 ATR；bars 只用 `data/replay_bars/`；费用 `fees_est`；滑点 3bps；pess 主口径、opt 敏感性。
+- **臂（冻结）**：C0 生产 adaptive（0.4/1.2/60%，activation 0.4）；C1 `floor=clamp(0.15×ATR%,0.40,1.00)`；C1b `0.10×ATR%,0.40,0.80`（敏感性）；C2 纯 trail 激活 1.0% 峰值 MFE（BE 仍 0.4，两遍锚定、激活后下一根 bar 生效）；C2b 0.7%（敏感性）。C1/C2 不组合裁决。
+- **样本与保真**：载入 177 笔（引擎先排除 18 笔 01:00–04:00 损坏时间戳）→ 可回放 **156 笔/28 ET 日**；处理组 `trailing_enabled=true` **118 笔/27 ET 日**；桶 high 118 / medium 34 / extreme 4；ATR 均值 4.62%。C0 **`reason_match=0.678（80/118）<0.80`**；BE 桶 66 vs live 57（区间 [43,71]）通过；出场%中位差 **0.1516pp** 通过。⇒ **FIDELITY_FAIL，C1/C1b/C2/C2b 一个都没跑，没有任何变体净额/t/MDE。**
+- **失败主因（不是再调一个参数）**：16 笔 `TRAIL_LOCK→SL_BREAKEVEN` + 4 笔反向，来自引擎跳过入场 bar + 1min bar vs 实盘 10s quote 峰值；6 笔 `BE→TIME_EXIT`、2 笔 `TRAIL→TIME`、2 笔 `INITIAL→TIME`，来自回放固定 BE 垫 0.35% 高于生产 fee-aware≈0.309% + 按线结算而非 BE 限价成交。出场%中位差仅 0.15pp，说明价格近、**原因标签在边界漂移**，故 0.80 原因门不能降。
+- **预注册修订 1**：生产 `mfe_stall_exit_enabled=false`（8/15 起），官方引擎默认按 7/24 起启用；C0 首跑 0.661，显式 `mfe_stall=False` 后 0.678，仅多对 2 笔。修订只修基线口径，不改 C1/C2 定义/阈值/样本。
+- **仪器债（本批不改引擎）**：`_fee_of()` 用 `gross − realized_pnl`，但当前库 195/195 笔 `realized_pnl` 是毛利（`fees_est` 才是费用，均值 $5.19），故 `_fee_of()` 恒 0、官方 `aggregate()` 的“net”实为 gross。C 全部用 `fees_est`，保真读数不受影响；但 RFC-154 T 臂“pess −5.77bps”等旧读数须先复核毛/净，不能直接引用。
+- **产物**：最终 `data/audits/atr_trail_replay_c_20261028T132149Z.json/.jsonl`；首跑 `...131925Z` 只作修订留痕（0.661），不得作为最终 C0 读数。
+- **验证**：C 定向 **16 passed**；邻近 `test_atr_trail_replay + test_invalidation_replay + test_replay_engine_import_smoke` **37 passed**；`py_compile`、`scripts/check_undefined_names.py`、本批 scoped `git diff --check` 全过。
+- **结论**：C 以 `FIDELITY_FAIL` 收口；**不改生产 `adaptive_trailing_min_drawdown_pct`、5% 硬顶、BE 0.4、桶边界**。DYN 10/27 MFE 1.065%/TRAIL_LOCK +$29.92 只证明“本案存在”，单笔不裁。
+- **下一步**：若还要回答 C，先修 C' 仪器（10s quote 或 live peak 锚定、入场分钟路径、fee-aware BE、BE 限价成交、cooldown 豁免、`_fee_of` 口径），另立预注册且保真门仍 ≥0.80；否则保持统一 adaptive trailing，不拿本次 0.678 或 T 臂 −5.77bps 当放宽 trail 的支持证据。
+
+最后更新：2026-10-28 晚（本条）
+
+## 2026-10-28 晚 A1b 失效位人工复核清单（REVIEW_ONLY，纯文档，零交易行为）
+
+- **用户指令**：「继续」——承接 A1，输出 A1b 人工复核清单；不新增统计臂、不接 A2、不新开影子、不改生产代码/配置、不重启。
+- **范围**：A1 主口径的 **21 个 applied 触发**（结构化收盘价 3 + 文本 `exit` 18），逐笔展开；**去重后 19 个唯一交易**。MU 1380、ORCL 1419 同时出现在结构化/文本两侧，不能重复计。另有 CRM 1518 在 pess 为 `observed but not applied`（同 bar SL 先），只在 opt 成为第 19 笔文本触发，未计入清单。
+- **机械分类**：结构化 3 笔 = 1 正 +$141.88（UBER 1372）/ 1 误杀 −$172.88（ORCL 1419）/ 1 亏损放大 −$156.10（MU 1380），净 −$187.10。文本 18 笔 = 6 正 +$307.44 / 12 负 −$946.72；其中误杀赢家 **8 笔 −$845.28**、亏损放大 4 笔 −$101.44，净 −$639.28。
+- **语义保真**：文本 14 笔 `compound`+`confirmation_delay` 为低保真（净 −$502.27，5 正/9 负）；`simple` 4 笔仍净 **−$137.01**（1 正/3 负）⇒ “文本只是被复合条件拖累”不成立。**同bar开盘成交 5 笔**（SNDK、META 1416、ORCL 1241、META 1289、BWXT）合计 −$323.88，是最需核执行假设的样本。
+- **去重合并**：两类规则同时在线时按每笔最早可成交触发合并（MU 1380、ORCL 1419 取更早的文本触发），19 个唯一交易净约 **−$497.40**；仍显著为负，去重不能翻正。
+- **重点异常**：SNDK 1625 −$237.12、AVGO 1385 −$220.13、META 1416 −$108.67（原文“取消挂单并观望”被当 exit）、ORCL 1419 −$108.91（与结构化同一笔）、MSFT 1132 −$20.57（“30 分钟未收回”下一分钟就成交）、UBER 1288 −$43.91（“开盘 30 分钟内”在 11:18 触发；按入场后口径压线，原文时间基准有歧义）。这些主要是 A1 价格代理的语义错配，不是失效位本身的最终证据。
+- **结论**：A1b 不改变 A1 结论；**A2 不接，REVIEW_ONLY 保持**。结构化侧只保留 UBER 1372 作为“持有到 15:50 窄 cohort”的单一正例；文本侧若继续，必须先做 A1c 语义重编码（复合条件/时间窗/成交量数据）再预注册回放；分层 trail/SL 仍走 C 类 ATR 归一化。DYN 与 CRM 1729 另做人工复核，不与 A1c/C 混跑。
+- **落档**：`DEB-20261028-bucket-layering-and-tiered-exit.md` §16.8（含 3 笔结构化表、18 笔文本表、复核清单、去重敏感性）；README/index 已更新。本批纯文档，未改代码/配置、未重启、未提交。
+- **下一步**：A1c 语义重编码（需先定复合条件与成交量数据口径）或 C 类 ATR trail 回放；两者都不接 LIVE。A2 继续冻结。
+
+最后更新：2026-10-28 晚（本条）
+
+## 2026-10-28 晚 A1 失效位离线回放（REVIEW_ONLY，零交易行为，未重启/未提交）
+
+- **用户指令**：「继续」——承接 A0 后执行 **A1 失效位离线回放**；只读历史 DB 与 1min bar，不接 A2、不新开影子、不改现有生产代码路径/配置/trail/SL/隔夜/频率。
+- **交付（3 个新文件）**：`app/playbook/invalidation_replay.py`（`invalidation_replay_v1` 纯函数，无 runtime import）、`scripts/invalidation_replay_a1.py`（默认 `mode=ro`，只写 `data/audits/`）、`tests/test_invalidation_replay.py`（12 例）。**未重启服务、未提交 git。**
+- **样本与质量**：主窗口 670 笔 join，剔除 8 笔入场不在 RTH 后 **662** 可回放；结构化收盘价 **227**（与 §15.5 的 112+115 一致），文本价规则 **382**（`exit` 362 / `non_exit` 19 / 歧义 1；A0 的 383 是 670 笔口径，差 1 笔为被 RTH 剔除的 UBER 1094）。bar **714 symbol-day 全 cache / 0 missing / 0 fetch error**，`simulation_errors=0`；基线复刻 n=418、MAE **$0.0029**、within $1 **100%**。
+- **结构化主口径**：n=227、触发 **3**、全样本 1.32%、有近收盘窗口 43 笔中 6.98%；净差 **−$187.10**、日聚类 t **−0.7277**、MDE80 3.18bps/$1.82；避免损失 $141.88、误杀 1 笔/$172.88、左尾减 $141.88、右尾不变。逐笔：UBER 1372 **+$141.88**、MU 1380 **−$156.10**、ORCL 1419 **−$172.88**。敏感性 next-open 触发 2、净 **−$359.19**、t **−1.403**，因次日开盘晚于实际出场而失去 UBER 正例。
+- **文本主口径**：n=362、触发 **18**、全样本 4.97%、有近收盘窗口 53 笔中 15.09%；净差 **−$639.28**、t **−0.7232**、MDE80 4.71bps/$2.33；避免损失 $307.44、误杀 8 笔/$845.28、左尾减 $255.62、右尾 **−$108.67**。18 笔全是盘中价（18/181），收盘文本价 0/181；分类：compound 12 笔/−$482.03、simple 4 笔/−$137.01、confirmation_delay 2 笔/−$20.24。opt 19 笔/−$641.58/t −0.7272；next-open 与主口径相同。
+- **结论**：**A1 不支持把结构化收盘价或文本价直接接成自动全平，A2 不接，REVIEW_ONLY 保持。** 左尾有小幅改善但右尾/总量为负，误杀赢家金额大于避免损失；文本 compound/confirmation 无法用单价格腿复刻，A1 只算价格单条件代理。分桶映射继续可信（新标的未见错桶；14 笔 `unknown` 是 7 月中旬旧数据缺 ATR/有效桶），但按桶失效位无单调性，**分层 trail/SL 仍未实现、仍待 C 类**；DYN trail 与 CRM 1729（未平仓）不在 A1 结论内。
+- **口径修复留痕**：`20261028T114940Z` 有“早退仓最后一根 bar 被误当近收盘 bar”的 bug，已修为完整交易日确认查找；**只可引用 `data/audits/invalidation_replay_a1_20261028T115401Z.json/.jsonl`，114940Z/114555Z 作废。**
+- **验证**：A1 定向 **12 passed**；邻近五文件 **46 passed**；`py_compile`、`scripts/check_undefined_names.py`、`git diff --check` 全过。
+- **边界**：未改现有生产代码路径/配置/trail/SL/隔夜/频率；未接 A2；未重启；未提交。代码工作树仅上述 3 个新文件；`docs/analysis/2026-10-27-da-ca-offline-replay/` 是他人产物，未触碰。
+- **落档**：`DEB-20261028-bucket-layering-and-tiered-exit.md` §16；`docs/debates/README.md` 与 `index_generated.md` 已更新。
+- **下一步**：① 若继续，只做 A1b **人工复核清单**（结构化 3 笔 + 文本 18 笔），不做自动动作；② 复合失效另立预注册语义回放；③ 分层 trail/SL 走 C 类 ATR 归一化回放，先回答 DYN；④ CRM 失效位对齐另做人工/A1b，不混入 C；**A2 不接。**
+
+最后更新：2026-10-28 晚（本条）
+
 ## 2026-10-28 晚 接管在途问题：口径修复 + 独立复核（已落地，零交易行为变更）
 
 - **用户裁决**：「确认 请直接根据接管在途问题做处理修复 重启」—— 独立复核方接手前两批在途改动，修口径缺陷并重启。
