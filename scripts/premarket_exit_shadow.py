@@ -94,7 +94,49 @@ OUTPUT = ROOT / "data" / "premarket_exit_shadow.jsonl"
 FLATTEN_ENABLED = os.getenv("EXT_PREMARKET_FLATTEN", "false").lower() == "true"
 FLATTEN_FROM_HHMM = int(os.getenv("EXT_PREMARKET_FLATTEN_FROM", "920"))   # 09:20 ET 起每次轮询都强平
 
-# ─ 收口豁免预注册 (2026-09-19, RFC-087; 用户令「按建议做」) ──
+# ─ RFC-177 (2026-10-30): 盘前报价可信度闸 ────────────────────────────
+#   缘起: 2026-10-20 ADSK 04:02 ET 的 executable 打印让持有仓"浮亏 -56%"
+#   (实际当日 +4.2 出场), 按它决策等于用垃圾价成交。用 jsonl 重放"盘前对穿 SL 即平"
+#   (n=35, 2026-09-16 起实盘观测): 反事实 Σ-2,694 vs 实际 Σ-1,341 ⇒ Δ-1,353,
+#   34 笔里 25 笔是误杀 ⇒ **盘前止损本身不成立**, 本闸只为保护利润侧兑现不被脏价触发。
+#   判据只挡"对持仓方向不利且离谱"的打印: 有理的顺势跳空(+12%)是兑现机会, 挡它有害无益。
+#   现阶段 record-only (EXT_QUOTE_SANE_ENFORCE=false): 只打标记攒样本, 一周后看
+#   命中率与是否误挡再决定是否转硬闸。回滚: env 置 false (默认) 即退回纯记录。
+QUOTE_SANE_MAX_ADVERSE_DEV_PCT = float(os.getenv("EXT_QUOTE_SANE_MAX_ADVERSE_DEV_PCT", "10.0"))
+QUOTE_SANE_MAX_SPREAD_PCT = float(os.getenv("EXT_QUOTE_SANE_MAX_SPREAD_PCT", "2.0"))
+QUOTE_SANE_ENFORCE = os.getenv("EXT_QUOTE_SANE_ENFORCE", "false").lower() == "true"
+
+
+def quote_implausible_adverse(executable, prev_close, spread_pct, direction,
+                              max_dev_pct=None, max_spread_pct=None):
+    """盘前 executable 价对持仓方向"离谱地不利" ⇒ 判为不可成交打印。
+
+    返回 (implausible: bool, reason: str)。任一输入缺失 → (False, "") 不挡
+    (fail-open: 数据不全不是证据, 挡了反而让利润侧兑现停摆)。
+
+    判据 = 逆向偏离 ≥ max_dev_pct 且 价差 ≥ max_spread_pct。
+    两者同时成立才算: 单看偏离会把真实跳空 (如财报暴雷 -15%, 盘口却窄) 误判成脏价;
+    单看价差会把正常薄盘误判。
+    """
+    dev_max = QUOTE_SANE_MAX_ADVERSE_DEV_PCT if max_dev_pct is None else float(max_dev_pct)
+    spr_max = QUOTE_SANE_MAX_SPREAD_PCT if max_spread_pct is None else float(max_spread_pct)
+    try:
+        px = float(executable) if executable is not None else 0.0
+        pc = float(prev_close) if prev_close is not None else 0.0
+        sp = float(spread_pct) if spread_pct is not None else None
+    except (TypeError, ValueError):
+        return False, ""
+    if px <= 0 or pc <= 0 or sp is None:
+        return False, ""
+    sign = _dir_sign(direction)
+    adverse = (px - pc) / pc * 100 * sign          # 负 = 对持仓不利
+    if adverse <= -dev_max and sp >= spr_max:
+        return True, (f"逆势偏离 {adverse:.1f}% ≥ {dev_max:.0f}% 且价差 {sp:.2f}% "
+                      f"≥ {spr_max:.1f}% (px={px:.4f} prev_close={pc:.4f})")
+    return False, ""
+
+
+# ─ 收口豁免预注册 (2026-09-19, RFC-087; 用户令「按建议做」) ──────────
 #   本批**只落影子**: `EXT_PREMARKET_FLATTEN_MODE` 默认 `unconditional` ⇒ 逐字等于现役行为;
 #   每个 tick 额外记录"若切 conditional/band 会判成什么", 供回放读数与后续裁决 join。
 #   实现要点: 现役与候选模式**共用同一条代码路径** (只换判据函数), 避免"影子版与生产版
@@ -343,6 +385,10 @@ def collect(dry: bool) -> int:
         atr = atr_metrics(entry, metadata)
         executable = metrics["executable_price"]
         executor_price = executable
+        # RFC-177: 脏价标记。enforce=false (默认) 时仅落行, 不影响 action;
+        #   转硬后该 tick 不产出交易动作 (走既有 no_executable_quote 分支)。
+        _quote_bad, _quote_bad_reason = quote_implausible_adverse(
+            executable, prev_close, metrics.get("spread_pct"), direction)
         fee_metrics = round_trip_fee_metrics(
             qty, entry, executable, direction, today_et)
         fee_pct = fee_metrics["round_trip_fee_pct"] if fee_metrics else None
@@ -355,7 +401,8 @@ def collect(dry: bool) -> int:
         # RFC-087: 三者在无报价分支下也必须已定义 (行字典是两分支共用的) — 否则 NameError
         # 会让整轮 collect 崩掉 (该 tick 所有持仓都不落行)。
         _cond_verdict, _cond_reason, _armed = None, None, False
-        if executable is not None and entry > 0:
+        if (executable is not None and entry > 0
+                and not (_quote_bad and QUOTE_SANE_ENFORCE)):
             decision = decide_original_profit_exit(
                 direction, entry, executable, sl,
                 metadata.get("peak_price", entry), metadata, fee_pct,
@@ -497,6 +544,10 @@ def collect(dry: bool) -> int:
             "limit_only": bool(LIMIT_ONLY),
             "thin_book": (metrics.get("spread_pct") is not None
                           and float(metrics["spread_pct"]) > THIN_BOOK_SPREAD_PCT),
+            # RFC-177 脏价台账 (record-only 默认; enforce 时该行为 no_executable_quote)
+            "quote_implausible": _quote_bad,
+            "quote_implausible_reason": _quote_bad_reason or None,
+            "quote_sane_enforce": QUOTE_SANE_ENFORCE,
             "settled": False,
             "recorded_at": datetime.utcnow().isoformat() + "Z",
         }
