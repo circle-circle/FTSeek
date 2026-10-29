@@ -791,6 +791,36 @@ REGISTRY: list[ShadowItem] = [
               "⚠️ config_key=volume_gate_vwap_relative 是**生产量能门**(现true), 照它停采=关生产闸。"
               "负载实测 172K/624行, 近7日+118 ⇒ 收益微小, 不值当改生产码。",
     ),
+    # ── C15 (2026-10-30): 组合方向偏斜 guardrail 恢复硬拦的轴 — 历史终局证伪 ──
+    #   为什么登记: 该 guardrail 的执行前评估台账 (F1 摘闸后 enforced=false 只记不拦)
+    #   从未进过注册表 ⇒ 周检/哨兵对它全盲, 判据 C15 的读数也就没人能复算。
+    #   本项是"已裁决关闭"的登记, 不产生新样本, 也不转正。
+    ShadowItem(
+        id="c15_portfolio_skew_guardrail",
+        name="组合方向偏斜 guardrail (C15 终局证伪)",
+        status=ShadowStatus.KILLED,
+        description="执行前按当日 B/S 偏斜率 >80% 砍多数方最低 confidence 单。"
+                    "2026-10-08 F1 摘闸后 enforced=false, 只落台账不拦截。",
+        data_path="data/shadow/portfolio_execution_guardrail.jsonl",
+        config_key="playbook.execution_parameters.portfolio_guardrail_enabled",
+        min_n=8,
+        graduation_criteria="已裁 KILLED (C15): 复活的唯一路径 = 换成有预测力的砍单排序依据 "
+                            "+ 剔最大单笔后 Σ 仍显著为正 (五条复活条件见判据字典 C15)。",
+        eval_script="scripts/deb20261030_portfolio_skew_guardrail_replay.py",
+        created="2026-10-08",
+        last_evaluated="2026-10-30",
+        verdict_history=[{
+            "date": "2026-10-30", "verdict": "KILLED",
+            "evidence": "C15: 台账 10-08→10-29 (26 SKIP, 全部 enforced=false), 受害者去重 46 条 → "
+                        "实际成交 18 笔。若硬拦 Σ净 -353.64, 但剔最大单笔 (CRM -356.09 "
+                        "OVERNIGHT_GAP_STOP) 后 Σ=+2.45 / 中位 +8.65 / 12 盈 6 亏 ⇒ 单笔主导; "
+                        "同期 12 笔缺口止损只有 CRM 落在受害者集合 (覆盖 1/12); 排序依据 "
+                        "confidence 分通道 IC 全灭 (C12) ⇒ 硬拦≈随机砍多头。",
+        }],
+        notes="用户 2026-10-30 令「做」= 回放并落档; 结论: 不恢复硬拦, 维持影子只记。"
+              "C15 判据文 + 复现脚本进仓; 与 C11/C12/C14 同族, 证据不可互替。",
+    ),
+
     ShadowItem(
         id="p1_1_capital_flow",
         name="资金流背离 record-only",
