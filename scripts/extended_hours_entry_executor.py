@@ -3255,7 +3255,7 @@ def _write_open_position(
             " is_filled, version, updated_at, metadata_json, sync_status, "
             " initial_sl, current_sl, stop_loss_price) "
             "VALUES (?, ?, ?, ?, ?, ?, 'extended_hours_entry', 'extended_hours_entry', "
-            " 'extended_hours_entry', 'extended_hours_entry', 'normal', 'simulate', 'AUTO', 1, 1, ?, ?, 'pending', "
+            " 'extended_hours_entry', 'extended_hours_entry', 'normal', 'simulate', 'AUTO', 1, 1, ?, ?, 'pending_sync', "
             " ?, ?, ?)",
             (pos_id, symbol, side, qty, entry_px, now, now, meta, init_sl, init_sl, init_sl))
         # P0-3 完整闭环: 写 trade_records — 盘中退出监控只读此表 (source_type PLAYBOOK_SIM 未平仓)
