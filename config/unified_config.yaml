@@ -2293,7 +2293,20 @@ event_stream:
   - Federal Communications Commission
   - Securities and Exchange Commission
 universe_expansion:
-  entry_enabled: true
+  # 2026-10-30 [RFC-182] 治理收口: entry_enabled true → false (零交易行为变更)。
+  #   背景: RFC-136 (2026-10-07) 已退役 UE 的 inject/push 腿 (crontab 不再跑
+  #   `llm_universe_scan.py inject`, 改为 `scan --da-feed && da_fresh_event_batch.py`
+  #   只做供料), 但配置字面一直留着 true ⇒ 配置与架构不一致, 属"静默与字面不符"。
+  #   为什么不能再开: A10 口径 UE 打单臂 91 笔 Σ净 -1,105.5 (其中 LONG 55 笔 -1,149.7,
+  #   7/8/9/10 月 4/4 全负, 毛 edge 本身 -33.3bps, 死单率 29%); 其 scan 自评分
+  #   2026-10-29 命中率 42.9% / 平均前瞻 -2.66% ⇒ 候选质量与成交账同向为负, 判据
+  #   (RFC-136 "实测无增量价值")仍成立。
+  #   消费者 (Guard-First 逐个核过): 仅 scripts/llm_universe_scan.py:3950 (cmd_inject 写库闸)
+  #   与 :5235 (push 文案 selector); **app/ 侧零读取** ⇒ 改此行不需重启服务。
+  #   置 false 后的保护含义: 即使有人把 inject cron 重新挂回, 也只会走 DRY-RUN 不写库。
+  #   重开条件 (三条全满足, 记入 docs/ADJUDICATED-CRITERIA.md C18): scan 命中率 ≥50%
+  #   ∧ 平均前瞻 >0 ∧ 评分窗 n≥20 交易日; 回滚 = 改回 true (但须先满足上述三条)。
+  entry_enabled: false
   # 2026-10-21 RFC-156 Phase 0A: 事件龄/事件后价格反应 (event_reaction_v1) 数据补全.
   #   只给 UE brief/DA 增加上下文, 不改 surfaced 准入/门/仓位. 回滚: false.
   event_reaction_enabled: true
