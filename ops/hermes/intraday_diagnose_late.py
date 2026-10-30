@@ -14,6 +14,8 @@ import sqlite3
 import os
 import sys
 import subprocess
+import json
+import re
 from datetime import datetime, timezone, timedelta
 
 DB_PATH = '/opt/ftseek/FTSeek-US/data/ftseek_us.db'
@@ -120,15 +122,50 @@ try:
 except Exception as e:
     add(f"[持仓查询失败] {e}")
 
+# 2b. 授权止损/止盈 (2026-10-31, 用户裁"要") — 展示口径改用 trade_records.metadata_json
+#   的 stop_loss / take_profit。open_positions.current_sl / initial_tp 是**建仓镜像**:
+#   position_sync 通用路径按 ATR×exit_policy.max_loss_pct(2%) 夹逼写入, playbook 退出链
+#   从不回写 (授权值只在 metadata_json)。两源不同源, 10-30 MRK 实锤:
+#     镜像 SL 147.5145 (-2.0%) vs 授权 SL 143.90 (-4.40%, 到位亏 -$258)
+#     镜像 TP 190.285        vs 授权 TP 162.89 (RR=1.87 已过 min_tp_rr 1.5, 真会触发)
+#   镜像未回落时报告=高估保护, 故优先授权值; 授权值缺失才回落镜像 (fail-open:
+#   展示不得因取数失败而整行消失)。
+auth_sl_tp = {}
+try:
+    for _r in db.execute('''
+        SELECT symbol, metadata_json FROM trade_records
+        WHERE exit_time IS NULL
+          AND COALESCE(source_type, '') IN ('PLAYBOOK_SIM', 'PLAYBOOK_LIVE')
+        ORDER BY rowid
+    '''):
+        _sym = (_r['symbol'] or '').strip().upper()
+        _md = _r['metadata_json']
+        if not _sym or not _md:
+            continue
+        try:
+            _m = json.loads(_md)
+        except (ValueError, TypeError):
+            _m = None
+        if not isinstance(_m, dict):
+            continue
+        _sl = _m.get('stop_loss')
+        _tp = _m.get('take_profit')
+        if _sl or _tp:
+            auth_sl_tp[_sym] = (_sl, _tp)   # 同标的多笔: 后写覆盖 = 以最新一笔为准
+except Exception as e:
+    add(f"[授权SL/TP查询失败, 已回落镜像列] {e}")
+
 # 3. Today's playbook instructions
 instr_total = 0
 instr_trig = 0
 instr_exec = 0
 instr_rows = []
 reentry_instr = []
+instr_blocked = {}      # gate -> [symbol]: 已触发但被门拦下的 (2026-10-31 加)
 try:
     instr_rows = db.execute('''
-        SELECT symbol, direction, confidence, triggered, executed, outcome, pnl, decision_id
+        SELECT symbol, direction, confidence, triggered, executed, outcome, pnl,
+               decision_id, skip_reason
         FROM playbook_instructions WHERE date = ? AND direction != 'SKIP'
         ORDER BY rowid
     ''', (today,)).fetchall()
@@ -137,6 +174,11 @@ try:
         d = dict(r)
         if d.get('triggered'): instr_trig += 1
         if d.get('executed'): instr_exec += 1
+        # 触发未执行 ≠ 未触发: 归因到拦它的门 (chase_cap / vwap_gate / 预算帽 …)
+        if d.get('triggered') and not d.get('executed'):
+            _sr = (d.get('skip_reason') or '').strip()
+            _gate = _sr.split('(')[0].split('—')[0].strip() or 'pending(无skip_reason)'
+            instr_blocked.setdefault(_gate, []).append(d.get('symbol', '?'))
         if (d.get('decision_id') or '').startswith('intraday_reentry'):
             reentry_instr.append(d)
 except Exception as e:
@@ -283,25 +325,53 @@ try:
 except Exception:
     pass
 
-# 8. Error log scan (last 5 min)
+# 8. Error log scan — 只算当前 ET 交易日的 ERROR, 并按「事件」去重 (2026-10-31 修)
+#   旧形态两个病灶 (10-30 12:00 报告实锤):
+#   ① 无日期过滤: `grep -c ERROR <当前文件>` ⇒ 轮转前 (03:30 CST 起) 会把上一 ET 交易日的
+#      ERROR 当"今日异常"反复推送 (实锤: 文件首两行 2026-10-30 03:31:29 CST = 10-29 15:31 ET,
+#      llm_strategy_loop 停摆重启事件, 在 10-30 全天每轮推送里被重复报告)
+#   ② 同一次故障的告警行 + [Watchdog.heal] 动作行被计成 2 个 ERROR
+#   口径: 日志时间戳是宿主机 CST 墙钟 ⇒ naive 解析后 astimezone() 挂本机时区再转 ET
+#        (不硬编码偏移); 无时间戳的裸 print 行归到最近的上一条带时间戳行 (同日志锚定纪律);
+#        定位不到时间的行不计入 (宁少报不虚报)。
 error_count = 0
 recent_errors = []
 try:
     if os.path.exists(LOG_PATH):
-        result = subprocess.run(
-            ['grep', '-c', 'ERROR', LOG_PATH],
-            capture_output=True, text=True, timeout=5
-        )
-        error_count = int(result.stdout.strip()) if result.stdout.strip().isdigit() else 0
-        # Get last 5 ERROR lines
-        result2 = subprocess.run(
-            ['grep', 'ERROR', LOG_PATH],
-            capture_output=True, text=True, timeout=10
-        )
-        all_errors = result2.stdout.strip().split('\n') if result2.stdout.strip() else []
-        recent_errors = all_errors[-5:] if all_errors else []
-except Exception:
-    pass
+        _ts_re = re.compile(r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})')
+        _lg_re = re.compile(r'^.*?\[([^\]\s]+)\] \[([^\]]+)\] (ERROR|CRITICAL):\s*(.*)$')
+        _cur_et = None
+        _events = {}   # (ET秒级时刻, logger) -> 展示行; 同秒同 logger = 同一事件
+        with open(LOG_PATH, 'r', encoding='utf-8', errors='replace') as _lf:
+            for _line in _lf:
+                _m = _ts_re.match(_line)
+                if _m:
+                    try:
+                        _cur_et = datetime.strptime(
+                            _m.group(1), '%Y-%m-%d %H:%M:%S'
+                        ).astimezone().astimezone(et)
+                    except (ValueError, OSError):
+                        _cur_et = None
+                if 'ERROR:' not in _line and 'CRITICAL:' not in _line:
+                    continue
+                if _cur_et is None or _cur_et.strftime('%Y-%m-%d') != today:
+                    continue
+                _g = _lg_re.match(_line.rstrip('\n'))
+                if _g:
+                    _lvl, _logger, _msg = _g.group(3), _g.group(2), _g.group(4)
+                    _thread = _g.group(1)
+                else:
+                    _lvl, _logger, _msg, _thread = 'ERROR', '?', _line.strip(), '?'
+                _key = (_cur_et.replace(microsecond=0).isoformat(), _logger)
+                if _key not in _events:
+                    _events[_key] = (
+                        f"{_cur_et.strftime('%Y-%m-%d %H:%M')} ET [{_thread}] "
+                        f"{_lvl}: {_msg[:100]}"
+                    )
+        error_count = len(_events)
+        recent_errors = list(_events.values())
+except Exception as _ee:
+    add(f"[日志ERROR扫描失败] {_ee}")
 
 # 9. Healthcheck
 healthcheck_ok = False
@@ -328,9 +398,17 @@ add(f"• 持仓: {len(positions)}只, equity=${equity}, cash=${cash}")
 if positions:
     for p in positions:
         d = dict(p)
-        add(f"  {d['symbol']:8s} size={d['size']} dir={d.get('direction','?')} entry=${d.get('avg_entry_price','?')} SL={d.get('current_sl','?')} TP={d.get('initial_tp','?')}")
+        # 授权值优先 (见 2b), 缺失才回落 open_positions 镜像列
+        _a = auth_sl_tp.get((d.get('symbol') or '').strip().upper())
+        _sl = _a[0] if (_a and _a[0] is not None) else d.get('current_sl', '?')
+        _tp = _a[1] if (_a and _a[1] is not None) else d.get('initial_tp', '?')
+        add(f"  {d['symbol']:8s} size={d['size']} dir={d.get('direction','?')} entry=${d.get('avg_entry_price','?')} SL={_sl} TP={_tp}")
 
 add(f"• 今日指令: {instr_total}条 → 触发{instr_trig}条✅, 执行{instr_exec}条✅, {instr_total - instr_trig}条未触发")
+if instr_blocked:
+    _nb = sum(len(v) for v in instr_blocked.values())
+    _detail = '; '.join(f"{_g} {len(_v)}: {'/'.join(_v)}" for _g, _v in instr_blocked.items())
+    add(f"  └ 触发未执行: {_nb}条 ({_detail})")
 if reentry_instr:
     re_trig = sum(1 for d in reentry_instr if d.get('triggered'))
     re_exec = sum(1 for d in reentry_instr if d.get('executed'))
@@ -381,10 +459,10 @@ if sig_top:
     for s in sig_top[:5]:
         add(f"  {s.get('symbol','?'):8s} dir={s.get('direction','?')} strength={s.get('strength','?')} conf={s.get('confidence','?')}")
 
-add(f"• 异常: {'无' if error_count == 0 else f'{error_count}个ERROR'}")
+add(f"• 异常: {'无' if error_count == 0 else f'{error_count}个ERROR事件(ET今日, 已按事件去重)'}")
 if recent_errors and error_count > 0:
     for e in recent_errors[-3:]:
-        add(f"  {e[:120]}")
+        add(f"  {e[:130]}")
 
 # Notable findings
 findings = []
