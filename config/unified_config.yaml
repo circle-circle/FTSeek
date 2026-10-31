@@ -1630,6 +1630,13 @@ playbook:
     model_disagreement_downsize_factor: 1.0
     risk_base_capital: 82000.0
     risk_pct: 0.5
+    # 绝对风险帽 (DEB-20261031-risk-cap; 用户 2026-10-31 裁「先做 P1」)
+    #   语义: 单笔名义风险 (|entry−SL|×股数) ≤ 本值美元; 0 = 关闭。
+    #   病灶: max_position_pct(6%) 先于 risk_pct(0.5%) 绑定 ⇒ 实际每笔风险 ≈ 6%名义 × 止损距离%,
+    #        720 笔实测中位 $257 / p90 $306 / 最大 $554, 而中位单笔盈利仅 $4.29 (0.017R)。
+    #   80 = 历史回放同期净额 −$1,315 → −$817 (+$498); 未计费用刚性项, 真实改善会略小。
+    #   回滚: 改 0 + restart。判据/复议门/停止条件: docs/decisions/DEB-20261031-risk-cap.md
+    risk_cap_usd_per_trade: 80.0
     # ⚠️ 影子键 (2026-08-22 audit A7): 实际生效的 RR 在 playbook_horizon.yaml 各
     #   horizon 块的 rr_ratio (instruction_generator.py:356 / pipeline _hp.get 读那边);
     #   本键仅 config.py:29 默认表登记, 零读取. 调盈亏比请改 horizon 文件.

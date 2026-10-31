@@ -44,6 +44,7 @@ def compute_position_size(
     regime_mult: float = 1.0,
     water_mult: float = 1.0,
     conf_factor: float = 1.0,
+    risk_cap_usd: float = 0.0,
 ) -> int:
     """确定性仓位计算 SSOT (F1, 2026-07-19, DEB-20260719-round2 Ω.3-4).
 
@@ -75,6 +76,21 @@ def compute_position_size(
             size = max(1, int(max_position_value / entry_price))
             logger.debug(
                 f"[sizing] 仓位截断至 {size}股 (上限{max_position_pct*100:.0f}%=${max_position_value:,.0f})"
+            )
+    # ── 绝对风险帽 (DEB-20261031-risk-cap, P1) ──
+    #   现状病灶: risk_pct(0.5%) 的风险预算实际从不绑定 —— max_position_pct(6%) 先绑,
+    #   而 6% 名义 × 5% 止损距离 = 0.3% 权益/笔 (~$240), 是声明预算的六成但绝对金额过大:
+    #   720 笔实盘的中位单笔名义风险 $257, 中位单笔盈利仅 $4.29 (风险回报 0.017R)。
+    #   本帽按"这一笔最多亏多少美元"直接截断, 与止损宽度自适应 (止损宽 ⇒ 股数少)。
+    #   risk_cap_usd<=0 ⇒ 关闭 (0 = 不拦, 与 admission 的 0=不拦 语义一致)。
+    if risk_cap_usd and risk_cap_usd > 0 and per_share_risk > 0:
+        max_by_risk = int(risk_cap_usd / per_share_risk)
+        if size > max_by_risk:
+            # 至少 1 股 (与上一条截断同契约); 若 1 股本身超帽, 由调用方记录 residual。
+            size = max(1, max_by_risk)
+            logger.debug(
+                f"[sizing] 风险帽截断至 {size}股 (每笔风险≤${risk_cap_usd:,.0f}, "
+                f"每股风险${per_share_risk:,.2f})"
             )
     return size
 
@@ -515,10 +531,24 @@ def compute_instruction_values(
     #   risk_amount 保留供 result["risk_amount"] 报告; size 数学(除法+截断)全在 compute_position_size.
     risk_amount = _risk_base * (risk_pct / 100) * regime_multiplier * _water_mult
     _max_position_pct = float(pb_cfg.get("max_position_pct", 0.08))
+    _risk_cap_usd = float(pb_cfg.get("risk_cap_usd_per_trade", 0.0) or 0.0)
     position_size = compute_position_size(
         _risk_base, risk_pct, entry_price, result["stop_loss"], _max_position_pct,
         regime_mult=regime_multiplier, water_mult=_water_mult, conf_factor=1.0,
+        risk_cap_usd=_risk_cap_usd,
     )
+    # 风险帽可观测性 (DEB-20261031-risk-cap): 与上限边界同形 —— 只在帽真正绑住时打一行,
+    # 并显式告警"1 股就超帽"的残差情形 (高价股无法再缩, 否则会静默放行超标风险)。
+    if _risk_cap_usd > 0 and position_size > 0:
+        _residual = abs(entry_price - result["stop_loss"]) * position_size
+        if position_size > 1 and _residual > _risk_cap_usd * 1.05:
+            logger.warning(
+                f"[Playbook] {decision.get('symbol','')} 风险帽结余超标: {position_size}股 风险${_residual:,.0f} "
+                f"> 帽${_risk_cap_usd:,.0f} (整股取整残差)")
+        elif position_size == 1 and _residual > _risk_cap_usd:
+            logger.warning(
+                f"[Playbook] {decision.get('symbol','')} 1股风险${_residual:,.2f} 已超帽${_risk_cap_usd:,.0f} "
+                f"⇒ 该标的无法在帽内建仓 (整股下限), 按最小仓放行")
     # 截断可观测性: sizing 数学在 SSOT 函数内, 此处仅在上限边界触发 info 日志
     _max_position_value = _risk_base * _max_position_pct
     if position_size > 0 and position_size * entry_price <= _max_position_value < (position_size + 1) * entry_price:

@@ -842,6 +842,29 @@ REGISTRY: list[ShadowItem] = [
               "不否掉 meta-labeling 方法本身 (方法的价值在特征, 不在模型)。",
         count_mode="where:settled",
     ),
+    # ── 单笔绝对风险帽 (2026-10-31 用户裁「先做 P1」) ──
+    ShadowItem(
+        id="risk_cap_sizing",
+        name="单笔绝对风险帽 (这一笔最多亏多少钱)",
+        status=ShadowStatus.OBSERVING,
+        description="把「每笔名义风险 (|entry−SL|×股数)」按美元直接封顶 ($80), 与止损宽度自适应; "
+                    "治的是风险/收益结构倒挂 (实测中位风险 $257 vs 中位盈利 $4.29 = 0.017R), "
+                    "不预测方向、不改选股、不改出场。纯算术改动。",
+        data_path="data/shadow/risk_cap_sizing_latest.json",
+        config_key="playbook.risk_cap_usd_per_trade",
+        min_n=60,
+        graduation_criteria="scripts/risk_cap_shadow_eval.py 头部 + DEB-20261031-risk-cap §3 逐字 (读数前写死): "
+                            "生效门 E1 帽绑定成交占比≥30% ∧ E2 risk_amount p90 ≤$96 ∧ E3 1股超帽≤5%; "
+                            "经济门 J1 笔均 > 基线 −$1.84 ∧ J2 费用率 ≤ 同基线+3bps ∧ J3 笔数下降≤25%; "
+                            "停止 S1 连5日净额<同长度基线×1.2 / S2 费用率高且笔均仍负 / S3 E3>5% ⇒ 立即回滚到 0。",
+        eval_script="scripts/risk_cap_shadow_eval.py",
+        created="2026-10-31",
+        last_evaluated=None,
+        notes="本轮唯一的生产行为变更 (改仓位计算)。诚实边界: ①历史回放 +$498 未计费用刚性项, "
+              "实测改善会小; ②帽只降低燃烧速度, 不让策略转正 (720 笔基线 −$1.84/笔 → 约 −$1.1/笔); "
+              "③与 P2 (逆势单禁隔夜) 叠加须重算, 不得把两次改善相加; ④跨两个退出参数时代 (RFC-138)。",
+        count_mode="where:settled",
+    ),
     # ── Phase 1 (2026-08-23) ──
     ShadowItem(
         id="p1_1_vwap_slope",

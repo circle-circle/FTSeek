@@ -200,6 +200,7 @@ def read_sizing_context(db_path: Optional[str] = None, *,
         pb_cfg = get_playbook_config()
         ctx["risk_pct"] = float(pb_cfg.get("risk_pct", 0.5))
         ctx["max_position_pct"] = float(pb_cfg.get("max_position_pct", 0.06))
+        ctx["risk_cap_usd_per_trade"] = float(pb_cfg.get("risk_cap_usd_per_trade", 0.0) or 0.0)
         ctx["risk_base_capital"] = float(pb_cfg.get("risk_base_capital", 82000.0))
         ctx["min_confidence"] = float(pb_cfg.get("min_confidence", 60) or 60)
         ctx["confidence_sizing_enabled"] = bool(pb_cfg.get("confidence_sizing_enabled", False))
@@ -403,17 +404,29 @@ def estimate_size(*, entry: Any, stop_loss: Any, direction: str, ctx: Dict[str, 
     size = compute_position_size(
         equity, risk_pct, entry_value, sl_value, max_position_pct,
         regime_mult=regime_mult, water_mult=water_mult, conf_factor=conf_factor,
+        risk_cap_usd=float(ctx.get("risk_cap_usd_per_trade") or 0.0),
     )
     risk_amount = equity * (risk_pct / 100.0) * regime_mult * water_mult * conf_factor
     risk_size = int(risk_amount / per_share_risk)
     cap_notional = equity * max_position_pct if max_position_pct > 0 else None
     truncated = bool(cap_notional is not None and risk_size * entry_value > cap_notional)
+    # 归因补第三支 (DEB-20261031-risk-cap): 风险帽绑住时必须能被读出, 否则库里的
+    # risk_amount 又会被当成"风险预算"误读 (本模块 docstring 的历史病灶)。
+    risk_cap_usd = float(ctx.get("risk_cap_usd_per_trade") or 0.0)
+    _size_no_risk_cap = compute_position_size(
+        equity, risk_pct, entry_value, sl_value, max_position_pct,
+        regime_mult=regime_mult, water_mult=water_mult, conf_factor=conf_factor,
+    )
+    risk_cap_bound = bool(risk_cap_usd > 0 and int(size) < int(_size_no_risk_cap))
 
     out.update({
         "state": "computed",
         "size": int(size),
-        "size_basis": "max_position_pct_cap" if truncated else "risk_budget",
+        "size_basis": ("risk_cap_usd" if risk_cap_bound
+                       else ("max_position_pct_cap" if truncated else "risk_budget")),
         "truncated_by_cap": truncated,
+        "risk_cap_bound": risk_cap_bound,
+        "risk_cap_usd": _round(risk_cap_usd, 2),
         "notional": _round(int(size) * entry_value, 2),
         "cap_notional": _round(cap_notional, 2),
         "risk_budget_notional": _round(risk_size * entry_value, 2),
