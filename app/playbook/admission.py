@@ -105,6 +105,11 @@ _DEFAULTS: Dict[str, Any] = {
     # 止损宽度: 距入场 >max_sl_pct% = 单笔最大亏损失控 (静态 R:R 不可靠 —
     #   止盈端常被保本/锁盈/EOD 替代, 真正硬约束是止损端), 0=不拦
     "max_sl_pct": 0.0,
+    # ── 组合层在险总帽 (DEB-20261031-budget-design) ──
+    #   语义: 所有未平仓位的「到止损还要亏多少」之和 + 本笔 ≤ 权益×本值%。
+    #   存在理由: 单笔帽 (risk_pct/max_position_pct) 挡不住并发叠加 —— 实测并发峰值 18 笔,
+    #   18×$284≈5.1% 权益同时裸在止损上。0=不关(默认, 先观测)。implemented: portfolio_heat.py
+    "max_open_risk_pct": 0.0,
 }
 
 _cfg_cache: Optional[Dict[str, Any]] = None
@@ -233,6 +238,19 @@ def evaluate(inst: Dict[str, Any]) -> Dict[str, Any]:
         if _sl_pct > _sl_max:
             reasons.append(f"SL_STOP_TOO_WIDE({_sl_pct:.1f}%>{_sl_max:g}%)")
 
+    # 组合层在险总帽 (DEB-20261031-budget-design): 单笔帽之外的第二层, 挡并发叠加。
+    #   fail-open: 库读不到 ⇒ heat_reason 返回 None, 不阻断交易 (但会留 warning)。
+    if _f(cfg.get("max_open_risk_pct")) > 0 and qty > 0 and entry_price > 0 and _sl > 0:
+        try:
+            from app.playbook.portfolio_heat import heat_reason
+            _cand_risk = abs(entry_price - _sl) * qty
+            _heat = heat_reason(cfg, _cand_risk, _equity_usd())
+            if _heat:
+                reasons.append(_heat)
+            metrics["candidate_risk"] = round(_cand_risk, 2)
+        except Exception as exc:  # noqa: BLE001 — 组合帽永不阻断 (fail-open)
+            logger.warning(f"[admission] portfolio heat 判定失败, 跳过该判据: {exc}")
+
     # 弱信号审计标记 (2026-08-07 用户哲学"不强不做"): 辩论一方弃权 = 弱信号。
     #   record-only (不强拦): sim 采集期供给优先 + confidence 类无 IC 证据;
     #   攒 n≥30 弃权组实际表现再决定硬拦/反向。方向冲突已在 da_gate 决策环节拦截。
@@ -317,6 +335,24 @@ def apply(inst: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         inst["skip_reason"] = f"admission: {_why}"
 
     return inst, res
+
+
+def _equity_usd() -> float:
+    """权益基数 — 与 sizing 同源 (capital_safety 实时净值), 兜底 config risk_base_capital。"""
+    try:
+        from app.risk.capital_safety import get_capital_safety_system
+        cs = get_capital_safety_system()
+        if cs._state and getattr(cs._state, "current_equity", None):
+            eq = float(cs._state.current_equity)
+            if eq > 0:
+                return eq
+    except Exception:
+        pass
+    try:
+        from app.playbook.config import PlaybookConfig
+        return float(PlaybookConfig().get("risk_base_capital") or 82000.0)
+    except Exception:
+        return 82000.0
 
 
 def _f(v: Any) -> float:
