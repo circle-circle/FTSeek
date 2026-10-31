@@ -13,9 +13,20 @@
 2026-09-23: 截留率改报 Σ/Σ 为主 + 中位 (原 mean(strat/close) 被小分母笔拉飞,
   同一子集 均值0.47 / 中位0.11 / Σ/Σ0.19); 上游 collector 同步改口径。
   历史 state 里 2026-09-23 及以前的 capture 是均值比口径, 不与新值比较。
+2026-10-31 (周报两项可读性修复, 零交易行为变更):
+  ① 变体反事实表补「实盘同子集」臂: 原表只印变体自身 gross%, 读者会读成
+     「变体更赚 +1.31%」; 实测补臂后 12 个变体 Δ=变体−实盘 全在 ±0.08pp、
+     |t|<1 ⇒ 退出参数收紧方向无杠杆 (是负面结果, 不是可用杠杆)。
+     实盘毛% = strategy_net_pct(净) + fees_est/notional×100, 需读生产库 (只读,
+     失败则降级为旧表并标注, 不阻断推送)。
+  ② 周窗口改互斥: 原 cutoff=max_d−7d 且按 > cutoff 过滤, 上一期 week_end 那天
+     会被两周同时计入 (实测 10-22 的 8 笔双计, 稀释 Δ上周)。现起点取 state 里
+     上一期 week_end (互斥); 缺失/超 14 天回退 7 日历日。标题印实际交易日数,
+     待回填拆「窗内 / 窗后顺延」。
 """
 import json
 import pathlib
+import sqlite3
 import statistics
 import subprocess
 import sys
@@ -26,6 +37,7 @@ SAMPLES = pathlib.Path(
 HERE = pathlib.Path(__file__).resolve().parent
 STATE = HERE / "dual_caliber_state.json"
 FTSEEK = "/opt/ftseek/FTSeek-US"
+TRADE_DB = FTSEEK + "/data/ftseek_us.db"
 
 
 def trading_day() -> bool:
@@ -135,19 +147,97 @@ def save_state(st):
     STATE.write_text(json.dumps(st, ensure_ascii=False))
 
 
-def variant_table(pairs, top=6):
+def _live_gross_map(pairs):
+    """实盘同子集「毛%」映射: decision_id → (净+费)/名义×100。
+
+    变体 profit_pct 是 gross%, 必须与实盘 gross 同口径才可比。净额已在样本里
+    (strategy_net_pct), 但费率不在样本字段内 ⇒ 只读生产库取 fees_est/notional。
+    报表路径: 任何异常都降级为 {} (调用方退回旧表并标注), 绝不阻断推送。
+    """
+    ids = sorted({p.get("decision_id") for p in pairs
+                  if p.get("decision_id") and p.get("strategy_net_pct") is not None})
+    if not ids:
+        return {}
+    out = {}
+    try:
+        con = sqlite3.connect("file:" + TRADE_DB + "?mode=ro", uri=True, timeout=10)
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            q = ("SELECT decision_id, "
+                 "SUM(COALESCE(fees_est,0)), SUM(entry_price*quantity) "
+                 "FROM trade_records WHERE decision_id IN (%s) "
+                 "GROUP BY decision_id" % ",".join("?" * len(chunk)))
+            for did, fee, nom in con.execute(q, chunk):
+                if nom and nom > 0:
+                    out[did] = (fee or 0.0) / nom * 100.0
+        con.close()
+    except Exception:
+        return {}
+    # (fee/notional%) 拼上样本里的净% = 毛%
+    for p in pairs:
+        fp = out.get(p.get("decision_id"))
+        if fp is not None and p.get("strategy_net_pct") is not None:
+            p["live_gross_pct"] = p["strategy_net_pct"] + fp
+    return out
+
+
+def variant_table(pairs, week, top=6):
+    """变体反事实: 变体自身 mean 必须并列实盘同子集 mean 才有判读价值。
+
+    2026-10-31: 原实现只印变体利润均值并按它排序 ⇒ 「+1.31%」会被读成
+    「变体比实盘多赚 1.31pp」。补实盘臂后实测 12 变体 Δ 全在 ±0.08pp (|t|<1)：
+    真正该读的是 Δ 与 t，不是变体绝对值。
+    """
     stat = {}
     for p in pairs:
         for vn, v in (p.get("shadow_variants") or {}).items():
             if isinstance(v, dict) and v.get("profit_pct") is not None:
-                stat.setdefault(vn, []).append(v["profit_pct"])
+                stat.setdefault(vn, []).append(p)
     if not stat:
         return ""
-    lines = []
-    for vn, vs in sorted(stat.items(), key=lambda kv: -sum(kv[1]) / len(kv[1]))[:top]:
-        lines.append(f"| {vn} | {len(vs)} | {sum(vs)/len(vs):+.2f}% |")
-    return ("**变体反事实**(触发子集, 变体恒比实盘更紧, gross%):\n"
-            "|变体|触发笔|触发均值|\n|---|---|---|\n" + "\n".join(lines))
+    _live_gross_map(pairs)  # 补实盘毛% 到样本上; 失败返回 {}, 下方自动降级
+    week_n = {}
+    for p in week:
+        for vn, v in (p.get("shadow_variants") or {}).items():
+            if isinstance(v, dict) and v.get("profit_pct") is not None:
+                week_n[vn] = week_n.get(vn, 0) + 1
+
+    rows, degraded = [], False
+    for vn, ps in stat.items():
+        both = [p for p in ps if p.get("live_gross_pct") is not None]
+        if not both:
+            degraded = True
+            rows.append((vn, len(ps), sum(p["shadow_variants"][vn]["profit_pct"] for p in ps) / len(ps),
+                         None, None, None, week_n.get(vn, 0)))
+            continue
+        diffs = [p["shadow_variants"][vn]["profit_pct"] - p["live_gross_pct"] for p in both]
+        t = None
+        if len(diffs) > 1:
+            sd = statistics.stdev(diffs)
+            if sd > 0:
+                t = (sum(diffs) / len(diffs)) / (sd / len(diffs) ** 0.5)
+        rows.append((vn, len(both),
+                     sum(p["shadow_variants"][vn]["profit_pct"] for p in both) / len(both),
+                     sum(p["live_gross_pct"] for p in both) / len(both),
+                     sum(diffs) / len(diffs), t, week_n.get(vn, 0)))
+
+    # 排序: 有 Δ 的按 Δ 降序 (最值得看的在最上), 缺 Δ 的沉底
+    rows.sort(key=lambda r: (r[4] is None, -(r[4] or 0), -r[1]))
+    L = ["**变体反事实**(累计触发子集; 变体恒比实盘更紧; gross%):",
+         "|变体|累计n|变体均值|实盘同子集|Δpp|t|本周n|",
+         "|---|---|---|---|---|---|---|"]
+    for vn, n, vm, lm, dm, t, wn in rows[:top]:
+        if dm is None:
+            L.append(f"| {vn} | {n} | {vm:+.2f}% | — | — | — | {wn} |")
+        else:
+            ts = f"{t:+.2f}" if t is not None else "—"
+            L.append(f"| {vn} | {n} | {vm:+.2f}% | {lm:+.2f}% | {dm:+.2f} | {ts} | {wn} |")
+    if degraded:
+        L.append("Δ 列不可用(生产库读取失败), 本表只列变体自身收益 —— **不可**据此判变体优劣。")
+    else:
+        L.append("Δ = 变体毛% − 实盘毛%(净+费)。|t|<2 即与实盘不可分辨 —— 变体均值高 "
+                 "不代表它更好, 只看 Δ/t。")
+    return "\n".join(L)
 
 
 def daily():
@@ -190,39 +280,67 @@ def daily():
     return "\n".join(L)
 
 
+def _week_start(prev, max_d):
+    """周窗口起点 (不含): 优先接上一期 week_end ⇒ 两期互斥, 不重不漏。
+
+    原实现起点 = max_d−7 天且按 > 起点过滤 ⇒ 上一期 week_end 那天 (实为上一期
+    窗口末日) 会被两周同时计入 (实测 2026-10-22 的 8 笔双计, 稀释 Δ上周)。
+    缺失上期 / 上期早于 14 天 (漏跑多周) 时回退 7 日历日, 避免窗口无限拉长。
+    同期重跑 (days=0, 上期窗末就是最新配对日) 也走「接上期」⇒ 窗口为空 ⇒ 静默不推,
+    这是有意的: 半周内重复触发 cron/手工重跑不应再推一遍同一批数据。
+    """
+    if prev and prev.get("week_end"):
+        try:
+            d0 = datetime.strptime(prev["week_end"], "%Y-%m-%d")
+            if 0 <= (datetime.strptime(max_d, "%Y-%m-%d") - d0).days <= 14:
+                return prev["week_end"], "接上期"
+        except Exception:
+            pass
+    return ((datetime.strptime(max_d, "%Y-%m-%d") - timedelta(days=7)).strftime("%Y-%m-%d"),
+            "回退7日历日")
+
+
 def weekly():
     rows = load_samples()
     pairs = complete_pairs(rows)
     if not pairs:
         return ""
     max_d = max(p["trade_date"] for p in pairs)
-    cutoff = (datetime.strptime(max_d, "%Y-%m-%d")
-              - timedelta(days=7)).strftime("%Y-%m-%d")
-    week = [p for p in pairs if p["trade_date"] > cutoff]
-    wa = agg(week)
-    pend_week = sum(1 for s in rows if s.get("strategy_net_pct") is not None
-                    and s.get("fwd_ret_t1_entry") is None
-                    and s.get("trade_date", "") > cutoff)
     st = load_state()
     hist = st.get("weekly", [])
     prev = hist[-1] if hist else None
+    start, why = _week_start(prev, max_d)
+    week = [p for p in pairs if p["trade_date"] > start]
+    if not week:
+        return ""  # 无新配对 → 静默 (no_agent 语义), 不推进 state
+    wa = agg(week)
+    sessions = sorted({p["trade_date"] for p in week})
+    pend_in = sum(1 for s in rows if s.get("strategy_net_pct") is not None
+                  and s.get("fwd_ret_t1_entry") is None
+                  and start < s.get("trade_date", "") <= max_d)
+    pend_after = sorted({s.get("trade_date", "") for s in rows
+                         if s.get("strategy_net_pct") is not None
+                         and s.get("fwd_ret_t1_entry") is None
+                         and s.get("trade_date", "") > max_d})
     hist.append({"week_end": max_d, **(wa or {})})
     st["weekly"] = hist[-12:]
     save_state(st)
 
-    L = [f"📈 **dc双口径周对比** (截至 {max_d} 的7天)",
+    L = [f"📈 **dc双口径周对比** (窗口 {start}<日期≤{max_d} · {len(sessions)} 个交易日 · {why})",
          fmt_agg(wa, "本周 "),
          fmt_agg(agg(pairs), "累计 "),
-         f"本周成交待T+1回填: {pend_week} (周四/五的配对下周一/三才齐)"]
+         f"待T+1回填: 窗内 {pend_in} 笔 | 窗后顺延下期 {len(pend_after)} 笔"
+         + (f" ({'/'.join(pend_after[:4])})" if pend_after else "")]
     if prev and prev.get("n"):
-        L.append(f"Δ上周: 配对{wa['n']-prev['n']:+d}"
+        L.append(f"Δ上期: 配对{wa['n']-prev['n']:+d}"
                  f" | 收盘口径 {wa['close_mean']-prev['close_mean']:+.2f}pp"
                  f" | 策略退出 {wa['strat_mean']-prev['strat_mean']:+.2f}pp"
-                 f" | 方向一致 {wa['agree_pct']-prev['agree_pct']:+.0f}pp")
+                 f" | 方向一致 {wa['agree_pct']-prev['agree_pct']:+.0f}pp"
+                 f" (上期窗末 {prev.get('week_end')}, 两期互斥)")
     L.append(f"\n**本周逐笔记录 ({len(week)})**:")
     L.append(TABLE_HEAD)
     L.extend(trade_row(p) for p in week)
-    vt = variant_table(week)
+    vt = variant_table(pairs, week)
     if vt:
         L.append("\n" + vt)
     return "\n".join(L)
