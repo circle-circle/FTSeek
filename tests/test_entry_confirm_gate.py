@@ -170,7 +170,13 @@ def test_production_yaml_keys_are_readable_end_to_end():
     from app.playbook.config import PlaybookConfig
     pb = PlaybookConfig()
     # 键存在且非默认兜底 (证明真从 YAML 读到, 不是 DEFAULTS 回填)
-    assert pb.get("entry_confirm_enabled") is True
+    # 2026-10-31 用户裁「关门」⇒ 现在真值是 False。**这里钉的是接线, 不是开关值**:
+    #   断言「门读到的 == YAML 真值」而不是把 True 写死 —— 否则每次治理裁决都要改测试
+    #   (改测试=让裁决绕过 DECISION 记录), 或反过来把「关着」焊死成不可复活。
+    _yaml_enabled = pb.get("entry_confirm_enabled")
+    assert isinstance(_yaml_enabled, bool), "键读不到 ⇒ 回落默认 = 装饰性配置"
+    assert ecg.confirm_gate_config()["enabled"] is _yaml_enabled, \
+        "门读到的 != YAML 真值 ⇒ 读取路径断开 (2026-10-10 同型病灶)"
     assert pb.get("entry_confirm_delay_sec") == 120
     # 2026-10-10 用户裁「直接走 sim 交易链路, 不用影子攒样看 sim 交易结果」
     # ⇒ holdout 归零 (留对照臂会稀释 SIM 结果), 全量走门
@@ -188,10 +194,10 @@ def test_production_yaml_keys_are_readable_end_to_end():
     from app.core.config_container import get_config
     assert get_config().get_dotted("playbook.entry_confirm.enabled", None) is None
     assert get_config().get_dotted(
-        "playbook.execution_parameters.entry_confirm_enabled", None) is True
-    # 门自身读到的 = YAML 真值 (不是保守默认)
+        "playbook.execution_parameters.entry_confirm_enabled", None) is _yaml_enabled
+    # 门自身读到的 = YAML 真值 (不是保守默认); 开关值与 2026-10-31 关门裁决一致
     assert ecg.confirm_gate_config() == {
-        "enabled": True, "delay_sec": 120, "holdout_pct": 0, "ttl_sec": 600,
+        "enabled": _yaml_enabled, "delay_sec": 120, "holdout_pct": 0, "ttl_sec": 600,
         "ruler": "mid", "grace_sweeps": 3, "grace_votes": 2,
         "fade_short_chase_cap_enabled": True,
         "fade_short_max_opp_pct": 1.0, "fade_short_window_min": 15}
@@ -258,7 +264,10 @@ def test_config_zero_values_are_not_swallowed_by_falsy_default():
     from app.playbook.config import PlaybookConfig
     prod = ecg.confirm_gate_config(PlaybookConfig())
     assert prod["holdout_pct"] == 0, f"生产门实际 holdout={prod['holdout_pct']} ≠ YAML 的 0"
-    assert prod["enabled"] is True and prod["delay_sec"] == 120 and prod["ttl_sec"] == 600
+    # 生产真实值复核 (端到端, 不经替身) —— 只钉「非 0 值没被吞」, 不钉开关状态
+    # (2026-10-31 用户裁关门 ⇒ enabled 现为 False; 钉 True 会逼每次裁决改测试)
+    assert isinstance(prod["enabled"], bool)
+    assert prod["delay_sec"] == 120 and prod["ttl_sec"] == 600
 
 
 # ══════════════════════════════════════════════════════════════

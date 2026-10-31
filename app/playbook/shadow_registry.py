@@ -151,13 +151,16 @@ ADJUDICATED: dict[str, dict] = {
                 "复跑: scripts/execution_tca_report.py。注: 均值/中位为正不代表成本 (方向感知未定义)。",
     },
     "entry_confirm_forward": {
-        "read_at": "2026-10-31", "recheck_after": "2026-11-15", "needs_user": True,
+        "read_at": "2026-10-31", "recheck_after": None, "needs_user": False,
         "note": "10/31 产物 FAIL: n=65 全量 +6.27/笔 (t=0.84, WR81.5%) 但 SL_INITIAL 族 n=5 -120.37/笔 "
                 "⇒ 判据① 不过。🔴 RFC-141 §5 案例3 预注册后果「轴 KILLED, enabled=false, 产物留档」"
                 "**未执行**: config/unified_config.yaml:1267 entry_confirm_enabled 仍为 true, 10/12 起 "
                 "entry_confirm_reversed 弃单 78 笔/15 日 (10/30 计划18 弃7)。决策与生产不一致 ⇒ 待用户裁: "
                 "(a) 按预注册关门 (false + restart, 回滚零卡单) 或 (b) 破例续跑 (须在 RFC-141 留痕说明 "
-                "n=5 欠功率并预注册续跑样本门)。⛔ 不得靠改判据/改本登记日期消除本条。",
+                "n=5 欠功率并预注册续跑样本门)。⛔ 不得靠改判据/改本登记日期消除本条。"
+                "│2026-10-31 用户裁「关门」= 按 (a) 执行预注册后果: config → false + restart "
+                "(20:48 CST; 快循环已启动/0 ERROR/2 持仓不变); status → KILLED, verdict_history 已记 "
+                "三块独立证据 + RFC-153 连带失效披露。recheck=None ⇒ 不再周期推回; 复活须带 20% 对照臂 (新 RFC)。",
     },
     "instruction_conflict_shadow": {
         "read_at": "2026-10-31", "recheck_after": "2026-12-31", "needs_user": False,
@@ -2244,7 +2247,7 @@ REGISTRY: list[ShadowItem] = [
     ShadowItem(
         id="entry_confirm_forward",
         name="RFC-141 入场延迟确认门 SIM 实弹前瞻 (D2' forward, 2026-10-10 用户裁)",
-        status=ShadowStatus.OBSERVING,
+        status=ShadowStatus.KILLED,
         description="触发后 120s 复核: 价格仍站 reprice 执行锚同侧→放行, 反转→ABANDONED 放弃 "
                     "(落 guardrail SKIP reason=entry_confirm_reversed 可追溯)。"
                     "载体=10s 退出快循环 sweep (非 180s 主循环 — 防静默落地 3-5min 未预注册变体, "
@@ -2280,6 +2283,21 @@ REGISTRY: list[ShadowItem] = [
                             "PASS 后 REAL 转正另须 RFC 修订+用户签字, 不自动。",
         eval_script="scripts/settle_entry_confirm_forward.py",
         created="2026-10-10",
+        last_evaluated="2026-10-31",
+        verdict_history=[{"date": "2026-10-31", "verdict": "KILLED",
+                          "evidence": "用户裁「关门」(= RFC-141 §5 案例3 预注册后果的**执行**) + "
+                                      "`entry_confirm_enabled: false` + systemctl restart (20:48 CST, "
+                                      "启动证据: 快循环已启动/0 ERROR/2 持仓对账不变)。"
+                                      "依据三块独立读数 (DEB-20261031 §六): ①净经济价值≈0 —— "
+                                      "弃单躲掉 $1.6–2.3k vs 确认单等待成本 $1.69k; ②交易量腰斩 "
+                                      "(通过率 51.2%, 15 日弃 81 笔) 且空头被砍六成 (42.1% vs 多头 56.0%), "
+                                      "而空头是当下唯一赚钱侧 (10 月 +$11.26/笔 vs 多头 −$2.38/笔); "
+                                      "③等待成本 34.6bps = entry_cost_decomposition 里全链唯一可回收段 "
+                                      "(开盘→执行锚 36.3bps), 即门把唯一能省的钱花掉了。"
+                                      "靶心族 n=5 −$120.37/笔 从未收敛 (判据① FAIL)。"
+                                      "⚠️ 副作用已披露: 同模块 RFC-153 FADE_SHORT 追价帽一并失效 "
+                                      "(键只在本模块被读), 其轴 (5 处理/10 对照) 停粮; 重开走 RFC-158 新预注册。"
+                                      "复活血路: 带 20% 对照臂 (holdout_pct=20) 重开 —— 无对照臂就永远不可归因。"}],
         notes="形态=SIM 实弹全量 (holdout_pct=0, 2026-10-10 用户裁: 留对照臂会稀释 SIM 结果)。"
               "强制披露: ①confirm_gate 反向先验 +0.50%/笔 t=5.67 (域不同, 盘前注入 vs 开盘窗微结构) "
               "②ALL 人群历史回放平 (t=−0.16/误杀58%), 达标证据全在 SL_INITIAL 事后族 "

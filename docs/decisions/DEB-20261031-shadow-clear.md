@@ -114,3 +114,26 @@
 **交叉验证 (本批最有价值的一处)**: ③ 的 **36.3bps** 与 entry_confirm 门为「等 2 分钟」付的
 **34.6bps** (opp_cost 0.346%) 几乎相等 ⇒ **那道门花掉的, 正好就是这条链上唯一可回收的那一段**。
 两笔独立读数指向同一结论: 入场成本的可优化项是「信号→下单的滞后」, 而 2 分钟门正是在放大它。
+
+## 七、执行回执: entry_confirm 门已按预注册关闭 (2026-10-31 用户裁「关门」)
+
+| 项 | 内容 |
+|---|---|
+| 裁决 | 按 RFC-141 §5 案例3 预注册后果执行 —— 「判读 1 明确不过 ⇒ 轴 KILLED, enabled=false」 |
+| 改动 | `config/unified_config.yaml: playbook.execution_parameters.entry_confirm_enabled: true → false` (就地留 6 行依据注记) |
+| 生效 | `systemctl restart ftseek-us` @ 2026-10-31 20:48:20 CST; 新 PID 1087471 |
+| 启动证据 | `[PlaybookExit] 快循环已启动 (interval=10s)` 20:48:38; 重启后 `ERROR/CRITICAL/Traceback` 计数 **0**; `open_positions` 仍 **2** (US.MRK 39 LONG / US.LMT 9 LONG, 10/30 建仓, 无平仓记录=非幽灵仓) |
+| 空窗披露 | 重启期间退出快循环空窗约 **10–20s**; 当时美股休市 (Sat 05:xx ET) ⇒ 无报价变动, 零执行风险 |
+| 代码路径 | `entry_confirm_gate.py:438` `if not cfg.get("enabled") …: return "execute"` ⇒ 门永不 arm、不弃单 |
+| 连带副作用 | 同模块 **RFC-153「FADE_SHORT 开盘快跌不追」追价帽一并失效** (其键 `entry_confirm_fade_short_*` 只在本模块被读); 该轴 5 处理/10 对照 ⇒ **停粮**, 重开走 RFC-158 新预注册 |
+| 登记 | registry `entry_confirm_forward` → **KILLED** + verdict_history(三块证据); ADJUDICATED `recheck_after=None` (不再周期推回); 白话词典改终态 |
+| 待裁面 | ① **0 项** (清账前 14 项) |
+| 回滚 | `entry_confirm_enabled: true` + restart (原批准 2026-10-10 SIM 全量)。⛔ 复活须带 **20% 对照臂** (`holdout_pct=20`) —— 无对照臂就永远不可归因, 这是本门 15 天读数最大的教训 |
+
+### 测试口径同步 (关门带来的连带改动, 非放宽)
+
+- `tests/test_entry_confirm_live_wiring.py::_cfg_t()` 显式 `enabled=True`: 该文件验的是**机制接线**,
+  不应随治理开关失效 (否则 13 例集体假红, 且某天门被重开时这些用例又「自己变绿」= 覆盖不可信)。
+- `test_production_config_end_to_end` 改为断言**当前治理真值 False**: 任何人重开开关都会让它变红,
+  强迫其留下 DECISION 记录 —— 这是该用例应有的用途。
+- `test_config_zero_values_are_not_swallowed_by_falsy_default` 只钉「非 0 值没被吞」, 不再钉开关状态。

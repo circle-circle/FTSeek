@@ -96,9 +96,14 @@ def _save(db, sym, direction, entry, size=50, did=None):
 
 
 def _cfg_t():
-    """生产 cfg 但 holdout 显式置 0 (验 treatment 路径); holdout 臂另有专测。"""
+    """生产 cfg 但 holdout 显式置 0 (验 treatment 路径); holdout 臂另有专测。
+
+    ⚠️ 2026-10-31: `entry_confirm_enabled` 生产真值已按用户裁**关门** (RFC-141 §5 案例3)。
+    本文件验的是**门机制**是否接线正确, 不该随治理开关一起失效 ⇒ `enabled` 显式强制 True。
+    (若跟着生产关 ⇒ 13 例集体假红, 且某天门被重开时这些用例又会"自己变绿" = 覆盖不可信。)
+    """
     from app.playbook.config import PlaybookConfig
-    return {**ecg.confirm_gate_config(PlaybookConfig()), "holdout_pct": 0}
+    return {**ecg.confirm_gate_config(PlaybookConfig()), "holdout_pct": 0, "enabled": True}
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -299,10 +304,15 @@ def test_settler_consumes_gate_artifact_without_change(env, monkeypatch):
 # ══════════════════════════════════════════════════════════════════
 def test_production_config_end_to_end():
     """生产 YAML 真值 (不经替身) — 2026-10-10 用户裁 holdout 归零;
-    2026-10-15 用户裁 v2 判尺 (RFC-141 §5.10)。"""
+    2026-10-15 用户裁 v2 判尺 (RFC-141 §5.10);
+    2026-10-31 用户裁**关门** ⇒ enabled 真值 = False (判据1 FAIL, RFC §5 案例3)。
+
+    本例断言的是**当前治理真值**, 所以关门后必须跟着变 —— 这正是它的用途:
+    任何人重开开关都会让本例变红, 强迫其留下 DECISION 记录。
+    """
     from app.playbook.config import PlaybookConfig
     cfg = ecg.confirm_gate_config(PlaybookConfig())
-    assert cfg == {"enabled": True, "delay_sec": 120, "holdout_pct": 0, "ttl_sec": 600,
+    assert cfg == {"enabled": False, "delay_sec": 120, "holdout_pct": 0, "ttl_sec": 600,
                    "ruler": "mid", "grace_sweeps": 3, "grace_votes": 2,
                    "fade_short_chase_cap_enabled": True,
                    "fade_short_max_opp_pct": 1.0, "fade_short_window_min": 15}, cfg

@@ -1264,7 +1264,13 @@ playbook:
     #   ⚠️ 键名与既有 entry_confirm_max_wait_s 无关 (那是下单**后**确认成交的 30s 等待窗,
     #   消费点 playbook_service.py:1851); 本节是入场**前**延迟确认。grep entry_confirm 会
     #   同时命中两者, 改动须看清语义 — 2026-10-10 撞车登记。
-    entry_confirm_enabled: true       # 2026-10-10 用户批准 SIM 全量; 回滚=false+restart
+    entry_confirm_enabled: false      # 2026-10-31 用户裁「关门」(RFC-141 §5 案例3 预注册后果): 判据1 FAIL
+                                      # (SL_INITIAL 族 n=5 −120.37/笔 ≥−$40 门不过) ⇒ 轴 KILLED, enabled=false。
+                                      # 依据 DEB-20261031 §六; 反事实: 门净经济价值≈0 而交易量腰斩(51.2%通过)、
+                                      # 空头被砍六成(42.1%通过)、等待成本 34.6bps = 全链唯一可回收成本段(36.3bps)。
+                                      # ⚠️ 同模块 RFC-153「FADE_SHORT 开盘快跌不追」追价帽随门一并失效 (键只在本模块被读);
+                                      #    其轴 (5 处理/10 对照) 已停粮, 重开须走 RFC-158 新预注册。
+                                      # 回滚 = true + restart (原批准 2026-10-10 SIM 全量)。
     entry_confirm_delay_sec: 120      # 影子裁过的 2min 腿 (DELAYS_MIN=(2,5), 5min 腿 opp 超门)
     #   holdout 归零 (2026-10-10 用户裁「直接走 sim 交易链路, 不用影子攒样, 看 sim 交易结果」):
     #   留 20% 对照臂会稀释 SIM 结果 ⇒ 全量走门。裁决基准改为开门前预注册基线 (RFC-141 §4),

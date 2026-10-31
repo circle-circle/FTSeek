@@ -199,8 +199,8 @@ SHADOW_LEXICON: dict[str, dict[str, str]] = {
     },
     "entry_confirm_forward": {
         "plain": "触发后等 2 分钟再进场（价格还站在触发方向才进）, 到底救不救得回『一进场就反向』那族亏损",
-        "conclusion": "10/31 产物 **FAIL**: 全量 n=65 净 **+6.27/笔**（t=0.84, WR81.5%）看着转好, 但判据① 的靶心 SL_INITIAL 族 n=5 仍 **−120.37/笔** ⇒ 判据① 不过。🔴 **RFC-141 §5 案例3 的预注册后果「轴 KILLED, enabled=false」没有执行** —— 门现在还开着（`entry_confirm_enabled: true`）, 10/12 起 `entry_confirm_reversed` 已弃单 **78 笔/15 日**, 且它成了空头被掐的第二大原因（22 只）。**待你裁**: (a) 按预注册关门（`false` + restart, 回滚零卡单）; (b) 破例续跑（须在 RFC-141 留痕: 族 n=5 欠功率 + 预注册续跑样本门）。",
-        "cls": "NEEDS_USER",
+        "conclusion": "**已关门（2026-10-31 用户裁, status=KILLED）** —— 按 RFC-141 §5 案例3 预注册后果执行: `entry_confirm_enabled: false` + restart (20:48 CST, 快循环已启动/0 ERROR/2 持仓不变)。三块独立依据: ①净经济价值≈0 (弃单躲 $1.6–2.3k vs 等待成本 $1.69k); ②交易量腰斩 (通过率 51.2%, 15 日弃 81 笔) 且空头被砍六成 (42.1% vs 多头 56%), 而空头是当下唯一赚钱侧; ③等待成本 34.6bps = 全链唯一可回收成本段 (开盘→执行锚 36.3bps)。⚠️ 同模块 RFC-153「FADE_SHORT 快跌不追」追价帽随门一并失效 (键只在本模块被读), 其轴停粮, 重开走 RFC-158。复活须带 20% 对照臂 (holdout_pct=20) —— 无对照臂永远不可归因",
+        "cls": "AUTO_WATCH",
     },
     "instruction_conflict_shadow": {
         "plain": "同一个 decision_id 被写了两次、方向还互相矛盾 —— 这种冲突多久发生一次, 仲裁有没有漏",
