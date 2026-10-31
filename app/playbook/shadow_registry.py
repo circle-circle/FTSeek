@@ -901,6 +901,29 @@ REGISTRY: list[ShadowItem] = [
               "说明经济效应在噪声内; 确定的部分是「笔数减少、费用率下降、最坏同时亏损从 5.1% 压到 2.5%」。",
         count_mode="where:settled",
     ),
+    # ── confidence 分档门候选 (2026-10-31 发现, 只记账不拦) ──
+    ShadowItem(
+        id="confidence_tier_gate",
+        name="confidence 低档 (conf<60) 是不是「零边际人群」",
+        status=ShadowStatus.OBSERVING,
+        description="按指令 confidence 分档看毛利/R: conf<60 (n=408) 的毛利/R = −0.001 ≈ 0, "
+                    "净 −$2,261 正好 ≈ 408×单笔费用 $5.5 ⇒ 结构上「零边际人群被费用抽干」; "
+                    "conf≥60 (n=282) 毛利/R +0.037, 净 +$1,014。两个子期同号但 Welch t 仅 1.29。",
+        data_path="data/shadow/confidence_tier_latest.json",
+        config_key=None,
+        min_n=300,
+        graduation_criteria="scripts/confidence_tier_eval.py 头部预注册逐字: "
+                            "T1 两子期 R 差同号 ∧ T2 Welch t≥2.0 ∧ T3 conf<60 组 |毛利/R|≤0.01 且 n≥300 ⇒ "
+                            "GATE_CANDIDATE (须另立 DEB 才可上硬门); T1∧T3 而 T2 不过 ⇒ KEEP_SHADOW; "
+                            "其余 WEAK/作废。",
+        eval_script="scripts/confidence_tier_eval.py",
+        created="2026-10-31",
+        last_evaluated="2026-10-31",
+        notes="只读影子, 零交易行为变更。**禁止**在 t 未达 2.0 前把它接成硬门 —— 那等于拿 57% 的笔数换一个"
+              "不显著的分组。conf 取值是离散档 (35/50/55/70/90), 不是连续信心分; 35 与 70 都来自 "
+              "deep_analysis, 所以它不是简单的通路标签, 但仍须防「拿通路当信号」。",
+        count_mode="where:settled",
+    ),
     # ── Phase 1 (2026-08-23) ──
     ShadowItem(
         id="p1_1_vwap_slope",
