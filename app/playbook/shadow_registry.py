@@ -875,6 +875,29 @@ REGISTRY: list[ShadowItem] = [
               "③与 P2 (逆势单禁隔夜) 叠加须重算, 不得把两次改善相加; ④跨两个退出参数时代 (RFC-138)。",
         count_mode="where:settled",
     ),
+    # ── 预算三帽 P3 (2026-10-31 用户裁「P3上」) ──
+    ShadowItem(
+        id="budget_p3_sizing",
+        name="预算三帽 P3 (组合在险/名义下限/止损宽度)",
+        status=ShadowStatus.OBSERVING,
+        description="三层预算帽: ①组合在险总帽 2.5% (Σ|入场−止损|×股数 + 本笔 ≤ 权益×2.5%); "
+                    "②名义下限 $5,500 (费用 ≤7.2bps, 低于此做一笔亏一笔); "
+                    "③止损宽度上限 8% (宽止损 ⇒ 名义小+风险大, 两头亏)。"
+                    "治的是「单笔帽挡不住并发叠加」(实测峰值 18 笔 = 5.1% 权益裸在止损上) 与费用地板漏损。",
+        data_path="data/shadow/budget_p3_latest.json",
+        config_key="playbook.admission.max_open_risk_pct",
+        min_n=60,
+        graduation_criteria="scripts/budget_p3_eval.py 头部 + DEB-20261031-budget-design §8 逐字 (读数前写死): "
+                            "E1 日均成交 ≥3 笔 ∧ E2 在险峰值 ≤2.5% 权益 ∧ E3 热帽拒绝占比 ≤60%; "
+                            "J1 笔均 > 基线 −$1.84 ∧ J2 费用率 ≤11.54bps ∧ J3 名义中位 ≥$5,500; "
+                            "回滚 R1 连10日日均<3 / R2 笔均<−$1.84 / R3 热帽拒绝>60% / R4 在险超帽。",
+        eval_script="scripts/budget_p3_eval.py",
+        created="2026-10-31",
+        last_evaluated=None,
+        notes="生产行为变更 (三道帽同时生效)。诚实边界: 回放各方案符号不稳 (-190/+1,117/-660 取决于帽组合), "
+              "说明经济效应在噪声内; 确定的部分是「笔数减少、费用率下降、最坏同时亏损从 5.1% 压到 2.5%」。",
+        count_mode="where:settled",
+    ),
     # ── Phase 1 (2026-08-23) ──
     ShadowItem(
         id="p1_1_vwap_slope",
