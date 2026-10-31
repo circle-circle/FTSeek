@@ -130,10 +130,16 @@ def _background_block(it: dict) -> list[str]:
         lines.append(f"    · 判据原文: {shown}")
     if spec and spec.known_gap:
         lines.append(f"    · 已知缺口: {spec.known_gap}")
-    # 你要决定什么: 按 lexicon 分类给出明确动作
+    # 你要决定什么: 按 lexicon 分类 + 是否已读过判据给出明确动作
+    # (2026-10-31: 原实现只按 cls 判 ⇒ 已读但 recheck 到期的条目被印成「暂无」,
+    #  却在 ①「需要你决定」段里 ⇒ 同一推送自相矛盾。已读项的动作是重估/结案, 不是再裁一次。)
     cls = lex.get("cls", "")
+    read_at = str(it.get("adjudicated_at") or "")
     if cls == "NEEDS_USER":
         lines.append("    · 你要决定: 立刻处置（补结算器/裁停采/裁转正）— 不要放着, 会混淆决策源")
+    elif read_at:
+        lines.append(f"    · 你要决定: 到期重看（判据已于 {read_at} 读毕，不在'从未裁过'之列）"
+                     "— 动作二选一: 登记新 recheck 日期（结论没翻面）或裁退役/转正（翻面了）")
     else:
         lines.append("    · 你要决定: 暂无（自动续观; 下次达门/漂移时再抬出）")
     return lines
@@ -183,7 +189,7 @@ def build_report(*, force: bool = False, dry: bool = False) -> str:
     ready = [r for r in rows if r.get("ready")]
     held = [r for r in rows if not r.get("ready")]
 
-    needs, watch, window = [], [], []
+    needs, recheck, watch, window = [], [], [], []
     for r in ready:
         cur = CURATED.get(r["id"])
         # 待裁面以 SSOT 为准 (`criteria_status.needs_adjudication` —— 已算进"已读判据登记 + 重看闹钟");
@@ -195,11 +201,16 @@ def build_report(*, force: bool = False, dry: bool = False) -> str:
                     "conclusion": "（未收录白话结论 — 请跑 " + str(r.get("eval_script") or "无 eval 脚本") + " 取读数）"}
         item = dict(r, **(cur or fallback))
         if decided:
-            needs.append(item)
-        elif cur is None or cur["cls"] == "WINDOW":
+            # 闸门 ① 与 ①b 的分界: 判据**从未读过** ⇒ 首次待裁 (真欠账);
+            # 读过了只是 `recheck_after` 到期 ⇒ 到期重看 (结论已出, 缺的是重估/结案),
+            # 两者混印会让「14 项需要你决定」里 9 项其实无事可做 (2026-10-31 核查实锤:
+            # 通知标题 14 项 vs 条目自己印「你要决定: 暂无」12 次 = 同一推送自相矛盾)。
+            (recheck if (r.get("adjudicated_at") and (cur or {}).get("cls") != "NEEDS_USER")
+             else needs).append(item)
+        elif cur is not None and cur.get("cls") == "WINDOW":
             window.append(item)
         else:
-            watch.append(dict(r, **cur))
+            watch.append(dict(r, **(cur or fallback)))
 
     # 状态变化面: 上轮之后有新条目落终态 (KILLED/SUPERSEDED/GRADUATED) 也要抬 (结论已出)
     state = {}
@@ -224,9 +235,9 @@ def build_report(*, force: bool = False, dry: bool = False) -> str:
          "不代表判据过），所以清单越长越没人看。这条通知只在**待裁面有变化**时出现，不是日报。",
          ""]
 
-    if needs:
-        L.append(f"**① 需要你决定（{len(needs)} 项）**")
-        for it in needs:
+    def _render_pending(items, header):
+        L.append(header)
+        for it in items:
             L.append(f"- **{it['plain']}**（`{it['id']}`，样本 {it['progress']}）")
             L.append(f"  结论：{it['conclusion']}")
             # F4 (DEB-20261007): 判据实测值栏 — READY≠判据过, 裁决前先看实测读数
@@ -238,9 +249,17 @@ def build_report(*, force: bool = False, dry: bool = False) -> str:
             if _el:
                 L.append(f"  {_el}")
         L.append("")
+
+    if needs:
+        _render_pending(needs, f"**① 需要你决定 · 首次待裁（{len(needs)} 项）**"
+                               "（判据从未读过 ⇒ 真欠账, 需要一次读数或一次裁决）")
     else:
-        L.append("**① 需要你决定：当前 0 项** ✅（我不会自己动任何治理变更）")
+        L.append("**① 需要你决定：首次待裁 0 项** ✅（我不会自己动任何治理变更）")
         L.append("")
+    if recheck:
+        _render_pending(recheck, f"**①b 到期重看（{len(recheck)} 项，不必重新裁决）**"
+                                 "（判据早已读过、只是重看线到了 ⇒ 动作只有两个: "
+                                 "登记新的 recheck 日期，或裁退役/转正）")
 
     if watch:
         L.append(f"**② 判据已读完、自动续观（{len(watch)} 项，不用你管）**")
@@ -256,7 +275,7 @@ def build_report(*, force: bool = False, dry: bool = False) -> str:
 
     if changed:
         moved = [r for r in held if r["id"] in changed] + [
-            r for r in ready if r["id"] in changed and r["id"] not in {i["id"] for i in needs + watch + window}]
+            r for r in ready if r["id"] in changed and r["id"] not in {i["id"] for i in needs + recheck + watch + window}]
         if moved:
             L.append(f"**④ 状态变化，结论已出（{len(moved)} 项）**")
             for r in moved:

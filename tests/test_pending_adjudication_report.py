@@ -112,6 +112,31 @@ def test_overdue_recheck_raises_again(monkeypatch, tmp_path):
     assert "gap_chase_gate" in out.split("②")[0], "重看闹钟到期后必须重新抬到待裁面"
 
 
+def test_overdue_recheck_is_split_out_of_first_time_bucket(monkeypatch, tmp_path):
+    """已读过判据、只是重看闹钟到期 ⇒ 落 ①b「到期重看」, 不许印成「首次待裁」。
+
+    回潮防线 (2026-10-31): 原实现把「从未读过」与「读过了只是闹钟到期」压成同一个
+    `needs_adjudication` 布尔 ⇒ 14 项待裁里 9 项其实无事可做, 而条内动作行同时印
+    「你要决定: 暂无」= 同一推送自相矛盾。本测试钉死两件事:
+      ① 已读项出现在 ①b 段、不出现在 ① 段头;
+      ② 已读项的动作行必须说「到期重看」且带 read_at, 不许是「暂无」。
+    """
+    rows = _rows()
+    for r in rows:
+        r["needs_adjudication"] = True
+        r["adjudicated_at"] = "2026-09-26"       # 判据已读过
+        r["recheck_after"] = "2026-10-26"        # 重看线已过
+    m = _prep(monkeypatch, tmp_path, rows)
+    out = m.build_report()
+    first = out.split("①b")[0]
+    recheck_seg = out.split("①b")[1]
+    assert "涨幅榜" not in first and "futu_channel_top_movers" not in first, \
+        "已读判据的项被印成首次待裁 (= 通知在报假欠账)"
+    assert "futu_channel_top_movers" in recheck_seg, "已读+到期的项必须落 ①b"
+    assert "到期重看（判据已于 2026-09-26 读毕" in out, "动作行未说明'已读过', 用户会以为要重裁"
+    assert "你要决定: 暂无" not in out, "已读项仍印'暂无' ⇒ 段落标题与条目动作自相矛盾"
+
+
 def test_adjudicated_registry_ids_are_real_and_typed():
     """已读判据登记的 id 必须真实存在 (防打字错的"幽灵已裁"把真待裁项静默吞掉)。"""
     import sys

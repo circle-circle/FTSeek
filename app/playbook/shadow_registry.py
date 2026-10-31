@@ -130,6 +130,48 @@ class ShadowItem:
 #           recheck_after = 下次应重看的日期 (默认 +30 天; 观察窗类填窗口结束日);
 #           needs_user = 判据读数已出但处置待用户裁 (与"自动续观"区分)。
 ADJUDICATED: dict[str, dict] = {
+
+    # ── 2026-10-31 DEB-20261031 清账批: 5 条「判据从未读过」的首次登记 ──────────
+    # 病灶: 这 5 条 READY 但 ADJUDICATED 无记录 ⇒ 每周被印成「① 需要你决定」的
+    # 首次待裁欠账, 而其中 4 条此前连 eval 都没人跑过 (产物无读数)。本批实跑登记。
+    "execution_tca_spread_shadow": {
+        "read_at": "2026-10-31", "recheck_after": "2027-01-31", "needs_user": False,
+        "note": "10/31 实跑 execution_tca_report: 成交 37 笔但**仅 8 个 ET 交易日** ⇒ 预注册样本门 "
+                "(>=10 ET 日 AND >=30 笔) **未过** (gate_passed=false), 注册表 progress 37/30 只数笔数 "
+                "不数交易日 = 印像达标。点差 p50 13.79/p90 29.46 bps; 报价年龄 p50 1.89s/p90 14.3s; "
+                "计划→成交 均 +111.4/中位 +126.8 bps (方向语义未定谳, 只作上界, 不得当成本)。"
+                "复跑: scripts/execution_tca_report.py。注: 均值/中位为正不代表成本 (方向感知未定义)。",
+    },
+    "entry_confirm_forward": {
+        "read_at": "2026-10-31", "recheck_after": "2026-11-15", "needs_user": True,
+        "note": "10/31 产物 FAIL: n=65 全量 +6.27/笔 (t=0.84, WR81.5%) 但 SL_INITIAL 族 n=5 -120.37/笔 "
+                "⇒ 判据① 不过。🔴 RFC-141 §5 案例3 预注册后果「轴 KILLED, enabled=false, 产物留档」"
+                "**未执行**: config/unified_config.yaml:1267 entry_confirm_enabled 仍为 true, 10/12 起 "
+                "entry_confirm_reversed 弃单 78 笔/15 日 (10/30 计划18 弃7)。决策与生产不一致 ⇒ 待用户裁: "
+                "(a) 按预注册关门 (false + restart, 回滚零卡单) 或 (b) 破例续跑 (须在 RFC-141 留痕说明 "
+                "n=5 欠功率并预注册续跑样本门)。⛔ 不得靠改判据/改本登记日期消除本条。",
+    },
+    "instruction_conflict_shadow": {
+        "read_at": "2026-10-31", "recheck_after": "2026-12-31", "needs_user": False,
+        "note": "10/31 实跑 jsonl: 90 事件 / 19 交易日 (2026-10-01..10-28), 同 decision_id 持久多行 = 0, "
+                "全部 incoming_source=DA (BUY 54/SKIP 25/SELL_SHORT 11) ⇒ 判据①② 过。"
+                "判据③「checkpoint 扫描 = 落盘」**无结算器** (注册表 eval_script=None) ⇒ 转正前须先补 eval; "
+                "本登记不代表判据全过。",
+    },
+    "blocked_exit_opportunity": {
+        "read_at": "2026-10-31", "recheck_after": "2027-01-31", "needs_user": False,
+        "note": "10/31 实跑 blocked_exit_opportunity_shadow (脚本自身即结算器): 48 episode/49 观测, "
+                "冻结时长 median & p90 = 0s (max 66.5s), adverse_move median/p90 = 0, "
+                "stop_breach 1/48 = 2.1% (单例 US.CRM 10/30 盘中) ⇒ 冻结代价极小, 无「告警升级/受控重评」"
+                "门的立项依据; 维持纯观测。",
+    },
+    "factor_neg_edge_shadow": {
+        "read_at": "2026-10-31", "recheck_after": "2026-12-31", "needs_user": False,
+        "note": "10/31 实跑 (全史 701 行, actual_pnl_net): BUY 被标 SKIP n=373 -8.66/笔 (WR57%) vs "
+                "放行 n=184 -4.15/笔 (WR70%) ⇒ **有判别力** (负 edge 因子该拦); "
+                "SELL_SHORT 被标 SKIP n=91 **+19.62/笔** (WR63%) vs 放行 n=51 +5.17/笔 (WR67%) ⇒ **反向**: "
+                "该因子在空头侧标记的是更好的单。改因子用法/停用 = 生产变更须另立 DEB, 本批只登记读数。",
+    },
     "futu_channel_top_movers": {
         # 2026-10-03 闹钟到期, 用户确认执行 9/21b 建议③ (并入 kr3 轴, 不新增门/影子)。
         # 〔2026-10-23 用户裁「退役」: KR3 10-15 证伪结题 ⇒ 采集理由失效, 已停采
@@ -192,7 +234,9 @@ ADJUDICATED: dict[str, dict] = {
                 "KILLED 停采 (DEB-20260822-health-check-t5-counterfactual)。",
     },
     "ue_confirm_gate": {
-        "read_at": "2026-10-22", "recheck_after": "2026-10-31", "needs_user": False,
+        "read_at": "2026-10-31", "recheck_after": "2026-12-31", "needs_user": False,
+        "note_latest": "2026-10-31 10/31 复现 KEEP_SAMPLING: PRICE_IN 前瞻 +3.99% (判据要<=0) / CONFIRM -0.01% (要>0) ⇒ 反向 — 见 docs/decisions/DEB-20261031-shadow-clear.md §二",
+
         "note": "2026-10-22 最新报告: 39 交易日/171 裁决/167 join; PRICE_IN n=73 "
                 "mean +5.52% (median +0.22%), CONFIRM n=85 mean -0.09% (median -0.06%) "
                 "⇒ 判据两项方向均不过, verdict=KEEP_SAMPLING; 10/31 重看 "
@@ -361,7 +405,9 @@ ADJUDICATED: dict[str, dict] = {
         # 补登欠账: 9/21 用户裁「不停采」已写在本条 notes (🔒 段), 但从未入 ADJUDICATED
         # ⇒ 周检每周把这条已裁项重复通知为「待裁」(skill 明载病灶: 已出读数不改状态
         # ⇒ 通知面 ≠ 真实待裁面)。本行只把既有裁决登记进 SSOT, 判据与采集均零改动。
-        "read_at": "2026-09-26", "recheck_after": "2026-10-26", "needs_user": False,
+        "read_at": "2026-10-31", "recheck_after": "2027-01-31", "needs_user": False,
+        "note_latest": "2026-10-31 10/31 复算 IC +0.0071 (t=0.079, n_pairs=127), 增量 vs OFI -0.0248, OOS 异号 ⇒ FAIL 不变; 旧数值 (IC -0.1447) 作废 — 见 docs/decisions/DEB-20261031-shadow-clear.md §二",
+
         "note": "9/26 重跑 futu_channel_shadow_eval: rank_ic_marginal=-0.1447 (t=-1.52, "
                 "n_pairs=110) 不显著; 增量 vs OFI=-0.1326; OOS 双窗同号 (-0.1953/-0.0971) "
                 "但均为负; verdict_candidate=WEAK_EVIDENCE ⇒ 毕业判据 (双窗 OOS ≥40% 或 "
@@ -369,7 +415,9 @@ ADJUDICATED: dict[str, dict] = {
                 "intraday_reentry, 见本条 notes 🔒 段)。要动的是判据/门方向, 不是采集。",
     },
     "exit_param_shadow": {
-        "read_at": "2026-09-26", "recheck_after": "2026-10-26", "needs_user": False,
+        "read_at": "2026-10-31", "recheck_after": "2027-01-31", "needs_user": False,
+        "note_latest": "2026-10-31 10/31 复算: 11 变体仅 dead_signal_60m x2 PASS (=已生产腿), BE/DD+early_tight+30min-abort 全 FAIL ⇒ 结论不变 (era 漂移未翻盘) — 见 docs/decisions/DEB-20261031-shadow-clear.md §二",
+
         "note": "9/26 实跑 exit_shadow_graduation (N=495, 三门: N≥30 / 均值改善 / 一致性≥55%): "
                 "BE/DD 族 5 变体全 FAIL (最好 be0.3_dd0.3 Δ+0.191 但一致性 38.2%<55%); "
                 "30min-abort FAIL (mean_saved -0.0299%); early_tight 族 5 变体全 FAIL "
@@ -432,7 +480,9 @@ ADJUDICATED: dict[str, dict] = {
         #   「OBSERVING ∧ current_n≥min_n ∧ 无挂账原因」会运行时自动提升为 READY_TO_EVALUATE
         #   (代码注释明写「READY 仅表示样本量达标, 不代表判据通过」) ⇒ 本项运行时读数就是 READY,
         #   与其余 needs_user=False 的已裁项完全一致, 属既有设计不是不一致。
-        "read_at": "2026-09-26", "recheck_after": "2026-10-26", "needs_user": False,
+        "read_at": "2026-10-31", "recheck_after": None, "needs_user": False,
+        "note_latest": "2026-10-31 10/31 用户裁「退役不转正」: 全样本反事实 -$1641(30m)/-$1498(15m), 亏→盈反弹单占 63%; 判据 55% 绝对线在现役词表下永不可达 ⇒ status=KILLED, 采集保留作回归监测 — 见 docs/decisions/DEB-20261031-shadow-clear.md §二",
+
         "note": "9/26 实跑 early_dead_signal_report (已结算 389): 判据①双窗死单率均≥55% ⇒ "
                 "**FAIL** (预注册词表 15min 1/111=1%, 30min 0/86=0%; 词表现役基率仅 1.3% "
                 "vs 预注册当时 30% = 词表漂移, engineering-change-protocol 2026-09-23 实锤). "
@@ -468,7 +518,9 @@ ADJUDICATED: dict[str, dict] = {
                 "(B/C 案的共同前提), 那是新研究须另立 DEB。",
     },
     "eth_premarket_exit_shadow": {
-        "read_at": "2026-09-26", "recheck_after": "2026-10-26", "needs_user": False,
+        "read_at": "2026-10-31", "recheck_after": "2027-01-31", "needs_user": False,
+        "note_latest": "2026-10-31 10/31 结算: tighten +0.369% (n=125); hold -0.696% (n=912); hold_no_stop 持仓级 +0.153% (n=65) / 行级 +0.272% (n=15556, 10.7x 重复计权) — 见 docs/decisions/DEB-20261031-shadow-clear.md §二",
+
         "note": "9/26 实跑真结算器 settle_extended_hours (新结算 270 行, 累计 5479): "
                 "判据「水下保本族/时间退出族净额>0 且样本≥30」⇒ 盘前 tighten n=125 "
                 "avg_t0_close_ret **+0.369%** (>0 ✓) / hold n=139 **-0.302%** (✗) / "
@@ -481,7 +533,9 @@ ADJUDICATED: dict[str, dict] = {
                 "被小 mfe 行放大, 属报表口径瑕疵, 不可当判据读数。",
     },
     "eth_afterhours_exit_shadow": {
-        "read_at": "2026-09-26", "recheck_after": "2026-10-26", "needs_user": False,
+        "read_at": "2026-10-31", "recheck_after": "2027-01-31", "needs_user": False,
+        "note_latest": "2026-10-31 10/31 结算: hold_to_next_open -6.992% (n=112); hold_no_stop 持仓级 -0.003% (n=51) / 行级 +0.060%; tighten -0.060% ⇒ 仍不过 (贴线 0.003pp, 不可称显著) — 见 docs/decisions/DEB-20261031-shadow-clear.md §二",
+
         "note": "同上批结算 (settle_extended_hours 9/26): 盘后 hold_to_next_open n=112 "
                 "avg_t0_close_ret **-6.992%** / best_holdout -2.307% / avg_mfe **-4.237%** "
                 "(负 MFE = 全窗未翻绿); hold_no_stop n=2640 -0.028% / best_holdout +0.051% / "
@@ -492,7 +546,9 @@ ADJUDICATED: dict[str, dict] = {
     },
     "eth_earnings_direction_path": {
         # 已读数待攒样: 尺子修好后出了真读数, 判据未过 ⇒ 维持攒样, 不到用户面前。
-        "read_at": "2026-10-15", "recheck_after": "2026-10-31", "needs_user": False,
+        "read_at": "2026-10-31", "recheck_after": "2027-01-31", "needs_user": False,
+        "note_latest": "2026-10-31 10/31 实跑通 (旧结论「尺子坏了不可重跑」已被 RFC-109④-D 修好): SHORT n=199 净-1.87/笔, LONG n=151 净-0.10/笔 ⇒ 判据不过 — 见 docs/decisions/DEB-20261031-shadow-clear.md §二",
+
         "note": "📐 10-15 复读 (产物 112 行 / 17 distinct 日, 9/21~10-14, cron 在跑): "
                 "①相位标定 112/112=100%; distinct 日 17≥15 ⇒ 「覆盖率稳定」轴已可判; "
                 "②SHORT n=26(<30✗) 净均值+23.80 净中位+86.23 胜率57.7% / LONG n=12(<30✗) "
@@ -541,7 +597,9 @@ ADJUDICATED: dict[str, dict] = {
         # (立门 = 改 pipeline 加门 = 生产行为变更 = L3, 须另立 DEB 预注册后再裁)。
         # needs_user=False 退出待裁面; recheck_after=2026-10-26 保留重看窗 (不用
         # no_adjudication_reason — 那会永久屏蔽裁决通道, early_dead 批同一坑)。
-        "read_at": "2026-09-26", "recheck_after": "2026-10-26", "needs_user": False,
+        "read_at": "2026-10-31", "recheck_after": "2026-11-30", "needs_user": False,
+        "note_latest": "2026-10-31 10/31 用户裁「不立门」: 61 只被掐 (bridge 26 + entry_confirm_reversed 22); 反事实 scripts/short_blocked_cf_eval.py 全人群 T+1 +0.990%/笔 n=47 p=0.191 不显著 ⇒ 不构成开门依据, 待用现役退出规则重跑 — 见 docs/decisions/DEB-20261031-shadow-clear.md §二",
+
         "note": "✅**已裁 (2026-09-26 用户裁「按建议执行」)**: 维持观测继续攒样; **不立 bridge 层门** — "
                 "26 日同轴回算指向若立门该立在 bridge/通道候选层 (最大漏斗口 27 只, 主因 "
                 "`SKIP: 非当前通道候选(bridge未提名/无方向)` ×17), 但立门 = 改 pipeline 加门 = "
@@ -656,7 +714,9 @@ ADJUDICATED: dict[str, dict] = {
         #   注记「攒样至 10/11 双窗口回放终裁窗」已过期未裁 ⇒ 转 needs_user。
         #   ⚠️并陈 10-22 新证据: 「$3-5k 名义桶费/毛 2.16」结论已衰减 (9/1 起复测 1.03,
         #   近 11 日该桶净 +$129.72) ⇒ 名义地板类子门的靶面已变, 裁决时须用新口径复算。〕
-        "read_at": "2026-10-22", "recheck_after": "2026-10-29", "needs_user": True,
+        "read_at": "2026-10-31", "recheck_after": "2027-01-31", "needs_user": False,
+        "note_latest": "2026-10-31 10/31 实跑: baseline n=207 净-1.21/笔 WR78.7% 费9.33bps; 各候选门 blocked 组反而更赚 (notional<5000: +7.59 vs -3.12) ⇒ 无可立项门 — 见 docs/decisions/DEB-20261031-shadow-clear.md §二",
+
         "note": "fee_gate_shadow_latest.json (cron 45 6 产物): baseline n=64, 期望/笔 −$2.48; "
                 "各门 blocked 子集: price<$1 n=2 / 名义<$4k n=2 (exp −$41.6) / <$5k n=4 "
                 "(exp −$20.5) ⇒ 方向对 (被拦更差) 但子样本 2-4 笔太小, 不构成转正证据, "
@@ -3365,7 +3425,7 @@ REGISTRY: list[ShadowItem] = [
     ShadowItem(
         id="early_dead_signal_shadow",
         name="死单早期识别影子 (15/30min MFE 快照)",
-        status=ShadowStatus.OBSERVING,
+        status=ShadowStatus.KILLED,
         description="持仓 15/30min 检查点 MFE 快照 (30min<0.2%=候选死单 / 15min<0.15% 辅助), "
                     "settler 配对 trade_records 终局回填 settled/is_dead/final_pnl_net。"
                     "看板段10 数据面 (含结算面守卫行, 9/23 批)。DEB-20260811。",
@@ -3379,6 +3439,15 @@ REGISTRY: list[ShadowItem] = [
                             "现役词表三档只印不判; 改判据须另立 DEB。",
         eval_script="scripts/early_dead_signal_report.py",
         created="2026-08-11",
+        last_evaluated="2026-10-31",
+        verdict_history=[{"date": "2026-10-31", "verdict": "KILLED",
+                          "evidence": "用户裁「退役不转正」(2026-10-31)。全样本反事实 "
+                                      "scripts/early_dead_signal_report.py: 30min -$1641 / "
+                                      "15min -$1498 (9/26 读数 -$595/-$415, 样本翻倍后更差); "
+                                      "命中组亏→盈(早退砍反弹)占 63%; 预注册 55%% 绝对线在现役"
+                                      "词表下永不可达 (基率 0.8%% vs 当时 30%%) = 结构性死判据。 "
+                                      "不动判据 (改词表亦不接线: 反事实与词表无关), 采集保留作 "
+                                      "轻量回归监测。回滚须新 RFC + 预注册判据, 复用本判据=阈值购物。"}],
         notes="补登 (2026-09-26 RFC-109②): 写方=exit_engine 检查点埋点 (相对路径陷阱已修, "
               "engineering-change-protocol 2026-09-21 实锤批)。settler cron 2 6 * * 2-6 (9/22 补挂)。"
               "count_mode=where:settled=True — 判据 n 轴是**已结算命中**, 非总行数。",
