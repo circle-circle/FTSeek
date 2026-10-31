@@ -26,7 +26,20 @@ if str(REPO) not in sys.path:          # 直接 `python scripts/xxx.py` 时 cwd 
 P3_FROM = "2026-10-31"
 BASE_FROM, BASE_TO = "2026-07-01", "2026-10-31"
 BASE_PER_TRADE, BASE_FEE_BPS = -1.84, 11.54
-HEAT_CAP_PCT, MIN_NOTIONAL = 2.5, 5500.0
+# ⚠️ 这三个值必须从线上配置读, 不许写死 —— 2026-10-31 自查: 脚本曾写死 2.5%, 而线上已改 4.0%,
+#    报告会打印「帽 2.5%」并拿错阈值算 R4 回滚判据 (自相矛盾的报表层, 与 11/01 清账同一类病灶)。
+def _live_thresholds():
+    try:
+        from app.playbook.admission import get_admission_config
+        c = get_admission_config(refresh=True)
+        return (float(c.get("max_open_risk_pct") or 0.0),
+                float(c.get("min_notional_usd") or 0.0),
+                float(c.get("max_sl_pct") or 0.0))
+    except Exception:
+        return (0.0, 0.0, 0.0)
+
+
+HEAT_CAP_PCT, MIN_NOTIONAL, SL_MAX_PCT = _live_thresholds()
 MIN_TRADES_PER_DAY, MAX_HEAT_REJECT_PCT = 3.0, 60.0
 
 
@@ -130,6 +143,7 @@ def main() -> int:
            "p3_from": P3_FROM,
            "thresholds": {"min_trades_per_day": MIN_TRADES_PER_DAY,
                           "heat_cap_pct": HEAT_CAP_PCT, "min_notional": MIN_NOTIONAL,
+                          "sl_max_pct": SL_MAX_PCT,
                           "base_per_trade": BASE_PER_TRADE, "base_fee_bps": BASE_FEE_BPS}}
     try:
         path = REPO / "data/shadow/budget_p3_latest.json"
@@ -149,6 +163,7 @@ def main() -> int:
               f"费用 {live['fee_bps'] or 0:.2f}bps 名义中位 ${live['notional_median'] or 0:,.0f}")
     else:
         print(f"P3 {P3_FROM}~今: 无已平仓样本")
+    print(f"阈值(线上实读): 热帽 {HEAT_CAP_PCT}% / 名义下限 ${MIN_NOTIONAL:,.0f} / 止损上限 {SL_MAX_PCT}%")
     print(f"当前在险 ${cur_risk:,.0f} ({cur_n} 笔)"
           + (f" = {cur_risk / equity * 100:.2f}% 权益 (帽 {HEAT_CAP_PCT}%)" if equity else ""))
     print("门禁拒绝分布:", dict(hits) or "无")
