@@ -116,6 +116,13 @@ def main() -> int:
         gates["state"] = ("READY_TO_ADJUDICATE" if gates["sample_ok"]
                           else "KEEP_SAMPLING")
     out["gates"] = gates
+    # 落盘产物 (registry data_path 约定): 只写只读产物, 不动任何生产状态。
+    try:
+        out_path = REPO / "data/shadow/risk_cap_sizing_latest.json"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(out, ensure_ascii=False, indent=2))
+    except OSError as exc:
+        print(f"[warn] 写产物失败: {exc}", file=sys.stderr)
 
     if args.json:
         print(json.dumps(out, ensure_ascii=False, indent=2))
