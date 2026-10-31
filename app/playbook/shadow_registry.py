@@ -134,6 +134,14 @@ ADJUDICATED: dict[str, dict] = {
     # ── 2026-10-31 DEB-20261031 清账批: 5 条「判据从未读过」的首次登记 ──────────
     # 病灶: 这 5 条 READY 但 ADJUDICATED 无记录 ⇒ 每周被印成「① 需要你决定」的
     # 首次待裁欠账, 而其中 4 条此前连 eval 都没人跑过 (产物无读数)。本批实跑登记。
+    # ── 2026-10-31 DEB-20261031: 元标签首版证伪 (KILLED) ──────────
+    "meta_label_shadow": {
+        "read_at": "2026-10-31", "recheck_after": None, "needs_user": False,
+        "note": "首版实跑 n=715 (A10, 7/1–10/30): OOS AUC 0.536 (purged 日块) / 0.394 (时间切分) ⇒ "
+                "时间外反指; 三等份 top −$10.11/笔 vs bottom −$5.92/笔 (单调性反向) ⇒ G1 FAIL。"
+                "三档政策净额 −$1,072 vs 基线 −$1,315, 但**笔均不变 (−$1.80)** ⇒ 只是少下注, 不是选样。"
+                "定性: 6 个宏观事前特征无仓位排序力; 复活须换特征 (OBI/微价, 11/02 起) 重跑同判据。",
+    },
     "execution_tca_spread_shadow": {
         "read_at": "2026-10-31", "recheck_after": "2027-01-31", "needs_user": False,
         "note": "10/31 实跑 execution_tca_report: 成交 37 笔但**仅 8 个 ET 交易日** ⇒ 预注册样本门 "
@@ -799,6 +807,38 @@ def adjudication_state(item: "ShadowItem") -> dict:
 
 
 REGISTRY: list[ShadowItem] = [
+    ShadowItem(
+        id="meta_label_shadow",
+        name="元标签影子 (这条已有信号该给多大仓位)",
+        status=ShadowStatus.KILLED,
+        description="López de Prado 2018 §3 meta-labeling: 不预测方向, 只判断「一层信号(DA 评级→bridge→"
+                    "admission)给出的这单, 事后是否值得重仓」→ 概率 → 调仓位而非砍单 (从而保住交易量)。"
+                    "首版特征只用**已落库的事前字段** (方向/时段/ATR%/VIX/价位/条件数)。",
+        data_path="data/shadow/meta_label_latest.json",
+        config_key=None,
+        min_n=30,
+        graduation_criteria="scripts/meta_label_shadow.py 头部预注册逐字 (2026-10-31, 读数前写死): "
+                            "G1 排序力 顶三分之一 vs 底三分之一 pnl_net 差 ≥$5.00/笔 ∧ OOS AUC ≥0.55; "
+                            "G2 保留量 三档政策保留笔数 ≥80% 全量; G3 净额不劣化 (负基线用绝对比较)。"
+                            "三项全过 = PROMOTE_CANDIDATE (仍须另立 DEB 才可接线); 任一不过 = KEEP_SHADOW。",
+        eval_script="scripts/meta_label_shadow.py",
+        created="2026-10-31",
+        last_evaluated="2026-10-31",
+        verdict_history=[{"date": "2026-10-31", "verdict": "KILLED",
+                          "evidence": "首版实跑 (n=715 已平仓, A10 口径, 基线 −$1,315 / −$1.84 笔均): "
+                                      "OOS AUC = 0.536 (purged 日块 5 折) / 0.394 (时间切分 9/15 后) "
+                                      "⇒ 时间外甚至反指; 分三等份 top −$10.11/笔 vs bottom −$5.92/笔 "
+                                      "(单调性反向, G1 FAIL); 三档政策净额 −$1,072 看似少亏, 但**笔均 "
+                                      "仍是 −$1.80** ⇒ 只减暴露未实现选样, 不是 alpha。"
+                                      "定性: **这 6 个宏观事前特征对「该给多大仓位」无排序力**, "
+                                      "与 docs/audits/2026-10-31-intraday-direction-identifiability.md "
+                                      "(最强单特征 |IC|≈0.02) 同向。"
+                                      "复活血路: 换特征 (11/02 起的 OBI/微价/逐笔, 见 orderflow_forward_capture) "
+                                      "重跑同一套 G1/G2/G3 —— 复用本判据须先声明特征变更, 否则=阈值购物。"}],
+        notes="只读影子, 零交易行为变更。**本条 KILLED 只否掉「用宏观事前字段做仓位分层」这一版**, "
+              "不否掉 meta-labeling 方法本身 (方法的价值在特征, 不在模型)。",
+        count_mode="where:settled",
+    ),
     # ── Phase 1 (2026-08-23) ──
     ShadowItem(
         id="p1_1_vwap_slope",
