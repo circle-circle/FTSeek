@@ -901,6 +901,29 @@ REGISTRY: list[ShadowItem] = [
               "说明经济效应在噪声内; 确定的部分是「笔数减少、费用率下降、最坏同时亏损从 5.1% 压到 2.5%」。",
         count_mode="where:settled",
     ),
+    # ── 隔夜暴露治理: 三条方案已被真实数据证伪 (2026-10-31, DEB-20261031-overnight-exposure) ──
+    ShadowItem(
+        id="overnight_exposure_rules",
+        name="隔夜暴露该不该削 (禁隔夜 / 减半 / 只留浮盈仓)",
+        status=ShadowStatus.KILLED,
+        description="跨日持仓 75 笔拆两腿: 日内腿(入→收盘) −$5,396、隔夜腿(收盘→次日出) +$2,137。"
+                    "即隔夜是减损机制不是亏损源。三条削减方案全部更差: 禁隔夜 −$5,396(Δ−$2,137)、"
+                    "减半 −$4,477(Δ−$1,218)、只留浮盈仓 −$5,174(Δ−$1,915), 一致性 29–35% 全部 <55%。",
+        data_path="data/shadow/overnight_leg_latest.json",
+        config_key=None,
+        min_n=75,
+        graduation_criteria="scripts/overnight_leg_decompose.py 头部预注册逐字: "
+                            "G1 净额>现状 ∧ G2 逐笔一致性≥55% ∧ G3 改善>\$150 ⇒ CANDIDATE; 否则 FALSIFIED。",
+        eval_script="scripts/overnight_leg_decompose.py",
+        created="2026-10-31",
+        last_evaluated="2026-10-31",
+        notes="KILLED。复活前置: ①市况从震荡转单边(跳空分布改变) ②n≥200 且跳空笔数≥30。"
+              "⚠️ 关键不可分事实: 12 笔跳空大亏在收盘时浮亏 −0.7~−2.3%, 而 44 笔赚钱的跨日单"
+              "收盘时也是 −1.2~−2.3% ⇒ 收盘时点无法区分, 任何基于浮盈亏的隔夜规则必然连赢家一起砍。"
+              "本项同时记录一次自我撤回: 「隔夜暴露减半」原按整笔 pnl×0.5 算出 +$314, 属错误算法"
+              "(隔夜只占持仓一段), 正确式 pnl=日内腿+0.5×隔夜腿 ⇒ −$2,534。",
+        count_mode="where:settled",
+    ),
     # ── confidence 分档门候选 (2026-10-31 发现, 只记账不拦) ──
     ShadowItem(
         id="confidence_tier_gate",
