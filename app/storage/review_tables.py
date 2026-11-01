@@ -681,7 +681,6 @@ class ReviewDatabase:
             # 处理 None 值
             confidence_values = [t.get('decision_confidence') for t in trades if t.get('decision_confidence') is not None]
             timing_values = [t.get('entry_timing_score') for t in trades if t.get('entry_timing_score') is not None]
-            stop_loss_count = len([t for t in trades if t.get('stop_loss_executed') is True])
             
             return {
                 'total_trades': total_trades,
@@ -692,7 +691,8 @@ class ReviewDatabase:
                 'emotion_distribution': emotion_counts,
                 'avg_decision_confidence': sum(confidence_values) / len(confidence_values) if confidence_values else 0,
                 'avg_entry_timing_score': sum(timing_values) / len(timing_values) if timing_values else 0,
-                'stop_loss_execution_rate': stop_loss_count / total_trades if total_trades > 0 else 0
+                # 2026-11-01 拆除 'stop_loss_execution_rate': trades_review 有该列但零填充
+                #   (实测 7 行, 非空 0) ⇒ 恒报 0%。不可测的指标不留冒牌读数。
             }
 
 

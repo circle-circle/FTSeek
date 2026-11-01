@@ -424,16 +424,19 @@ class WeeklyReviewGenerator:
         }
     
     def _analyze_risk(self, trades: List) -> Dict:
-        """风险分析"""
+        """风险分析
+
+        ⚠️ 2026-11-01 拆除「止损执行率」(与 monthly_review._calculate_risk_metrics 同根因):
+        本方法读的是**活跃库** ftseek_us.db 的 trade_records, 该库无
+        stop_loss_planned / stop_loss_executed 列 (PRAGMA 实测) ⇒ 旧判据恒空 ⇒ 恒落默认 1.0,
+        只喂养 _generate_plan 里 `rate < 0.8` 的死分支 (永不出建议)。指标不可测就不留默认值。
+        """
         if not trades:
             return {}
         
-        sl_trades = [t for t in trades if t.get('stop_loss_planned') and t['stop_loss_planned'] > 0]
-        executed = len([t for t in sl_trades if t.get('stop_loss_executed', True)])
         max_dd = max([t.get('max_drawdown', 0) or 0 for t in trades], default=0)
         
         return {
-            'stop_loss_execution_rate': round(executed / len(sl_trades), 4) if sl_trades else 1.0,
             'max_drawdown': round(max_dd, 4),
         }
     
@@ -497,10 +500,9 @@ class WeeklyReviewGenerator:
             if summary.get('win_rate', 0) < 0.4:
                 plan.append({'action': '胜率低于 40%，建议重新评估策略', 'priority': 'high'})
             
-            risk = self._analyze_risk(trades)
-            if risk.get('stop_loss_execution_rate', 1) < 0.8:
-                plan.append({'action': '止损执行率低于 80%，需严格执行纪律', 'priority': 'high'})
-            
+            # 2026-11-01 拆除「止损执行率」建议: 判据读活跃库不存在的列 ⇒ 永不触发 (死规则)。
+            #    与 monthly_review / weekly_review._analyze_risk 同根因, 详 see those docstrings。
+
             voting = self._analyze_voting(trades)
             if voting.get('low_strength_trades', 0) > 0:
                 plan.append({

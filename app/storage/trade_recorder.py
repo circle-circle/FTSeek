@@ -530,7 +530,6 @@ class TradeRecorder:
             confidence_values = [r.get('decision_confidence') for r in records if r.get('decision_confidence') is not None]
             entry_timing_values = [r.get('entry_timing_score') for r in records if r.get('entry_timing_score') is not None]
             exit_timing_values = [r.get('exit_timing_score') for r in records if r.get('exit_timing_score') is not None]
-            stop_loss_count = len([r for r in records if r.get('stop_loss_executed') is True])
             impulse_count = len([r for r in records if r.get('decision_reason') == 'impulse'])
             
             return {
@@ -545,7 +544,8 @@ class TradeRecorder:
                 'avg_decision_confidence': sum(confidence_values) / len(confidence_values) if confidence_values else 5,
                 'avg_entry_timing_score': sum(entry_timing_values) / len(entry_timing_values) if entry_timing_values else 5,
                 'avg_exit_timing_score': sum(exit_timing_values) / len(exit_timing_values) if exit_timing_values else 5,
-                'stop_loss_execution_rate': stop_loss_count / total_trades if total_trades > 0 else 0,
+                # 2026-11-01 拆除 'stop_loss_execution_rate': 本方法用的 records 来自活跃库路径时
+                #   根本没有 stop_loss_executed 列 ⇒ 恒 0 (反向冒牌读数)。指标不可测即不留。
                 'impulse_trade_ratio': impulse_count / total_trades if total_trades > 0 else 0
             }
         

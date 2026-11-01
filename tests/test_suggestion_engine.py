@@ -32,7 +32,7 @@ class TestSuggestionEngine:
                 quantity=100,
                 price=175.5,
                 decision_reason='impulse',
-                stop_loss=172.0,  # stop_loss_planned>0 → 进入止损执行率统计
+                stop_loss=172.0,
             )
             
             recorder.record_close(
@@ -69,18 +69,23 @@ class TestSuggestionEngine:
         ]
         assert len(consecutive_warnings) > 0
     
-    def test_rule_stop_loss_execution(self, setup_low_performance):
+    def test_stop_loss_execution_rule_removed(self, setup_low_performance):
+        """2026-11-01 拆除: 判据读 stop_loss_planned/executed, 活跃库无此两列 ⇒ 恒默认 1.0。
+
+        本条原为 test_rule_stop_loss_execution, 用本模块自建临时库 + stop_loss_executed=False
+        让规则"触发"。但生产在读的活跃库 ftseek_us.db 没有这两列 (PRAGMA 实测 52 列),
+        本模块亦无任何调用方 ⇒ 该断言守的是一条永远跑不到的生产路径, 属假绿。
+        改为钉"规则必须不再存在", 与 tests/review/test_dead_review_patterns.py 同范式。
+        """
         engine = SuggestionEngine()
         stats = engine._calculate_stats('last_30_days')
-        
-        assert stats['stop_loss_rate'] == 0.0
-        
-        suggestions = engine.generate_suggestions()
-        sl_warnings = [
-            s for s in suggestions 
-            if s.get('rule_id') == 'stop_loss_execution'
-        ]
-        assert len(sl_warnings) > 0
+
+        assert 'stop_loss_rate' not in stats, "伪指标不得留在 stats 里"
+        assert 'stop_loss_execution' not in [r['id'] for r in engine.RULES], (
+            "stop_loss_execution 规则读活跃库不存在的列 ⇒ 永不触发; 真接线前不得复活")
+
+        # 反向: 其余规则仍须正常工作 (不是把整块删光)
+        assert engine.generate_suggestions()
     
     def test_priority_sorting(self, setup_low_performance):
         engine = SuggestionEngine()

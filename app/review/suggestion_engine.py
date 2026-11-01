@@ -31,13 +31,10 @@ class SuggestionEngine:
             'priority': 'high',
             'category': '决策'
         },
-        {
-            'id': 'stop_loss_execution',
-            'condition': lambda s: s.get('stop_loss_rate', 1) < 0.8,
-            'suggestion': '止损执行率 < 80%，需严格执行止损纪律',
-            'priority': 'critical',
-            'category': '风控'
-        },
+        # 2026-11-01 拆除 'stop_loss_execution' 规则: 判据读 stop_loss_planned/stop_loss_executed,
+        #   而活跃库 ftseek_us.db 无此两列 (PRAGMA 实测 52 列) ⇒ stop_loss_rate 恒默认 1.0 ⇒ 永不触发。
+        #   该规则只在本模块自建的临时库 (TradeRecorder 旧 schema) 上"能跑"; 且本模块当前无任何调用方,
+        #   数据源还是 0 行遗留库 data/trade_records.db — 是整块死子系统, 指标层不再保留冒牌读数。
         {
             'id': 'low_win_rate',
             'condition': lambda s: s.get('win_rate', 0) < 0.4,
@@ -56,8 +53,10 @@ class SuggestionEngine:
     
     def __init__(self):
         self.trade_recorder = get_trade_recorder()
-        # P0 修复 (F21 2026-05-12): 确保 trade_records 有 stop_loss 列
-        self._ensure_stop_loss_columns()
+        # 2026-11-01 拆除 _ensure_stop_loss_columns(): 它把 stop_loss_planned/executed 的 ALTER
+        #   打在**遗留库** data/trade_records.db (0 行, 4 月起停更), 活跃库 ftseek_us.db 永远没有这两列
+        #   —— 正是"止损执行率恒 100%/恒 0"这类伪指标的根源 (band-aid 指向错库)。
+        #   指标已按不可测拆除, 这里不再做无意义的建列。
     
     def generate_suggestions(self, period: str = 'last_30_days') -> List[Dict]:
         logger.info(f"生成智能建议 ({period})")
@@ -114,17 +113,12 @@ class SuggestionEngine:
         # 冲动交易
         impulse = len([t for t in trades if t.get('decision_reason') == 'impulse'])
         
-        # 止损执行
-        sl_trades = [t for t in trades if t.get('stop_loss_planned') and t['stop_loss_planned'] > 0]
-        sl_executed = len([t for t in sl_trades if t.get('stop_loss_executed', True)])
-        
         return {
             'total_trades': total,
             'win_rate': len(winning) / total if total > 0 else 0,
             'total_pnl': total_pnl,
             'max_consecutive_losses': max_consecutive,
             'impulse_ratio': impulse / total if total > 0 else 0,
-            'stop_loss_rate': sl_executed / len(sl_trades) if sl_trades else 1.0,
             'max_loss_ratio': max_loss / abs(total_pnl) if total_pnl != 0 else 0
         }
     
@@ -150,30 +144,6 @@ class SuggestionEngine:
     def get_critical_suggestions(self, period: str = 'last_30_days') -> List[Dict]:
         all_suggestions = self.generate_suggestions(period)
         return [s for s in all_suggestions if s.get('priority') in ['critical', 'high']]
-
-
-    def _ensure_stop_loss_columns(self):
-        """确保 trade_records 有 stop_loss_planned 和 stop_loss_executed 列 (F21 2026-05-12)"""
-        import sqlite3
-        try:
-            db_path = self.trade_recorder.db_path if hasattr(self.trade_recorder, 'db_path') else None
-            if not db_path:
-                return
-            conn = sqlite3.connect(str(db_path))
-            cursor = conn.cursor()
-            try:
-                cursor.execute("SELECT stop_loss_planned FROM trade_records LIMIT 0")
-            except Exception:
-                cursor.execute("ALTER TABLE trade_records ADD COLUMN stop_loss_planned REAL DEFAULT 0")
-                conn.commit()
-            try:
-                cursor.execute("SELECT stop_loss_executed FROM trade_records LIMIT 0")
-            except Exception:
-                cursor.execute("ALTER TABLE trade_records ADD COLUMN stop_loss_executed REAL DEFAULT 0")
-                conn.commit()
-            conn.close()
-        except Exception as e:
-            logger.debug(f"[SuggestionEngine] 列对齐检查失败: {e}")
 
 
 def generate_suggestions(period: str = 'last_30_days') -> List[Dict]:
