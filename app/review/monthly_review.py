@@ -231,7 +231,7 @@ class MonthlyReviewGenerator:
         """计算风险指标
 
         ⚠️ 2026-11-01 拆除「止损执行率」: trade_records 无 stop_loss_planned / stop_loss_executed 列
-        (PRAGMA 实测 52 列, 两列均不存在) ⇒ 旧实现 `t.get('stop_loss_planned')` 恒空 ⇒
+        (PRAGMA 实测 52 列, 两列均不存在) ⇒ 旧实现按 stop_loss_planned 取值恒空 ⇒
         sl_trades=[] ⇒ sl_rate 恒落默认 1.0 ⇒ 月报恒印「止损执行率 100.0%」。
         该指标从未测量过, 是纯伪影。按本仓约定 (daily_review 2026 年同因拆除) 直接删除,
         不再以默认值伪造; 需要该指标必须先在写入侧真实落库。
