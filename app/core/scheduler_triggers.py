@@ -1488,13 +1488,19 @@ def _format_weekly_review(report: dict) -> str:
 
 
 def _format_monthly_review(report: dict) -> str:
-    """格式化月报为文本"""
+    """格式化月报为文本
+
+    2026-11-01: 收益段改「毛 | 费 | 净」三列 (对齐周报 _format_weekly_review / DEB-20260730 D1),
+    并拆掉恒 100% 的伪「止损执行率」(trade_records 无对应列, 见 monthly_review._calculate_risk_metrics)。
+    旧 JSON 无净字段 → 回退毛口径渲染, 不伪造净额。
+    """
     year = report.get('year', '')
     month = report.get('month', '')
     perf = report.get('performance', {})
     risk = report.get('risk_metrics', {})
     
     total = perf.get('total_trades', 0)
+    closed = perf.get('closed_trades') or 0
     win_rate = perf.get('win_rate', 0)
     pnl = perf.get('total_pnl', 0)
     sharpe = perf.get('sharpe_ratio', 0)
@@ -1502,22 +1508,42 @@ def _format_monthly_review(report: dict) -> str:
     
     pnl_sign = "+" if pnl >= 0 else ""
     pnl_emoji = "🟢" if pnl > 0 else "🔴" if pnl < 0 else "⚪"
-    
+
+    # 净口径头部 (旧 JSON 无 total_pnl_net → 回退毛口径)
+    pnl_net = perf.get('total_pnl_net')
+    if pnl_net is not None:
+        _fees = perf.get('fees_total') or 0
+        _wr_net = (perf.get('win_rate_net') or 0) * 100
+        _fake = perf.get('fake_wins', 0)
+        header_emoji = "🟢" if pnl_net > 0 else "🔴" if pnl_net < 0 else "⚪"
+        pnl_lines = (
+            f"• 总交易：{total} 笔 (已平仓 {closed})\n"
+            f"• 胜率：{win_rate*100:.1f}% (净 {_wr_net:.1f}%"
+            + (f", 假盈利 {_fake} 笔" if _fake else "") + ")\n"
+            f"• 总盈亏：毛 ${pnl:+,.2f} | 费 ${_fees:,.2f} | 净 ${pnl_net:+,.2f}\n"
+            f"• 平均每笔: 毛 ${(pnl / closed if closed else 0):+,.2f} "
+            f"| 净 ${(pnl_net / closed if closed else 0):+,.2f}"
+        )
+    else:
+        header_emoji = pnl_emoji
+        pnl_lines = (
+            f"• 总交易：{total} 笔\n"
+            f"• 胜率：{win_rate*100:.1f}%\n"
+            f"• 总盈亏：${pnl_sign}{pnl:,.2f} (毛口径, 本报告生成于净口径上线前)"
+        )
+
     return f"""📊 FTSeek-US 每月复盘
 
 📅 周期：{year}年{month}月
 
-{pnl_emoji} 月度收益
-• 总交易：{total} 笔
-• 胜率：{win_rate*100:.1f}%
-• 总盈亏：${pnl_sign}{pnl:.2f}
+{header_emoji} 月度收益
+{pnl_lines}
 • 夏普比率：{sharpe:.2f}
-• 盈利因子：{profit_factor:.2f}
+• 盈利因子：{profit_factor:.2f} (毛口径)
 
 ⚠️ 风险指标
 • 最大单笔亏损：${risk.get('max_single_loss', 0):.2f}
 • 最大回撤：${risk.get('max_drawdown', 0):.2f}
-• 止损执行率：{risk.get('stop_loss_execution_rate', 0)*100:.1f}%
 
 📈 投票分析
 • 平均信号强度：{report.get('voting_analysis', {}).get('avg_signal_strength', 0)}

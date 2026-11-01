@@ -154,6 +154,13 @@ class MonthlyReviewGenerator:
                 'avg_pnl_pct': 0,
                 'mfe_capture_efficiency': None,
                 'mfe_capture_n': 0,
+                # 净口径 (2026-11-01): 与周报 weekly_review._generate_summary 同源
+                'closed_trades': 0,
+                'total_pnl_net': 0,
+                'fees_total': 0,
+                'winning_trades_net': 0,
+                'win_rate_net': 0,
+                'fake_wins': 0,
             }
         
         total_pnl = sum(t.get('realized_pnl', 0) or 0 for t in trades)
@@ -183,6 +190,19 @@ class MonthlyReviewGenerator:
             if _mfe > 0:
                 _cap_ratios.append(max(0.0, min(1.0, (t.get('pnl_pct') or 0) * 100.0 / _mfe)))
 
+        # 净口径 (2026-11-01 新增, 与周报 weekly_review._generate_summary / DEB-20260730 D1 逐字对齐):
+        #   净额 = COALESCE(pnl_net, realized_pnl) —— pnl_net 已扣 fees_est, 缺失时回退毛额 (旧行)
+        #   分母只用已平仓子集 (realized_pnl 非 NULL); 未平仓 pnl_net/realized_pnl 皆 NULL, 不得进分母
+        #   fake_wins = 毛赚但净亏/净平 的笔数 —— 费用吃掉毛利的直接计数
+        _closed = [t for t in trades if t.get('realized_pnl') is not None]
+        _net_pnls = [
+            (t.get('pnl_net') if t.get('pnl_net') is not None else (t.get('realized_pnl') or 0)) or 0
+            for t in _closed
+        ]
+        _total_pnl_net = sum(_net_pnls)
+        _fees_total = sum(t.get('fees_est', 0) or 0 for t in _closed)
+        _winning_net = [p for p in _net_pnls if p > 0]
+
         return {
             'total_trades': len(trades),
             'winning_trades': len(winning),
@@ -196,16 +216,31 @@ class MonthlyReviewGenerator:
             'avg_pnl_pct': round(avg_return, 4),
             'mfe_capture_efficiency': round(sum(_cap_ratios) / len(_cap_ratios), 4) if _cap_ratios else None,
             'mfe_capture_n': len(_cap_ratios),
+            # 净口径 (2026-11-01): 毛/费/净三列的事实源, 格式化层只做渲染不再自算
+            'closed_trades': len(_closed),
+            'total_pnl_net': round(_total_pnl_net, 2),
+            'fees_total': round(_fees_total, 2),
+            'winning_trades_net': len(_winning_net),
+            'win_rate_net': round(len(_winning_net) / len(_closed), 4) if _closed else 0,
+            'fake_wins': sum(1 for t, p in zip(_closed, _net_pnls)
+                             if (t.get('realized_pnl') or 0) > 0 >= p),
+            'pnl_basis': 'gross=SUM(realized_pnl) | net=SUM(COALESCE(pnl_net,realized_pnl)) 仅已平仓子集',
         }
     
     def _calculate_risk_metrics(self, trades: List[Dict]) -> Dict:
-        """计算风险指标"""
+        """计算风险指标
+
+        ⚠️ 2026-11-01 拆除「止损执行率」: trade_records 无 stop_loss_planned / stop_loss_executed 列
+        (PRAGMA 实测 52 列, 两列均不存在) ⇒ 旧实现 `t.get('stop_loss_planned')` 恒空 ⇒
+        sl_trades=[] ⇒ sl_rate 恒落默认 1.0 ⇒ 月报恒印「止损执行率 100.0%」。
+        该指标从未测量过, 是纯伪影。按本仓约定 (daily_review 2026 年同因拆除) 直接删除,
+        不再以默认值伪造; 需要该指标必须先在写入侧真实落库。
+        """
         if not trades:
             return {
                 'max_single_loss': 0,
                 'max_drawdown': 0,
                 'avg_holding_hours': 0,
-                'stop_loss_execution_rate': 0,
             }
         
         # 最大单笔亏损
@@ -226,17 +261,11 @@ class MonthlyReviewGenerator:
         # 平均持仓时间
         holding_hours = [t.get('holding_hours', 0) or 0 for t in trades]
         avg_holding = sum(holding_hours) / len(holding_hours) if holding_hours else 0
-        
-        # 止损执行率
-        sl_trades = [t for t in trades if t.get('stop_loss_planned')]
-        sl_executed = len([t for t in sl_trades if t.get('stop_loss_executed', True)])
-        sl_rate = sl_executed / len(sl_trades) if sl_trades else 1.0
-        
+
         return {
             'max_single_loss': round(max_loss, 2),
             'max_drawdown': round(max_drawdown, 2),
             'avg_holding_hours': round(avg_holding, 1),
-            'stop_loss_execution_rate': round(sl_rate, 4),
         }
     
     def _analyze_strategies(self, trades: List[Dict]) -> Dict:
@@ -394,16 +423,11 @@ class MonthlyReviewGenerator:
                 'suggestion': '减少冲动交易，等待高质量信号',
             })
         
-        # 2. 止损违规
-        violations = [t for t in trades if t.get('stop_loss_planned') and not t.get('stop_loss_executed', True)]
-        if violations:
-            patterns.append({
-                'pattern': 'stop_loss_violation',
-                'count': len(violations),
-                'total_loss': sum(t.get('realized_pnl', 0) or 0 for t in violations),
-                'suggestion': '严格执行止损纪律',
-            })
-        
+        # 2. 止损违规 —— 2026-11-01 拆除 (与 _calculate_risk_metrics 同根因):
+        #    trade_records 无 stop_loss_planned/stop_loss_executed 列 ⇒ 该判据恒空 ⇒ 永远不会命中。
+        #    留着只会让「已识别 0 个止损违规」看起来像一次真实检测, 实际是零检测。
+        #    恢复条件: 写入侧真实落库该两列后, 再按新列名重写判据。
+
         # 3. 低信号强度交易
         low_strength = [t for t in trades if (t.get('signal_strength', 50) or 50) < 50]
         if len(low_strength) >= 3:
