@@ -1,0 +1,373 @@
+【证伪任务 — 第14轮 P9】候选方向 = SKIP。
+
+第一步【假设它错了】:
+仅根据以下原始数据, 假设 SKIP 方向会亏损, 找出最可能导致亏损的具体证据。
+把你在"不看分析师结论"下独立倾向的方向填入 independent_direction (作为防锚定观测)。
+
+原始数据:
+## 📊 数据覆盖统计: 19/19 维度有效
+- score_band 锚点③【数据充分性】: 充分 ✓ (缺失维度<6)
+
+
+## 标的基本面
+- 代码: US.MRK
+- 名称: 默沙东
+- 当前价格: $145.27 (⚠️盘前时段此值为昨收, 有效现价见盘前段)
+- 涨跌幅: +0.0%
+- 成交量: 8,381,399.0
+- 换手率: 0.34%
+- PE(TTM): 116.216
+- PE(动态): 19.954
+- PB: 8.547
+- EPS: 数据未采集(N/A)
+- 总市值: 358.4B
+- 股息率: 数据未采集(N/A)%
+- 52周最高: 156.00
+- 52周最低: 79.67
+- 振幅: 1.379%
+- 买盘/卖盘比: -65.289
+- 量比: 0.702
+- ⚠️ 口径: 上方 成交量/换手率/振幅/量比/买卖盘比 均为**上一交易日收盘**口径 (盘前/盘后不刷新 —— 此处盘前量比实为昨日量能, 不是今日放量); 今日量能只能看下方盘前段的盘前成交量。
+
+## ⚡ 盘前时段数据 (当前处于盘前, 这是今日趋势的第一个信号)
+- 盘前现价(有效价格): $145.43
+- 盘前涨跌幅(vs昨收): +0.11%
+- 隔夜涨跌幅: +0.02%
+- 盘前成交量: 10,379股
+- 昨日收盘价: $145.27
+- ⚠️ 上方"当前价格"是昨日正股收盘价, 不是今日真实价。入场/止损/止盈必须锚定盘前现价 $145.43。
+- ⚠️ 你必须对盘前波动显式表态: 趋势延续(顺势入场) 还是 过度反应(逆势博反弹, 需强证据)。
+
+## 技术面 (60日K线)
+- MA5: 146.86 | MA10: 146.03 | MA20: 145.19 | MA60: 143.46
+- 5日涨跌: -0.5% | 20日涨跌: -2.4%
+- 量比(20日均量): 0.87x
+- 近5日K线:
+  2026-10-19 00:00:00: O=145.00 H=147.41 L=143.53 C=143.63 V=10,449,088
+  2026-10-20 00:00:00: O=146.29 H=149.36 L=146.12 C=148.30 V=9,923,562
+  2026-10-21 00:00:00: O=147.11 H=150.00 L=147.11 C=149.88 V=9,008,233
+  2026-10-22 00:00:00: O=151.05 H=154.02 L=144.07 C=147.24 V=19,030,262
+  2026-10-23 00:00:00: O=145.02 H=145.44 L=143.41 C=145.27 V=8,381,399
+
+## 资金面 (分时)
+- 最新主力流入: N/A
+- 超大单流入: -4603747.2
+- 大单流入: -4655990.629
+
+## 异动信号
+  技术面异动: 8条 (近7个自然日)
+    - [ts 1792728000] 收盘价跌破MA5、MA10和MA30，暗示潜在的下行风险。
+    - [ts 1792728000] VR指标从中性转为超卖，暗示抛压减弱的迹象。
+    - [ts 1792641600] MA10上穿MA30形成金叉，暗示可能出现上涨趋势。
+    - [ts 1792555200] WMSR从中性区间进入超买区域，暗示价格可能下跌。
+    - [ts 1792555200] MA10上穿MA20形成金叉，暗示潜在上升趋势。
+    - [ts 1792468800] RSI6、CCI和BR从中性区间进入超买区域，表明股价可能已触及短期高点，即将面临回落。
+    - …另有2条未展示
+  资金面异动: 1条 (近7个自然日)
+    - [ts 1792641600] 10/22卖空数量日环比上升181%，为298.6万，比近一月均值高109%。
+  衍生品异动: 38条 (近7个自然日)
+    - 10.24 01:19，出现一笔卖出看涨期权交易，成交量为543张，未平仓数为6504张，V/OI值为0.7，交易金额为200910USD，合约行权价是150，到期日为2026/11/20。
+    - 10.24 01:16，出现一笔卖出看涨期权交易，成交量为525张，未平仓数为6504张，V/OI值为0.6，交易金额为194250USD，合约行权价是150，到期日为2026/11/20。
+    - 10.23 23:46，出现一笔买入看跌期权交易，成交量为486张，未平仓数为21张，V/OI值为24，交易金额为191961USD，合约行权价是144，到期日为2026/11/06。
+    - 10.23 22:57，出现一笔卖出看涨期权交易，成交量为900张，未平仓数为6504张，V/OI值为0.5，交易金额为292500USD，合约行权价是150，到期日为2026/11/20。
+    - 10.23 22:56，出现一笔卖出看涨期权交易，成交量为2100张，未平仓数为6504张，V/OI值为0.3，交易金额为682500USD，合约行权价是150，到期日为2026/11/20。
+    - 10.23 22:12，出现一笔中性看涨期权交易，成交量为3592张，未平仓数为4289张，V/OI值为1.2，交易金额为53880USD，合约行权价是165，到期日为2026/10/30。
+    - …另有32条未展示
+
+## 最新新闻 (共10条, 时间为ET)
+  [10-26 07:30ET] <em>默沙东</em>/科伦博泰重磅 ADC 首个全球 III 期数据亮相
+  [10-25 21:32ET] 美银证券维持<em>默沙东</em>(<em>MRK</em>.US)买入评级，维持目标价163美元
+  [10-25 20:31ET] 瑞士银行维持<em>默沙东</em>(<em>MRK</em>.US)买入评级，维持目标价175美元
+  [10-25 20:11ET] 默克公司：ESMO26 sac-TMT 在 PD-L1 阴性非小细胞肺癌中数据令人印象深刻
+  [10-25 19:50ET] <em>默沙东</em>、GSK等MNC为什么开始高价抢中国的TCE了？
+  [10-25 12:00ET] 创新药周报：<em>默沙东</em>/Moderna肿瘤疫苗发布III期详细结果
+  [10-25 04:44ET] 礼来、<em>默沙东</em>、艾伯维等全部入局，眼科正成为全球药企必争之地
+  [10-25 03:01ET] 分析师对医疗保健公司提供见解：默克公司（<em>MRK</em>）和赛默飞世尔科技（TMO）
+
+## Finnhub 新闻事实流 (近7天, 含摘要 — 新闻类论据必须引用此处事实)
+  [10-24] (Yahoo) Can Merck (MRK) Stay Undervalued If Cash Flow Keeps Growing?
+    摘要: Merck has had a strong multi year run and is now back in the spotlight after fresh oncology headlines. This raises an important question for investors who focus on cash flows: Is the current share pri
+  [10-22] (Yahoo) Merck (MRK) Wins EU Approval For KEYTRUDA Plus Padcev In Bladder Cancer
+    摘要: Merck (NYSE:MRK) received European Commission approval for KEYTRUDA plus Padcev as a perioperative therapy for resectable muscle-invasive bladder cancer in the EU. The decision covers patients regardl
+  [10-22] (Yahoo) Earnings Preview: Merck (MRK) Q3 Earnings Expected to Decline
+    摘要: Merck (MRK) doesn't possess the right combination of the two key ingredients for a likely earnings beat in its upcoming report. Get prepared with the key expectations.
+  [10-21] (Yahoo) Merck (MRK) Laps the Stock Market: Here's Why
+    摘要: The latest trading day saw Merck (MRK) settling at $149.88, representing a +1.07% change from its previous close.
+  [10-20] (ChartMill) Dow Jones Top Gainers on Oct. 20, 2026: MMM, UNH, MRK Lead Session
+    摘要: Dow Jones top gainers for the Oct. 20, 2026 US session included MMM, UNH, MRK, JNJ, and AMGN, with the article noting their gains and longer-term performance.
+  [10-20] (Yahoo) Merck (MRK) Has New Cancer Treatments. Can They Outgrow the Keytruda Patent Cliff?
+    摘要: A Growing Franchise With an Expiration Date Merck & Co., Inc. (NYSE:MRK) is trying to extend its oncology leadership before competition threatens its largest earnings engine. Keytruda and Keytruda Qle
+
+## 研报 (共5条, 去重3条与新闻同稿)
+  [10-23 08:31ET] 丰业银行维持<em>默沙东</em>(<em>MRK</em>.US)买入评级，维持目标价180美元
+  [10-23 08:00ET] 分析师对医疗保健公司提供见解：信诺保险（CI）、默克公司（<em>MRK</em>）和美国物理治疗公司（USPH）
+
+## 社区讨论 (共30条帖子)
+
+  发帖节奏: 最近一条前5分钟内 1 条 / 全部30条跨 16854.0 分钟
+
+  帖子1: 一周前瞻10.26，三大云巨头交卷，美联储决议撞上GDP与PCE，存储、电力、光通信迎密集检验！ 大盘：纳指两周连跌，科技止跌还缺一份融资与回报的答案。上周五（10.23）美股三大指数集体收跌：道指跌1.23%，报52215.16点标普50
+
+  帖子2: 美股前瞻10.23，纳指周涨幅清零，盘前回流，抄底下周云厂商财报？ 大盘：只看三大指数，昨晚回吐的非常厉害，尤其是纳指，科技半导体直接被重创。科技重伤Meta跌6.98%，SpaceX跌9.14%，亚马逊跌4.57%，英伟达跌4.40%，特
+
+  帖子3: 期權收租｜癌症疫苗三期數據引發資金異動，Moderna單日跌18% 一、Moderna：三期數據未能消除商業化疑慮，股價轉入高位急跌前一交易日交易情況回顧： 10月22日，$Moderna (MRNA.US)$收於202.63美元，單日下跌
+
+  帖子4: 礼来、默沙东、艾伯维、信达、恒瑞等全部入局，眼科正成为全球药企必争之地 （本文作者为 医线Insight，钛媒体经授权发布）文 | 医线Insight，作者丨张小漫2026年的最后一个季度，全球眼科行业都在等一个数据。艾伯维与ReGenXB
+
+  帖子5: 【有獎】Q3 財報密集週，谷歌、
+…(原文截断, 挑战者仅需主旨)
+## 基本面指标 (Finnhub, TTM)
+- 营收增长(YoY): 4.64%
+- 营收增长(5年CAGR): 9.38%
+- EPS增长(5年): 21.23%
+- ROE: 6.6000000000000005%
+- ROA: 2.42%
+- 净利润率: 4.77%
+- 毛利率: 77.28%
+- 营业利润率: 9.58%
+- PE(标准化): 19.6344
+- PB: 4.9663
+- PS: 5.513
+- 每股营收: 26.951
+- 每股净资产: 21.2582
+- 负债/权益比: 0.9379
+- 股息率: 2.8664%
+- 派息率: 44.79%
+- Beta: 0.12236488
+
+## 分析师评级 (Finnhub, 2026-10-01)
+- 强烈买入: 8 | 买入: 18 | 持有: 9 | 卖出: 0 | 强烈卖出: 0
+- 覆盖分析师: 35位
+- 买入占比: 74.3%
+
+## 内部人交易 (Finnhub)
+- 最近交易: 0笔买入 / 0笔卖出
+- 最近交易总额: $0
+  2026-09-30 Seidman Christine E None shares=None price=$145.31
+  2026-09-30 Karsanbhai Surendral None shares=None price=$145.31
+  2026-09-30 Coe Mary Ellen None shares=None price=$145.31
+  2026-08-13 Guindo Chirfi None shares=None price=$135
+  2026-08-12 Zachary Jennifer None shares=None price=$0
+
+## 内部人情绪 (Finnhub MSPR)
+- 6个月平均MSPR: 55.53 (净买入)
+- MSPR>0=净买入, <0=净卖出
+
+## 公司概况
+- 行业: Pharmaceuticals
+- 交易所: NEW YORK STOCK EXCHANGE, INC.
+- 国家: US
+
+## 大盘环境
+- 大盘趋势(代码判定, SPY/QQQ): 盘前UP (SPY +0.42%, QQQ +0.74%); 日线DOWN
+- SPY: $759.97 (MA20=770.15, 趋势=DOWN, 5日-0.4%, 20日-1.5%) [日线口径, 基准日=2026-10-23 收盘; 今日盘前 +0.42% (盘前价 763.1962 / 昨收 763.96; 快照 2026-10-26 08:27:40.572 premarket)]
+- QQQ: $704.4 (MA20=735.23, 趋势=DOWN, 5日-0.8%) [日线口径, 基准日=2026-10-23 收盘; 今日盘前 +0.74% (盘前价 709.65 / 昨收 704.47; 快照 2026-10-26 08:27:48.137 premarket)]
+- VIX: 15.23 今日+0.0% [代理值: US.VIXY×0.85 校准, VIXY=$17.92; VIX 现货无盘前交易]
+- 扫描层市况(当日候选池广度): 扫描39只候选：14涨16跌9平，平均-2.5%，震荡分化。 涨幅领涨：US.MMYT(+4.8%) 跌幅最深：US.ITUB(-26.3%) 板块表现均衡，最强Technology(+0.5%)。 多头信号：US.SLB,US.EQNR,US.NOW。 空头信号：US.KEYS,US.NOW,US.ADI。 放量股：US.BE。 盘前异动：US.ITUB(-26.7%) US.NU(-25.0%) US.PBR.A(-21.4%) US.PBR(-20.8%)。
+
+## 行业对比 (Pharmaceuticals)
+- 行业平均: 今日+0.0% 5日+2.6%
+- 行业趋势(代码判定, peer均值): 今日UP, 5日UP, 综合UP
+- 行业PE中位数: 39.51 (由5家peer算得)
+- peer明细 (共8只):
+  RPRX: $63.86 今日+0.2% 5日+6.0% PE=34.333
+  BMY: $61.48 今日-0.0% 5日+4.5% PE=13.541
+  JNJ: $263.81 今日-0.0% 5日+4.0% PE=40.092
+  LLY: $1273.46 今日-0.0% 5日+2.7% PE=42.747
+  PFE: $30.03 今日+0.0% 5日+2.0% PE=39.513
+
+## 财报日历
+- 下次财报: 2026-10-29 (距今3天)
+- EPS预期: 1.7826 | 营收预期: None
+- ⚠️ 财报前3日不宜开新仓
+
+## 数据质量审计
+- 数据源总数: 19
+- 完整(有信息量): 19项
+- 降级(空壳): 0项
+- 缺失: 0项
+
+## 论据溯源清单（以下为输入数据中的真实数字，LLM输出必须引用这些，不得编造）
+- last_price=145.27
+- pe_ratio=19.954
+- pe_ttm_ratio=116.216
+- pb_ratio=8.547
+- total_market_val=358406023852.26
+- highest52weeks_price=155.999072058
+- lowest52weeks_price=79.670560515
+- amplitude=1.379
+- bid_ask_ratio=-65.289
+- volume_ratio=0.702
+- turnover_rate=0.34
+- revenue_growth_yoy=4.64
+- roe_ttm=6.6000000000000005
+- net_profit_margin_ttm=4.77
+- pe_normalized=19.6344
+- beta=0.12236488
+- debt_to_equity=0.9379
+- avg_mspr_6m=55.53
+- strong_buy=8
+- buy=18
+- hold=9
+- total_analysts=35
+- buy_pct=74.3
+- next_earnings_date=2026-10-29
+- industry_pe_median=39.51
+
+## 板块上下文（真实轮动数据, 板块层因果必须引用此处事实; 逆板块风方向须自证为何成立）
+当前快照板块ETF涨跌(弱→强): Materials(-0.74%), Utilities(-0.72%), Financials(-0.00%), Energy(+0.00%), Healthcare(-0.00%), Industrials(-0.00%), Consumer Discretionary(-0.00%), Consumer Staples(+0.00%), Communication(-0.00%), Real Estate(+0.12%), Technology(+0.49%)
+上一交易日(2026-10-23)盘中板块脉搏(15:30 ET, 弱→强): ConsStaples(-1.9%), ConsDiscretionary(-1.6%), Communication(-1.4%), Healthcare(-1.2%), Financials(-1.2%), Industrials(-1.0%), Utilities(-0.7%), Materials(-0.2%), RealEstate(+0.0%), Technology(+0.5%), Semis(+0.8%), Energy(+2.7%)
+
+## 前序回吐率（历史统计 shadow, 近1年大涨>+5%后表现）
+- 大涨样本: 3次 | 5日守成率: 33.3% | 5日后均涨幅: -2.84% → 回吐倾向
+- 3日/10日: 守成 0.0%/0.0%, 均涨 -2.23%/-3.45%
+- 用法: 若本次触发源于大涨, 该统计反映该标的自身的涨幅留存性格; 样本少(<10)时仅作弱参考。
+
+## 近期交易经验（背景事实, 非方向先验）
+上次分析(2026-10-23): 2026-10-23 | 看多 | 信心中 | BUY | verdict=盘前-1.05%且成交量仅5137股属无量情绪性错杀(随Moderna连带下跌)，判断为过度反应；动态PE 20.2倍远低于行业中枢40.0倍，叠加Keytruda欧盟获批，回调至145.00附近低吸 | 核心论据=动态PE仅20.225倍，显著低于制药行业中枢40.03倍，且PB 4.9663倍，估值具备极高安全边际与防御属性。 (fundamental) ; KEYTRUDA联合Padcev获欧盟批准用于肌层浸润性膀胱癌围手术期治疗，巩固核心肿瘤学管线护城河，对冲单一疫苗数据利空。 (news) | 本股US.MRK最近4笔结局(新→旧): 09-03 LONG SL_BREAKEVEN $19@cautious; 08-28 LONG SL_TRAIL_LOCK $68@risk_on; 08-27 LONG SL_TRAIL_LOCK $26@cautious; 08-03 LONG MFE_STALL_EXIT -$35@risk_on | 本股US.MRK无历史交易记录
+赚钱pattern(近30日净额)(全市场参考,非本股): LONG+SL_TRAIL_LOCK(70-80) 13笔 WR=100% PnL=$539.63 hold=0.9h [低置信,仅参考]; LONG+SL_TRAIL_LOCK(<50) 19笔 WR=95% PnL=$526.96 hold=1.3h [低置信,仅参考]; LONG+PRE_CLOSE_EXIT(50-60) 2笔 WR=100% PnL=$272.77 hold=6.2h [低置信,仅参考]
+亏钱pattern(近30日净额)(全市场参考,非本股): LONG+OVERNIGHT_GAP_STOP(50-60) 2笔 PnL=$-645.67 hold=12.8h [低置信,仅参考]; SHORT+SL_INITIAL(50-60) 2笔 PnL=$-379.7 hold=0.2h [低置信,仅参考]; SHORT+SL_INITIAL(<50) 2笔 PnL=$-306.78 hold=0.3h [低置信,仅参考]
+退出效果(近30日净额)(全市场参考,非本股): SL_TRAIL_LOCK(44笔 WR=96% PnL=$1668.78); PRE_CLOSE_EXIT(7笔 WR=100% PnL=$618.81) [低置信]; SL_BREAKEVEN(74笔 WR=85% PnL=$524.47); DEAD_SIGNAL_EXIT(10笔 WR=70% PnL=$33.08) [低置信]; SL_INITIAL(7笔 WR=0% PnL=$-1026.09) [低置信]
+近期教训(全市场参考,非本股):
+  [2026-10-23][low] 当日整体净盈利$25 3胜0负，市场环境有利于当前策略
+  [2026-10-23][medium] SHORT+SL_BREAKEVEN 净赚$12 持1.4h US.TMUS
+
+
+
+---
+
+第二步【对照分析师的论据】:
+分析师的结论与论据如下。逐条核验其数字是否与上方原始数据一致:
+
+{
+  "direction": "SKIP",
+  "rating": "观望",
+  "score": 8.0,
+  "score_band": "HIGH",
+  "executive_summary": "ADC III期数据亮相及Keytruda欧盟获批巩固护城河，动态PE 19.954远低于行业中枢39.51；但盘前无量微涨(+0.11%/10379股)显示利好未发酵，且距10-29财报仅3天触发禁开仓风控，SKIP等待财报落地。",
+  "execution_plan": {
+    "entry_strategy": "等待10-29财报发布后，若EPS超1.78预期且价格站稳146.86(MA5)则首批买入，当前财报前3日禁开仓",
+    "entry_archetype": "BREAKOUT",
+    "confirmation": {
+      "price_level": 146.86,
+      "side": "above",
+      "ttl_min": 1440
+    },
+    "chase_cap_price": 149.0,
+    "stop_loss": 140.0,
+    "take_profit": 156.0,
+    "entry_price": 146.86,
+    "stop_loss_price": 140.0,
+    "take_profit_price": 156.0,
+    "invalidation": "财报EPS不及1.78预期或价格跌破143.41前低，表明利好出尽且空头掌控趋势",
+    "tripwires": [
+      {
+        "metric": "Q3 EPS",
+        "threshold": ">1.78",
+        "deadline": "2026-10-29",
+        "source": "财报日历 EPS预期 1.7826"
+      },
+      {
+        "metric": "收盘价",
+        "threshold": ">146.86",
+        "deadline": "2026-11-05",
+        "source": "技术面 MA5 146.86"
+      }
+    ],
+    "invalidation_triggers": [
+      {
+        "metric": "收盘价",
+        "operator": "<",
+        "value": 143.41,
+        "deadline": "2026-11-05"
+      },
+      {
+        "metric": "5日涨跌",
+        "operator": "<",
+        "value": -5.0,
+        "deadline": "2026-11-05"
+      }
+    ]
+  },
+  "key_levels": {
+    "current": 145.43,
+    "support": [
+      143.41,
+      140.0,
+      135.0
+    ],
+    "resistance": [
+      146.86,
+      150.0,
+      154.02
+    ]
+  },
+  "bull_case": [
+    {
+      "thesis": "估值极具防御性，动态PE 19.954显著低于制药行业中枢39.51，PB 4.9663，在Healthcare板块震荡中提供高安全边际。",
+      "strength": "HIGH",
+      "evidence": "PE(动态) 19.954, 行业PE中位数 39.51, PB 4.9663",
+      "source_type": "fundamental",
+      "claim_type": "valuation_cheap"
+    },
+    {
+      "thesis": "核心管线催化密集，10-26 ADC III期数据亮相及10-22 Keytruda+Padcev获欧盟批准，有效对冲单一产品专利悬崖风险。",
+      "strength": "HIGH",
+      "evidence": "10-26 ADC III期数据, 10-22 Keytruda+Padcev EU获批",
+      "source_type": "news",
+      "claim_type": "product_catalyst"
+    }
+  ],
+  "bear_case": [
+    {
+      "thesis": "技术破位与空头狙击，股价跌破MA5(146.86)与MA10(146.03)，10/22卖空数量环比激增181%至298.6万股，期权市场集中卖出150看涨并买入144看跌，短期抛压沉重。",
+      "strength": "HIGH",
+      "evidence": "MA5 146.86, MA10 146.03, 卖空数量298.6万(+181%), 卖出150看涨/买入144看跌期权",
+      "source_type": "technical",
+      "claim_type": "technical_breakdown"
+    },
+    {
+      "thesis": "财报前预期悲观与资金流出，新闻预警Q3盈利预期下降，超大单/大单合计净流出逾925万美元，机构资金呈现明显避险撤离态势。",
+      "strength": "MEDIUM",
+      "evidence": "Q3 Earnings Expected to Decline, 超大单-460万/大单-465万",
+      "source_type": "fundamental",
+      "claim_type": "product_catalyst"
+    }
+  ],
+  "constraints": [
+    {
+      "thesis": "财报前3日禁开仓硬性约束",
+      "strength": "HIGH",
+      "evidence": "下次财报 2026-10-29，距今3天"
+    }
+  ],
+  "causal_chain": "ADC/Keytruda获批及数据亮相(产品催化) → 巩固肿瘤学护城河并缓解专利悬崖担忧(基本面改善) → 动态PE 19.954显著低于行业中枢39.51凸显估值洼地(估值锚定) → 吸引长线资金配置，但短期受10-29财报预期下降及空头狙击压制，需等待财报落地后右侧确认(价格表现)。",
+  "risks": [
+    "10-29财报前3日不开仓，当前距财报仅3天，面临财报预期下降及业绩不及预期的跳空风险。",
+    "10/22卖空数量激增181%至298.6万股，且衍生品市场集中卖出150看涨期权，短期存在空头挤压或顺势下杀风险。",
+    "Moderna肿瘤疫苗III期数据引发其股价单日跌18%，市场对MRK合作疫苗的商业化前景可能存在连带担忧。"
+  ],
+  "data_quality_note": "数据源总数19项，完整19项，降级0项，缺失0项。数据充分性: 充分 ✓。所有维度均完整，无缺失对分析结论的影响。",
+  "skip_reason": "距离10-29财报仅3天，触发财报前3日不开仓硬性风控；且盘前成交量仅10379股，ADC三期数据利好尚未引发资金抢筹，等待财报落地及量能确认后再行评估。",
+  "evidence_gaps": []
+}
+
+---
+
+第三步【裁决 verdict】:
+- 独立方向与分析师相反，且有足以推翻方向的数据反证 → DISAGREE, my_direction 给反方向
+- 同向但至少一条有出处的实质硬伤(足以改变确信度或入场条件) → PARTIAL_AGREE, 指明哪条论据与哪条数据矛盾
+- 同向且无实质硬伤 → AGREE；次要风险只写进 missed_risks，不构成PARTIAL
+- 证据不足 → my_direction=SKIP，并在 skip_reason 写明具体证据缺口
+
+无论 verdict 为何, falsification_target 与 flip_condition 必填 (AGREE 也不例外) —
+"证伪失败"不等于零信息: 你必须指出这笔交易最可能的亏损机制, 以及什么数据出现会让你翻向。
+
+【反虚构硬规】: 你的每条 challenged_claims 的 counter_evidence 与 missed_risks 里若含数字,
+该数字必须能在上方原始数据中找到。找不到来源的数字 = 你的幻觉, 会被记录。
+validation 五维照常核验(数据/逻辑/市场/风险/价位), 每维给 通过/不通过+一句证据。
+
+my_score / my_score_band: 表达你对"自己my_direction"的确信度档位 (HIGH/MEDIUM/LOW,
+锚定判据与分析师相同)。若你 AGREE (证伪失败), my_direction = 分析师方向, my_score_band 给分析师论据的实际强度档位。
+
+返回JSON。

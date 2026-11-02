@@ -1,0 +1,204 @@
+{
+  "scope": "all challenged_claims.counter_evidence; not every validation/missed_risks sentence",
+  "claims_reviewed": 20,
+  "counts": {
+    "sourced_but_limited": 1,
+    "direct_source": 13,
+    "derived_checked": 4,
+    "negative_evidence": 2
+  },
+  "unsupported_or_fabricated_found": 0,
+  "rows": [
+    {
+      "sample": "short_partial",
+      "arm": "baseline",
+      "run": 1,
+      "claim_index": 0,
+      "classification": "sourced_but_limited",
+      "original_thesis": "bear_case：技术面中期破位与均线压制，反弹缺乏量能支撑（HIGH）"
+    },
+    {
+      "sample": "short_partial",
+      "arm": "baseline",
+      "run": 1,
+      "claim_index": 1,
+      "classification": "direct_source",
+      "original_thesis": "bull_case：资金面大单净流入2653万美元显示短线修复动能（MEDIUM）"
+    },
+    {
+      "sample": "short_partial",
+      "arm": "baseline",
+      "run": 1,
+      "claim_index": 2,
+      "classification": "derived_checked",
+      "original_thesis": "bear_case：PE(TTM)132.51远高于半导体行业中位数36.92（HIGH）",
+      "derived_check": {
+        "formula": "650/524-1 and 620/524-1",
+        "computed": [
+          24.045801526717558,
+          18.32061068702291
+        ],
+        "reported": [
+          24.0,
+          18.3
+        ],
+        "pass": true
+      }
+    },
+    {
+      "sample": "short_partial",
+      "arm": "variant",
+      "run": 1,
+      "claim_index": 0,
+      "classification": "negative_evidence",
+      "original_thesis": "key_levels.support 给出 [502.6, 480.0]"
+    },
+    {
+      "sample": "short_partial",
+      "arm": "variant",
+      "run": 1,
+      "claim_index": 1,
+      "classification": "derived_checked",
+      "original_thesis": "bull_case[1]: '资金面大单净流入2653万美元'",
+      "derived_check": {
+        "formula": "26,532,186.272-6,036,891.821",
+        "computed": 20495294.450999998,
+        "comparison": "below 26,530,000",
+        "pass": true
+      }
+    },
+    {
+      "sample": "short_partial",
+      "arm": "variant",
+      "run": 2,
+      "claim_index": 0,
+      "classification": "direct_source",
+      "original_thesis": "bull_case二：资金面大单净流入2653万美元"
+    },
+    {
+      "sample": "short_partial",
+      "arm": "variant",
+      "run": 2,
+      "claim_index": 1,
+      "classification": "negative_evidence",
+      "original_thesis": "key_levels.support 含 480.0"
+    },
+    {
+      "sample": "short_partial",
+      "arm": "variant",
+      "run": 2,
+      "claim_index": 2,
+      "classification": "direct_source",
+      "original_thesis": "entry_strategy：等待突破MA5($530.05)后做多，或反弹至$530.05遇阻时做空"
+    },
+    {
+      "sample": "long_partial",
+      "arm": "baseline",
+      "run": 1,
+      "claim_index": 0,
+      "classification": "direct_source",
+      "original_thesis": "估值显著低于行业中枢且基本面扎实：当前PE(TTM)为22.762倍，远低于Technology行业中位数951.38倍，具备极强的估值修复弹性。"
+    },
+    {
+      "sample": "long_partial",
+      "arm": "baseline",
+      "run": 1,
+      "claim_index": 1,
+      "classification": "direct_source",
+      "original_thesis": "盘前微跌-0.39%且成交量仅16080股，属正常缩量回调非趋势反转。"
+    },
+    {
+      "sample": "long_partial",
+      "arm": "baseline",
+      "run": 1,
+      "claim_index": 2,
+      "classification": "direct_source",
+      "original_thesis": "风险已覆盖：宏观与大盘日线逆风（SPY/QQQ趋势DOWN）为MEDIUM约束。"
+    },
+    {
+      "sample": "long_partial",
+      "arm": "baseline",
+      "run": 2,
+      "claim_index": 0,
+      "classification": "direct_source",
+      "original_thesis": "估值显著低于行业中枢且基本面扎实：当前PE(TTM)为22.762倍，远低于Technology行业中位数951.38倍(strength=HIGH, claim_type=valuation_cheap)"
+    },
+    {
+      "sample": "long_partial",
+      "arm": "baseline",
+      "run": 2,
+      "claim_index": 1,
+      "classification": "direct_source",
+      "original_thesis": "盘前微跌-0.39%且成交量仅16080股，属正常缩量回调非趋势反转(entry_strategy)"
+    },
+    {
+      "sample": "long_partial",
+      "arm": "baseline",
+      "run": 2,
+      "claim_index": 2,
+      "classification": "derived_checked",
+      "original_thesis": "并购与AI产品双重催化(HIGH强度)：56.6亿美元收购Braze强化AI营销云布局",
+      "derived_check": {
+        "formula": "100*5.66e9/204573110000",
+        "computed": 2.7667370359672394,
+        "reported": 2.8,
+        "pass": true
+      }
+    },
+    {
+      "sample": "long_partial",
+      "arm": "variant",
+      "run": 1,
+      "claim_index": 0,
+      "classification": "direct_source",
+      "original_thesis": "当前PE(TTM)为22.762倍，远低于Technology行业中位数951.38倍，具备极强的估值修复弹性（strength=HIGH）。"
+    },
+    {
+      "sample": "long_partial",
+      "arm": "variant",
+      "run": 1,
+      "claim_index": 1,
+      "classification": "derived_checked",
+      "original_thesis": "并购与AI产品双重催化（Braze 56.6亿美元收购+Hunter AI）构成未被价格反映的HIGH级催化。",
+      "derived_check": {
+        "formula": "100*(250.29/241.78-1)",
+        "computed": 3.519728678964351,
+        "reported": 3.52,
+        "pass": true
+      }
+    },
+    {
+      "sample": "long_partial",
+      "arm": "variant",
+      "run": 1,
+      "claim_index": 2,
+      "classification": "direct_source",
+      "original_thesis": "宏观与大盘日线逆风已被列入constraints（SPY趋势DOWN，QQQ趋势DOWN）。"
+    },
+    {
+      "sample": "long_partial",
+      "arm": "variant",
+      "run": 2,
+      "claim_index": 0,
+      "classification": "direct_source",
+      "original_thesis": "PE(TTM)为22.762倍，远低于Technology行业中位数951.38倍，具备极强的估值修复弹性(bull_case #1, strength=HIGH)"
+    },
+    {
+      "sample": "long_partial",
+      "arm": "variant",
+      "run": 2,
+      "claim_index": 1,
+      "classification": "direct_source",
+      "original_thesis": "'盘前微跌-0.39%且成交量仅16080股，属正常缩量回调非趋势反转'(execution_plan.entry_strategy)"
+    },
+    {
+      "sample": "long_partial",
+      "arm": "variant",
+      "run": 2,
+      "claim_index": 2,
+      "classification": "direct_source",
+      "original_thesis": "风险完备性: risks仅列内部人偏空、技术超买与资金分歧、SPY/QQQ日线DOWN三条，causal_chain与tripwires均无日期锚定宏观事件"
+    }
+  ],
+  "caveat": "sourced_but_limited means citation exists but does not fully prove the stated weakness; derived values checked arithmetically."
+}

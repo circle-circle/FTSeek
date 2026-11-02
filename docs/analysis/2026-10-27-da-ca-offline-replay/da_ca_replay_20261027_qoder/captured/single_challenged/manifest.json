@@ -1,0 +1,53 @@
+{
+  "label": "single_challenged",
+  "date": "2026-10-08",
+  "symbol": "US.AMD",
+  "arms": {
+    "baseline": {
+      "system_fingerprint": "bd4f78da4ac7",
+      "system_sha256": "5053e09ff2a24d5f1fe128cbd16858cbafa9aa963dd732522970bab2c77506df",
+      "user_sha256": "db0d9d54112c7598dfd7cac7b6e46b8c5d9532dc06c419aba15a26ea672e54f8",
+      "kwargs": {
+        "temperature": 0.0,
+        "model": "deepseek-v4.1-flash",
+        "max_tokens": 16000,
+        "extra_body": {
+          "enable_thinking": true
+        },
+        "timeout": 300
+      },
+      "data_text_sha256": "9e4fe22155656be65a92ef92f17a3e7f9e9d3a3adc3f0ded68bc80296ef528d2",
+      "data_tail_exact": true,
+      "analysis_view_sha256": "ec0b25178cd5e87de7dd44191fa59fc689664f71660de17053bd6bb0828fef4b"
+    },
+    "variant": {
+      "system_fingerprint": "40e9681c9661",
+      "system_sha256": "d429ce5a2372a8bd7da8f6e4d9bc0b512ee66a68c09eb9e1403ea8e9551d39d3",
+      "user_sha256": "e7be17f300d77d0507eb91d2520a8c30684d33673ff9843d33ab822a8e4510ab",
+      "kwargs": {
+        "temperature": 0.0,
+        "model": "deepseek-v4.1-flash",
+        "max_tokens": 16000,
+        "extra_body": {
+          "enable_thinking": true
+        },
+        "timeout": 300
+      },
+      "data_text_sha256": "9e4fe22155656be65a92ef92f17a3e7f9e9d3a3adc3f0ded68bc80296ef528d2",
+      "data_tail_exact": true,
+      "analysis_view_sha256": "ec0b25178cd5e87de7dd44191fa59fc689664f71660de17053bd6bb0828fef4b"
+    }
+  },
+  "historical_challenger_hash": "01256354d91b",
+  "historical_model": "deepseek-v4.1-flash",
+  "historical_tier": "primary",
+  "pass1_reconstruction": "documented_inverse; original request not persisted",
+  "postprocessing_removed": [
+    "debate_outcome",
+    "symbol",
+    "name",
+    "confidence(post-merge)",
+    "challenger_risks:4",
+    "claim_markers:0"
+  ]
+}

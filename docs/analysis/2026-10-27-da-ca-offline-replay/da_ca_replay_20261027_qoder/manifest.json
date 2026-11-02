@@ -1,0 +1,7 @@
+{
+  "source": "/root/.hermes/skills/deep-stock-analysis/scripts/llm_synth.py",
+  "source_sha256": "97367403caac2a27e53e0879d743202e474232ad780899aecd257d803f037ba1",
+  "variant_sha256": "e793c131b43dca4ad2fb156f021eb4ec6e4309f8a4e012f6bfe33eb53e0540b6",
+  "replacement_blocks": 2,
+  "production_file_modified": false
+}

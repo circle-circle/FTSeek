@@ -1,0 +1,73 @@
+{
+  "label": "short_partial",
+  "arm": "baseline",
+  "repeat": 1,
+  "http_attempts": 1,
+  "latency_ms": 114720,
+  "model_parameters": {
+    "temperature": 0.0,
+    "model": "deepseek-v4.1-flash",
+    "max_tokens": 16000,
+    "extra_body": {
+      "enable_thinking": true
+    },
+    "timeout": 300
+  },
+  "result": {
+    "independent_direction": "SKIP",
+    "validation": {
+      "data": "通过 — PE(TTM)132.51、industry_pe_median 36.92、avg_mspr_6m -68.01、盘前成交量192,213股(=19.2万)、大单流入26,532,186.272、MA5 530.05/MA60 532.63 均可在原始数据中逐一比对；唯一来源不明项为 key_levels.support 480.0，在论据溯源清单中无出处。",
+      "logic": "通过 — '盘前+1.40%但量能仅19.2万股→非趋势反转'的链条与数据一致：盘前192,213股远低于分析师自设tripwire 500,000股；同时MA5(530.05)跌破MA60(532.63)死叉、20日-18.1%、10-23反弹量15,177,935低于10-22杀跌量28,007,407，反弹缩量成立。",
+      "market": "通过 — 日线口径 SPY 759.97 < MA20 770.15、QQQ 704.4 < MA20 735.23，行业5日-2.6%，确为DOWN；但存在短线张力：盘前 SPY+0.42%、QQQ+0.74%、Technology板块+0.49%为当日最强板块，constraints中'板块环境不支持个股独立走强'在盘前口径下不完全成立。",
+      "risk": "通过 — 估值(132.51 vs 36.92)、板块共振、内部人净卖出(-68.01)三条风险均有数据支撑；覆盖缺口是社区帖4(10.26前瞻)明确提及'本周关注美联储议息会&三大云厂财报'这一硬日期，未进入risks三条，分析师仅在evidence_gaps承认'缺失财报日历日期'。",
+      "levels": "通过 — current 524.0=盘前现价、resistance 530.05=MA5、551.18=MA10、support 502.6=10-22最低价502.60，均锚定有效值；瑕疵两处：support 480.0无溯源，entry_strategy中'反弹至$530.05遇阻时做空'属第二腿条件位（当前执行端不执行第二腿）。"
+    },
+    "agreed": true,
+    "my_direction": "SKIP",
+    "my_score_band": "MEDIUM",
+    "my_score": 6,
+    "skip_reason": "独立判断亦为SKIP，非锚定分析师：多头侧盘前+1.40%至524.0但成交量仅192,213股（未达分析师自设50万股确认线），且价格仍在MA5 530.05/MA60 532.63之下、20日-18.1%、10-23缩量反弹（15.18M vs 10-22的28.01M）；空头侧面临RSI(12)/PSY/BR超卖、收盘价位于BOLL下轨下方，以及60位分析师83.3%买入、联博10-26维持目标价650美元托底。更关键的机械事实：本股近30日 SHORT+SL_INITIAL 两档均为亏钱pattern（(50-60)2笔PnL=-379.7；(<50)2笔PnL=-306.78，WR=0%），做空的风险回报被数据否定。证据缺口：缺失AMD具体财报日历与EPS数值，无法核算PEG与财报窗口，这本身就是不选边的理由。",
+    "falsification_target": "SKIP的失败模式是机会成本而非本金亏损：若今日收盘价站上MA5 530.05 且量比>1.5（>20日均量1.5倍），或盘前成交量突破500,000股，则盘前+1.40%被确认为趋势起点而非超卖修复，价格向MA10 551.18延展——该股单日弹性已有先例：10-21由10-20收盘534.74升至552.72（+3.4%，当日H=556.79、V=17,998,627）。此时任何在530附近建立的SELL_SHORT会被逼空，而SKIP则错失该段。",
+    "flip_condition": "若今日收盘价>530.05（MA5）且量比>1.5，或盘前成交量>500,000股同时QQQ维持盘前+0.74%以上，则翻向BUY；反之若收盘跌破10-22低点502.60且量比>1.2，则翻向SELL_SHORT。",
+    "challenged_claims": [
+      {
+        "original_thesis": "bear_case：技术面中期破位与均线压制，反弹缺乏量能支撑（HIGH）",
+        "weakness": "量能证据仅取昨日量比0.78x与盘前19.2万股，未纳入盘前价格方向与大盘同步转多的边际变化，属静态快照结论；不构成硬伤（盘前量仍远低于50万股阈值）。",
+        "counter_evidence": "盘前现价524.0 vs 昨收516.79（+1.40%），同期 SPY 盘前+0.42%（763.1962/763.96）、QQQ 盘前+0.74%（709.65/704.47）、Technology板块+0.49%为当日最强板块。"
+      },
+      {
+        "original_thesis": "bull_case：资金面大单净流入2653万美元显示短线修复动能（MEDIUM）",
+        "weakness": "选择性引用——同数据段超大单为净流出、买卖盘比为负，多头资金论据被高估，实际支持SKIP而非BUY。",
+        "counter_evidence": "资金面(分时)：超大单流入 -6,036,891.821，大单流入 26,532,186.272，买盘/卖盘比 -55.102。"
+      },
+      {
+        "original_thesis": "bear_case：PE(TTM)132.51远高于半导体行业中位数36.92（HIGH）",
+        "weakness": "36.92由5家peer算得（含MU 11.806、NVDA 26.67等低PE标的），口径偏纯；同期机构目标价隐含更高估值容忍度，该对比的说服力弱于呈现方式。",
+        "counter_evidence": "研报[10-26 07:31ET]联博维持买入、目标价650美元；[10-21]Susquehanna自550上调至620美元——距盘前524.0分别约+24.0%/+18.3%。"
+      }
+    ],
+    "missed_risks": [
+      "硬日期覆盖缺口：社区帖4（10.26前瞻）明确写'本周前瞻…超级周关注美联储议息会&三大云厂财报'，分析师risks三条未列FOMC/云厂财报日程，仅evidence_gaps承认'缺失具体财报日历日期'；对SKIP而言不改变结论，但会改变选边后的时间窗。",
+      "来源不明数字: 480.0 出现于 key_levels.support — 论据溯源清单与原始数据中均无该值（可查支撑仅502.60、MA60 532.63）。",
+      "资金面引用不对称：bull_case只取大单+V2653万美元，未提同段的超大单-603.69万美元与买盘/卖盘比-55.102。",
+      "大盘口径张力：constraints以日线DOWN否证个股走强，但盘前SPY+0.42%/QQQ+0.74%、Technology +0.49%为最强板块，短线方向与'不支持独立走强'存在矛盾。",
+      "第二腿残留：entry_strategy含'或反弹至$530.05遇阻时做空'，属第二可执行条件位；当前执行端不执行第二腿，建议删除、仅留研究背景。"
+    ],
+    "verdict": "AGREE",
+    "_model_reported": "deepseek-v4.1-flash",
+    "_finish_reason": "stop",
+    "_usage": {
+      "completion_tokens": 8987,
+      "completion_tokens_details": {
+        "reasoning_tokens": 7182,
+        "text_tokens": 1804
+      },
+      "prompt_tokens": 8279,
+      "prompt_tokens_details": {
+        "cached_tokens": 0,
+        "text_tokens": 8279
+      },
+      "total_tokens": 17266
+    }
+  }
+}

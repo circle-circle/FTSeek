@@ -1,5 +1,21 @@
 # FTSeek-US · HANDOFF
 
+## 2026-11-02 未提交研究件事后审计修补批（零读数变更，零交易行为变更，未重启/未提交）
+
+- **触发**：用户令「检查当前项目变更和优化事项，确认是否合理正常」。审阅结论：主体合理——零交易行为变更、预注册先写判据、保真门 0.80 未下调（0.678 → FIDELITY_FAIL 停手）、自我推翻（§5.16 → §5.17）、日聚类 t + MDE80、毛净双列、28 测试真过；但查出 4 处要修。
+- **已修 4 处**（只动研究件与其落档，不触生产 trail/SL/桶边界/隔夜/频率；未重启、未接 A2、未新开影子）：
+  1. **费用模型异常被静默归零**（`app/playbook/invalidation_replay.py` `_fee_for_leg`）→ 改抛 `FeeModelError`；`_leg` 记 `fee_error` 字段；`summarize_arm` 增 `n_fee_error_rows` + `fee_error_sample`；驱动脚本顶层 `fee_errors` 计数 + stderr 告警。
+  2. **A1 脚本默认连 OpenD 拉 bar 并写共享 `data/replay_bars/`**，与 DEB §16.2「唯一写入是 `data/audits/`」不符 → 默认离线只读既有缓存（`--fetch` 显式开启）；`--refresh-bars` 缺 `--fetch` 直接 exit 2。
+  3. **`truncated` 样本计入 `n_skip`（被印成「跳过」）但实际仍进回放与统计**（`scripts/trail_floor_atr_cf_20261028.py`）→ 拆为独立 `n_truncated` 并单列打印；另把 `_walk` 里算了却从不披露的坏 bar 计数暴露为 `n_malformed_bar`。
+  4. **`docs/debates/index_generated.md` 是生成物却被手改**（行数写成 1992、生成器实算 2080、头部日期停在 10-28）→ 重跑 `scripts/build_debate_index.py`（现 2120，日期 11-02）。
+- **读数不变实证（复跑）**：A1（默认离线）与 `data/audits/invalidation_replay_a1_20261028T115401Z.json` **逐字段实质差异 0**，且 `fee_errors.n_rows=0` ⇒ 费用模型当时确为逐笔成功，缺陷是潜在而非实际；trail_floor `n_replayed=139`、保真度 **0.338（47/139）**、日内 `v_floor` **−$442.98（49/122）**、`v_be` **+$173.86（64/122）** 与 DEB §5.18 **逐笔逐字段差异 0**（`n_total` 160→169 系窗口内新增 9 笔全被 `no_atr` 跳过，不进回放）。
+- **测试**：`tests/test_invalidation_replay.py` 12 → **14** 例（新增「费用异常必须留痕并被计数」「`--refresh-bars` 缺 `--fetch` 必须 exit 2」；原 `--no-fetch` 用例改名固化默认离线）；`test_invalidation_replay + test_atr_trail_replay` **30 passed**。
+- **落档**：`DEB-20261028-bucket-layering-and-tiered-exit.md` 新增 §18 + 状态行；`docs/debates/README.md` 手工索引行同步；`index_generated.md` 重跑。
+- **未解决（待用户决断，本批不动）**：① 整批（A1/A1b/C/P1/P2）自 10-28 起**未提交已 5 天**（3711 行新代码 + DEB +834 行），`git status --porcelain -- app/ scripts/` 仍返回 6 个文件 ⇒ 下次重启等于把在途 WIP 顺带上线；② `handoff.md` 自 10-29 RFC-141 起**停更 36 个提交**（RFC-174~183、DEB-20261031 budget-design·risk-cap·overnight-exposure、8 个 hotfix 均未写），宪章 §三.3 要求每次改动更新进度队列；③ `obsidian_vault` 46 改 + 24 新 symbol 卡 + 15 篇 daily note 自 10-15 起未提交；④ `docs/analysis/2026-10-27-da-ca-offline-replay/`（他 agent 产物，带 SHA256SUMS）未提交。
+- **下一步**：提交方案待用户确认（建议拆两笔：①研究件 6 文件 + tests + DEB + README + index + analysis 包；②vault 产物）；handoff 36 提交补写单独议；已修 4 项不再动。
+
+最后更新：2026-11-02（本条）
+
 ## 2026-10-29 RFC-141 v2 复核 + 预裁决归因（用户令「请确认无误后优化执行」）
 
 **复核结论**（独立 SQL 逐字段对账，非结算器单方读数）:

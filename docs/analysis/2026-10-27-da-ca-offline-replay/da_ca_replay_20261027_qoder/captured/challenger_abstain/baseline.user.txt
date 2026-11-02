@@ -1,0 +1,385 @@
+【证伪任务 — 第14轮 P9】候选方向 = SELL_SHORT。
+
+第一步【假设它错了】:
+仅根据以下原始数据, 假设 SELL_SHORT 方向会亏损, 找出最可能导致亏损的具体证据。
+把你在"不看分析师结论"下独立倾向的方向填入 independent_direction (作为防锚定观测)。
+
+原始数据:
+## 📊 数据覆盖统计: 19/19 维度有效
+- score_band 锚点③【数据充分性】: 充分 ✓ (缺失维度<6)
+
+
+## 标的基本面
+- 代码: US.VZ
+- 名称: Verizon
+- 当前价格: $44.66 (⚠️盘前时段此值为昨收, 有效现价见盘前段)
+- 涨跌幅: +0.0%
+- 成交量: 51,121,208.0
+- 换手率: 1.232%
+- PE(TTM): 11.63
+- PE(动态): 11.0
+- PB: 1.785
+- EPS: 数据未采集(N/A)
+- 总市值: 185.6B
+- 股息率: 数据未采集(N/A)%
+- 52周最高: 50.88
+- 52周最低: 36.41
+- 振幅: 3.656%
+- 买盘/卖盘比: -99.288
+- 量比: 2.104
+- ⚠️ 口径: 上方 成交量/换手率/振幅/量比/买卖盘比 均为**上一交易日收盘**口径 (盘前/盘后不刷新 —— 此处盘前量比实为昨日量能, 不是今日放量); 今日量能只能看下方盘前段的盘前成交量。
+
+## ⚡ 盘前时段数据 (当前处于盘前, 这是今日趋势的第一个信号)
+- 盘前现价(有效价格): $44.3374
+- 盘前涨跌幅(vs昨收): -0.72%
+- 隔夜涨跌幅: +0.34%
+- 盘前成交量: 441,429股
+- 昨日收盘价: $44.66
+- ⚠️ 上方"当前价格"是昨日正股收盘价, 不是今日真实价。入场/止损/止盈必须锚定盘前现价 $44.3374。
+- ⚠️ 你必须对盘前波动显式表态: 趋势延续(顺势入场) 还是 过度反应(逆势博反弹, 需强证据)。
+
+## 技术面 (60日K线)
+- MA5: 44.42 | MA10: 44.20 | MA20: 44.59 | MA60: 46.87
+- 5日涨跌: -0.3% | 20日涨跌: -3.7%
+- 量比(20日均量): 1.82x
+- 近5日K线:
+  2026-10-19 00:00:00: O=44.23 H=44.60 L=44.00 C=44.15 V=16,154,945
+  2026-10-20 00:00:00: O=44.53 H=45.09 L=44.35 C=44.54 V=26,368,059
+  2026-10-21 00:00:00: O=43.00 H=44.05 L=43.00 C=43.56 V=29,921,588
+  2026-10-22 00:00:00: O=43.85 H=45.29 L=43.78 C=45.20 V=28,917,556
+  2026-10-23 00:00:00: O=43.60 H=45.08 L=43.42 C=44.66 V=51,121,208
+
+## 资金面 (分时)
+- 最新主力流入: N/A
+- 超大单流入: 9549450.0
+- 大单流入: -4469559.964
+
+## 异动信号
+  技术面异动: 8条 (近7个自然日)
+    - [ts 1792641600] WMSR从中性区间进入超买区域，暗示股价可能面临下跌。
+    - [ts 1792641600] BOLL指标显示收盘价位于布林带中轨上方，暗示潜在上升趋势。收盘价上穿MA5、MA10和MA20，表明价格可能继续上涨。
+    - [ts 1792555200] 收盘价已跌破MA5和MA10，暗示价格可能继续下跌。
+    - [ts 1792555200] RSI(6)和RSI(12)从中性转为超卖，暗示潜在的反弹和反转。
+    - [ts 1792468800] WMSR从中性区间进入超买区域，暗示上涨动能可能即将减弱。
+    - [ts 1792468800] 收盘价突破MA5和MA10，预示股价可能即将上涨。
+    - …另有2条未展示
+  资金面异动: 3条 (近7个自然日)
+    - [ts 1792728000] 特大单净流入5489.49万且流入流出金额相差一倍以上，小单净流出338.91万，方向相反，代表大资金和小资金存在分歧。
+    - [ts 1792555200] 特大单净流出1763.74万且流入流出金额相差一倍以上，小单净流入835.21万，方向相反，代表大资金和小资金存在分歧。
+    - [ts 1792468800] 特大单净流出1497.1万且流入流出金额相差一倍以上，小单净流入58.58万，方向相反，代表大资金和小资金存在分歧。
+  衍生品异动: 38条 (近7个自然日)
+    - 10.24 03:21，出现一笔卖出看涨期权交易，成交量为1000张，未平仓数为8008张，V/OI值为0.3，交易金额为129000USD，合约行权价是45，到期日为2026/11/20。
+    - 10.24 00:43，出现一笔买入看跌期权交易，成交量为1000张，未平仓数为7211张，V/OI值为0.1，交易金额为258000USD，合约行权价是38，到期日为2028/01/21。
+    - 10.24 00:39，出现一笔买入看涨期权交易，成交量为3200张，未平仓数为4178张，V/OI值为0.8，交易金额为345600USD，合约行权价是45，到期日为2026/11/06。
+    - 10.24 00:28，出现一笔买入看涨期权交易，成交量为540张，未平仓数为33张，V/OI值为16.4，交易金额为262980USD，合约行权价是47，到期日为2029/01/19。
+    - 10.24 00:28，出现一笔卖出看涨期权交易，成交量为540张，未平仓数为1822张，V/OI值为0.3，交易金额为208980USD，合约行权价是50，到期日为2028/12/15。
+    - 10.23 21:30，出现一笔买入看涨期权交易，成交量为947张，未平仓数为401张，V/OI值为2.4，交易金额为364595USD，合约行权价是41，到期日为2026/12/18。
+    - …另有32条未展示
+
+## 最新新闻 (共10条, 时间为ET)
+  [10-26 07:51ET] Verizon Signs $2B-Plus AWS Deal to Power AI Infrastructure -- Company Talk
+  [10-26 07:51ET] Verizon Posts Record Ebitda as Equipment Revenue Drops 9% -- Company Talk
+  [10-26 07:50ET] Verizon's Subsidy Shift Fuels Best Postpaid Adds in 5 Years -- Company Talk
+  [10-26 07:40ET] Verizon Earnings Show Why Its Stock Is This Year's Wireless Winner -- Barrons.com
+  [10-26 07:27ET] Verizon(<em>VZ</em>.US)Q3业绩喜忧参半 与亚马逊AWS达成超20亿美元AI基建协议
+  [10-26 07:00ET] Verizon Communications第三季度调整后每股收益$1.31，高于$1.27的预估；销售额$343.13亿，低于$347.44亿的预估
+  [10-26 07:00ET] Verizon财报预测市场前瞻
+…(原文截断, 挑战者仅需主旨)
+## Finnhub 新闻事实流 (近7天, 含摘要 — 新闻类论据必须引用此处事实)
+  [10-25] (Yahoo) Earnings to watch: Verizon (VZ) reports Q3 results tomorrow
+    摘要: Telecommunications giant Verizon (NYSE:VZ) will be reporting results this Monday before the bell. Here’s what to look for.
+  [10-24] (Yahoo) Verizon (VZ) Stock Looks Reasonable After A 62% Three Year Gain
+    摘要: Verizon Communications has delivered a strong multi year share price gain, leaving investors asking whether the current US$44.66 stock price is fully supported by the earnings the business is generati
+  [10-23] (Yahoo) VZ, TMUS, T Stocks Face Valuation Pressure From SpaceX Wireless Push But Tower Operators Stand To Gain, Says Citi
+    摘要: The firm sees additional downside for established wireless carriers but views SpaceX's potential network expansion as a positive development for cell tower operators.
+  [10-23] (Yahoo) Verizon Communications (VZ) Seeks FCC Signoff To End Copper Landlines As Review Widens
+    摘要: Verizon Communications (NYSE:VZ) has asked the FCC for permission to phase out copper-based POTS landline service in parts of its footprint. The filing has sparked concern among seniors and rural resi
+  [10-23] (Yahoo) Verizon Communications (VZ) Shares Moved, So What Is Driving Attention Now?
+    摘要: Verizon Communications (VZ) is back in the spotlight as investors weigh SpaceX’s push into U.S. wireless and softer fiber results at AT&T ahead of Verizon’s next earnings update and guidance. Recent m
+  [10-22] (Yahoo) SpaceX Reportedly Eyes 80,000 Cell Sites In Push To Become Fourth US Wireless Carrier: T, TMUS, VZ Stocks Slip After-Hours
+    摘要: SpaceX is in discussions with at least one major cellular infrastructure team, Bloomberg reported, citing people familiar with the matter.
+
+## 研报 (共5条)
+  [10-21 08:31ET] 联博集团维持Verizon(<em>VZ</em>.US)持有评级，维持目标价45美元
+  [10-21 07:47ET] 伯恩斯坦维持对Verizon（<em>VZ</em>）的“持有”评级
+  [10-14 07:31ET (⚠️12天前)] 美银证券维持Verizon(<em>VZ</em>.US)持有评级，维持目标价48美元
+  [10-13 07:35ET (⚠️13天前)] 联博集团维持Verizon(<em>VZ</em>.US)持有评级，下调目标价至45美元
+  [10-13 06:55ET (⚠️13天前)] Bernstein维持对Verizon (<em>VZ</em>)的持有评级
+
+## 社区讨论 (共30条帖子)
+
+  发帖节奏: 最近一条前5分钟内 1 条 / 全部30条跨 19941.8 分钟
+
+  帖子1: $Verizon (VZ.US)$ 业绩这么好，为啥不涨啊？ $Verizon (VZ.US)$ 业绩这么好，为啥不涨啊？
+
+  帖子2: $Verizon (VZ.US)$ 怎么还没岀来 $Verizon (VZ.US)$ 怎么还没岀来
+
+  帖子3: $Verizon(VZ.US)$ 补完缺口继续下，ATT已给出示范 $Verizon(VZ.US)$ 补完缺口继续下，ATT已给出示范
+
+  帖子4: $Verizon (VZ.US)$ 等民主黨大勝 查馬斯克 就大漲了 $Verizon (VZ.US)$ 等民主黨大勝 查馬斯克 就大漲了
+
+  帖子5: 几点出业绩？ 几点出业绩？
+
+## 基本面指标 (Finnhub, TTM)
+- 营收增长(YoY): 1.38%
+- 营收增长(5年CAGR): 1.5%
+- EPS增长(5年): -1.14%
+- ROE: 15.52%
+- ROA: 3.9899999999999998%
+- 净利润率: 11.64%
+- 毛利率: 59.41%
+- 营业利润率: 20.59%
+- PE(标准化): 10.6048
+- PB: 1.644
+- PS: 1.3179
+- 每股营收: 33.3002
+- 每股净资产: 24.7701
+- 负债/权益比: 1.514
+- 股息率: 7.1104%
+- 派息率: 71.93%
+- Beta: 0.2689707
+
+## 分析师评级 (Finnhub, 2026-10-01)
+- 强烈买入: 7 | 买入: 10 | 持有: 18 | 卖出: 0 | 强烈卖出: 0
+- 覆盖分析师: 35位
+- 买入占比: 48.6%
+
+## 内部人交易 (Finnhub)
+- 最近交易: 0笔买入 / 0笔卖出
+- 最近交易总额: $0
+  2026-10-22 Villanueva Rodriguez None shares=None price=$12.91
+  2026-10-22 Russo Joseph J. None shares=None price=$12.91
+  2026-10-22 Venkatesh Vandana None shares=None price=$12.91
+  2026-10-22 Malady Kyle None shares=None price=$12.91
+  2026-10-22 Stillwell Mary-Lee None shares=None price=$12.91
+
+## 内部人情绪 (Finnhub MSPR)
+- 6个月平均MSPR: 12.92 (净买入)
+- MSPR>0=净买入, <0=净卖出
+
+## 公司概况
+- 行业: Telecommunication
+- 交易所: NEW YORK STOCK EXCHANGE, INC.
+- 国家: US
+
+## 大盘环境
+- 大盘趋势(代码判定, SPY/QQQ): 盘前UP (SPY +0.43%, QQQ +0.70%); 日线DOWN
+- SPY: $759.97 (MA20=770.15, 趋势=DOWN, 5日-0.4%, 20日-1.5%) [日线口径, 基准日=2026-10-23 收盘; 今日盘前 +0.43% (盘前价 763.235 / 昨收 763.96; 快照 2026-10-26 08:14:33.853 premarket)]
+- QQQ: $704.4 (MA20=735.23, 趋势=DOWN, 5日-0.8%) [日线口径, 基准日=2026-10-23 收盘; 今日盘前 +0.70% (盘前价 709.32 / 昨收 704.47; 快照 2026-10-26 08:14:35.311 premarket)]
+- VIX: 15.23 今日+0.0% [代理值: US.VIXY×0.85 校准, VIXY=$17.92; VIX 现货无盘前交易]
+- 扫描层市况(当日候选池广度): 扫描39只候选：14涨16跌9平，平均-2.5%，震荡分化。 涨幅领涨：US.MMYT(+4.8%) 跌幅最深：US.ITUB(-26.3%) 板块表现均衡，最强Technology(+0.5%)。 多头信号：US.SLB,US.EQNR,US.NOW。 空头信号：US.KEYS,US.NOW,US.ADI。 放量股：US.BE。 盘前异动：US.ITUB(-26.7%) US.NU(-25.0%) US.PBR.A(-21.4%) US.PBR(-20.8%)。
+
+## 行业对比 (Telecommunication)
+- 行业平均: 今日-0.0% 5日-0.1%
+- 行业趋势(代码判定, peer均值): 今日DOWN, 5日DOWN, 综合DOWN
+- 行业PE中位数: 7.18 (由3家peer算得)
+- peer明细 (共8只):
+  GLIBA: $21.36 今日+1.0% 5日+5.4% PE=-1.92
+  CMCSA: $22.69 今日-0.7% 5日+3.6% PE=7.18
+  ATNI: $25.91 今日-1.2% 5日+2.6% PE=2.513
+  SHEN: $10.35 今日+0.5% 5日+1.9% PE=-12.777
+  VZ: $44.66 今日+0.0% 5日+1.2% PE=11.63
+
+## 财报日历
+- 下次财报: 2026-10-26 (距今0天)
+- EPS预期: 1.3111 | 营收预期: 35786346491
+- ⚠️ 财报前3日不宜开新仓
+
+## 数据质量审计
+- 数据源总数: 19
+- 完整(有信息量): 19项
+- 降级(空壳): 0项
+- 缺失: 0项
+
+## 论据溯源清单（以下为输入数据中的真实数字，LLM输出必须引用这些，不得编造）
+- last_price=44.66
+- pe_ratio=11.0
+- pe_ttm_ratio=11.63
+- pb_ratio=1.785
+- total_market_val=185552260521.32
+- highest52weeks_price=50.87637025
+- lowest52weeks_price=36.413128157
+- amplitude=3.656
+- bid_ask_ratio=-99.288
+- volume_ratio=2.104
+- turnover_rate=1.232
+- revenue_growth_yoy=1.38
+- roe_ttm=15.52
+- net_profit_margin_ttm=11.64
+- pe_normalized=10.6048
+- beta=0.2689707
+- debt_to_equity=1.514
+- avg_mspr_6m=12.92
+- strong_buy=7
+- buy=10
+- hold=18
+- total_analysts=35
+- buy_pct=48.6
+- next_earnings_date=2026-10-26
+- industry_pe_median=7.18
+
+## 板块上下文（真实轮动数据, 板块层因果必须引用此处事实; 逆板块风方向须自证为何成立）
+本股所属板块: Telecommunication
+当前快照板块ETF涨跌(弱→强): Materials(-0.74%), Utilities(-0.72%), Financials(-0.00%), Energy(+0.00%), Healthcare(-0.00%), Industrials(-0.00%), Consumer Discretionary(-0.00%), Consumer Staples(+0.00%), Communication(-0.00%), Real Estate(+0.12%), Technology(+0.49%)
+上一交易日(2026-10-23)盘中板块脉搏(15:30 ET, 弱→强): ConsStaples(-1.9%), ConsDiscretionary(-1.6%), Communication(-1.4%), Healthcare(-1.2%), Financials(-1.2%), Industrials(-1.0%), Utilities(-0.7%), Materials(-0.2%), RealEstate(+0.0%), Technology(+0.5%), Semis(+0.8%), Energy(+2.7%)
+
+## 近期交易经验（背景事实, 非方向先验）
+上次分析(2026-10-23): 2026-10-23 | 观望 | 信心中高 | SKIP | verdict=SpaceX推进8万个基站无线计划对VZ构成降维打击，叠加10月26日财报临近与实时现价缺失，强制SKIP观望，等待财报落地与价格锚点恢复。 | 核心论据=6个月平均MSPR达8.39(净买入)，内部人持续增持显示对公司长期价值的认可，对冲短期外部竞争恐慌。 (fundamental) ; 10月22日收盘价45.20上穿MA5(44.45)、MA10(43.90)和MA20(44.67)，BOLL指标显示收盘价位于中轨上方，技术面呈现突破态势。 (t | 本股US.VZ无历史交易记录
+赚钱pattern(近30日净额)(全市场参考,非本股): LONG+SL_TRAIL_LOCK(70-80) 13笔 WR=100% PnL=$539.63 hold=0.9h [低置信,仅参考]; LONG+SL_TRAIL_LOCK(<50) 19笔 WR=95% PnL=$526.96 hold=1.3h [低置信,仅参考]; LONG+PRE_CLOSE_EXIT(50-60) 2笔 WR=100% PnL=$272.77 hold=6.2h [低置信,仅参考]
+亏钱pattern(近30日净额)(全市场参考,非本股): LONG+OVERNIGHT_GAP_STOP(50-60) 2笔 PnL=$-645.67 hold=12.8h [低置信,仅参考]; SHORT+SL_INITIAL(50-60) 2笔 PnL=$-379.7 hold=0.2h [低置信,仅参考]; SHORT+SL_INITIAL(<50) 2笔 PnL=$-306.78 hold=0.3h [低置信,仅参考]
+退出效果(近30日净额)(全市场参考,非本股): SL_TRAIL_LOCK(44笔 WR=96% PnL=$1668.78); PRE_CLOSE_EXIT(7笔 WR=100% PnL=$618.81) [低置信]; SL_BREAKEVEN(73笔 WR=85% PnL=$511.17); DEAD_SIGNAL_EXIT(10笔 WR=70% PnL=$33.08) [低置信]; SL_INITIAL(7笔 WR=0% PnL=$-1026.09) [低置信]
+近期教训(全市场参考,非本股):
+  [2026-10-23][low] 当日整体净盈利$25 3胜0负，市场环境有利于当前策略
+  [2026-10-23][medium] SHORT+SL_BREAKEVEN 净赚$12 持1.4h US.TMUS
+
+
+
+---
+
+第二步【对照分析师的论据】:
+分析师的结论与论据如下。逐条核验其数字是否与上方原始数据一致:
+
+{
+  "direction": "SELL_SHORT",
+  "rating": "看空",
+  "score": 6.0,
+  "score_band": "MEDIUM",
+  "executive_summary": "Q3 EPS $1.31超预期但营收$343.13亿miss，盘前利好不涨反跌-0.72%，叠加PE 11.63高于行业中枢7.18，反弹至44.50附近顺势做空。",
+  "execution_plan": {
+    "entry_strategy": "反弹至44.50(MA5附近)遇阻时首批做空，博弈财报营收miss引发的估值修复",
+    "entry_archetype": "FADE_SHORT",
+    "confirmation": {
+      "price_level": 44.5,
+      "side": "above",
+      "ttl_min": 120
+    },
+    "chase_cap_price": 43.5,
+    "stop_loss": 45.3,
+    "take_profit": 43.0,
+    "entry_price": 44.5,
+    "stop_loss_price": 45.3,
+    "take_profit_price": 43.0,
+    "invalidation": "股价放量突破45.30(昨日高点及MA20上方)，说明市场完全消化营收miss并转向AWS大单逻辑",
+    "tripwires": [
+      {
+        "metric": "Q4设备收入同比降幅",
+        "threshold": ">10%",
+        "deadline": "2027-01-20",
+        "source": "财报日历/基本面指标"
+      },
+      {
+        "metric": "后付费用户净增数",
+        "threshold": "<0",
+        "deadline": "2027-01-20",
+        "source": "财报日历/基本面指标"
+      }
+    ],
+    "invalidation_triggers": [
+      {
+        "metric": "收盘价",
+        "operator": ">",
+        "value": 45.3,
+        "deadline": "2026-10-31"
+      },
+      {
+        "metric": "量比",
+        "operator": ">",
+        "value": 2.5,
+        "deadline": "2026-10-27"
+      }
+    ]
+  },
+  "key_levels": {
+    "current": 44.3374,
+    "support": [
+      43.0,
+      42.5
+    ],
+    "resistance": [
+      44.59,
+      45.08,
+      46.87
+    ]
+  },
+  "bull_case": [
+    {
+      "thesis": "Q3 EPS超预期且后付费用户增长创5年最佳，核心盈利能力改善",
+      "strength": "HIGH",
+      "evidence": "Q3调整后EPS $1.31高于预估$1.27，EBITDA创纪录，补贴转变推动后付费用户增长",
+      "source_type": "fundamental",
+      "claim_type": "earnings_beat"
+    },
+    {
+      "thesis": "与AWS达成超20亿美元AI基建协议，打开新增长曲线",
+      "strength": "MEDIUM",
+      "evidence": "10-26新闻：Verizon Signs $2B-Plus AWS Deal to Power AI Infrastructure",
+      "source_type": "news",
+      "claim_type": "product_catalyst"
+    },
+    {
+      "thesis": "内部人持续净买入，显示管理层对长期价值的信心",
+      "strength": "MEDIUM",
+      "evidence": "6个月平均MSPR达12.92，处于净买入区间",
+      "source_type": "sentiment",
+      "claim_type": "insider_bullish"
+    }
+  ],
+  "bear_case": [
+    {
+      "thesis": "Q3营收不及预期且设备收入大幅下滑，顶线增长疲软",
+      "strength": "HIGH",
+      "evidence": "Q3销售额$343.13亿低于预估$347.44亿，设备收入下降9%",
+      "source_type": "fundamental",
+      "claim_type": "earnings_beat"
+    },
+    {
+      "thesis": "估值显著高于行业中枢，在低增长背景下缺乏溢价支撑",
+      "strength": "HIGH",
+      "evidence": "PE(TTM) 11.63显著高于行业PE中位数7.18，且营收YoY仅增1.38%",
+      "source_type": "fundamental",
+      "claim_type": "valuation_expensive"
+    },
+    {
+      "thesis": "SpaceX无线计划推进，对传统运营商构成降维竞争威胁",
+      "strength": "MEDIUM",
+      "evidence": "10-23新闻：SpaceX推进8万个基站无线计划，Citi指出对VZ等构成估值压力",
+      "source_type": "news",
+      "claim_type": "macro_headwind"
+    }
+  ],
+  "constraints": [
+    {
+      "thesis": "高股息率提供下行保护，限制做空空间",
+      "strength": "HIGH",
+      "evidence": "股息率高达7.1104%，派息率71.93%"
+    }
+  ],
+  "causal_chain": "Q3营收miss+设备收入降9% → 盘前对EPS beat/AWS大单反应平淡(-0.72%) → 市场定价重心转向顶线疲软与SpaceX竞争威胁 → 估值溢价(PE 11.63 vs 行业7.18)面临挤压 → 股价短期承压回落",
+  "risks": [
+    "财报前3日不开仓(10-23/24/25)，今日为财报日(10-26)，日内波动率极高，需防范盘中反转",
+    "股息率7.11%提供强下行保护，若大盘反弹易引发高息股资金回流",
+    "SpaceX无线计划尚处讨论阶段，若FCC审批受阻或计划搁置，竞争威胁逻辑将失效"
+  ],
+  "data_quality_note": "数据完整性说明：19项完整/0项降级/0项缺失。数据充分性: 充分 ✓。所有维度均有效，无缺失对分析结论的影响。",
+  "skip_reason": "",
+  "evidence_gaps": []
+}
+
+---
+
+第三步【裁决 verdict】:
+- 你找到了≥2条有数据出处的具体反证, 且足以推翻方向 → DISAGREE, my_direction 给反方向
+- 找到反证但不足以推翻方向(只够降低确信度) → PARTIAL_AGREE, 指明哪条论据与哪条数据矛盾
+- 找不到≥2条有出处的具体反证 → AGREE, 并在 missed_risks 写 "无实质反证" (诚实, 不编造)
+
+无论 verdict 为何, falsification_target 与 flip_condition 必填 (AGREE 也不例外) —
+"证伪失败"不等于零信息: 你必须指出这笔交易最可能的亏损机制, 以及什么数据出现会让你翻向。
+
+【反虚构硬规】: 你的每条 challenged_claims 的 counter_evidence 与 missed_risks 里若含数字,
+该数字必须能在上方原始数据中找到。找不到来源的数字 = 你的幻觉, 会被记录。
+validation 五维照常核验(数据/逻辑/市场/风险/价位), 每维给 通过/不通过+一句证据。
+
+my_score / my_score_band: 表达你对"自己my_direction"的确信度档位 (HIGH/MEDIUM/LOW,
+锚定判据与分析师相同)。若你 AGREE (证伪失败), my_direction = 分析师方向, my_score_band 给分析师论据的实际强度档位。
+
+返回JSON。

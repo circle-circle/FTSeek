@@ -1,0 +1,373 @@
+【证伪任务 — 第14轮 P9】候选方向 = BUY。
+
+第一步【假设它错了】:
+仅根据以下原始数据, 假设 BUY 方向会亏损, 找出最可能导致亏损的具体证据。
+把你在"不看分析师结论"下独立倾向的方向填入 independent_direction (作为防锚定观测)。
+
+原始数据:
+## 📊 数据覆盖统计: 18/19 维度有效, 1 项缺失/降级
+- score_band 锚点③【数据充分性】: 充分 ✓ (缺失维度<6)
+
+
+## 标的基本面
+- 代码: US.AMD
+- 名称: 美国超微公司
+- 当前价格: $645.86 (⚠️盘前时段此值为昨收, 有效现价见盘前段)
+- 涨跌幅: -0.6%
+- 成交量: 18,561,149.0
+- 换手率: 1.158%
+- PE(TTM): 165.605
+- PE(动态): 243.72
+- PB: 15.684
+- EPS: 数据未采集(N/A)
+- 总市值: 1054.4B
+- 股息率: 数据未采集(N/A)%
+- 52周最高: 658.52
+- 52周最低: 188.22
+- 振幅: 2.359%
+- 买盘/卖盘比: 66.102
+- 量比: 1.005
+- ⚠️ 口径: 上方 成交量/换手率/振幅/量比/买卖盘比 均为**上一交易日收盘**口径 (盘前/盘后不刷新 —— 此处盘前量比实为昨日量能, 不是今日放量); 今日量能只能看下方盘前段的盘前成交量。
+
+## ⚡ 盘前时段数据 (当前处于盘前, 这是今日趋势的第一个信号)
+- 盘前现价(有效价格): $637.35
+- 盘前涨跌幅(vs昨收): -1.32%
+- 隔夜涨跌幅: -1.13%
+- 盘前成交量: 202,414股
+- 昨日收盘价: $649.42
+- ⚠️ 上方"当前价格"是昨日正股收盘价, 不是今日真实价。入场/止损/止盈必须锚定盘前现价 $637.35。
+- ⚠️ 你必须对盘前波动显式表态: 趋势延续(顺势入场) 还是 过度反应(逆势博反弹, 需强证据)。
+
+## 技术面 (60日K线)
+- MA5: 635.33 | MA10: 626.38 | MA20: 587.62 | MA60: 521.16
+- 5日涨跌: +5.6% | 20日涨跌: +23.9%
+- 量比(20日均量): 0.84x
+- 近5日K线:
+  2026-10-01 00:00:00: O=612.70 H=619.30 L=601.50 C=615.73 V=17,134,533
+  2026-10-02 00:00:00: O=635.95 H=645.46 L=628.55 C=633.91 V=19,865,309
+  2026-10-05 00:00:00: O=630.61 H=633.50 L=619.99 C=631.75 V=13,717,510
+  2026-10-06 00:00:00: O=648.04 H=658.52 L=628.00 C=649.42 V=24,245,863
+  2026-10-07 00:00:00: O=634.77 H=648.48 L=633.16 C=645.86 V=18,561,149
+
+## 资金面 (分时)
+- 最新主力流入: N/A
+- 超大单流入: -3629335.371
+- 大单流入: 1569152.789
+
+## 异动信号
+  技术面异动: 3条 (近7个自然日)
+    - [ts 1791259200] MA5上穿MA10形成金叉，暗示价格可能继续上涨。
+    - [ts 1790913600] CCI指标从中性区间进入超买区域，暗示未来股价可能下跌。MA5跌破MA10形成死叉，表明潜在的下跌趋势。
+    - [ts 1790827200] 收盘价上穿MA5，暗示价格可能继续上涨。MA指标呈多头排列，预示潜在上升趋势。
+  资金面异动: 1条 (近7个自然日)
+    - [ts 1791345600] 特大单净流入7334.87万且流入流出金额相差一倍以上，小单净流出4368.91万，方向相反，代表大资金和小资金存在分歧。
+  衍生品异动: 30条 (近7个自然日)
+    - 10.7 22:02，出现一笔买入看涨期权交易，成交量为1892张，未平仓数为560张，V/OI值为11.3，交易金额为5789520USD，合约行权价是640，到期日为2026/10/30。
+    - 10.7 21:58，出现一笔买入看涨期权交易，成交量为1500张，未平仓数为1871张，V/OI值为0.8，交易金额为33786000USD，合约行权价是520，到期日为2028/01/21。
+    - 10.7 21:58，出现一笔买入看跌期权交易，成交量为2500张，未平仓数为2534张，V/OI值为1，交易金额为18030000USD，合约行权价是520，到期日为2028/01/21。
+    - 10.7 21:58，出现一笔卖出看涨期权交易，成交量为1000张，未平仓数为2780张，V/OI值为0.4，交易金额为14364000USD，合约行权价是520，到期日为2027/01/15。
+    - 10.7 21:58，出现一笔卖出看跌期权交易，成交量为1000张，未平仓数为1896张，V/OI值为0.5，交易金额为1702000USD，合约行权价是520，到期日为2027/01/15。
+    - 10.7 21:56，出现一笔卖出看涨期权交易，成交量为1675张，未平仓数为560张，V/OI值为7.5，交易金额为5293000USD，合约行权价是640，到期日为2026/10/30。
+    - …另有24条未展示
+
+## 最新新闻 (共10条, 时间为ET)
+  [10-08 07:22ET] 纳指创新高点燃美股财报季期待！花旗预判近九成科技股“盈利惊喜”，英伟达与<em>AMD</em>领跑超预期榜单
+  [10-08 06:21ET] <em>AMD</em>苏姿丰上午见鸿海，下午约台积电，喊话，需求高于供应，产能要看到五年外
+  [10-08 04:21ET] <em>AMD</em> 苏姿丰访韩，会见三星电子联席 CEO 全永铉
+  [10-08 03:34ET] 【华鑫汽车|行业周报W39】英伟达追加10亿美元投资Figure AI，<em>AMD</em>斥资82亿美元收购World Labs
+  [10-08 02:17ET] 花旗：2030年CPU市场规模料达3000亿美元，将<em>AMD</em>目标价升至800美元
+  [10-08 02:13ET] 芬兰下令停止两座谷歌数据中心的建设工作；<em>AMD</em>首席执行官苏姿丰将与三星半导体负责人会面，应对内存短缺丨智能制造日报
+  [10-08 02:07ET] 大行评级丨花旗：2030年CPU市场规模料达3000亿美元，<em>AMD</em>目标价升至800美元
+  [10-07 23:50ET] 派拉蒙天舞完成收购华纳兄弟探索；<em>AMD</em>收购李飞飞AI初创World Labs；英飞凌出售部分存储芯
+…(原文截断, 挑战者仅需主旨)
+## Finnhub 新闻事实流 (近7天, 含摘要 — 新闻类论据必须引用此处事实)
+  [10-08] (Yahoo) TSMC Sales Are a Big Win for the AI Trade. Why AMD and Other Chip Stocks Are Falling Anyway.
+    摘要: The artificial-intelligence trade just got a pretty strong signal that the good times can keep going.
+  [10-08] (Yahoo) Lisa Su Says AI Demand Will Stay ‘Very, Very High’ for Years as AMD Races to Add Supply
+    摘要: Advanced Micro Devices Inc. CEO Lisa Su says demand for AI and computing capacity will stay elevated for years, forcing the chipmaker to substantially increase supply again in 2027 even after expandin
+  [10-08] (Yahoo) AMD (AMD) Stock May Be Fully Valued On Citi's $800 Target
+    摘要: Advanced Micro Devices has turned into one of the market’s most closely watched AI chip stories, and after a share price near US$645.86, the key question is whether that level can be explained by the 
+  [10-07] (Yahoo) S&P 500 And Nasdaq 100 Slip From Record Highs Amid Pressure From Soaring Treasury Yields — SPCX, AMD, NVDA, MRVL In Focus
+    摘要: The 30-year bond yield hit its highest level since May 2002 at 5.732%.
+  [10-07] (Yahoo) Is Advanced Micro Devices Inc. (AMD) Right to Bet $8.2 Billion on the Future of Physical AI?
+    摘要: Advanced Micro Devices, Inc. (NASDAQ:AMD) has set its sights on gaining early visibility into workloads that could define the next generation of artificial intelligence chips. On September 28, the com
+  [10-07] (Yahoo) AMD’s Lisa Su Visits South Korea, Reportedly Discusses AI Collaboration With Samsung, SK Hynix
+    摘要: AMD Chairperson and CEO Lisa Su met with senior leadership from Samsung Electronics and SK Hynix in South Korea to bolster supply chain ties and expand AMD’s artificial intelligence research footprint
+
+## 研报 (共5条)
+  [] 大行评级丨花旗：2030年CPU市场规模料达3000亿美元，<em>AMD</em>目标价升至800美元
+  [] 瑞穗：AI智能体将引爆服务器CPU需求，上调<em>AMD</em>、英特尔等目标价
+  [] 花旗维持<em>美国超微公司</em>(<em>AMD</em>.US)买入评级，维持目标价800美元
+  [] Advanced Micro Devices Price Target Raised to $800.00/Share From $575.00 by Citigroup
+  [] Advanced Micro Devices Is Maintained at Buy by Citigroup
+
+## 社区讨论 (共30条帖子)
+
+  发帖节奏: 最近一条前5分钟内 1 条 / 全部30条跨 244.2 分钟
+
+  帖子1: $美国超微公司 (AMD.US)$ 需要燃料⛽️ 否则涨不动 $美国超微公司 (AMD.US)$ 需要燃料⛽️ 否则涨不动
+
+  帖子2: 利率破 24 年新高，美股却历史新高！拆解这场背离后真正的信号 10月7日，美国财政部拍卖390亿美元10年期国债，中标利率5.300%，创2000年11月以来最高。但这个价格比发行前交易利率低1.7个基点，间接投标人（含海外央行）认购比例
+
+  帖子3: $美国超微公司 (AMD.US)$  $美国超微公司 (AMD.US)$
+
+  帖子4: $美國超微公司 (AMD.US)$ 第二個NVIDIA邁向七巨頭吧 $美國超微公司 (AMD.US)$ 第二個NVIDIA邁向七巨頭吧
+
+  帖子5: AI浪潮会在美债收益率中继续翻滚吗？ 美股天天上热搜，AI喊得震天响，满屏都是“ NVDA （$英伟达 (NVDA.US)$ ）冲高”“又创新高”，结果今天的市场又将被锤我刷到fantasy_keith的第一条推文是NBIS（ $NEBIU
+
+## 基本面指标 (Finnhub, TTM)
+- 营收增长(YoY): 39.54%
+- 营收增长(5年CAGR): 28.82%
+- EPS增长(5年): 5.13%
+- ROE: 10.07%
+- ROA: 8.1%
+- 净利润率: 15.58%
+- 毛利率: 53.2%
+- 营业利润率: 15.71%
+- PE(标准化): 243.2067
+- PB: 5.5719
+- PS: 30.4368
+- 每股营收: 24.8975
+- 每股净资产: 38.6497
+- 负债/权益比: 0.0511
+- 股息率: None%
+- 派息率: None%
+- Beta: 2.5437484
+
+## 分析师评级 (Finnhub, 2026-09-01)
+- 强烈买入: 17 | 买入: 32 | 持有: 10 | 卖出: 0 | 强烈卖出: 0
+- 覆盖分析师: 59位
+- 买入占比: 83.1%
+
+## 内部人交易 (Finnhub)
+- 最近交易: 0笔买入 / 0笔卖出
+- 最近交易总额: $0
+  2026-09-15 Norrod Forrest Eugen None shares=None price=$0
+  2026-09-15 Norrod Forrest Eugen None shares=None price=$506.88
+  2026-09-15 Norrod Forrest Eugen None shares=None price=$505.9
+  2026-09-15 Norrod Forrest Eugen None shares=None price=$505.12
+  2026-09-15 Norrod Forrest Eugen None shares=None price=$504
+
+## 内部人情绪 (Finnhub MSPR)
+- 6个月平均MSPR: -68.01 (净卖出)
+- MSPR>0=净买入, <0=净卖出
+
+## 公司概况
+- 行业: Semiconductors
+- 交易所: NASDAQ NMS - GLOBAL MARKET
+- 国家: US
+
+## 大盘环境
+- 大盘趋势(代码判定, SPY/QQQ): 盘前DOWN (SPY -0.42%, QQQ -0.69%); 日线UP
+- SPY: $777.22 (MA20=765.89, 趋势=UP, 5日+1.9%, 20日+2.2%) [日线口径, 基准日=2026-10-07 收盘; 今日盘前 -0.42% (盘前价 773.9292 / 昨收 779.09; 快照 2026-10-08 08:16:32.752 premarket)]
+- QQQ: $757.73 (MA20=733.52, 趋势=UP, 5日+2.4%) [日线口径, 基准日=2026-10-07 收盘; 今日盘前 -0.69% (盘前价 752.4917 / 昨收 759.66; 快照 2026-10-08 08:16:12.497 premarket)]
+- VIX: 13.76 (低波动) 今日+0.6% [代理值: US.VIXY×0.85 校准, VIXY=$16.19; VIX 现货无盘前交易]
+- 扫描层市况(当日候选池广度): 扫描48只候选：14涨25跌9平，平均-0.7%，震荡分化。 涨幅领涨：US.HAE(+14.6%) 跌幅最深：US.ARGX(-15.6%) 板块表现均衡，最强Healthcare(-0.0%)。 多头信号：US.MU,US.VST,US.P。 空头信号：US.PLTR,US.NOK,US.MDT。 放量股：US.MDT,US.APLD,US.LEVI。 盘前异动：US.HAE(+21.8%) US.ARGX(-15.5%) US.AAOX(-10.6%) US.AAOZ(+10.4%)。
+
+## 行业对比 (Semiconductors)
+- 行业平均: 今日-0.2% 5日+2.6%
+- 行业趋势(代码判定, peer均值): 今日DOWN, 5日UP, 综合MIXED
+- 行业PE中位数: 45.97 (由4家peer算得, 剔除1家离群)
+- peer明细 (共8只):
+  AVGO: $376.51 今日+0.2% 5日+9.6% PE=48.024
+  MRVL: $284.68 今日-0.8% 5日+6.2% PE=94.264
+  AMD: $645.86 今日-0.6% 5日+4.9% PE=165.605
+  NVDA: $237.47 今日-0.7% 5日+2.9% PE=30.021
+  TXN: $288.98 今日+0.0% 5日+2.7% PE=43.917
+
+## 数据质量审计
+- 数据源总数: 19
+- 完整(有信息量): 18项
+- 降级(空壳): 1项
+- 缺失: 0项
+- 降级明细: earnings_calendar (API返回但无实质数据，相关论据应降级)
+- ⚠️ 降级/缺失维度不可作为论据依据，必须在data_quality_note中说明影响
+
+## 论据溯源清单（以下为输入数据中的真实数字，LLM输出必须引用这些，不得编造）
+- last_price=645.86
+- pe_ratio=243.72
+- pe_ttm_ratio=165.605
+- pb_ratio=15.684
+- total_market_val=1054350330626.12
+- highest52weeks_price=658.52
+- lowest52weeks_price=188.22
+- amplitude=2.359
+- bid_ask_ratio=66.102
+- volume_ratio=1.005
+- turnover_rate=1.158
+- revenue_growth_yoy=39.54
+- roe_ttm=10.07
+- net_profit_margin_ttm=15.58
+- pe_normalized=243.2067
+- beta=2.5437484
+- debt_to_equity=0.0511
+- avg_mspr_6m=-68.01
+- strong_buy=17
+- buy=32
+- hold=10
+- total_analysts=59
+- buy_pct=83.1
+- industry_pe_median=45.97
+
+## 板块上下文（真实轮动数据, 板块层因果必须引用此处事实; 逆板块风方向须自证为何成立）
+当前快照板块ETF涨跌(弱→强): Energy(-0.61%), Financials(-0.48%), Communication(-0.35%), Consumer Discretionary(-0.32%), Technology(-0.30%), Consumer Staples(-0.12%), Utilities(-0.02%), Healthcare(-0.00%), Industrials(+0.00%), Real Estate(+0.00%), Materials(-0.00%)
+上一交易日(2026-10-07)盘中板块脉搏(15:30 ET, 弱→强): Industrials(-2.0%), Semis(-1.4%), Materials(-1.3%), RealEstate(-1.0%), Energy(-0.5%), Financials(-0.5%), Technology(-0.4%), ConsDiscretionary(-0.3%), Communication(-0.2%), Utilities(+0.1%), ConsStaples(+0.1%), Healthcare(+1.1%)
+
+## 前序回吐率（历史统计 shadow, 近1年大涨>+5%后表现）
+- 大涨样本: 35次 | 5日守成率: 54.3% | 5日后均涨幅: 0.66% → 续涨倾向
+- 3日/10日: 守成 60.0%/57.1%, 均涨 0.79%/4.48%
+- 用法: 若本次触发源于大涨, 该统计反映该标的自身的涨幅留存性格; 样本少(<10)时仅作弱参考。
+
+## 近期交易经验（背景事实, 非方向先验）
+上次分析(2026-10-06): 2026-10-06 | 强烈看多 | 信心中高 | BUY | verdict=大行密集上调目标价至$705-$800且Meta AI Agent催化强劲，盘前+1.7%属趋势延续，建议突破52周高点$645.46后分2批追入建仓，止损$625.0。 | 核心论据=大行密集上调目标价与AI Agent独家催化：花旗上调目标价至$800，瑞穗上调至$705；Meta's Muse运行在AMD EPYC上，大摩预计占2026年销售20%，构建长期护城河。 (news) ; 分析师共识高度看多且营收高增：59位分析师中83.1%给予买入评级，营收YoY增长39.54 | 本股US.AMD最近4笔结局(新→旧): 10-05 LONG SL_TRAIL_LOCK $20@risk_on; 10-02 LONG SL_TRAIL_LOCK $19@cautious; 09-29 LONG SL_TRAIL_LOCK $60@risk_on; 09-28 LONG SL_INITIAL -$119@risk_on | 本股US.AMD历史LONG: 6笔5胜 WR=83% PnL=$46.24 最佳=$59.65 最差=$-118.69 [置信度:low]
+赚钱pattern: LONG+SL_TRAIL_LOCK(70-80) 51笔 WR=96% PnL=$3548.53 hold=1.7h; LONG+SL_TRAIL_LOCK(<50) 49笔 WR=94% PnL=$1570.51 hold=1.4h; LONG+SL_TRAIL_LOCK(50-60) 22笔 WR=91% PnL=$1026.31 hold=1.9h
+亏钱pattern: LONG+SL_INITIAL(70-80) 14笔 PnL=$-2487.62 hold=2.6h [低置信,仅参考]; LONG+OVERNIGHT_GAP_STOP(<50) 3笔 PnL=$-932.49 hold=6.4h [低置信,仅参考]; SHORT+SL_INITIAL(50-60) 5笔 PnL=$-657.44 hold=0.2h [低置信,仅参考]
+退出效果: SL_TRAIL_LOCK(151笔 WR=94% PnL=$7752.44); SL_BREAKEVEN(214笔 WR=88% PnL=$1933.83); PRE_CLOSE_EXIT(7笔 WR=71% PnL=$417.68) [低置信]; breakeven_lock(2笔 WR=100% PnL=$158.83) [低置信]; DEAD_SIGNAL_EXIT(29笔 WR=76% PnL=$-69.09)
+近期教训:
+  [2026-10-07][low] 当日整体盈利$104 2胜0负，市场环境有利于当前策略
+  [2026-10-07][high] 当日2笔LONG全胜 总PnL=$104
+  [2026-10-07][medium] LONG+SL_TRAIL_LOCK 赚$99 持0.3h US.BKV
+  [2026-10-06][low] 当日整体盈利$102 6胜0负，市场环境有利于当前策略
+  [2026-10-06][medium] LONG+SL_BREAKEVEN 赚$26 持0.3h US.HPK
+
+
+
+---
+
+第二步【对照分析师的论据】:
+分析师的结论与论据如下。逐条核验其数字是否与上方原始数据一致:
+
+{
+  "direction": "BUY",
+  "rating": "看多",
+  "score": 6.0,
+  "score_band": "MEDIUM",
+  "executive_summary": "花旗上调目标价至$800且营收YoY+39.54%支撑基本面，但PE(TTM)165.6远超行业中枢45.97且MSPR-68.01示警，盘前-1.32%属良性回踩，建议在MA5($635)与MA10($626)分2批低吸，禁追$645以上。",
+  "execution_plan": {
+    "entry_strategy": "分2批低吸：第1批在$635.0(MA5附近)接仓30%，需开盘半小时不跌破$633；第2批在$626.0(MA10附近)接仓70%，需RSI超卖企稳。禁止在$645.0以上追涨。",
+    "entry_archetype": "PULLBACK_LIMIT",
+    "confirmation": {
+      "price_level": 635.0,
+      "side": "below",
+      "ttl_min": 30
+    },
+    "chase_cap_price": 645.0,
+    "stop_loss": "615.0",
+    "take_profit": "658.0",
+    "entry_price": 635.0,
+    "stop_loss_price": 615.0,
+    "take_profit_price": 658.0,
+    "invalidation": "放量跌破MA10($626)及$615关键支撑，或美债收益率突破6.0%引发科技股系统性杀估值。",
+    "tripwires": [
+      {
+        "metric": "30年期美债收益率",
+        "threshold": "高于5.8%",
+        "deadline": "2026-10-31",
+        "source": "新闻事实流(Yahoo)"
+      },
+      {
+        "metric": "收盘价",
+        "threshold": "低于$615.0",
+        "deadline": "2026-10-15",
+        "source": "技术面K线"
+      }
+    ],
+    "invalidation_triggers": [
+      {
+        "metric": "收盘价",
+        "operator": "<",
+        "value": 615.0,
+        "deadline": "2026-10-15"
+      },
+      {
+        "metric": "5日涨跌",
+        "operator": "<",
+        "value": -5.0,
+        "deadline": "2026-10-15"
+      }
+    ]
+  },
+  "key_levels": {
+    "current": 637.35,
+    "support": [
+      635.33,
+      626.38,
+      615.0
+    ],
+    "resistance": [
+      645.86,
+      658.52
+    ]
+  },
+  "bull_case": [
+    {
+      "thesis": "大行上调目标价与AI需求强劲：花旗上调目标价至$800，苏姿丰确认AI需求将保持“非常非常高”且产能规划至五年外，基本面营收YoY+39.54%提供强劲支撑。",
+      "strength": "HIGH",
+      "evidence": "花旗目标价$800；营收增长(YoY) 39.54%；苏姿丰访韩及产能五年规划新闻。",
+      "source_type": "news",
+      "claim_type": "product_catalyst"
+    },
+    {
+      "thesis": "供应链保障与生态扩张：苏姿丰访韩会见三星/SK Hynix应对内存短缺，同时斥资$82亿收购World Labs布局物理AI，构建长期护城河。",
+      "strength": "MEDIUM",
+      "evidence": "AMD斥资82亿美元收购World Labs；苏姿丰会见三星电子联席CEO全永铉。",
+      "source_type": "news",
+      "claim_type": "product_catalyst"
+    }
+  ],
+  "bear_case": [
+    {
+      "thesis": "估值严重透支：PE(TTM)高达165.605，是行业PE中位数45.97的3.6倍，PB 15.684亦处高位，对利率及业绩不及预期极度敏感。",
+      "strength": "HIGH",
+      "evidence": "PE(TTM) 165.605；行业PE中位数 45.97；PB 15.684。",
+      "source_type": "fundamental",
+      "claim_type": "valuation_expensive"
+    },
+    {
+      "thesis": "内部人情绪悲观：6个月平均MSPR为-68.01，显示高管处于净卖出状态，缺乏内部资金托底，与外部大行看多形成分歧。",
+      "strength": "MEDIUM",
+      "evidence": "6个月平均MSPR -68.01 (净卖出)。",
+      "source_type": "sentiment",
+      "claim_type": "insider_bearish"
+    }
+  ],
+  "constraints": [
+    {
+      "thesis": "宏观逆风压制估值：30年期美债收益率飙升至5.732%（2002年来最高），对高估值科技股形成系统性估值压制。",
+      "strength": "HIGH",
+      "evidence": "30-year bond yield hit its highest level since May 2002 at 5.732%。"
+    }
+  ],
+  "causal_chain": "苏姿丰访韩保障HBM内存供应+收购World Labs完善AI生态 → 巩固AI芯片第二极地位并支撑营收39.54%高增 → 大行上调目标价至$800引发资金关注 → 短期涨幅过大(20日+23.9%)遇美债收益率5.732%压制导致盘前-1.32%回踩 → 提供均线附近低吸机会。",
+  "risks": [
+    "追高风险：20日涨幅达+23.9%，5日涨幅+5.6%，短期获利盘丰厚，易受大盘波动引发踩踏。",
+    "宏观压制：30年期美债收益率创2002年来新高5.732%，高PE(165.6)科技股对利率极度敏感。",
+    "数据降级：earnings_calendar缺失，无法规避财报前后的隐含波动率风险。"
+  ],
+  "data_quality_note": "数据完整性：18项完整/1项降级/0项缺失。降级维度为earnings_calendar，导致无法精确标注财报日及'财报前3日不开仓'规则，增加持有期内的突发波动风险。",
+  "skip_reason": "",
+  "evidence_gaps": [
+    "缺失具体财报发布日期，无法评估财报前期权隐含波动率及规避时间窗口",
+    "内部人交易具体股数(shares=None)缺失，仅能依赖MSPR-68.01进行情绪判断"
+  ]
+}
+
+---
+
+第三步【裁决 verdict】:
+- 独立方向与分析师相反，且有足以推翻方向的数据反证 → DISAGREE, my_direction 给反方向
+- 同向但至少一条有出处的实质硬伤(足以改变确信度或入场条件) → PARTIAL_AGREE, 指明哪条论据与哪条数据矛盾
+- 同向且无实质硬伤 → AGREE；次要风险只写进 missed_risks，不构成PARTIAL
+- 证据不足 → my_direction=SKIP，并在 skip_reason 写明具体证据缺口
+
+无论 verdict 为何, falsification_target 与 flip_condition 必填 (AGREE 也不例外) —
+"证伪失败"不等于零信息: 你必须指出这笔交易最可能的亏损机制, 以及什么数据出现会让你翻向。
+
+【反虚构硬规】: 你的每条 challenged_claims 的 counter_evidence 与 missed_risks 里若含数字,
+该数字必须能在上方原始数据中找到。找不到来源的数字 = 你的幻觉, 会被记录。
+validation 五维照常核验(数据/逻辑/市场/风险/价位), 每维给 通过/不通过+一句证据。
+
+my_score / my_score_band: 表达你对"自己my_direction"的确信度档位 (HIGH/MEDIUM/LOW,
+锚定判据与分析师相同)。若你 AGREE (证伪失败), my_direction = 分析师方向, my_score_band 给分析师论据的实际强度档位。
+
+返回JSON。

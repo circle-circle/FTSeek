@@ -1,0 +1,71 @@
+{
+  "label": "short_partial",
+  "arm": "variant",
+  "repeat": 2,
+  "http_attempts": 1,
+  "latency_ms": 90827,
+  "model_parameters": {
+    "temperature": 0.0,
+    "model": "deepseek-v4.1-flash",
+    "max_tokens": 16000,
+    "extra_body": {
+      "enable_thinking": true
+    },
+    "timeout": 300
+  },
+  "result": {
+    "independent_direction": "SKIP",
+    "validation": {
+      "data": "通过 — 关键数字均可在原始数据中找到出处(PE(TTM)=132.51、industry_pe_median=36.92、avg_mspr_6m=-68.01、MA5=530.05、盘前现价$524.0/+1.40%、盘前成交量192,213)，唯 key_levels.support 的 480.0 在原始数据中无出处。",
+      "logic": "通过 — 多空证据互斥(超卖反弹+83.3%买入评级 vs PE 132.51/行业36.92+均线死叉+20日-18.1%)推得观望，因果链无跳跃。",
+      "market": "通过 — 方向与大盘环境相符：SPY/QQQ 日线趋势DOWN、半导体行业综合DOWN(5日-2.6%)，个股盘前+1.40%不足以独立走强，观望适配。",
+      "risk": "通过 — 估值/板块/内部人三风险均有出处；硬日期事件风险(本周美联储议息会与三大云厂财报，见社区帖子4)未列入risks，但SKIP无持仓暴露，不改变方向确信度。",
+      "levels": "通过 — 阻力530.05锚定MA5=530.05，支撑502.60锚定2026-10-22低点L=502.60，均有效；480.0无锚，且SKIP无入场价位，无执行层风险。"
+    },
+    "agreed": true,
+    "my_direction": "SKIP",
+    "my_score_band": "LOW",
+    "my_score": 5,
+    "skip_reason": "独立判断：多空证据真互斥且无任一侧的确认信号。做多侧：盘前+1.40%至$524.0但成交量仅192,213股、量比0.725(昨收口径)，价格仍在MA5(530.05)/MA10(551.18)/MA20(587.22)/MA60(532.63)之下，反弹未获量能确认；做空侧：83.3%买入评级(50/60)、目标价$620-$650、10-24多笔卖出看跌期权(行权价400/430/450)、RSI/BR超卖，逼空风险高，SHORT三问(具体下跌催化剂/催化剂时效/逼空风险)不全，故不选边。证据缺口：缺失AMD自身财报日历日期(数据质量审计缺失项news)，本周FOMC与三大云厂财报(社区帖子4)落地前方向无法定价。",
+    "falsification_target": "若SKIP被证伪，最可能的单一机械原因是错失二元事件后的单边行情：本周美联储议息会或三大云厂财报(社区帖子4)落地使AI资本开支叙事单向确认，AMD以放量跳空突破/跌破当前$516.79-$530.05区间。可观测触发：日线收盘站上MA5=$530.05且量比>1.5(或盘前成交量>50万股，对照今日盘前192,213股)则本应做多；日线收盘跌破2026-10-22低点$502.60且超大单持续净流出(今日超大单流入-6,036,891.821)则本应做空。",
+    "flip_condition": "收盘价站上$530.05且量比>1.5(或盘前成交量>50万股)→翻向BUY；收盘跌破$502.60且超大单维持净流出→翻向SELL_SHORT(须重新核验SHORT三问)。",
+    "challenged_claims": [
+      {
+        "original_thesis": "bull_case二：资金面大单净流入2653万美元",
+        "weakness": "口径失实：原始数据只有“大单流入: 26532186.272”与“超大单流入: -6036891.821”，两者合计约2049万且超大单为净流出，将其表述为“净流入2653万美元”高估了资金面强度。",
+        "counter_evidence": "原始资金面(分时)：大单流入=26,532,186.272；超大单流入=-6,036,891.821；另昨收口径 买盘/卖盘比=-55.102。"
+      },
+      {
+        "original_thesis": "key_levels.support 含 480.0",
+        "weakness": "来源不明数字：原始数据中无480.0的任何出处。",
+        "counter_evidence": "原始数据可用的下方锚点仅为 2026-10-22 低点 L=502.60、52周最低 188.22；480.0 未出现于K线/技术面/研报/新闻事实流。"
+      },
+      {
+        "original_thesis": "entry_strategy：等待突破MA5($530.05)后做多，或反弹至$530.05遇阻时做空",
+        "weakness": "写入第二个可执行触发价(遇阻做空)，属第二腿；当前执行端不执行第二腿，不应作为入场条件。",
+        "counter_evidence": "execution_plan.confirmation.price_level=null、entry_price=null，与entry_strategy的双向触发描述自相矛盾。"
+      }
+    ],
+    "missed_risks": [
+      "硬日期事件风险未列入risks：社区帖子4明示“超级周关注美联储议息会&三大云厂财报”，这是打破当前僵局的主要变量；分析师仅在evidence_gaps提“缺失具体财报日历日期”，未在risks中列示FOMC与云厂财报。",
+      "昨收口径 买盘/卖盘比=-55.102 为强卖方信号，bull_case与bear_case均未引用，多空证据表述不完整。",
+      "来源不明数字: 480.0出现于 key_levels.support。"
+    ],
+    "verdict": "AGREE",
+    "_model_reported": "deepseek-v4.1-flash",
+    "_finish_reason": "stop",
+    "_usage": {
+      "completion_tokens": 6445,
+      "completion_tokens_details": {
+        "reasoning_tokens": 5101,
+        "text_tokens": 1343
+      },
+      "prompt_tokens": 8292,
+      "prompt_tokens_details": {
+        "cached_tokens": 8192,
+        "text_tokens": 8292
+      },
+      "total_tokens": 14737
+    }
+  }
+}

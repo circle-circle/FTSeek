@@ -1,0 +1,82 @@
+{
+  "fixtures": [
+    {
+      "label": "short_partial",
+      "symbol": "US.AMD",
+      "date": "2026-10-26",
+      "raw_sha256": "a88e7d4a4a30121b67a6f69964aea012dbf05f15fc8e17b27d902efff008669f",
+      "historical_sha256": "a1582baecb311caba686d5587d7a14d56ec80b016e754554ee256f9db0ea36a7",
+      "scanner_direction": "bearish",
+      "collected_keys": [
+        "_quality",
+        "_quality_effective",
+        "_source_status",
+        "_timestamp",
+        "analyst_consensus",
+        "cap_anomaly",
+        "capital_distribution",
+        "capital_flow",
+        "company_profile",
+        "deriv_anomaly",
+        "earnings_calendar",
+        "fundamentals",
+        "industry_peers",
+        "insider_sentiment",
+        "insider_transactions",
+        "kline",
+        "market_context",
+        "news",
+        "news_v2",
+        "research",
+        "sector_context",
+        "sentiment",
+        "snapshot",
+        "symbol",
+        "tech_anomaly"
+      ]
+    },
+    {
+      "label": "long_partial",
+      "symbol": "US.CRM",
+      "date": "2026-10-26",
+      "raw_sha256": "b7cb5ad088eefb8c4ef34ea0c0aa2a6f097b591d83dabc4bd36f6bcac1c5532c",
+      "historical_sha256": "07b1d67796eeb7b5646f1724242930ced3c5c913c627511162f151351ce19be0",
+      "scanner_direction": "bullish",
+      "collected_keys": [
+        "_quality",
+        "_quality_effective",
+        "_source_status",
+        "_timestamp",
+        "analyst_consensus",
+        "cap_anomaly",
+        "capital_distribution",
+        "capital_flow",
+        "company_profile",
+        "deriv_anomaly",
+        "earnings_calendar",
+        "fundamentals",
+        "industry_peers",
+        "insider_sentiment",
+        "insider_transactions",
+        "kline",
+        "market_context",
+        "news",
+        "news_v2",
+        "research",
+        "sector_context",
+        "sentiment",
+        "snapshot",
+        "symbol",
+        "tech_anomaly"
+      ]
+    }
+  ],
+  "source_manifest": {
+    "source": "/root/.hermes/skills/deep-stock-analysis/scripts/llm_synth.py",
+    "source_sha256": "97367403caac2a27e53e0879d743202e474232ad780899aecd257d803f037ba1",
+    "variant_sha256": "e793c131b43dca4ad2fb156f021eb4ec6e4309f8a4e012f6bfe33eb53e0540b6",
+    "replacement_blocks": 2,
+    "production_file_modified": false
+  },
+  "scope": "2 samples; 1 fresh Pass1 + 2 runs x 2 arms per sample; primary only; no production writes"
+}

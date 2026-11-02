@@ -1,0 +1,73 @@
+{
+  "label": "same_direction_partial",
+  "arm": "variant",
+  "http_attempts": 1,
+  "latency_ms": 157068,
+  "model_parameters": {
+    "temperature": 0.0,
+    "model": "deepseek-v4.1-flash",
+    "max_tokens": 16000,
+    "extra_body": {
+      "enable_thinking": true
+    },
+    "timeout": 300
+  },
+  "system_fingerprint": "40e9681c9661",
+  "user_sha256": "d3145a4d6e846d1ce8729302d4c7afe5ce4e59bd2d045814632593bc26485ea9",
+  "result": {
+    "independent_direction": "SELL_SHORT",
+    "validation": {
+      "data": "通过 — PE(TTM)132.51、行业PE中位数36.92、MSPR=-68.01、MA5=530.05、MA60=532.63、20日-18.1%、盘前量192,213股、盘前+1.40%(524.0 vs 昨收516.79)、83.3%买入占比、联博目标价650美元均可与原始数据逐项对上；唯一瑕疵是 key_levels.support 中的 480.0 在原始数据/溯源清单中查无出处(502.6有源=10-22最低点)。",
+      "logic": "通过(估值腿偏弱) — '收盘跌破MA5/MA60 + MA5(530.05)下穿MA60(532.63) + 20日-18.1%'的技术腿可独立支撑做空；但'PE 132.51 → 资金承接力不足 → 短期下跌'是慢变量因果，新闻载该股YTD+131.3%，高估值本身不是日内方向，真正的因果来自技术腿。",
+      "market": "通过(附逆风) — 方向与SPY/QQQ日线DOWN一致；但今日盘前SPY+0.42%、QQQ+0.74%，且昨日盘中最强板块为Semis(+0.8%)/Technology(+0.5%)，短期风向与做空相反。",
+      "risk": "通过 — SHORT三问齐全：催化剂(估值3.59倍行业中枢+死叉)、时效(24-72h)、逼空(83.3%买入占比 vs 盘前量192,213股、量比0.725)，且超级周(FOMC+三大云厂财报)与Futu新闻缺失均已入 risks/data_quality_note。",
+      "levels": "不通过 — 止损542距入场530仅12点(2.26%)，小于原始数据给出的振幅3.064%(≈15.8点@516.79)，叠加 Beta=2.5629，噪音扫损概率高；且比上一轮同标的计划(入场522/止损538=3.07%)反而更紧，与本标的近30日 SHORT+SL_INITIAL 0胜记录同向。"
+    },
+    "agreed": true,
+    "my_direction": "SELL_SHORT",
+    "my_score_band": "MEDIUM",
+    "my_score": 6,
+    "skip_reason": "选边依据：收盘516.79低于MA5(530.05)、MA60(532.63)，20日-18.1%，MA5<MA60死叉，PE(TTM)132.51≈行业中位36.92的3.59倍，内部人6个月MSPR=-68.01，趋势与估值支持 SELL_SHORT，且入场设计是等反弹至MA5阻力530兑现、不追跌，结构成立。不给HIGH档的原因：原始异动信号里超卖反弹条目占多数(BOLL下轨下方、RSI(12)/PSY转超卖、BR转超卖均提示反弹潜力)，20日-18.1%说明看空已部分定价，且10-26当周为FOMC+三大云厂财报超级周，盘前AMD+1.40%已强于QQQ+0.74%。证据缺口：无AMD自身财报日与下季EPS预期(分析师已自陈)。",
+    "falsification_target": "最可能的单一机械亏损路径：盘前+1.40%(AMD强于QQQ+0.74%)延续为开盘动能，价格上触530触发做空，随后超级周云厂财报/FOMC带动AI-半导体链条整体上行，AMD收复MA5(530.05)并直奔止损542。可观测确认条件：10-26或10-27 收盘站稳530.05之上且当日量比由0.725升至>1.0；若再站上MA10 551.18则做空逻辑彻底失效。",
+    "flip_condition": "若10-27盘前涨幅>3.0%(分析师自设tripwire)、或任一日收盘价>551.18(MA10)且量比>2.5，则放弃SELL_SHORT并转观察做多。",
+    "challenged_claims": [
+      {
+        "original_thesis": "'盘前+1.40%属弱势反弹'（executive_summary）与 score_band=HIGH",
+        "weakness": "把盘前+1.40%定性为弱势，忽略了相对大盘的强度；据此给HIGH档缺乏'未被价格反映'条件(20日已跌18.1%)，确信度应下调至MEDIUM。",
+        "counter_evidence": "原始数据：AMD盘前524.0 vs 昨收516.79 = +1.40%，同期QQQ盘前+0.74%(704.4→709.65)、SPY+0.42%，AMD盘前强度约为大盘2倍；且10-23收盘516.79已较10-22最低502.60回升约2.8%，并高于当日开盘510.21。"
+      },
+      {
+        "original_thesis": "'MA5(530.05)下穿MA60(532.63)死叉确认下行趋势'（bear_case第2条）",
+        "weakness": "该死叉仅0.49%的边际差值且属滞后信号，容易被一次普通反弹抹平；同一批原始技术异动以超卖反弹提示为主，把它作为HIGH档核心催化剂证据强度不足。",
+        "counter_evidence": "原始异动信号原文：'BOLL指标显示收盘价位于布林带下轨下方…RSI(12)和PSY均从中性区间转为超卖…暗示价格可能接近低位并有望反弹'、'BR指标从中性转为超卖，暗示存在反弹潜力'；MA5 530.05与MA60 532.63差值仅2.58点。"
+      },
+      {
+        "original_thesis": "entry 530.0 / stop_loss 542.0（execution_plan）",
+        "weakness": "止损距离小于该标的日常波动幅度，属可执行性层面的结构性弱点，会显著改变该方向的胜率预期，而非措辞问题。",
+        "counter_evidence": "原始数据 振幅=3.064%(≈15.8点@516.79)、Beta=2.5629141、10-22单日区间524.10→502.60；近30日亏损pattern：SHORT+SL_INITIAL(50-60) 2笔 PnL=-379.7、SHORT+SL_INITIAL(<50) 2笔 PnL=-306.78，SL_INITIAL 7笔 WR=0% PnL=-1026.09。止损542相对入场530仅2.26%，小于上述日均振幅。"
+      }
+    ],
+    "missed_risks": [
+      "来源不明数字: 480.0 出现于 key_levels.support；495.0 出现于 take_profit —— 二者在原始数据与论据溯源清单中均无对应价位（原始数据可核的支撑仅有502.60=10-22最低点、508.36=10-23最低点）。",
+      "未定价硬日期风险：原始数据未给出AMD自身下一财报日，而社区帖4明确'超级周关注美联储议息会&三大云厂财报'，云厂财报可整体拉升AI/半导体链条，属方向性风险而非波动性风险。",
+      "盘前量能证据力不足：盘前成交量192,213股仅相当于昨日成交量15,177,935股的约1.3%，以此断言'逼空燃料不足'证据偏弱（量比0.725/0.725均为昨日口径，非今日放量），低流动性同时意味着开盘跳空放大风险。",
+      "本标的SHORT执行记录反向：近30日 SHORT+SL_INITIAL 共4笔(50-60档2笔、<50档2笔)合计 PnL≈-686.48、持有0.2-0.3h即止损，说明该标的的做空初始止损历史上被扫概率极高，与540一线止损设置直接冲突。"
+    ],
+    "verdict": "PARTIAL_AGREE",
+    "_model_reported": "deepseek-v4.1-flash",
+    "_finish_reason": "stop",
+    "_usage": {
+      "completion_tokens": 11601,
+      "completion_tokens_details": {
+        "reasoning_tokens": 9747,
+        "text_tokens": 1853
+      },
+      "prompt_tokens": 8275,
+      "prompt_tokens_details": {
+        "cached_tokens": 0,
+        "text_tokens": 8275
+      },
+      "total_tokens": 19876
+    }
+  }
+}

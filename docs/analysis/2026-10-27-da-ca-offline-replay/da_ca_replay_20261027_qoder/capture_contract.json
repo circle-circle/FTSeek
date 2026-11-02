@@ -1,0 +1,51 @@
+{
+  "samples": [
+    {
+      "label": "analyst_skip",
+      "system_diff_blocks": 1,
+      "user_diff_blocks": 1,
+      "same_data": true,
+      "same_analysis": true,
+      "same_parameters": true,
+      "historical_hash_match": true,
+      "variant_hash_distinct": true,
+      "pass": true
+    },
+    {
+      "label": "challenger_abstain",
+      "system_diff_blocks": 1,
+      "user_diff_blocks": 1,
+      "same_data": true,
+      "same_analysis": true,
+      "same_parameters": true,
+      "historical_hash_match": true,
+      "variant_hash_distinct": true,
+      "pass": true
+    },
+    {
+      "label": "same_direction_partial",
+      "system_diff_blocks": 1,
+      "user_diff_blocks": 1,
+      "same_data": true,
+      "same_analysis": true,
+      "same_parameters": true,
+      "historical_hash_match": true,
+      "variant_hash_distinct": true,
+      "pass": true
+    },
+    {
+      "label": "single_challenged",
+      "system_diff_blocks": 1,
+      "user_diff_blocks": 1,
+      "same_data": true,
+      "same_analysis": true,
+      "same_parameters": true,
+      "historical_hash_match": false,
+      "variant_hash_distinct": true,
+      "pass": true
+    }
+  ],
+  "all_pass": true,
+  "production_unchanged": true,
+  "note": "10/26 baseline hash matches historical; 10/08 uses historical input with current baseline, not historical prompt replay."
+}

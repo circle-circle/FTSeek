@@ -1,0 +1,136 @@
+{
+  "executive_summary": "CRM以56.6亿美元收购Braze并推出Hunter AI强化营销布局，PE(TTM)22.76倍显著低于行业中枢951.38倍，盘前-0.39%属正常缩量回调，依托246.5美元支撑位低吸建仓。",
+  "rating": "看多",
+  "score_band": "HIGH",
+  "direction": "BUY",
+  "skip_reason": "",
+  "bull_case": [
+    {
+      "thesis": "估值显著低于行业中枢且基本面扎实：当前PE(TTM)为22.762倍，远低于Technology行业中位数951.38倍；同时营收同比增长11.23%，净利润率达21.99%，ROE为20.15%，具备极强的估值修复弹性。",
+      "strength": "HIGH",
+      "evidence": "PE(TTM)=22.762, industry_pe_median=951.38, revenue_growth_yoy=11.23, net_profit_margin_ttm=21.99, roe_ttm=20.15",
+      "source_type": "fundamental",
+      "claim_type": "valuation_cheap"
+    },
+    {
+      "thesis": "并购与AI产品双重催化：公司宣布以56.6亿美元全股票收购Braze强化AI营销云布局，并推出Hunter AI销售代理集成Demandbase数据；星展集团上调目标价至300美元，奥本海默维持275美元，56位分析师中买入占比达71.4%。",
+      "strength": "HIGH",
+      "evidence": "收购Braze金额56.6亿美元，星展目标价300美元，奥本海默275美元，分析师买入占比71.4% (40/56)",
+      "source_type": "news",
+      "claim_type": "product_catalyst"
+    }
+  ],
+  "bear_case": [
+    {
+      "thesis": "内部人情绪偏空：6个月平均MSPR为-7.64，显示高管处于净卖出状态，需警惕内部人对短期估值修复空间的谨慎态度及潜在抛压。",
+      "strength": "MEDIUM",
+      "evidence": "avg_mspr_6m=-7.64",
+      "source_type": "fundamental",
+      "claim_type": "insider_bearish"
+    },
+    {
+      "thesis": "短期技术超买与主力资金分歧：KDJ与RSI指标进入超买区域，且主力资金近5日持续净流出，特大单与小单资金方向相反，短期存在技术性回调与震荡洗盘风险。",
+      "strength": "MEDIUM",
+      "evidence": "KDJ/RSI超买，主力资金近5日持续净流出，特大单净流出1156.48万与小单净流入253.29万方向相反",
+      "source_type": "technical",
+      "claim_type": "technical_breakdown"
+    }
+  ],
+  "constraints": [
+    {
+      "thesis": "大盘日线级别逆风：SPY与QQQ日线趋势均为DOWN，科技股上周面临抛压，若宏观流动性收紧或大盘继续调整，可能拖累CRM估值修复节奏。",
+      "strength": "MEDIUM",
+      "evidence": "SPY趋势DOWN(5日-0.4%)，QQQ趋势DOWN(5日-0.8%)，Technology板块上周盘中表现分化",
+      "source_type": "macro",
+      "claim_type": "macro_headwind"
+    }
+  ],
+  "causal_chain": "Salesforce 56.6亿美元收购Braze并推出Hunter AI代理 → 强化B2B营销与AI销售工作流，提升客户粘性与ARPU → 营收增速(11.23%)与净利润率(21.99%)获支撑，PE(TTM) 22.76倍显著低于行业中枢951.38倍 → 估值修复驱动股价向分析师目标价均值(275-300美元)靠拢。",
+  "execution_plan": {
+    "entry_strategy": "盘前微跌-0.39%且成交量仅16080股，属正常缩量回调非趋势反转；依托MA5(245.10)与W型底支撑位(247.78)附近，在246.5美元研究确认位低吸建仓首批。",
+    "entry_archetype": "PULLBACK_LIMIT",
+    "confirmation": {
+      "price_level": 246.5,
+      "side": "below",
+      "ttl_min": 120
+    },
+    "chase_cap_price": 252.0,
+    "stop_loss": 241.0,
+    "take_profit": 265.0,
+    "entry_price": 247.6,
+    "stop_loss_price": 241.0,
+    "take_profit_price": 265.0,
+    "invalidation": "放量跌破MA10(242.08)且主力资金持续大幅流出，或并购整合不及预期导致AI产品ARR增速放缓。",
+    "tripwires": [
+      {
+        "metric": "Braze并购整合进度/AI产品ARR贡献",
+        "threshold": "下季度财报AI相关ARR增速低于15%",
+        "deadline": "2027-02-28",
+        "source": "Finnhub新闻事实流/财报"
+      },
+      {
+        "metric": "核心分析师目标价调整",
+        "threshold": "星展或奥本海默下调目标价至250美元以下",
+        "deadline": "2026-12-31",
+        "source": "研报/新闻"
+      }
+    ],
+    "invalidation_triggers": [
+      {
+        "metric": "收盘价",
+        "operator": "<",
+        "value": 242.0,
+        "deadline": "2026-11-15"
+      },
+      {
+        "metric": "5日涨跌",
+        "operator": "<",
+        "value": -5.0,
+        "deadline": "2026-11-15"
+      }
+    ]
+  },
+  "key_levels": {
+    "current": 247.6,
+    "support": [
+      245.1,
+      242.08,
+      235.53
+    ],
+    "resistance": [
+      252.42,
+      259.04,
+      267.8
+    ]
+  },
+  "risks": [
+    "内部人情绪偏空：6个月平均MSPR为-7.64，显示高管净卖出，需警惕内部人对短期估值修复空间的谨慎态度。",
+    "短期技术超买与资金分歧：KDJ/RSI进入超买区域，且主力资金近5日持续净流出，特大单与小单方向相反，短期存在技术性回调风险。",
+    "宏观与大盘日线逆风：SPY与QQQ日线趋势DOWN，科技股上周面临抛压，若大盘继续调整可能拖累CRM估值修复节奏。"
+  ],
+  "data_quality_note": "数据源总数19项，完整19项，降级0项，缺失0项。数据充分性充分，所有维度均有效支撑分析结论，无缺失维度影响。",
+  "evidence_gaps": [],
+  "_model_reported": "qwen3.7-max",
+  "_finish_reason": "stop",
+  "_usage": {
+    "completion_tokens": 6778,
+    "completion_tokens_details": {
+      "reasoning_tokens": 5023
+    },
+    "prompt_tokens": 12928,
+    "prompt_tokens_details": {
+      "cache_creation": {
+        "ephemeral_5m_input_tokens": 10712
+      },
+      "cache_creation_input_tokens": 10712,
+      "cache_type": "ephemeral",
+      "cache_write_tokens": 10712,
+      "cached_tokens": 2208
+    },
+    "total_tokens": 19706
+  },
+  "_llm_latency_ms": 79426,
+  "_thinking_enabled": true,
+  "score": 8.0,
+  "_score_band_applied": "HIGH"
+}

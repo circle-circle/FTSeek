@@ -1,0 +1,1196 @@
+{
+  "samples": [
+    {
+      "label": "short_partial",
+      "symbol": "US.AMD",
+      "pass1": {
+        "direction": "SKIP",
+        "score": 6.0,
+        "contract": {
+          "violations": [],
+          "repairable": []
+        },
+        "source_verification": {
+          "verified_count": 22,
+          "unverified_count": 0,
+          "unverified_numbers": [],
+          "flagged_claims": []
+        }
+      },
+      "arms": {
+        "baseline": {
+          "runs": [
+            {
+              "repeat": 1,
+              "json_errors": [],
+              "verdict": "AGREE",
+              "my_direction": "SKIP",
+              "independent_direction": "SKIP",
+              "raw_agreed": true,
+              "challenged_count": 3,
+              "missed_risks_count": 5,
+              "evidence": [
+                {
+                  "index": 0,
+                  "original_thesis": "bear_case：技术面中期破位与均线压制，反弹缺乏量能支撑（HIGH）",
+                  "weakness": "量能证据仅取昨日量比0.78x与盘前19.2万股，未纳入盘前价格方向与大盘同步转多的边际变化，属静态快照结论；不构成硬伤（盘前量仍远低于50万股阈值）。",
+                  "counter_evidence": "盘前现价524.0 vs 昨收516.79（+1.40%），同期 SPY 盘前+0.42%（763.1962/763.96）、QQQ 盘前+0.74%（709.65/704.47）、Technology板块+0.49%为当日最强板块。",
+                  "cited_numbers": [
+                    "524.0",
+                    "516.79",
+                    "1.40%",
+                    "0.42%",
+                    "763.1962",
+                    "763.96",
+                    "0.74%",
+                    "709.65",
+                    "704.47",
+                    "0.49%"
+                  ],
+                  "missing_literal_numbers": [],
+                  "status": "needs_semantic_review"
+                },
+                {
+                  "index": 1,
+                  "original_thesis": "bull_case：资金面大单净流入2653万美元显示短线修复动能（MEDIUM）",
+                  "weakness": "选择性引用——同数据段超大单为净流出、买卖盘比为负，多头资金论据被高估，实际支持SKIP而非BUY。",
+                  "counter_evidence": "资金面(分时)：超大单流入 -6,036,891.821，大单流入 26,532,186.272，买盘/卖盘比 -55.102。",
+                  "cited_numbers": [
+                    "-6,036,891.821",
+                    "26,532,186.272",
+                    "-55.102"
+                  ],
+                  "missing_literal_numbers": [],
+                  "status": "needs_semantic_review"
+                },
+                {
+                  "index": 2,
+                  "original_thesis": "bear_case：PE(TTM)132.51远高于半导体行业中位数36.92（HIGH）",
+                  "weakness": "36.92由5家peer算得（含MU 11.806、NVDA 26.67等低PE标的），口径偏纯；同期机构目标价隐含更高估值容忍度，该对比的说服力弱于呈现方式。",
+                  "counter_evidence": "研报[10-26 07:31ET]联博维持买入、目标价650美元；[10-21]Susquehanna自550上调至620美元——距盘前524.0分别约+24.0%/+18.3%。",
+                  "cited_numbers": [
+                    "10",
+                    "-26",
+                    "07",
+                    "31",
+                    "650",
+                    "10",
+                    "-21",
+                    "550",
+                    "620",
+                    "524.0",
+                    "24.0%",
+                    "18.3%"
+                  ],
+                  "missing_literal_numbers": [
+                    "24.0%",
+                    "18.3%"
+                  ],
+                  "status": "needs_semantic_review"
+                }
+              ],
+              "downstream": {
+                "state": "ANALYST_SKIP",
+                "adapter_conf": 0.5,
+                "gate_decision_conf": 0.5,
+                "tier": "SKIP",
+                "gate_decision": "BLOCK",
+                "bridge_conf_after_warn": 0.5,
+                "publishable": false,
+                "merged_direction": "SKIP"
+              },
+              "usage": {
+                "completion_tokens": 8987,
+                "completion_tokens_details": {
+                  "reasoning_tokens": 7182,
+                  "text_tokens": 1804
+                },
+                "prompt_tokens": 8279,
+                "prompt_tokens_details": {
+                  "cached_tokens": 0,
+                  "text_tokens": 8279
+                },
+                "total_tokens": 17266
+              },
+              "http_attempts": 1,
+              "latency_ms": 114720,
+              "finish_reason": "stop"
+            },
+            {
+              "repeat": 2,
+              "json_errors": [],
+              "verdict": "AGREE",
+              "my_direction": "SKIP",
+              "independent_direction": "SKIP",
+              "raw_agreed": true,
+              "challenged_count": 0,
+              "missed_risks_count": 4,
+              "evidence": [],
+              "downstream": {
+                "state": "ANALYST_SKIP",
+                "adapter_conf": 0.5,
+                "gate_decision_conf": 0.5,
+                "tier": "SKIP",
+                "gate_decision": "BLOCK",
+                "bridge_conf_after_warn": 0.5,
+                "publishable": false,
+                "merged_direction": "SKIP"
+              },
+              "usage": {
+                "completion_tokens": 4214,
+                "completion_tokens_details": {
+                  "reasoning_tokens": 2941,
+                  "text_tokens": 1272
+                },
+                "prompt_tokens": 8279,
+                "prompt_tokens_details": {
+                  "cached_tokens": 8192,
+                  "text_tokens": 8279
+                },
+                "total_tokens": 12493
+              },
+              "http_attempts": 1,
+              "latency_ms": 58700,
+              "finish_reason": "stop"
+            }
+          ],
+          "verdict_stable": true,
+          "direction_stable": true,
+          "json_all_valid": true,
+          "challenged_counts": [
+            3,
+            0
+          ],
+          "challenged_count_stable": false
+        },
+        "variant": {
+          "runs": [
+            {
+              "repeat": 1,
+              "json_errors": [],
+              "verdict": "AGREE",
+              "my_direction": "SKIP",
+              "independent_direction": "SKIP",
+              "raw_agreed": true,
+              "challenged_count": 2,
+              "missed_risks_count": 4,
+              "evidence": [
+                {
+                  "index": 0,
+                  "original_thesis": "key_levels.support 给出 [502.6, 480.0]",
+                  "weakness": "480.0在上方全部原始数据中无任何出处，属不可溯源的价位；不构成实质硬伤(SKIP无执行)，但违反'价位须锚定有效现价'原则。",
+                  "counter_evidence": "原始数据可溯源的近端低点仅有10-22的L=502.60与10-23的L=508.36；52周最低188.22、MA60=532.63均非480.00。",
+                  "cited_numbers": [
+                    "10",
+                    "-22",
+                    "502.60",
+                    "10",
+                    "-23",
+                    "508.36",
+                    "52",
+                    "188.22",
+                    "0",
+                    "532.63",
+                    "480.00"
+                  ],
+                  "missing_literal_numbers": [
+                    "480.00"
+                  ],
+                  "status": "needs_semantic_review"
+                },
+                {
+                  "index": 1,
+                  "original_thesis": "bull_case[1]: '资金面大单净流入2653万美元'",
+                  "weakness": "把'大单流入(单向)'表述为'净流入'，且略去同源反向流；方向结论不受影响，属措辞级瑕疵。",
+                  "counter_evidence": "原始资金面：大单流入 +26,532,186.272，超大单流入 -6,036,891.821，两者相抵后的净额低于所引2653万；买盘/卖盘比亦为 -55.102(昨日口径)。",
+                  "cited_numbers": [
+                    "26,532,186.272",
+                    "-6,036,891.821",
+                    "2653",
+                    "-55.102"
+                  ],
+                  "missing_literal_numbers": [
+                    "2653"
+                  ],
+                  "status": "needs_semantic_review"
+                }
+              ],
+              "downstream": {
+                "state": "ANALYST_SKIP",
+                "adapter_conf": 0.5,
+                "gate_decision_conf": 0.5,
+                "tier": "SKIP",
+                "gate_decision": "BLOCK",
+                "bridge_conf_after_warn": 0.5,
+                "publishable": false,
+                "merged_direction": "SKIP"
+              },
+              "usage": {
+                "completion_tokens": 6365,
+                "completion_tokens_details": {
+                  "reasoning_tokens": 4937,
+                  "text_tokens": 1427
+                },
+                "prompt_tokens": 8292,
+                "prompt_tokens_details": {
+                  "cached_tokens": 0,
+                  "text_tokens": 8292
+                },
+                "total_tokens": 14657
+              },
+              "http_attempts": 1,
+              "latency_ms": 87060,
+              "finish_reason": "stop"
+            },
+            {
+              "repeat": 2,
+              "json_errors": [],
+              "verdict": "AGREE",
+              "my_direction": "SKIP",
+              "independent_direction": "SKIP",
+              "raw_agreed": true,
+              "challenged_count": 3,
+              "missed_risks_count": 3,
+              "evidence": [
+                {
+                  "index": 0,
+                  "original_thesis": "bull_case二：资金面大单净流入2653万美元",
+                  "weakness": "口径失实：原始数据只有“大单流入: 26532186.272”与“超大单流入: -6036891.821”，两者合计约2049万且超大单为净流出，将其表述为“净流入2653万美元”高估了资金面强度。",
+                  "counter_evidence": "原始资金面(分时)：大单流入=26,532,186.272；超大单流入=-6,036,891.821；另昨收口径 买盘/卖盘比=-55.102。",
+                  "cited_numbers": [
+                    "26,532,186.272",
+                    "-6,036,891.821",
+                    "-55.102"
+                  ],
+                  "missing_literal_numbers": [],
+                  "status": "needs_semantic_review"
+                },
+                {
+                  "index": 1,
+                  "original_thesis": "key_levels.support 含 480.0",
+                  "weakness": "来源不明数字：原始数据中无480.0的任何出处。",
+                  "counter_evidence": "原始数据可用的下方锚点仅为 2026-10-22 低点 L=502.60、52周最低 188.22；480.0 未出现于K线/技术面/研报/新闻事实流。",
+                  "cited_numbers": [
+                    "2026",
+                    "-10",
+                    "-22",
+                    "502.60",
+                    "52",
+                    "188.22",
+                    "480.0"
+                  ],
+                  "missing_literal_numbers": [
+                    "480.0"
+                  ],
+                  "status": "needs_semantic_review"
+                },
+                {
+                  "index": 2,
+                  "original_thesis": "entry_strategy：等待突破MA5($530.05)后做多，或反弹至$530.05遇阻时做空",
+                  "weakness": "写入第二个可执行触发价(遇阻做空)，属第二腿；当前执行端不执行第二腿，不应作为入场条件。",
+                  "counter_evidence": "execution_plan.confirmation.price_level=null、entry_price=null，与entry_strategy的双向触发描述自相矛盾。",
+                  "cited_numbers": [],
+                  "missing_literal_numbers": [],
+                  "status": "needs_semantic_review"
+                }
+              ],
+              "downstream": {
+                "state": "ANALYST_SKIP",
+                "adapter_conf": 0.5,
+                "gate_decision_conf": 0.5,
+                "tier": "SKIP",
+                "gate_decision": "BLOCK",
+                "bridge_conf_after_warn": 0.5,
+                "publishable": false,
+                "merged_direction": "SKIP"
+              },
+              "usage": {
+                "completion_tokens": 6445,
+                "completion_tokens_details": {
+                  "reasoning_tokens": 5101,
+                  "text_tokens": 1343
+                },
+                "prompt_tokens": 8292,
+                "prompt_tokens_details": {
+                  "cached_tokens": 8192,
+                  "text_tokens": 8292
+                },
+                "total_tokens": 14737
+              },
+              "http_attempts": 1,
+              "latency_ms": 90827,
+              "finish_reason": "stop"
+            }
+          ],
+          "verdict_stable": true,
+          "direction_stable": true,
+          "json_all_valid": true,
+          "challenged_counts": [
+            2,
+            3
+          ],
+          "challenged_count_stable": false
+        }
+      },
+      "cross_arm_verdicts": {
+        "baseline": [
+          "AGREE",
+          "AGREE"
+        ],
+        "variant": [
+          "AGREE",
+          "AGREE"
+        ]
+      },
+      "cross_arm_downstream": {
+        "baseline": [
+          {
+            "state": "ANALYST_SKIP",
+            "adapter_conf": 0.5,
+            "gate_decision_conf": 0.5,
+            "tier": "SKIP",
+            "gate_decision": "BLOCK",
+            "bridge_conf_after_warn": 0.5,
+            "publishable": false,
+            "merged_direction": "SKIP"
+          },
+          {
+            "state": "ANALYST_SKIP",
+            "adapter_conf": 0.5,
+            "gate_decision_conf": 0.5,
+            "tier": "SKIP",
+            "gate_decision": "BLOCK",
+            "bridge_conf_after_warn": 0.5,
+            "publishable": false,
+            "merged_direction": "SKIP"
+          }
+        ],
+        "variant": [
+          {
+            "state": "ANALYST_SKIP",
+            "adapter_conf": 0.5,
+            "gate_decision_conf": 0.5,
+            "tier": "SKIP",
+            "gate_decision": "BLOCK",
+            "bridge_conf_after_warn": 0.5,
+            "publishable": false,
+            "merged_direction": "SKIP"
+          },
+          {
+            "state": "ANALYST_SKIP",
+            "adapter_conf": 0.5,
+            "gate_decision_conf": 0.5,
+            "tier": "SKIP",
+            "gate_decision": "BLOCK",
+            "bridge_conf_after_warn": 0.5,
+            "publishable": false,
+            "merged_direction": "SKIP"
+          }
+        ]
+      }
+    },
+    {
+      "label": "long_partial",
+      "symbol": "US.CRM",
+      "pass1": {
+        "direction": "BUY",
+        "score": 8.0,
+        "contract": {
+          "violations": [],
+          "repairable": []
+        },
+        "source_verification": {
+          "verified_count": 33,
+          "unverified_count": 0,
+          "unverified_numbers": [],
+          "flagged_claims": []
+        }
+      },
+      "arms": {
+        "baseline": {
+          "runs": [
+            {
+              "repeat": 1,
+              "json_errors": [],
+              "verdict": "PARTIAL_AGREE",
+              "my_direction": "BUY",
+              "independent_direction": "BUY",
+              "raw_agreed": true,
+              "challenged_count": 3,
+              "missed_risks_count": 5,
+              "evidence": [
+                {
+                  "index": 0,
+                  "original_thesis": "估值显著低于行业中枢且基本面扎实：当前PE(TTM)为22.762倍，远低于Technology行业中位数951.38倍，具备极强的估值修复弹性。",
+                  "weakness": "因果链断裂——参照系本身失效，且前瞻估值方向与'修复弹性'相反。",
+                  "counter_evidence": "industry_pe_median=951.38由3家peer算得，peer明细中CRWD PE=6778.157、ZS PE=-654.23、PANW=951.375，中位数被极端值主导，不构成有效估值锚；同时原始数据pe_ratio(动态)=31.867 > pe_ttm_ratio=22.762，隐含前瞻EPS低于TTM，与'估值修复弹性'相矛盾。",
+                  "cited_numbers": [
+                    "951.38",
+                    "3",
+                    "6778.157",
+                    "-654.23",
+                    "951.375",
+                    "31.867",
+                    "22.762"
+                  ],
+                  "missing_literal_numbers": [],
+                  "status": "needs_semantic_review"
+                },
+                {
+                  "index": 1,
+                  "original_thesis": "盘前微跌-0.39%且成交量仅16080股，属正常缩量回调非趋势反转。",
+                  "weakness": "用盘前时段常态低量作为'回调健康'的证据，证据力近零；量能方向上反而偏空。",
+                  "counter_evidence": "盘前成交量16,080股出现在08:27时段，属常态微量，无法证明'缩量企稳'；昨日volume_ratio=0.754、20日量比0.73x为缩量，同时资金面异动记录'主力资金近5日持续净流出，当日净流出金额比前3日均值高494%'、特大单净流出1156.48万而小单净流入253.29万，量能与资金方向均不支持'健康缩量回调'。",
+                  "cited_numbers": [
+                    "16,080",
+                    "08",
+                    "27",
+                    "0.754",
+                    "20",
+                    "0.73",
+                    "5",
+                    "3",
+                    "494%",
+                    "1156.48",
+                    "253.29"
+                  ],
+                  "missing_literal_numbers": [],
+                  "status": "needs_semantic_review"
+                },
+                {
+                  "index": 2,
+                  "original_thesis": "风险已覆盖：宏观与大盘日线逆风（SPY/QQQ趋势DOWN）为MEDIUM约束。",
+                  "weakness": "关键硬日期风险未定价——泛泛的'宏观逆风'无法替代本周事件窗口的对冲安排。",
+                  "counter_evidence": "社区讨论帖子1/2/3/4明确列出本周为'超级央行周'：FOMC议息会 + 美國九月份PCE（市場預期按年升幅加快至3.6%、核心3.1%）+ 三大云厂（MSFT/GOOGL/AMZN）财报；新闻[10-23]'Salesforce, American Express Share Losses Lead Dow's 575-Point Drop'显示CRM在Beta=1.2364675下放大市场下行，而执行计划中无任何事件日期绑定。",
+                  "cited_numbers": [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "3.6%",
+                    "3.1%",
+                    "10",
+                    "-23",
+                    "575",
+                    "1.2364675"
+                  ],
+                  "missing_literal_numbers": [],
+                  "status": "needs_semantic_review"
+                }
+              ],
+              "downstream": {
+                "state": "PARTIAL_AGREE",
+                "adapter_conf": 0.5,
+                "gate_decision_conf": 0.5,
+                "tier": "中",
+                "gate_decision": "WARN",
+                "bridge_conf_after_warn": 0.35,
+                "publishable": true,
+                "merged_direction": "BUY"
+              },
+              "usage": {
+                "completion_tokens": 5563,
+                "completion_tokens_details": {
+                  "reasoning_tokens": 3612,
+                  "text_tokens": 1951
+                },
+                "prompt_tokens": 9001,
+                "prompt_tokens_details": {
+                  "cached_tokens": 0,
+                  "text_tokens": 9001
+                },
+                "total_tokens": 14564
+              },
+              "http_attempts": 1,
+              "latency_ms": 74182,
+              "finish_reason": "stop"
+            },
+            {
+              "repeat": 2,
+              "json_errors": [],
+              "verdict": "PARTIAL_AGREE",
+              "my_direction": "BUY",
+              "independent_direction": "BUY",
+              "raw_agreed": true,
+              "challenged_count": 3,
+              "missed_risks_count": 5,
+              "evidence": [
+                {
+                  "index": 0,
+                  "original_thesis": "估值显著低于行业中枢且基本面扎实：当前PE(TTM)为22.762倍，远低于Technology行业中位数951.38倍(strength=HIGH, claim_type=valuation_cheap)",
+                  "weakness": "数字本身属实但比较基准失效，属因果断裂——把含负值/异常值样本计算出的中位数当作估值折价锚点，使该HIGH强度论据无法支撑方向确信度。",
+                  "counter_evidence": "输入数据peer明细: ZS PE=-654.23、RBRK PE=-101.37、CRWD PE=6778.157、PANW PE=951.375、NOW PE=99.35，'行业PE中位数: 951.38 (由3家peer算得)'——负值PE与6778倍PE混入后中位数无经济含义；同一数据源中PE(动态)=31.867高于PE(TTM)=22.762，前瞻盈利口径反而更贵。",
+                  "cited_numbers": [
+                    "-654.23",
+                    "-101.37",
+                    "6778.157",
+                    "951.375",
+                    "99.35",
+                    "951.38",
+                    "3",
+                    "6778",
+                    "31.867",
+                    "22.762"
+                  ],
+                  "missing_literal_numbers": [
+                    "6778"
+                  ],
+                  "status": "needs_semantic_review"
+                },
+                {
+                  "index": 1,
+                  "original_thesis": "盘前微跌-0.39%且成交量仅16080股，属正常缩量回调非趋势反转(entry_strategy)",
+                  "weakness": "以盘前16,080股的成交量作为'缩量'判据不成立——盘前成交量小是结构常态，与昨日全天5,843,515股不可比，该句无法提供任何趋势判据(结论可能仍对，但该证据无效)。",
+                  "counter_evidence": "原始数据: 盘前成交量16,080股 vs 上一交易日成交量5,843,515股(口径为昨日收盘)，量比0.754、20日量比0.73x；盘中数据尚未产生，'缩量'无当日样本可比。",
+                  "cited_numbers": [
+                    "16,080",
+                    "5,843,515",
+                    "0.754",
+                    "20",
+                    "0.73"
+                  ],
+                  "missing_literal_numbers": [],
+                  "status": "needs_semantic_review"
+                },
+                {
+                  "index": 2,
+                  "original_thesis": "并购与AI产品双重催化(HIGH强度)：56.6亿美元收购Braze强化AI营销云布局",
+                  "weakness": "以全股票方式支付的对价同时是股权稀释，分析师将其单列为纯正向催化，未在bear_case或tripwires中计稀释成本。",
+                  "counter_evidence": "原始数据: 总市值204,573,110,000美元(204.6B)，Finnhub事实流'$5.66 billion Braze deal'，全股票支付对应约2.8%的市值量级稀释；内部人情绪avg_mspr_6m=-7.64(净卖出)与最近交易0笔买入/0笔卖出并存。",
+                  "cited_numbers": [
+                    "204,573,110,000",
+                    "204.6",
+                    "$5.66",
+                    "2.8%",
+                    "-7.64",
+                    "0",
+                    "0"
+                  ],
+                  "missing_literal_numbers": [
+                    "204,573,110,000",
+                    "2.8%"
+                  ],
+                  "status": "needs_semantic_review"
+                }
+              ],
+              "downstream": {
+                "state": "PARTIAL_AGREE",
+                "adapter_conf": 0.5,
+                "gate_decision_conf": 0.5,
+                "tier": "中",
+                "gate_decision": "WARN",
+                "bridge_conf_after_warn": 0.35,
+                "publishable": true,
+                "merged_direction": "BUY"
+              },
+              "usage": {
+                "completion_tokens": 7451,
+                "completion_tokens_details": {
+                  "reasoning_tokens": 5340,
+                  "text_tokens": 2111
+                },
+                "prompt_tokens": 9001,
+                "prompt_tokens_details": {
+                  "cached_tokens": 8960,
+                  "text_tokens": 9001
+                },
+                "total_tokens": 16452
+              },
+              "http_attempts": 1,
+              "latency_ms": 107560,
+              "finish_reason": "stop"
+            }
+          ],
+          "verdict_stable": true,
+          "direction_stable": true,
+          "json_all_valid": true,
+          "challenged_counts": [
+            3,
+            3
+          ],
+          "challenged_count_stable": true
+        },
+        "variant": {
+          "runs": [
+            {
+              "repeat": 1,
+              "json_errors": [],
+              "verdict": "PARTIAL_AGREE",
+              "my_direction": "BUY",
+              "independent_direction": "BUY",
+              "raw_agreed": false,
+              "challenged_count": 3,
+              "missed_risks_count": 5,
+              "evidence": [
+                {
+                  "index": 0,
+                  "original_thesis": "当前PE(TTM)为22.762倍，远低于Technology行业中位数951.38倍，具备极强的估值修复弹性（strength=HIGH）。",
+                  "weakness": "因果断裂：951.38是由3家peer算出的中位数，样本内ZS PE=-654.23、CRWD PE=6778.157、RBRK PE=-101.37，盈利接近盈亏平衡的软件股PE被数学放大，与CRM的可比性为零，该比较不能支撑'修复弹性'。",
+                  "counter_evidence": "原始数据行业对比段：'行业PE中位数: 951.38 (由3家peer算得)'；peer明细 ZS PE=-654.23 / CRWD PE=6778.157 / PANW PE=951.375 / RBRK PE=-101.37；同一数据的 pe_normalized=27.4337、pe_ttm_ratio=22.762 才是有效比较锚。",
+                  "cited_numbers": [
+                    "951.38",
+                    "3",
+                    "-654.23",
+                    "6778.157",
+                    "951.375",
+                    "-101.37",
+                    "27.4337",
+                    "22.762"
+                  ],
+                  "missing_literal_numbers": [],
+                  "status": "needs_semantic_review"
+                },
+                {
+                  "index": 1,
+                  "original_thesis": "并购与AI产品双重催化（Braze 56.6亿美元收购+Hunter AI）构成未被价格反映的HIGH级催化。",
+                  "weakness": "两项遗漏：一是该标的近5日已+3.3%、10-22单日由241.78升至250.29（新闻10-22 13:03ET'为何赛富时股价在周四飙升？'），催化至少已部分定价；二是全股票收购的稀释成本被当作纯利好，10-23当日该股仍是'Dow's 575-Point Drop'的领跌成分之一。",
+                  "counter_evidence": "近5日K线 10-21 C=241.78 → 10-22 C=250.29（+3.52%）；新闻[10-23 09:45ET]'Salesforce, American Express Share Losses Lead Dow's 575-Point Drop'；近期交易经验文本记载'以56.6亿美元全股票收购Braze'；Finnhub事实流'$5.66 billion Braze deal'。",
+                  "cited_numbers": [
+                    "5",
+                    "10",
+                    "-21",
+                    "241.78",
+                    "10",
+                    "-22",
+                    "250.29",
+                    "3.52%",
+                    "10",
+                    "-23",
+                    "09",
+                    "45",
+                    "575",
+                    "56.6",
+                    "$5.66"
+                  ],
+                  "missing_literal_numbers": [
+                    "3.52%"
+                  ],
+                  "status": "needs_semantic_review"
+                },
+                {
+                  "index": 2,
+                  "original_thesis": "宏观与大盘日线逆风已被列入constraints（SPY趋势DOWN，QQQ趋势DOWN）。",
+                  "weakness": "关键风险未定价：分析师只写了趋势方向，未写事件日期。本周存在FOMC、9月PCE与三大云厂财报三个硬日期，其冲击窗口与241.0止损（距入场2.23%）完全重叠，事件风险足以单独改变入场条件。",
+                  "counter_evidence": "社区帖1'超级周关注美联储议息会&三大云厂财报'；帖2'市場迎來「超級央行周」'；帖4'美國九月份PCE數據即將公布…市場預期9月PCE按年升幅加快至3.6%，按月升0.5%；核心PCE按年升3.1%'。",
+                  "cited_numbers": [
+                    "1",
+                    "2",
+                    "4",
+                    "9",
+                    "3.6%",
+                    "0.5%",
+                    "3.1%"
+                  ],
+                  "missing_literal_numbers": [],
+                  "status": "needs_semantic_review"
+                }
+              ],
+              "downstream": {
+                "state": "PARTIAL_AGREE",
+                "adapter_conf": 0.5,
+                "gate_decision_conf": 0.5,
+                "tier": "中",
+                "gate_decision": "WARN",
+                "bridge_conf_after_warn": 0.35,
+                "publishable": true,
+                "merged_direction": "BUY"
+              },
+              "usage": {
+                "completion_tokens": 8226,
+                "completion_tokens_details": {
+                  "reasoning_tokens": 6099,
+                  "text_tokens": 2126
+                },
+                "prompt_tokens": 9014,
+                "prompt_tokens_details": {
+                  "cached_tokens": 0,
+                  "text_tokens": 9014
+                },
+                "total_tokens": 17240
+              },
+              "http_attempts": 1,
+              "latency_ms": 113214,
+              "finish_reason": "stop"
+            },
+            {
+              "repeat": 2,
+              "json_errors": [],
+              "verdict": "PARTIAL_AGREE",
+              "my_direction": "BUY",
+              "independent_direction": "BUY",
+              "raw_agreed": true,
+              "challenged_count": 3,
+              "missed_risks_count": 5,
+              "evidence": [
+                {
+                  "index": 0,
+                  "original_thesis": "PE(TTM)为22.762倍，远低于Technology行业中位数951.38倍，具备极强的估值修复弹性(bull_case #1, strength=HIGH)",
+                  "weakness": "基准失真导致因果断裂: 951.38并非行业中枢，输入数据自述'industry_pe_median=951.38 (由3家peer算得)'，其成分含亏损/极端倍数peer(ZS PE=-654.23、RBRK PE=-101.37、CRWD PE=6778.157)，用它论证'极度低估'会高估修复弹性，属逻辑瑕疵而非数据失实。",
+                  "counter_evidence": "行业对比段落: ZS PE=-654.23, RBRK PE=-101.37, CRWD PE=6778.157, PANW PE=951.375, 行业PE中位数951.38'由3家peer算得'; 而同页 peer NOW PE=99.35，说明该中位数不可作估值锚。",
+                  "cited_numbers": [
+                    "-654.23",
+                    "-101.37",
+                    "6778.157",
+                    "951.375",
+                    "951.38",
+                    "3",
+                    "99.35"
+                  ],
+                  "missing_literal_numbers": [],
+                  "status": "needs_semantic_review"
+                },
+                {
+                  "index": 1,
+                  "original_thesis": "'盘前微跌-0.39%且成交量仅16080股，属正常缩量回调非趋势反转'(execution_plan.entry_strategy)",
+                  "weakness": "定性偏乐观: 盘前16,080股确实无信息量，但方向上把'10-23 CRM领跌道指'与'主力资金净流出加速'一并归为正常回调，忽略了同日分布迹象。",
+                  "counter_evidence": "新闻[10-23 09:45ET]'Salesforce, American Express Share Losses Lead Dow's 575-Point Drop'；K线10-22 C=250.29(量9,748,941) → 10-23 C=248.57(量5,843,515，量比0.754/0.73x缩量回落)；资金面异动'主力资金近5日持续净流出，当日净流出金额比前3日均值高494%'。",
+                  "cited_numbers": [
+                    "10",
+                    "-23",
+                    "09",
+                    "45",
+                    "575",
+                    "10",
+                    "-22",
+                    "250.29",
+                    "9,748,941",
+                    "10",
+                    "-23",
+                    "248.57",
+                    "5,843,515",
+                    "0.754",
+                    "0.73",
+                    "5",
+                    "3",
+                    "494%"
+                  ],
+                  "missing_literal_numbers": [],
+                  "status": "needs_semantic_review"
+                },
+                {
+                  "index": 2,
+                  "original_thesis": "风险完备性: risks仅列内部人偏空、技术超买与资金分歧、SPY/QQQ日线DOWN三条，causal_chain与tripwires均无日期锚定宏观事件",
+                  "weakness": "关键硬日期风险未定价 — 交易窗口(TTL 120min至invalidation deadline 2026-11-15)完全覆盖FOMC、9月PCE与三大云厂财报，Beta=1.2364675 放大宏观冲击。",
+                  "counter_evidence": "社区帖子1'超级周关注美联储议息会&三大云厂财报'、帖子2'本周迎來「超級央行周」'、帖子3'美联储和大厂财报又挤到一起了'、帖子4'市場預期9月PCE按年升幅加快至3.6%，按月升0.5%；核心PCE按年升3.1%'；对照分析师 risks 三条中无任何一条提及上述事件。",
+                  "cited_numbers": [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "9",
+                    "3.6%",
+                    "0.5%",
+                    "3.1%"
+                  ],
+                  "missing_literal_numbers": [],
+                  "status": "needs_semantic_review"
+                }
+              ],
+              "downstream": {
+                "state": "PARTIAL_AGREE",
+                "adapter_conf": 0.5,
+                "gate_decision_conf": 0.5,
+                "tier": "中",
+                "gate_decision": "WARN",
+                "bridge_conf_after_warn": 0.35,
+                "publishable": true,
+                "merged_direction": "BUY"
+              },
+              "usage": {
+                "completion_tokens": 7536,
+                "completion_tokens_details": {
+                  "reasoning_tokens": 5368,
+                  "text_tokens": 2167
+                },
+                "prompt_tokens": 9014,
+                "prompt_tokens_details": {
+                  "cached_tokens": 8960,
+                  "text_tokens": 9014
+                },
+                "total_tokens": 16550
+              },
+              "http_attempts": 1,
+              "latency_ms": 101686,
+              "finish_reason": "stop"
+            }
+          ],
+          "verdict_stable": true,
+          "direction_stable": true,
+          "json_all_valid": true,
+          "challenged_counts": [
+            3,
+            3
+          ],
+          "challenged_count_stable": true
+        }
+      },
+      "cross_arm_verdicts": {
+        "baseline": [
+          "PARTIAL_AGREE",
+          "PARTIAL_AGREE"
+        ],
+        "variant": [
+          "PARTIAL_AGREE",
+          "PARTIAL_AGREE"
+        ]
+      },
+      "cross_arm_downstream": {
+        "baseline": [
+          {
+            "state": "PARTIAL_AGREE",
+            "adapter_conf": 0.5,
+            "gate_decision_conf": 0.5,
+            "tier": "中",
+            "gate_decision": "WARN",
+            "bridge_conf_after_warn": 0.35,
+            "publishable": true,
+            "merged_direction": "BUY"
+          },
+          {
+            "state": "PARTIAL_AGREE",
+            "adapter_conf": 0.5,
+            "gate_decision_conf": 0.5,
+            "tier": "中",
+            "gate_decision": "WARN",
+            "bridge_conf_after_warn": 0.35,
+            "publishable": true,
+            "merged_direction": "BUY"
+          }
+        ],
+        "variant": [
+          {
+            "state": "PARTIAL_AGREE",
+            "adapter_conf": 0.5,
+            "gate_decision_conf": 0.5,
+            "tier": "中",
+            "gate_decision": "WARN",
+            "bridge_conf_after_warn": 0.35,
+            "publishable": true,
+            "merged_direction": "BUY"
+          },
+          {
+            "state": "PARTIAL_AGREE",
+            "adapter_conf": 0.5,
+            "gate_decision_conf": 0.5,
+            "tier": "中",
+            "gate_decision": "WARN",
+            "bridge_conf_after_warn": 0.35,
+            "publishable": true,
+            "merged_direction": "BUY"
+          }
+        ]
+      }
+    }
+  ],
+  "totals": {
+    "logical_calls": 10,
+    "http_attempts": 10,
+    "prompt_tokens": 94398,
+    "completion_tokens": 67553,
+    "total_tokens": 161951,
+    "latency_ms": 907138,
+    "errors": 0
+  },
+  "production_prompt_unchanged": true,
+  "evidence_note": "Literal-number checks are leads, not truth verdicts; semantic review required.",
+  "manual_evidence_review": {
+    "scope": "all challenged_claims.counter_evidence; not every validation/missed_risks sentence",
+    "claims_reviewed": 20,
+    "counts": {
+      "sourced_but_limited": 1,
+      "direct_source": 13,
+      "derived_checked": 4,
+      "negative_evidence": 2
+    },
+    "unsupported_or_fabricated_found": 0,
+    "rows": [
+      {
+        "sample": "short_partial",
+        "arm": "baseline",
+        "run": 1,
+        "claim_index": 0,
+        "classification": "sourced_but_limited",
+        "original_thesis": "bear_case：技术面中期破位与均线压制，反弹缺乏量能支撑（HIGH）"
+      },
+      {
+        "sample": "short_partial",
+        "arm": "baseline",
+        "run": 1,
+        "claim_index": 1,
+        "classification": "direct_source",
+        "original_thesis": "bull_case：资金面大单净流入2653万美元显示短线修复动能（MEDIUM）"
+      },
+      {
+        "sample": "short_partial",
+        "arm": "baseline",
+        "run": 1,
+        "claim_index": 2,
+        "classification": "derived_checked",
+        "original_thesis": "bear_case：PE(TTM)132.51远高于半导体行业中位数36.92（HIGH）",
+        "derived_check": {
+          "formula": "650/524-1 and 620/524-1",
+          "computed": [
+            24.045801526717558,
+            18.32061068702291
+          ],
+          "reported": [
+            24.0,
+            18.3
+          ],
+          "pass": true
+        }
+      },
+      {
+        "sample": "short_partial",
+        "arm": "variant",
+        "run": 1,
+        "claim_index": 0,
+        "classification": "negative_evidence",
+        "original_thesis": "key_levels.support 给出 [502.6, 480.0]"
+      },
+      {
+        "sample": "short_partial",
+        "arm": "variant",
+        "run": 1,
+        "claim_index": 1,
+        "classification": "derived_checked",
+        "original_thesis": "bull_case[1]: '资金面大单净流入2653万美元'",
+        "derived_check": {
+          "formula": "26,532,186.272-6,036,891.821",
+          "computed": 20495294.450999998,
+          "comparison": "below 26,530,000",
+          "pass": true
+        }
+      },
+      {
+        "sample": "short_partial",
+        "arm": "variant",
+        "run": 2,
+        "claim_index": 0,
+        "classification": "direct_source",
+        "original_thesis": "bull_case二：资金面大单净流入2653万美元"
+      },
+      {
+        "sample": "short_partial",
+        "arm": "variant",
+        "run": 2,
+        "claim_index": 1,
+        "classification": "negative_evidence",
+        "original_thesis": "key_levels.support 含 480.0"
+      },
+      {
+        "sample": "short_partial",
+        "arm": "variant",
+        "run": 2,
+        "claim_index": 2,
+        "classification": "direct_source",
+        "original_thesis": "entry_strategy：等待突破MA5($530.05)后做多，或反弹至$530.05遇阻时做空"
+      },
+      {
+        "sample": "long_partial",
+        "arm": "baseline",
+        "run": 1,
+        "claim_index": 0,
+        "classification": "direct_source",
+        "original_thesis": "估值显著低于行业中枢且基本面扎实：当前PE(TTM)为22.762倍，远低于Technology行业中位数951.38倍，具备极强的估值修复弹性。"
+      },
+      {
+        "sample": "long_partial",
+        "arm": "baseline",
+        "run": 1,
+        "claim_index": 1,
+        "classification": "direct_source",
+        "original_thesis": "盘前微跌-0.39%且成交量仅16080股，属正常缩量回调非趋势反转。"
+      },
+      {
+        "sample": "long_partial",
+        "arm": "baseline",
+        "run": 1,
+        "claim_index": 2,
+        "classification": "direct_source",
+        "original_thesis": "风险已覆盖：宏观与大盘日线逆风（SPY/QQQ趋势DOWN）为MEDIUM约束。"
+      },
+      {
+        "sample": "long_partial",
+        "arm": "baseline",
+        "run": 2,
+        "claim_index": 0,
+        "classification": "direct_source",
+        "original_thesis": "估值显著低于行业中枢且基本面扎实：当前PE(TTM)为22.762倍，远低于Technology行业中位数951.38倍(strength=HIGH, claim_type=valuation_cheap)"
+      },
+      {
+        "sample": "long_partial",
+        "arm": "baseline",
+        "run": 2,
+        "claim_index": 1,
+        "classification": "direct_source",
+        "original_thesis": "盘前微跌-0.39%且成交量仅16080股，属正常缩量回调非趋势反转(entry_strategy)"
+      },
+      {
+        "sample": "long_partial",
+        "arm": "baseline",
+        "run": 2,
+        "claim_index": 2,
+        "classification": "derived_checked",
+        "original_thesis": "并购与AI产品双重催化(HIGH强度)：56.6亿美元收购Braze强化AI营销云布局",
+        "derived_check": {
+          "formula": "100*5.66e9/204573110000",
+          "computed": 2.7667370359672394,
+          "reported": 2.8,
+          "pass": true
+        }
+      },
+      {
+        "sample": "long_partial",
+        "arm": "variant",
+        "run": 1,
+        "claim_index": 0,
+        "classification": "direct_source",
+        "original_thesis": "当前PE(TTM)为22.762倍，远低于Technology行业中位数951.38倍，具备极强的估值修复弹性（strength=HIGH）。"
+      },
+      {
+        "sample": "long_partial",
+        "arm": "variant",
+        "run": 1,
+        "claim_index": 1,
+        "classification": "derived_checked",
+        "original_thesis": "并购与AI产品双重催化（Braze 56.6亿美元收购+Hunter AI）构成未被价格反映的HIGH级催化。",
+        "derived_check": {
+          "formula": "100*(250.29/241.78-1)",
+          "computed": 3.519728678964351,
+          "reported": 3.52,
+          "pass": true
+        }
+      },
+      {
+        "sample": "long_partial",
+        "arm": "variant",
+        "run": 1,
+        "claim_index": 2,
+        "classification": "direct_source",
+        "original_thesis": "宏观与大盘日线逆风已被列入constraints（SPY趋势DOWN，QQQ趋势DOWN）。"
+      },
+      {
+        "sample": "long_partial",
+        "arm": "variant",
+        "run": 2,
+        "claim_index": 0,
+        "classification": "direct_source",
+        "original_thesis": "PE(TTM)为22.762倍，远低于Technology行业中位数951.38倍，具备极强的估值修复弹性(bull_case #1, strength=HIGH)"
+      },
+      {
+        "sample": "long_partial",
+        "arm": "variant",
+        "run": 2,
+        "claim_index": 1,
+        "classification": "direct_source",
+        "original_thesis": "'盘前微跌-0.39%且成交量仅16080股，属正常缩量回调非趋势反转'(execution_plan.entry_strategy)"
+      },
+      {
+        "sample": "long_partial",
+        "arm": "variant",
+        "run": 2,
+        "claim_index": 2,
+        "classification": "direct_source",
+        "original_thesis": "风险完备性: risks仅列内部人偏空、技术超买与资金分歧、SPY/QQQ日线DOWN三条，causal_chain与tripwires均无日期锚定宏观事件"
+      }
+    ],
+    "caveat": "sourced_but_limited means citation exists but does not fully prove the stated weakness; derived values checked arithmetically."
+  },
+  "fallback_routing_contract": {
+    "cases": [
+      {
+        "case": "primary",
+        "calls": 1,
+        "models": [
+          "deepseek-v4.1-flash"
+        ],
+        "tier": "primary",
+        "fallback": false,
+        "self_debate": false,
+        "primary_error_recorded": null,
+        "max_tokens": [
+          16000
+        ],
+        "thinking": [
+          true
+        ],
+        "pass": true
+      },
+      {
+        "case": "fallback_independent",
+        "calls": 2,
+        "models": [
+          "deepseek-v4.1-flash",
+          "kimi-k2.6"
+        ],
+        "tier": "fallback_independent",
+        "fallback": true,
+        "self_debate": false,
+        "primary_error_recorded": "injected_json_failure",
+        "max_tokens": [
+          16000,
+          16000
+        ],
+        "thinking": [
+          true,
+          true
+        ],
+        "pass": true
+      },
+      {
+        "case": "fallback_independent_nonthinking",
+        "calls": 3,
+        "models": [
+          "deepseek-v4.1-flash",
+          "kimi-k2.6",
+          "glm-5.2"
+        ],
+        "tier": "fallback_independent_nonthinking",
+        "fallback": true,
+        "self_debate": false,
+        "primary_error_recorded": "injected_json_failure",
+        "max_tokens": [
+          16000,
+          16000,
+          2000
+        ],
+        "thinking": [
+          true,
+          true,
+          false
+        ],
+        "pass": true
+      },
+      {
+        "case": "self_debate",
+        "calls": 4,
+        "models": [
+          "deepseek-v4.1-flash",
+          "kimi-k2.6",
+          "glm-5.2",
+          "qwen3.7-max"
+        ],
+        "tier": "self_debate",
+        "fallback": true,
+        "self_debate": true,
+        "primary_error_recorded": "injected_json_failure",
+        "max_tokens": [
+          16000,
+          16000,
+          2000,
+          2000
+        ],
+        "thinking": [
+          true,
+          true,
+          false,
+          false
+        ],
+        "pass": true
+      }
+    ],
+    "all_pass": true,
+    "scope": "stubbed routing only; not live T2-T4 model-quality or HTTP-failure validation"
+  }
+}

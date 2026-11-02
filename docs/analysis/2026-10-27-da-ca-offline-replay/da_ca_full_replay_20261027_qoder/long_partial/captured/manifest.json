@@ -1,0 +1,40 @@
+{
+  "label": "long_partial",
+  "symbol": "US.CRM",
+  "arms": {
+    "baseline": {
+      "system_fingerprint": "bd4f78da4ac7",
+      "system_sha256": "5053e09ff2a24d5f1fe128cbd16858cbafa9aa963dd732522970bab2c77506df",
+      "user_sha256": "6ecfccdf3bf08322201b2068cf7660ecb798510da7297c76ede0dfebf382dede",
+      "kwargs": {
+        "temperature": 0.0,
+        "model": "deepseek-v4.1-flash",
+        "max_tokens": 16000,
+        "extra_body": {
+          "enable_thinking": true
+        },
+        "timeout": 300
+      },
+      "data_text_sha256": "d04df1b0e54ca3c8b19018a6bb1762557e13aabb75af23199cf70755c8701707",
+      "analysis_view_sha256": "b32c349756e909701a9390749262ccf2f15e89f0cf6ab98a40a06c754bf0c832"
+    },
+    "variant": {
+      "system_fingerprint": "40e9681c9661",
+      "system_sha256": "d429ce5a2372a8bd7da8f6e4d9bc0b512ee66a68c09eb9e1403ea8e9551d39d3",
+      "user_sha256": "94e75667969376eb176871a127390d115263fb40102d969592a7d048e6325193",
+      "kwargs": {
+        "temperature": 0.0,
+        "model": "deepseek-v4.1-flash",
+        "max_tokens": 16000,
+        "extra_body": {
+          "enable_thinking": true
+        },
+        "timeout": 300
+      },
+      "data_text_sha256": "d04df1b0e54ca3c8b19018a6bb1762557e13aabb75af23199cf70755c8701707",
+      "analysis_view_sha256": "b32c349756e909701a9390749262ccf2f15e89f0cf6ab98a40a06c754bf0c832"
+    }
+  },
+  "pass1_sha256": "9f50cee40a0c433ca6da254edf15eae4679cc9a92e1bb37307f3fa4e8dd484b4",
+  "pass1_source": "fresh single generation; no inverse reconstruction"
+}

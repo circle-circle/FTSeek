@@ -1,0 +1,65 @@
+{
+  "checks": {
+    "production_unchanged": true,
+    "only_two_diff_blocks": true,
+    "old_system_count_rule_removed": true,
+    "old_user_count_rule_removed": true,
+    "single_hard_flaw_rule_present": true,
+    "direction_condition_preserved": true,
+    "downstream_truth_table": true
+  },
+  "state_cases": [
+    {
+      "input": [
+        "BUY",
+        "BUY",
+        "AGREE"
+      ],
+      "expected": "AGREE",
+      "actual": "AGREE",
+      "pass": true
+    },
+    {
+      "input": [
+        "BUY",
+        "BUY",
+        "PARTIAL_AGREE"
+      ],
+      "expected": "PARTIAL_AGREE",
+      "actual": "PARTIAL_AGREE",
+      "pass": true
+    },
+    {
+      "input": [
+        "BUY",
+        "SELL_SHORT",
+        "DISAGREE"
+      ],
+      "expected": "DISAGREE",
+      "actual": "DISAGREE",
+      "pass": true
+    },
+    {
+      "input": [
+        "SKIP",
+        "BUY",
+        "AGREE"
+      ],
+      "expected": "ANALYST_SKIP",
+      "actual": "ANALYST_SKIP",
+      "pass": true
+    },
+    {
+      "input": [
+        "BUY",
+        "SKIP",
+        "DISAGREE"
+      ],
+      "expected": "ABSTAIN",
+      "actual": "ABSTAIN",
+      "pass": true
+    }
+  ],
+  "all_pass": true,
+  "note": "Static/deterministic only; no LLM behavior claim."
+}

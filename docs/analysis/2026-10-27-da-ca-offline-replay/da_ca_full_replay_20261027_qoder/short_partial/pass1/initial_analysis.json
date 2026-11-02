@@ -1,0 +1,135 @@
+{
+  "executive_summary": "AMD盘前+1.40%属超卖反弹但量能仅19.2万股，PE(TTM)132.51远超行业中枢36.92且MSPR-68.01，多空证据互斥，观望等待右侧放量确认。",
+  "rating": "观望",
+  "score_band": "MEDIUM",
+  "direction": "SKIP",
+  "skip_reason": "盘前+1.40%属超卖反弹但量能仅19.2万股未放大，做多缺乏趋势支撑；做空面临RSI超卖及60位分析师83.3%买入评级托底，盈亏比不佳，等待右侧放量确认方向。",
+  "bull_case": [
+    {
+      "thesis": "AI产品催化与分析师强力背书提供中长期估值锚",
+      "strength": "HIGH",
+      "evidence": "AMD推出Helios blueprint扩展rack-scale AI战略；60位分析师中83.3%维持买入，Susquehanna上调目标价至$620，联博维持$650。",
+      "source_type": "news",
+      "claim_type": "product_catalyst"
+    },
+    {
+      "thesis": "技术面超卖反弹与资金承接显示短线修复动能",
+      "strength": "MEDIUM",
+      "evidence": "RSI(12)和BR指标转入超卖区间，收盘价位于BOLL下轨下方；资金面大单净流入2653万美元，盘前上涨1.40%至$524.0。",
+      "source_type": "technical",
+      "claim_type": "technical_breakout"
+    }
+  ],
+  "bear_case": [
+    {
+      "thesis": "估值极度昂贵且内部人持续净卖出",
+      "strength": "HIGH",
+      "evidence": "PE(TTM) 132.51 远高于半导体行业中位数 36.92；6个月平均MSPR为-68.01显示内部人净卖出。",
+      "source_type": "fundamental",
+      "claim_type": "valuation_expensive"
+    },
+    {
+      "thesis": "技术面中期破位与均线压制，反弹缺乏量能支撑",
+      "strength": "HIGH",
+      "evidence": "MA5跌破MA60形成死叉，MA10下穿MA30死叉，20日跌幅达-18.1%；盘前成交量仅19.2万股，量比0.78x未见放量。",
+      "source_type": "technical",
+      "claim_type": "technical_breakdown"
+    }
+  ],
+  "constraints": [
+    {
+      "thesis": "大盘日线趋势向下且半导体板块综合趋势向下",
+      "strength": "MEDIUM",
+      "evidence": "SPY/QQQ日线趋势DOWN，半导体行业5日DOWN(-2.6%)，板块环境不支持个股独立走强。"
+    }
+  ],
+  "causal_chain": "AMD发布Helios AI蓝图扩展推理市场(事件) → 分析师上调目标价至$620-$650提供估值锚(估值) → 但短期受制于PE 132.51远超行业中枢36.92及均线死叉压制(价格) → 盘前+1.40%属超卖后的技术性修复而非趋势反转(交易)",
+  "execution_plan": {
+    "entry_strategy": "观望，等待右侧放量突破MA5($530.05)后做多，或反弹至$530.05遇阻时做空",
+    "entry_archetype": "BREAKOUT",
+    "confirmation": {
+      "price_level": null,
+      "side": "above",
+      "ttl_min": 60
+    },
+    "chase_cap_price": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "entry_price": null,
+    "stop_loss_price": null,
+    "take_profit_price": null,
+    "invalidation": "无",
+    "tripwires": [
+      {
+        "metric": "盘前成交量",
+        "threshold": ">500000股",
+        "deadline": "2026-10-26",
+        "source": "盘前时段数据"
+      },
+      {
+        "metric": "收盘价",
+        "threshold": "突破530.05",
+        "deadline": "2026-10-26",
+        "source": "技术面"
+      }
+    ],
+    "invalidation_triggers": [
+      {
+        "metric": "收盘价",
+        "operator": ">",
+        "value": 530.05,
+        "deadline": "2026-10-26"
+      },
+      {
+        "metric": "量比",
+        "operator": ">",
+        "value": 1.5,
+        "deadline": "2026-10-26"
+      }
+    ]
+  },
+  "key_levels": {
+    "current": 524.0,
+    "support": [
+      502.6,
+      480.0
+    ],
+    "resistance": [
+      530.05,
+      551.18
+    ]
+  },
+  "risks": [
+    "估值杀跌风险：PE(TTM) 132.51 远超行业中枢 36.92，若AI营收转化不及预期，高估值面临均值回归压力。",
+    "大盘与板块共振下行风险：SPY/QQQ日线趋势DOWN，半导体板块5日跌2.6%，系统性风险可能拖累个股反弹。",
+    "内部人抛售压力：6个月平均MSPR为-68.01，高管净卖出可能限制股价上行空间。"
+  ],
+  "data_quality_note": "18项完整/0项降级/1项缺失(Futu新闻)。缺失Futu新闻不影响核心逻辑，已通过Finnhub新闻事实流和研报补充催化剂与情绪数据，对分析结论无实质性影响。",
+  "evidence_gaps": [
+    "缺失具体财报日历日期，无法精确规避财报前3日不开仓规则",
+    "缺失EPS具体数值，无法计算PEG以进一步评估高估值合理性"
+  ],
+  "_model_reported": "qwen3.7-max",
+  "_finish_reason": "stop",
+  "_usage": {
+    "completion_tokens": 5988,
+    "completion_tokens_details": {
+      "reasoning_tokens": 4501
+    },
+    "prompt_tokens": 12298,
+    "prompt_tokens_details": {
+      "cache_creation": {
+        "ephemeral_5m_input_tokens": 12290
+      },
+      "cache_creation_input_tokens": 12290,
+      "cache_type": "ephemeral",
+      "cache_write_tokens": 12290,
+      "cached_tokens": 0
+    },
+    "total_tokens": 18286
+  },
+  "_llm_latency_ms": 79763,
+  "_thinking_enabled": true,
+  "score": 6.0,
+  "_score_band_applied": "MEDIUM"
+}
