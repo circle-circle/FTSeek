@@ -10,7 +10,7 @@
 | 1 | app/catalyst/reverse_catalyst.py | pipeline.get_recent_items | NewsPipelineV2 无此方法 ⇒ **死分支, 已删**; DB 兜底一直活着 (news_us.db 414 行/当日) |
 | 2 | app/core/scheduler_core.py | _adapter.get_stock_names | 全仓无此接口 ⇒ **死探测, 已删**; wl_names 恒空 ⇒ 新闻"按公司名匹配"从未生效 |
 | 3 | app/data/providers/futu_extended_provider.py | ctx.get_research_analyst_consensus | **误报 — 保留**: 被探测的是 futu SDK 的 OpenQuoteContext, 已装 10.09.6908 实测有此方法 |
-| 4 | app/monitoring/trading_monitor.py | cb.is_open | 真死门 + **死模块** (get_monitor/start_monitor 全仓零调用方) ⇒ 模块整体**已退役 2026-11-02** (340 行删除); 未来做日内监控须新建在有调用方的位置 |
+| 4 | app/monitoring/trading_monitor.py | cb.is_open | 真死门 + **死模块** ⇒ 模块整体**已退役 2026-11-02** (340 行删除); 退役时 main.py 的启动块一并摘除 (此前它才是唯一实际调用方, 每次启动都真跑 ⇒ 退役后残留 import 会变成每次启动一条 WARNING) |
 
 本文件钉住 1/2 的拆除与 3/4 的前提, 防"照着旧注释把死门重建一遍"。
 """
@@ -81,10 +81,9 @@ class TestSite3FutuSDKProbeKept:
 class TestSite4ModuleRetired:
     """4) TradingMonitor 已整体退役 (2026-11-02), 而不是修它的死守卫。
 
-    退役依据: ①get_monitor/start_monitor/stop_monitor 全仓零调用方 (从未启动)
-    ②4 项能力全有活替代 (watchdog 心跳 / SystemCircuitBreaker.is_triggered +
+    退役依据: ①4 项能力全有活替代 (watchdog 心跳 / SystemCircuitBreaker.is_triggered +
     MarketCircuitBreaker.is_trading_suspended / risk.pdt_guard / pre_trade_gate 日亏熔断)
-    ③内部 cb.is_open 本身恒 False; ④最后改动 2026-07-27。
+    ②内部 cb.is_open 本身恒 False; ③最后改动 2026-07-27。
     若将来要做日内监控, 必须新建在有真实调用方的位置, 不得复活本模块的失败告警。
     """
 
@@ -94,9 +93,19 @@ class TestSite4ModuleRetired:
             importlib.import_module('app.monitoring')
 
     def test_no_starter_references_left(self):
+        """退役后全仓 (含 main.py 启动块) 不得再引用该模块。
+
+        退役首批漏掉 main.py: 它的启动块才是唯一真实调用方 —— 每次启动都真跑
+        (日志 "[监控告警] 已启动"), 删除包后残留 import 变成每次启动一条
+        WARNING: [监控告警] 启动失败: No module named 'app.monitoring'。
+        """
         hits = [str(p.relative_to(REPO)) for p, src in _app_code_sources()
                 if "start_monitor(" in src or "TradingMonitor" in src]
         assert not hits, f"仍有代码引用已退役的 TradingMonitor: {hits}"
+
+        main_src = _code_only((REPO / "main.py").read_text(encoding="utf-8", errors="ignore"))
+        assert "trading_monitor" not in main_src and "监控告警" not in main_src, (
+            "main.py 仍有已退役监控器的启动块 ⇒ 每次启动都会打一条无意义 WARNING")
 
     def test_live_replacements_still_exist(self):
         """反向: 删死模块不得连活在用的替代者一起删 (否则是过度删改)。"""

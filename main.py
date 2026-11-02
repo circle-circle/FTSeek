@@ -839,19 +839,6 @@ def _run_new_scheduler(args):
     except Exception as _mh_e:
         logger.warning(f"[启动·ManualHoldRegistry] 恢复失败 (降级运行): {_mh_e}")
 
-    # ── 启动交易监控告警 (P2 2026-05-20) ──
-    # 必须在 scheduler.run_forever() 之前启动，因为 run_forever 是阻塞的
-    try:
-        from app.core.config_container import get_config as _get_app_config
-        from app.monitoring.trading_monitor import TradingMonitor, start_monitor
-        
-        cfg = _get_app_config()
-        monitor = TradingMonitor(config=cfg.to_dict() if hasattr(cfg, 'to_dict') else {})
-        monitor.start()
-        logger.info("[监控告警] 已启动 (PnL/PDT/熔断器实时监控)")
-    except Exception as e:
-        logger.warning(f"[监控告警] 启动失败：{e}")
-
     # ── 启动盘中归因报告 (P2 2026-05-01) ──
     # 必须在 scheduler.run_forever() 之前启动, 因为 run_forever 是阻塞的
     try:
