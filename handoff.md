@@ -12,19 +12,31 @@
 - **测试**：`tests/test_invalidation_replay.py` 12 → **14** 例（新增「费用异常必须留痕并被计数」「`--refresh-bars` 缺 `--fetch` 必须 exit 2」；原 `--no-fetch` 用例改名固化默认离线）；`test_invalidation_replay + test_atr_trail_replay` **30 passed**。
 - **落档**：`DEB-20261028-bucket-layering-and-tiered-exit.md` 新增 §18 + 状态行；`docs/debates/README.md` 手工索引行同步；`index_generated.md` 重跑。
 - **未解决（待用户决断，本批不动）**：① ~~整批自 10-28 起未提交 5 天~~ ⇒ **已解决**：`39faf7e9a`（研究件 6 文件 + tests + DEB + README + index + analysis 包）与 `4ab73f78f`（vault 产物 81 文件）两笔已提交，工作树干净；② ~~`handoff.md` 自 10-29 RFC-141 起停更 36 个提交~~ ⇒ **已解决**：本次补写 34 个提交，按主题归并为 12 条（见本文件 10-29 → 11-02 各条），并新查出 TradingMonitor 退役遗留 import 一处缺陷（同批已修）；③ ~~`obsidian_vault` 46 改 + 24 新 symbol 卡 + 15 篇 daily note 未提交~~ ⇒ **已解决**（`4ab73f78f`）；④ ~~`docs/analysis/2026-10-27-da-ca-offline-replay/` 未提交~~ ⇒ **已解决**（`39faf7e9a`，含 SHA256SUMS）。
-- **仍挂账（本批不动）**：① RFC-174/175/176/178 **无 `docs/decisions/` 决策文档**，判据只存在于提交历史，检索不到；② 分支 `rfc-060-phase1-hotfixes` 已推 origin，但**本地 `main` 仍停在 10-23**，领先 origin/main 约 82 个提交（合并策略本次已定：fast-forward）。
-- **下一步**：提交方案已落地（两笔提交）；handoff 停更已补齐；已修 4 项不再动。main 的 fast-forward + 推送本条之后执行。
+- **仍挂账（本批不动）**：① RFC-174/175/176/178 **无 `docs/decisions/` 决策文档**，判据只存在于提交历史，检索不到。
+- **下一步**：提交方案已落地（两笔提交）；handoff 停更已补齐；已修 4 项不再动。**main 的 fast-forward + 推送已完成**（见本文件「2026-11-02 分支推送 + main 分叉收口」条目）。
 
 最后更新：2026-11-02（本条）
 
-## 2026-11-02 死门拆除 + 零调用方模块退役批（零交易行为变更，已重启）
+## 2026-11-02 分支推送 + main 分叉收口（fast-forward，零代码变更）
+
+- **触发**：用户令「都做」——授权 ① 推分支 ② 回填 handoff 停更 ③ 收口 main 分叉（合并策略由我定并执行）。
+- **推分支**：`git push origin rfc-060-phase1-hotfixes` ⇒ `23d0f10c5..4ab73f78f`；补记两笔提交后再推一次至 `3741d1405`。分支此前领先 origin 6 个提交，现已全部同步。
+- **分叉诊断**：`git merge-base --is-ancestor main HEAD` = **YES** ⇒ main 是 HEAD 的**严格祖先，无分叉**，不存在需要解冲突的历史；本地 `main` = `origin/main` = `e4a943899`（2026-10-23），落后约 82 个提交。
+- **策略（选定）**：**fast-forward**，不做 merge commit、不做 rebase。理由：① 无分叉 ⇒ FF 是唯一无损动作（保留全部 82 个提交的原始哈希与作者时间线，便于按 commit 回溯）；② merge commit 会引入一个无信息的合流节点，并让「这批改动属于哪条线」的追溯变难；③ rebase 会重写 82 个提交的哈希，与已推送的 `origin/rfc-060-phase1-hotfixes` 脱钩，制造双份历史。
+- **执行方式（不碰运行目录）**：**没有 `git checkout main`**。服务正跑在本目录，改 checkout 会把工作树回退到 10-23 的文件内容（config 热重载会读到旧值）。改用 `git branch -f main rfc-060-phase1-hotfixes` 只移动 ref ⇒ 工作树全程停在 `rfc-060-phase1-hotfixes`，服务目录内容一格未动；再 `git push origin main` ⇒ `e4a943899..3741d1405`（快进推送，无 force）。
+- **收口状态**：`main` = `origin/main` = `origin/rfc-060-phase1-hotfixes` = `HEAD` = `3741d1405`（四者同一提交）。
+- **推送前安全扫描**：`origin/main..HEAD` 共 493 文件 / +73363 −2611；按顶层目录分 `docs` 193 / `obsidian_vault` 95 / `app` 80 / `tests` 67 / `scripts` 48 / `ops` 5 / `config` 2 / `main.py` / `handoff.md`；新增文件中**无 >1MB 单文件**；新增行中 `sk-*` / `AKIA*` / `-----BEGIN PRIVATE KEY` / `xoxb-` / `ghp_` 五类凭证模式**命中 0**（`docs/analysis` 归档里只有 `f"Bearer {DASHSCOPE_KEY}"` 模板，密钥从外部配置模块取，无字面量）。
+- **config 变更复核**：`entry_confirm_enabled` true→false（用户 10-31 裁「关门」）、`risk_cap_usd_per_trade` 80→0（当日证伪回退）、`min_notional_usd` 2500→5500（P3，用户裁「P3上」）、`universe_expansion.entry_enabled` true→false（RFC-182 治理收口）——**全部是用户裁决或已证伪回退，无新增 `enabled: true` 绕过审批**，且早已在运行服务中生效。
+- **下一步**：main 与分支已同指一处，后续两个分支任选其一开发即可；**不要**再对 main 做 force push（该 ref 是共享分支）。
+
+最后更新：2026-11-02（本条）
 
 - **背景**：宪章 §三.3 要求每次改动更新进度队列；10-29 RFC-141 之后 **34 个提交**未进 `handoff.md`（记录散在 `docs/decisions/` 与 `docs/audits/`）。本条起补齐，按主题归并 12 条（新条目一律「最新在上」，插在本条与 10-29 RFC-141 之间）。
 - **`app/review` 4 个零调用方模块退役**（`7d97fcf33`）：`improvement_generator.py` 92 行 / `psychology_analyzer.py` 77 行 / `strategy_analysis.py` 71 行 / `suggestion_engine.py` 156 行 = **396 行**，连同 `__init__.py` re-export 一并删；`tests/test_suggestion_engine.py` 随模块删除；`results/explore_20260905/ssot_findings.md` 同批改写。
 - **LLM 逐笔归因死门拆除**（`ee6aabc66`）：`app/core/scheduler_triggers.py` 里 `hasattr` 检查一个**从不存在**的方法 ⇒ 逐笔 LLM 归因从未生效；拆除并加 `tests/test_attribution_dead_gate.py`。
 - **hasattr 能力探测死门拆 2 处**（`00acdd8fe`）：新闻 in-memory 读取（`app/catalyst/reverse_catalyst.py`）、券商公司名注入（`app/core/scheduler_core.py`）；另 4 处裁决留档（futu SDK 的 `get_research_analyst_consensus` = **误报保留**，实测 SDK 有此方法）。
 - **TradingMonitor 退役**（`1d624dd16`）：`app/monitoring/` 整包删除（`trading_monitor.py` 340 行 + `__init__.py`）；4 项能力均有活替代（watchdog 心跳 / `SystemCircuitBreaker.is_triggered` / `MarketCircuitBreaker.is_trading_suspended` / `app.risk.pdt_guard` / `pre_trade_gate` 日亏熔断）；定案「不接公司名注入」。
-- **重启**（journal `systemctl` 记录）：11-02 08:59 / 09:25 / 09:36 / 10:30 共 4 次；当前 `ExecMainStartTimestamp=2026-11-02 10:30:19`、`ActiveState=active`。
+- **重启**（journal `systemctl` 记录）：11-02 08:59 / 09:25 / 09:36 / 10:30 共 4 次（10:30 那次即 `1d624dd16` 落地后的重启，也是遗留 import 告警出现的那次）。
 - **⚠ 本条新查出的遗留缺陷（已修，见下方补记条目）**：`1d624dd16` 的退役依据「该监控器从未启动」**与日志不符** —— `main.py` 启动块一直是它的唯一真实调用方，每次启动都真跑（`logs/ftseek_us.log` 有 4 条「[监控告警] 已启动」）；退役只删了包、漏删 `main.py` 启动块 ⇒ 10:30 重启后每次启动都打 `WARNING: [监控告警] 启动失败：No module named 'app.monitoring'`。该退役批的测试只扫 `app/` 目录（`_app_code_sources()`），漏掉根目录 `main.py` ⇒ 没抓到。
 - **下一步**：见本文件「2026-11-02 TradingMonitor 退役遗留 import 修补」条目。
 
@@ -35,7 +47,7 @@
 - **病灶**：`1d624dd16` 删除 `app/monitoring/` 整包，但 `main.py:842-853` 的「启动交易监控告警」块仍在 ⇒ 每次启动抛 `ModuleNotFoundError` 并打一条 WARNING（`logs/ftseek_us.log:1343` 实锤：10:30:33 `WARNING: [监控告警] 启动失败：No module named 'app.monitoring'`）。该块本就恒失败（模块已不存在），删除它**不改变任何运行行为**，只是消除每次启动的假告警（该告警会进 `logs/error_alert.log` 的告警面）。
 - **改动**：`main.py` 删掉整个启动块（含 import 与 `except → warning`）；`tests/test_hasattr_capability_gates.py` 的 `test_no_starter_references_left` 补上根目录 `main.py` 的断言（原先只扫 `app/` ⇒ 覆盖漏洞），并在模块 docstring 的第 4 行更正「全仓零调用方」的错误表述。
 - **验证**：`tests/test_hasattr_capability_gates.py` **11 passed**；**变异验证**：把启动块塞回 `main.py` ⇒ 该用例转红（`1 failed, 10 passed`），随即还原；`py_compile main.py` 过、`scripts/check_undefined_names.py` 退出码 0；全仓 `grep app.monitoring|trading_monitor|监控告警` 只剩 `app/positions/source.py` 的中文措辞（与退役模块无关）。
-- **重启**：11-02 本条提交后按 AGENT.md 走 `systemctl restart ftseek-us` + `scripts/startup_smoke_check.py`。
+- **重启**：11-02 17:13 按 AGENT.md 走 `systemctl restart ftseek-us` + `scripts/startup_smoke_check.py --wait 90` ⇒ **7/7 全过**（ConfigValidator / 漂移检测 / 热重载 / SSOT 审计 0 BLOCKING / 双臂安全确认 / 退出快循环 / 零 Traceback-CRITICAL）；重启后 `logs/ftseek_us.log` **无新增「监控告警」行**（遗留 WARNING 已消失），全文 `Traceback|CRITICAL` 计数 **0**；重启前在途出场核过：`data/ftseek_us.db` 未平仓 2 笔（US.MRK / US.LMT，均 10-30 入场，非幽灵仓，与 10-31 记录一致）。
 - **下一步**：无（收口）。教训已写进测试断言与 docstring，不再重复提案。
 
 最后更新：2026-11-02（本条）
