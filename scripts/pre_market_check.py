@@ -46,6 +46,26 @@ if (_VENV_PY.exists() and sys.prefix != str(BASE_DIR / "venv")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(levelname)s: %(message)s')
 logger = logging.getLogger("ftseek_us.premarket")
 
+# DA 主链 bridge 应产出时点 (ET HHMM)。历史实测 08:39–08:45 完成 ⇒ 08:45 为保守上限。
+DA_BRIDGE_READY_ET = 845
+
+
+def _da_bridge_phase(now_et_dt):
+    """判定 bridge 缺失属于"相位提前"还是"真未产出" — 纯函数 (无 IO / 无 DB), 便于直测。
+
+    2026-11-02 冬令时回归: 盘前预检固定 20:45 CST, EDT = ET 08:45 (DA 之后) 而 EST = ET 07:45
+    (DA 08:00 开跑之前) ⇒ 旧文案 "DA 18:00任务未产出" 使每个冬季交易日都误报供给断链。
+
+    Returns:
+        (is_early: bool, detail: str)
+    """
+    hm = now_et_dt.hour * 100 + now_et_dt.minute
+    if hm < DA_BRIDGE_READY_ET:
+        return True, ("尚未到 DA 生成时点 (ET %s < 08:45); DA 主链 ET 08:00 开跑, 约 08:41 完成 — 非故障"
+                      % now_et_dt.strftime("%H:%M"))
+    return False, ("bridge 未生成且已过 ET 08:45 应产出时点 — 查 data/shadow/da_main_schedule.jsonl "
+                   "的 status=complete / pipeline_* 行")
+
 
 def run_premarket_check() -> dict:
     """
@@ -161,15 +181,22 @@ def run_premarket_check() -> dict:
         results["checks"].append({"name": "数据源连接", "status": "ERROR", "detail": str(e)})
         results["warnings"].append(f"数据源检查异常: {e}")
 
-    # ── 5b. DA bridge 就绪 (2026-07-21 P0: 供给链路核心; DA 18:00任务 ~19:10 产出当日文件) ──
+    # ── 5b. DA bridge 就绪 (2026-07-21 P0: 供给链路核心) ──
+    #   2026-11-02 冬令时修正: DA 主链 = ET 08:00 开跑 / 约 08:41 产出 (旧注释写 "18:00任务 ~19:10"
+    #   是 EDT 时代的 CST 口径, 冬令时下 CST 20:45 = ET 07:45, 早于 DA 开跑 15min ⇒ 旧文案
+    #   让每个冬季交易日都误报"供给断链"。改为按 ET 时点判相位提前 vs 真未产出。
     try:
         from app.utils.timezone import now_et as _now_et_chk
-        today_et = _now_et_chk().strftime("%Y-%m-%d")
+        _now = _now_et_chk()
+        today_et = _now.strftime("%Y-%m-%d")
         bp = BASE_DIR / "data" / f"opportunity_scan_{today_et}.json"
         if not bp.exists():
-            results["checks"].append({"name": "DA bridge 就绪", "status": "WARN",
-                                      "detail": f"{today_et} bridge 未生成 (DA 18:00任务未产出或今日非交易日)"})
-            results["warnings"].append(f"bridge 未生成: opportunity_scan_{today_et}.json")
+            _early, _why = _da_bridge_phase(_now)
+            results["checks"].append({"name": "DA bridge 就绪",
+                                      "status": "INFO" if _early else "WARN",
+                                      "detail": f"{today_et} {_why}"})
+            if not _early:
+                results["warnings"].append(f"bridge 未生成: opportunity_scan_{today_et}.json")
         else:
             _bd = json.loads(bp.read_text())
             _bc = _bd.get("candidates", [])
