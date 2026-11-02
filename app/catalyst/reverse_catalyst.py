@@ -130,20 +130,12 @@ def _search_news_for_symbol(symbol: str, scheduler=None,
     items = []
     
     # 从 NewsPipelineV2 获取
-    try:
-        pipeline = getattr(scheduler, 'news_pipeline_v2', None)
-        if pipeline and hasattr(pipeline, 'get_recent_items'):
-            all_items = pipeline.get_recent_items(max_age_minutes=minutes)
-            for item in all_items:
-                # 检查是否关联到此标的
-                if symbol in (item.related_stocks or []):
-                    items.append(item)
-                elif symbol.replace("US.", "").lower() in item.title.lower():
-                    items.append(item)
-    except Exception:
-        pass
-    
-    # Fallback: NewsNow DB
+    # 2026-11-01 拆除死分支: `hasattr(pipeline, 'get_recent_items')` —— NewsPipelineV2 只有
+    #   add_source / attach_collector / start / stop / get_stats (无任何取近期条目的方法)
+    #   ⇒ 恒 False, 以下 in-memory 读取从未执行过。实际生效的一直是下面的 NewsNow DB 兜底
+    #   (实测 data/rsshub_us/news_us.db 有 414 行, 最新 fetched_at 当日) ⇒ 删除本分支零行为变化。
+    # 恢复: 先给 NewsPipelineV2 真正实现 get_recent_items(max_age_minutes) 并单测, 再接回来。
+    # 从 NewsNow DB 兜底 (原样保留)
     if not items:
         try:
             import sqlite3

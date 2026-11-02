@@ -530,17 +530,15 @@ class TradingScheduler:
                 if name:
                     wl_names.add(name)
 
-            # P2b (2026-06-16): 从 Futu 查询公司名称注入 watchlist_names
-            # 根因: self.watchlist 是纯字符串列表, 无公司名 → wl_names 永远为空
-            try:
-                _adapter = getattr(getattr(self, "execution_engine", None), "broker_adapter", None)
-                if _adapter and hasattr(_adapter, "get_stock_names"):
-                    _names = _adapter.get_stock_names(list(wl_codes))
-                    if _names:
-                        wl_names.update(_names.values())
-                        logger.info(f"[NewsV2] 从 Broker 注入 {len(_names)} 个公司名")
-            except Exception as _name_err:
-                logger.debug(f"[NewsV2] 公司名注入跳过: {_name_err}")
+            # P2b (2026-06-16) 原意: 从 Futu 查询公司名称注入 watchlist_names
+            # 2026-11-01 拆除死探测: `hasattr(_adapter, "get_stock_names")` —— 全仓无该方法
+            #   (BrokerAdapter / 数据层均无取公司名的接口) ⇒ 恒 False ⇒ wl_names 始终为空,
+            #   RelevanceFilter 的「按公司名匹配」分支 (relevance_filter.py:165) 从未生效。
+            #   即: 那条 P2b "修复" 本身是空操作。真接需要先在适配器实现 get_stock_names
+            #   (Futu 侧可走 get_stock_basicinfo), 且要评估对新闻相关性打分的影响, 属行为变更。
+            # 现状: wl_names 只来自 watchlist 里 dict 形态的 "name" 字段 (上游是纯代码列表 ⇒ 空)。
+            # 另注: 整块 NewsPipelineV2 构造在 `news_v2.enabled=false` 之下 (DEB-20260731 C2 退役,
+            #   启动日志 "[NewsV2] 已退役 … 产出零消费者") ⇒ 本块连带不执行; 上面两条是"若复活"时的前置。
 
             self.news_pipeline_v2 = NewsPipelineV2(
                 watchlist_codes=wl_codes,
