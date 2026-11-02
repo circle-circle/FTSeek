@@ -600,33 +600,21 @@ def check_daily_review(scheduler: 'TradingScheduler'):
                 except Exception as ve:
                     logger.debug(f"[教训验证] 失败 (不影响主流程): {ve}")
                 
-                # ── LLM 逐笔归因 (角色重定位 2026-05-13) ──
-                # 对每笔已平仓交易调 LLM 做归因，输出写入 trade_attribution
-                try:
-                    from app.llm.attribution_engine import get_attribution_engine
-                    from app.storage.trade_recorder import get_trade_recorder
-                    
-                    engine = get_attribution_engine()
-                    recorder = get_trade_recorder()
-                    
-                    # 获取今日已平仓交易
-                    today_str = now_et.date().isoformat()
-                    today_trades = recorder.get_trades_by_date(today_str) if hasattr(recorder, 'get_trades_by_date') else []
-                    
-                    for trade in today_trades:
-                        if trade.get("exit_time"):  # 只归因已平仓
-                            attribution = engine.attribute_trade(trade, market_context={
-                                "vix": review.get("market_context", {}).get("vix", "N/A"),
-                                "spy_chg": review.get("market_context", {}).get("spy_change", 0),
-                                "session": "after_hours",
-                                "regime": review.get("market_context", {}).get("regime", "N/A"),
-                            })
-                            engine.save(attribution)
-                    
-                    if today_trades:
-                        logger.info(f"[LLM归因] 今日 {len(today_trades)} 笔交易归因完成")
-                except Exception as lae:
-                    logger.debug(f"[LLM归因] 失败 (不影响主流程): {lae}")
+                # ── LLM 逐笔归因 — 已下线 (2026-11-01, 死门拆除) ──
+                # 死因: `hasattr(recorder, 'get_trades_by_date')` — TradeRecorder 只有
+                #   `get_records_by_date` (8 个公开方法实测), 该方法**从不存在** ⇒ hasattr 恒 False
+                #   ⇒ today_trades 恒 [] ⇒ 循环体一次没跑过, 且整块包在 except→logger.debug 里
+                #   (LOG_LEVEL=INFO 不可见) = 典型的"零调用 + 零告警"。
+                # 取证: trade_attribution 223 行, llm_model / key_decision_factor /
+                #   root_cause_category 填充均为 **0**; 表内行全部来自 order_executor 的下单期
+                #   阶段性归因 (INSERT OR REPLACE, app/pipeline/order_executor.py:2970),
+                #   与本块无关。本块从未写入过一行。
+                # 连带 (只登记, 本批不动): weekly_proposer._get_systemic_issues 读
+                #   `is_systemic_issue=1` + key_decision_factor ⇒ 该表无一行带 LLM 标签 ⇒ 恒 []。
+                # 另: app/llm/attribution_engine 本身仍有活调用方 (weekly_proposer), 故只删本块。
+                # 恢复本块前必须先做三件事, 否则等于白烧 LLM 费用:
+                #   ①改用真实方法名 recorder.get_records_by_date ②按"每笔已平仓一次 LLM 调用"
+                #   预注册费用预算 ③打开后首日核对 trade_attribution.llm_model 有非空行。
                 # ── LLM 逐笔归因结束 ──
 
                 # ── Task #12 (2026-05-27): 信号质量追踪与反馈闭环 ──
