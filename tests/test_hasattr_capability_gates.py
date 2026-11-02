@@ -10,7 +10,7 @@
 | 1 | app/catalyst/reverse_catalyst.py | pipeline.get_recent_items | NewsPipelineV2 无此方法 ⇒ **死分支, 已删**; DB 兜底一直活着 (news_us.db 414 行/当日) |
 | 2 | app/core/scheduler_core.py | _adapter.get_stock_names | 全仓无此接口 ⇒ **死探测, 已删**; wl_names 恒空 ⇒ 新闻"按公司名匹配"从未生效 |
 | 3 | app/data/providers/futu_extended_provider.py | ctx.get_research_analyst_consensus | **误报 — 保留**: 被探测的是 futu SDK 的 OpenQuoteContext, 已装 10.09.6908 实测有此方法 |
-| 4 | app/monitoring/trading_monitor.py | cb.is_open | 真死门, 但**在死模块里**: TradingMonitor 的 get_monitor/start_monitor 全仓零调用方 ⇒ 不动守卫, 模块本身列为退役候选 |
+| 4 | app/monitoring/trading_monitor.py | cb.is_open | 真死门 + **死模块** (get_monitor/start_monitor 全仓零调用方) ⇒ 模块整体**已退役 2026-11-02** (340 行删除); 未来做日内监控须新建在有调用方的位置 |
 
 本文件钉住 1/2 的拆除与 3/4 的前提, 防"照着旧注释把死门重建一遍"。
 """
@@ -78,20 +78,38 @@ class TestSite3FutuSDKProbeKept:
         assert "SDK lacks get_research_analyst_consensus" in src
 
 
-class TestSite4DeadModule:
-    def test_trading_monitor_has_no_starter(self):
-        """守卫 cb.is_open 恒 False, 但模块整体从未启动 ⇒ 不动守卫, 只登记死模块。"""
-        callers = []
-        for p, src in _app_code_sources():
-            if p.name == "trading_monitor.py":
-                continue
-            if "start_monitor(" in src or "get_monitor(" in src:
-                callers.append(str(p.relative_to(REPO)))
-        assert not callers, (
-            f"TradingMonitor 被启用 ({callers}) ⇒ 需先修 cb.is_open 死门 "
-            "(正确 API: MarketCircuitBreaker.is_trading_suspended / SystemCircuitBreaker.is_triggered)")
+class TestSite4ModuleRetired:
+    """4) TradingMonitor 已整体退役 (2026-11-02), 而不是修它的死守卫。
 
-    def test_real_apis_for_future_wiring(self):
+    退役依据: ①get_monitor/start_monitor/stop_monitor 全仓零调用方 (从未启动)
+    ②4 项能力全有活替代 (watchdog 心跳 / SystemCircuitBreaker.is_triggered +
+    MarketCircuitBreaker.is_trading_suspended / risk.pdt_guard / pre_trade_gate 日亏熔断)
+    ③内部 cb.is_open 本身恒 False; ④最后改动 2026-07-27。
+    若将来要做日内监控, 必须新建在有真实调用方的位置, 不得复活本模块的失败告警。
+    """
+
+    def test_package_gone(self):
+        import importlib
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module('app.monitoring')
+
+    def test_no_starter_references_left(self):
+        hits = [str(p.relative_to(REPO)) for p, src in _app_code_sources()
+                if "start_monitor(" in src or "TradingMonitor" in src]
+        assert not hits, f"仍有代码引用已退役的 TradingMonitor: {hits}"
+
+    def test_live_replacements_still_exist(self):
+        """反向: 删死模块不得连活在用的替代者一起删 (否则是过度删改)。"""
+        from app.risk.market_circuit_breaker import MarketCircuitBreaker
+        from app.risk.circuit_breaker import SystemCircuitBreaker
+        from app.risk.pdt_guard import PDTGuard
+        from app.observability.watchdog import Watchdog
         assert hasattr(MarketCircuitBreaker, "is_trading_suspended")
         assert hasattr(SystemCircuitBreaker, "is_triggered")
-        assert not hasattr(MarketCircuitBreaker, "is_open")
+        assert callable(PDTGuard.check_trade_permission)
+        assert hasattr(Watchdog, "register_heartbeat") or hasattr(Watchdog, "start")
+
+    def test_real_apis_for_future_wiring(self):
+        from app.risk.market_circuit_breaker import MarketCircuitBreaker
+        assert not hasattr(MarketCircuitBreaker, "is_open"), (
+            "is_open 仍不存在 ⇒ 若将来新建监控器, 别再按这个名字写守卫")

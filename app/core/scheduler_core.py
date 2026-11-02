@@ -539,6 +539,9 @@ class TradingScheduler:
             # 现状: wl_names 只来自 watchlist 里 dict 形态的 "name" 字段 (上游是纯代码列表 ⇒ 空)。
             # 另注: 整块 NewsPipelineV2 构造在 `news_v2.enabled=false` 之下 (DEB-20260731 C2 退役,
             #   启动日志 "[NewsV2] 已退役 … 产出零消费者") ⇒ 本块连带不执行; 上面两条是"若复活"时的前置。
+            # 2026-11-02 决策 (按分析执行): **不接公司名注入** —— 消费者已退役, 接上零效果;
+            #   若真要"按公司名匹配新闻", 落点应是活路径 reverse_catalyst._search_news_for_symbol 的 SQL
+            #   (可逆可测), 且属行为变更须预注册。NewsV2 本体按 DEB-20260731 C2 保留 (改 true 可复活)。
 
             self.news_pipeline_v2 = NewsPipelineV2(
                 watchlist_codes=wl_codes,
