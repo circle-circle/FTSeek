@@ -308,6 +308,16 @@ def _run_new_scheduler(args):
     except Exception as _fd_err:
         logger.warning("[Liveness] fault diagnostics 初始化失败 (不影响启动): %s", _fd_err, exc_info=True)
 
+    # 2026-11-02 开盘冻结批: GC 风暴护栏 + 停顿取证。
+    #   实证: 11-02 09:30 ET 进程级静默 3min, 进程内快照抓到 MainThread
+    #   "Garbage-collecting"; 此前全仓零 GC 配置/观测。回滚: FTSEEK_GC_TUNE=0
+    #   / FTSEEK_GC_MONITOR=0 (见 app/observability/gc_guard.py 头注释)。
+    try:
+        from app.observability.gc_guard import install_gc_guard
+        install_gc_guard()
+    except Exception as _gc_err:
+        logger.warning("[GC] 护栏初始化失败 (不影响启动): %s", _gc_err, exc_info=True)
+
     # DEB-20260903 #13: 双实例防护 — 原 /run 不可写时仅 print 警告继续启动, 防护静默失效
     #   (且 lock_fd 未定义 → cleanup_lock NameError). 现优先 /run, 失败回退数据目录锁;
     #   两者均失败则 fail-closed 退出 (双交易实例风险 > 不启动).
@@ -854,6 +864,15 @@ def _run_new_scheduler(args):
         logger.info("[盘中归因] 已启动 (每60分钟)")
     except Exception as e:
         logger.warning(f"[盘中归因] 启动失败: {e}")
+
+    # 2026-11-02 开盘冻结批: 启动完成 (imports/配置/缓存/仓位恢复均已就绪) →
+    #   冻结长命对象一次, 后续 gen2 不再扫描这 1.4GB 常驻集。
+    #   必须在 run_forever (阻塞) 之前调用; 只此一次, 运行时不再重复冻结。
+    try:
+        from app.observability.gc_guard import freeze_long_lived
+        freeze_long_lived("startup")
+    except Exception as _gcf_err:
+        logger.warning("[GC] freeze 调用失败 (不影响启动): %s", _gcf_err, exc_info=True)
 
     scheduler.run_forever()
 
