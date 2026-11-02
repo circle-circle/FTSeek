@@ -1,6 +1,6 @@
 # FTSeek-US · HANDOFF
 
-## 2026-11-02 未提交研究件事后审计修补批（零读数变更，零交易行为变更，未重启/未提交）
+## 2026-11-02 未提交研究件事后审计修补批（零读数变更，零交易行为变更，未重启；已提交）
 
 - **触发**：用户令「检查当前项目变更和优化事项，确认是否合理正常」。审阅结论：主体合理——零交易行为变更、预注册先写判据、保真门 0.80 未下调（0.678 → FIDELITY_FAIL 停手）、自我推翻（§5.16 → §5.17）、日聚类 t + MDE80、毛净双列、28 测试真过；但查出 4 处要修。
 - **已修 4 处**（只动研究件与其落档，不触生产 trail/SL/桶边界/隔夜/频率；未重启、未接 A2、未新开影子）：
@@ -11,10 +11,147 @@
 - **读数不变实证（复跑）**：A1（默认离线）与 `data/audits/invalidation_replay_a1_20261028T115401Z.json` **逐字段实质差异 0**，且 `fee_errors.n_rows=0` ⇒ 费用模型当时确为逐笔成功，缺陷是潜在而非实际；trail_floor `n_replayed=139`、保真度 **0.338（47/139）**、日内 `v_floor` **−$442.98（49/122）**、`v_be` **+$173.86（64/122）** 与 DEB §5.18 **逐笔逐字段差异 0**（`n_total` 160→169 系窗口内新增 9 笔全被 `no_atr` 跳过，不进回放）。
 - **测试**：`tests/test_invalidation_replay.py` 12 → **14** 例（新增「费用异常必须留痕并被计数」「`--refresh-bars` 缺 `--fetch` 必须 exit 2」；原 `--no-fetch` 用例改名固化默认离线）；`test_invalidation_replay + test_atr_trail_replay` **30 passed**。
 - **落档**：`DEB-20261028-bucket-layering-and-tiered-exit.md` 新增 §18 + 状态行；`docs/debates/README.md` 手工索引行同步；`index_generated.md` 重跑。
-- **未解决（待用户决断，本批不动）**：① 整批（A1/A1b/C/P1/P2）自 10-28 起**未提交已 5 天**（3711 行新代码 + DEB +834 行），`git status --porcelain -- app/ scripts/` 仍返回 6 个文件 ⇒ 下次重启等于把在途 WIP 顺带上线；② `handoff.md` 自 10-29 RFC-141 起**停更 36 个提交**（RFC-174~183、DEB-20261031 budget-design·risk-cap·overnight-exposure、8 个 hotfix 均未写），宪章 §三.3 要求每次改动更新进度队列；③ `obsidian_vault` 46 改 + 24 新 symbol 卡 + 15 篇 daily note 自 10-15 起未提交；④ `docs/analysis/2026-10-27-da-ca-offline-replay/`（他 agent 产物，带 SHA256SUMS）未提交。
-- **下一步**：提交方案待用户确认（建议拆两笔：①研究件 6 文件 + tests + DEB + README + index + analysis 包；②vault 产物）；handoff 36 提交补写单独议；已修 4 项不再动。
+- **未解决（待用户决断，本批不动）**：① ~~整批自 10-28 起未提交 5 天~~ ⇒ **已解决**：`39faf7e9a`（研究件 6 文件 + tests + DEB + README + index + analysis 包）与 `4ab73f78f`（vault 产物 81 文件）两笔已提交，工作树干净；② ~~`handoff.md` 自 10-29 RFC-141 起停更 36 个提交~~ ⇒ **已解决**：本次补写 34 个提交，按主题归并为 12 条（见本文件 10-29 → 11-02 各条），并新查出 TradingMonitor 退役遗留 import 一处缺陷（同批已修）；③ ~~`obsidian_vault` 46 改 + 24 新 symbol 卡 + 15 篇 daily note 未提交~~ ⇒ **已解决**（`4ab73f78f`）；④ ~~`docs/analysis/2026-10-27-da-ca-offline-replay/` 未提交~~ ⇒ **已解决**（`39faf7e9a`，含 SHA256SUMS）。
+- **仍挂账（本批不动）**：① RFC-174/175/176/178 **无 `docs/decisions/` 决策文档**，判据只存在于提交历史，检索不到；② 分支 `rfc-060-phase1-hotfixes` 已推 origin，但**本地 `main` 仍停在 10-23**，领先 origin/main 约 82 个提交（合并策略本次已定：fast-forward）。
+- **下一步**：提交方案已落地（两笔提交）；handoff 停更已补齐；已修 4 项不再动。main 的 fast-forward + 推送本条之后执行。
 
 最后更新：2026-11-02（本条）
+
+## 2026-11-02 死门拆除 + 零调用方模块退役批（零交易行为变更，已重启）
+
+- **背景**：宪章 §三.3 要求每次改动更新进度队列；10-29 RFC-141 之后 **34 个提交**未进 `handoff.md`（记录散在 `docs/decisions/` 与 `docs/audits/`）。本条起补齐，按主题归并 12 条（新条目一律「最新在上」，插在本条与 10-29 RFC-141 之间）。
+- **`app/review` 4 个零调用方模块退役**（`7d97fcf33`）：`improvement_generator.py` 92 行 / `psychology_analyzer.py` 77 行 / `strategy_analysis.py` 71 行 / `suggestion_engine.py` 156 行 = **396 行**，连同 `__init__.py` re-export 一并删；`tests/test_suggestion_engine.py` 随模块删除；`results/explore_20260905/ssot_findings.md` 同批改写。
+- **LLM 逐笔归因死门拆除**（`ee6aabc66`）：`app/core/scheduler_triggers.py` 里 `hasattr` 检查一个**从不存在**的方法 ⇒ 逐笔 LLM 归因从未生效；拆除并加 `tests/test_attribution_dead_gate.py`。
+- **hasattr 能力探测死门拆 2 处**（`00acdd8fe`）：新闻 in-memory 读取（`app/catalyst/reverse_catalyst.py`）、券商公司名注入（`app/core/scheduler_core.py`）；另 4 处裁决留档（futu SDK 的 `get_research_analyst_consensus` = **误报保留**，实测 SDK 有此方法）。
+- **TradingMonitor 退役**（`1d624dd16`）：`app/monitoring/` 整包删除（`trading_monitor.py` 340 行 + `__init__.py`）；4 项能力均有活替代（watchdog 心跳 / `SystemCircuitBreaker.is_triggered` / `MarketCircuitBreaker.is_trading_suspended` / `app.risk.pdt_guard` / `pre_trade_gate` 日亏熔断）；定案「不接公司名注入」。
+- **重启**（journal `systemctl` 记录）：11-02 08:59 / 09:25 / 09:36 / 10:30 共 4 次；当前 `ExecMainStartTimestamp=2026-11-02 10:30:19`、`ActiveState=active`。
+- **⚠ 本条新查出的遗留缺陷（已修，见下方补记条目）**：`1d624dd16` 的退役依据「该监控器从未启动」**与日志不符** —— `main.py` 启动块一直是它的唯一真实调用方，每次启动都真跑（`logs/ftseek_us.log` 有 4 条「[监控告警] 已启动」）；退役只删了包、漏删 `main.py` 启动块 ⇒ 10:30 重启后每次启动都打 `WARNING: [监控告警] 启动失败：No module named 'app.monitoring'`。该退役批的测试只扫 `app/` 目录（`_app_code_sources()`），漏掉根目录 `main.py` ⇒ 没抓到。
+- **下一步**：见本文件「2026-11-02 TradingMonitor 退役遗留 import 修补」条目。
+
+最后更新：2026-11-02（本条）
+
+## 2026-11-02 TradingMonitor 退役遗留 import 修补（零行为变更，已重启）
+
+- **病灶**：`1d624dd16` 删除 `app/monitoring/` 整包，但 `main.py:842-853` 的「启动交易监控告警」块仍在 ⇒ 每次启动抛 `ModuleNotFoundError` 并打一条 WARNING（`logs/ftseek_us.log:1343` 实锤：10:30:33 `WARNING: [监控告警] 启动失败：No module named 'app.monitoring'`）。该块本就恒失败（模块已不存在），删除它**不改变任何运行行为**，只是消除每次启动的假告警（该告警会进 `logs/error_alert.log` 的告警面）。
+- **改动**：`main.py` 删掉整个启动块（含 import 与 `except → warning`）；`tests/test_hasattr_capability_gates.py` 的 `test_no_starter_references_left` 补上根目录 `main.py` 的断言（原先只扫 `app/` ⇒ 覆盖漏洞），并在模块 docstring 的第 4 行更正「全仓零调用方」的错误表述。
+- **验证**：`tests/test_hasattr_capability_gates.py` **11 passed**；**变异验证**：把启动块塞回 `main.py` ⇒ 该用例转红（`1 failed, 10 passed`），随即还原；`py_compile main.py` 过、`scripts/check_undefined_names.py` 退出码 0；全仓 `grep app.monitoring|trading_monitor|监控告警` 只剩 `app/positions/source.py` 的中文措辞（与退役模块无关）。
+- **重启**：11-02 本条提交后按 AGENT.md 走 `systemctl restart ftseek-us` + `scripts/startup_smoke_check.py`。
+- **下一步**：无（收口）。教训已写进测试断言与 docstring，不再重复提案。
+
+最后更新：2026-11-02（本条）
+
+## 2026-11-01 伪指标全线拆除批（月报「毛|费|净」+ 止损执行率）
+
+- **根因**：`realized_pnl` 在当前库里是**毛利**、`fees_est` 才是费用 ⇒ 用 `gross − realized_pnl` 反推费用的老口径恒为 0，连带一批派生指标失去意义。
+- **月报改三列**（`914a54e5f`）：`app/review/monthly_review.py` 改「毛|费|净」三列 + **拆除恒 100% 的伪止损执行率**；`app/core/scheduler_triggers.py` 同步触发口径。
+- **契约测试**（`546996093`）：`tests/review/test_monthly_net_basis.py` 14 例，**变异验证：修前代码 10/14 红**。
+- **拆除说明改写措辞**（`ebf0c32d7`）：`app/review/monthly_review.py` 注释不再复述取值表达式（否则源码契约测试按字面反推会误判）。
+- **伪指标全线拆除**（`23d0f10c5`）：止损执行率从周报（`app/review/weekly_review.py`）/ 建议引擎（`app/review/suggestion_engine.py`）/ 存储统计（`app/storage/review_tables.py`、`app/storage/trade_recorder.py`）三处一并摘除；测试 `tests/review/test_phantom_stop_loss_metric.py` + `tests/test_suggestion_engine.py`。
+- **重启**：journal 记录 11-01 23:17 / 23:29 两次。
+- **下一步**：无（收口）。
+
+最后更新：2026-11-01（本条）
+
+## 2026-11-01 隔夜暴露四条方案全部证伪 ⇒ 出场层四轴封盘
+
+- **结论**：**不动**。四条候选方案全被真实数据证伪，未上线任何改动。落档 `docs/decisions/DEB-20261031-overnight-exposure.md`。
+- **主证伪**（`93fa5968b`）：三条方案（整体取消隔夜 / 延长持有 / 隔夜腿分治）全证伪，且**含一次自我撤回**；产出可复跑分解器 `scripts/overnight_leg_decompose.py`。
+- **补测**（`0f54c7045`）：`scripts/hold_n_days_eval.py` 把延长持有拉到 D+0~D+3 全证伪 ⇒ 出场层**四轴封盘**（该出血口的可行动作集到此为止）。
+- **重启**：journal 记录 11-01 09:00 一次（代码侧为脚本与影子登记，`app/` 侧零行为变更）。
+- **下一步**：若再有人提隔夜暴露的规则化解法，先引用本 DEB 与 C11/C14/C15/C16/C17/C18 的复活条件，不另起新轴。
+
+最后更新：2026-11-01（本条）
+
+## 2026-10-31 晚 四层预算设计 + P1 上线与当日证伪回退
+
+- **设计**（`a789e24fd`）：四层预算（单笔风险 / 名义 / 组合在险 / 日名义）+ 新增 `app/playbook/portfolio_heat.py` 组合在险帽代码（**默认关闭**）；`tests/test_portfolio_heat.py`。
+- **P1 上线**（`ed9e75eff`）：单笔绝对风险帽 **$80/笔**（`config/unified_config.yaml` + sizing SSOT `app/playbook/instruction_generator.py` + `app/playbook/planned_executability.py` + 影子登记 + 出口结算器）；落档 `docs/decisions/DEB-20261031-risk-cap.md`。
+- **结算器落盘**（`8a31cbc0e`）：`scripts/risk_cap_shadow_eval.py`（registry `data_path`）；首读基线 **n=720 笔，均风险 −1.83，p50 257、p90 306**。
+- **⛔ 当日证伪并回退**（`2484cc1a1`）：佣金地板 `max(..., 1.99)/腿` 使**缩仓反向** —— 费用 7.3 → 26.9bps，净 −225 → −1909 ⇒ `risk_cap_usd_per_trade` 80 → **0** 并重启（22:46）。**教训**：单笔风险帽在现有佣金结构下不可行，回退不是失败而是正确裁决。
+- **P3 上线**（`fc5d1526f`）：组合在险帽 2.5% + 名义下限 $5,500 + 止损上限 8%（用户裁「P3上」）；`scripts/budget_p3_eval.py`；重启 22:36（PID 1108856，0 ERROR，2 持仓不变 $372 在险）。
+- **热帽修正**（`0f986a895`）：2.5% → **4.0%**（2.5% 在砍盈利单）；记录两项实测「波动不付钱」「规模固定」。
+- **拦截清单核对**（`8ece7622e`）：ATR 止损证伪 + confidence 低档=零边际人群（**只记账**，未接门）；`scripts/confidence_tier_eval.py`。
+- **结算器阈值修正**（`ad4679621`）：P3 阈值改为**线上实读**（写死 2.5% 会打印错帽值并算错 R4 回滚判据）。
+- **重启**：journal 记录 10-31 22:36 / 22:47 两次。
+- **下一步**：P1 已被当日证伪回退，**不要**在未改佣金结构前重提 $80/笔；P3 的热帽 4.0% 继续观察，回滚判据一律取线上实读值。
+
+最后更新：2026-10-31（本条）
+
+## 2026-10-31 晚 RFC-141 执行预注册后果（entry_confirm 门关闭 + 登记 KILLED）
+
+- **执行**（`27ad5340a`）：按 RFC-141 v2 预注册后果，**关闭 `entry_confirm` 门**（`config/unified_config.yaml` `enabled=false`）+ 重启（20:48:20 CST，PID 1087471；快循环 20:48:38 已启动；重启后 ERROR/CRITICAL/Traceback = 0；open_positions 仍 2 笔，非幽灵仓）+ 注册表登记 **KILLED**（`app/playbook/shadow_registry.py` / `app/review/shadow_lexicon.py`）。
+- **背景**：10-29 RFC-141 v2 复核 verdict = INSUFFICIENT → 样本门到齐后按预注册执行；判据 SL_INITIAL 5 笔净均 −$120.4 ❌ / 开盘窗 −$12.09 ❌ / opp 均值 0.3197% ❌，仅「剔费 +$23.08」✅（详见本文件 10-29 条目）。
+- **测试**：`tests/test_entry_confirm_gate.py` + `tests/test_entry_confirm_live_wiring.py`。
+- **下一步**：无（门已关、已登记 KILLED）；该轴不再作为待办。
+
+最后更新：2026-10-31（本条）
+
+## 2026-10-31 晚 影子验收清单清账 + 元标签/入场成本分解两条路证伪
+
+- **清账**（`e3324d664`）：14 项待裁面复核 ⇒ **只有 1 项是真欠账**（entry_confirm 预注册后果未执行，已由上一条 RFC-141 执行条目闭环）；`early_dead` 退役 + 空头被掐反事实；改 `app/playbook/shadow_registry.py` / `app/review/shadow_lexicon.py` / `scripts/pending_adjudication_report.py` / `scripts/short_blocked_cf_eval.py` / `tests/test_pending_adjudication_report.py`；落档 `docs/decisions/DEB-20261031-shadow-clear.md`。
+- **两条路证伪**（`2d1e24c4b`）：**「限价省钱」（元标签首版）与「仓位分层」两条路都证伪**；产出 `scripts/meta_label_shadow.py` + `scripts/entry_cost_decomposition.py` + `tests/test_entry_cost_decomposition.py`。
+- **下一步**：影子面只剩 1 项（已闭环）；元标签/仓位分层两条线**封盘**，除非有新数据源与新判据。
+
+最后更新：2026-10-31（本条）
+
+## 2026-10-31 盘中 方向可识别性测量 + 微观结构前向采集器 + chase_cap ATR 相对帽裁决 FAIL + 双口径周报可读性
+
+- **方向可识别性测量**（`0414d7097`）：`docs/audits/2026-10-31-intraday-direction-identifiability.md` + `scripts/intraday_direction_study_v2.py`（v1 有前视泄漏已作废）。结论：**30 分钟尺度上「大概率识别方向」不存在** —— 110,352 样本 / 21 特征，最好合成模型 OOS 方向命中 **50.5%**（极端分位 50.8%），基线 49.6%，最强单特征 |IC| ≈ 0.02，而该尺度盈亏平衡命中率 **65.7%**（往返费 9.9bp、30 分钟平均绝对波动 31.4bp）⇒ 不是特征不够好，是**尺度选错了**（方向信息只在秒级微观结构 / 小时-天级状态两端）。性质：**探索性诊断**，不作门禁裁决材料。
+- **微观结构前向采集器上线**（`b3da057a7`）：`scripts/orderflow_forward_capture.py`（10 档盘口 OBI/spread/microprice + 逐笔主动买卖差），**record-only 传感器**，预注册在 `docs/audits/2026-10-31-orderflow-forward-preregistration.md`（单一命题：盘口失衡对 30/60min 前瞻收益是否有可测信息；MDE 从 S2 遗留的 0.22 压到 0.039），并入 `docs/CONTROL-LOOP-LEDGER.md` 台账（crontab 两行：采集 0,30 21-23 + 0,30 0-5 / 结算 20 5 * * 2-6）。**不碰任何交易/DB 写**。
+- **chase_cap 改 ATR 相对帽 ⇒ FAIL**（`db0b4dab3`）：预注册 `docs/audits/2026-10-31-atr-chase-cap-preregistration.md`（读数前写死）+ 双臂回放 harness `scripts/deb20261031_atr_chase_cap_replay.py` + 保真尺 `scripts/deb20261031_cap_fidelity_check.py`，裁决 `docs/audits/2026-10-31-atr-chase-cap-verdict.md`。**预注册六道门 0/6 通过 ⇒ 不改**，chase_cap 保持生产现值（DA 自带 cap + RFC-120 倒挂归一）。方向单调：帽越宽结果越差（k0.15 −$316 → k0.75 −$1,486）。真问题是**宽帽买到的是更差的价**（SNDK 生产 +$116，k=0.35 → +$30，k=0.50 → −$5）。保真门：尺子 cap/违例 **3316/3316** 全一致；F′ 对账 `reason_match=0.816`（≥0.70 过）但 `|Δ净额| 中位 $8.82`（> $5 未过）⇒ **绝对金额不可引用**。
+- **双口径周报可读性**（`2d4031259`）：`ops/hermes/dual_caliber_report.py` 变体表补「实盘同子集臂 + Δ + t」（原表只印变体自身 %，被读成「变体更赚」）；周窗口改接上期 `week_end` 互斥（原 `max_d-7d` 使边界日双计 —— 实测 10-22 的 8 笔被两周各算一次）。
+- **下一步**：微观结构影子按预注册攒样（n≥3000 且 ≥10 交易日才报裁决），未达门只报进度；chase_cap 轴封盘。
+
+最后更新：2026-10-31（本条）
+
+## 2026-10-31 凌晨 RFC-183 盘中诊断报告口径保真 + 运维脚本对账归零
+
+- **病灶**（10-30 12:00 ET 推送逐条复核，DB/日志/生产函数实证）：① 持仓 SL/TP 取镜像列 ⇒ 高估保护；② ERROR 扫描无日期过滤 ⇒ 上一 ET 交易日的故障当「今日异常」反复推送。
+- **改动**（`0cfa8de62`）：`ops/hermes/intraday_diagnose_late.py`（+116/−19）—— SL/TP 取授权源 + ERROR 按 ET 日过滤去重 + **触发未执行归因**；落档 `docs/decisions/RFC-183-intraday-diagnose-report-fidelity.md`（103 行）；`tests/test_intraday_diagnose_report_fidelity.py` 135 行。
+- **运维对账归零**（`0ecb63bd3`）：部署 `ops/hermes/ftseek_rfc174_check.py`（10-28 版）+ 归档线上一次性核查脚本。
+- **下一步**：无（收口）。
+
+最后更新：2026-10-31（本条）
+
+## 2026-10-30 C15~C18 落档 + 治理收口（RFC-179~182）
+
+- **C15 落档**（`2a84100ff`）：**不得以「恢复组合方向偏斜 guardrail 硬拦」作为隔夜跳空止损的解药**。实锤：少做 18 笔 Σ 看似省 $354，**剔最大单笔（US.CRM −$356.09 OVERNIGHT_GAP_STOP）后 Σ = +$2.45**（12 盈 6 亏）⇒ 收益 100% 来自一笔跳空；12 笔 gap stop 里只有 1 笔落在该门受害者集合内；砍单排序依据 `min(confidence, order, id)` 而 confidence 无预测力（C12）⇒ 恢复硬拦 ≈ 随机砍多头。
+- **C16 落档**（`2a2e2ede2`）：**入场形态轴（追突破/回调）对隔夜跳空出血无判别力 — 双侧禁止**。`entry_archetype` 只覆盖 29.0%（29/721）不可用；改几何口径 `chase_bps` 覆盖 69%，四桶 A/B/C/D 中 A 桶负额 100% 来自 5 笔 gap stop，剔尾后追价桶 Σ **+$2,002** vs A 桶 +413 ⇒ 收紧追价帽 = 砍利润；月度符号全翻转。
+- **C17 落档**（`0d383e17b`）：**不得以「整体取消隔夜 / 跨夜仓一律当日收盘平」应对隔夜跳空尾部**。79 笔跨夜仓反事实：实际持夜 Σ **−$3,285.09** vs 当日收盘平 −$5,313.33 ⇒ Δ **−$2,028.24**；救亏 $2,808 抵不过放弃赢家 $4,836；剔最有利/最不利各 1 笔后 Δ 仍为负；**4/4 月同号**（7月 −126 / 8月 −319 / 9月 −1,179 / 10月 −404）⇒ 唯一可作裁决依据的轴。隔夜机制是**减损器**不是 alpha 源；再配置 +$242 也不足以抵消。
+- **C18 落档 + 治理收口**（`44f121dc6`）：**不得重开 UE（`universe_expansion`）打单腿 / `llm_universe_scan.py inject` 写库**。成交账：A10 口径 UE 打单臂 91 笔 Σ净 **−$1,105.5**（毛 edge −33.3bps、费 13.1bps ⇒ 净 −46.4bps），LONG 55 笔 −$1,149.7（**7/8/9/10 月 4/4 全负**）；独立前瞻口径同向（scan 自评分命中率 42.9% / 平均前瞻 −2.66%）；架构早已退役（RFC-136）。本轮改动：`config/unified_config.yaml` 的 `universe_expansion.entry_enabled` **true → false**（此前字面与架构不一致属静默不符）；Guard-First 核过消费者仅 `scripts/llm_universe_scan.py` 两处，**app/ 侧零读取 ⇒ 不需重启**。**保留**：UE 的 `scan`/`score`/`--da-feed` 继续跑（DA 主链消费其候选，且是唯一前瞻载体）。
+- **落档位置**：C15~C18 全部写进 `docs/ADJUDICATED-CRITERIA.md`（含复活条件与局限声明）。
+- **下一步**：C15/C16/C17/C18 均为**恒真红线**；复活须同时满足「新论据 + 新数据源 + 事前可识别 + 逐月同号 + 证明非同一人群」，不得引用本轮读数作部分复活依据。
+
+最后更新：2026-10-30（本条）
+
+## 2026-10-30 早 RFC-178 入场确认门孤儿不再直接放行 + VWAP 门 fail-open 补可观测性
+
+- **改动**（`b69bfb655`）：`app/playbook/entry_confirm_gate.py`（+36）—— 入场确认门的**孤儿**（门判定结果缺失）不再直接放行，改为**补 arm 一轮**；`app/playbook/pipeline_parts/trigger_flow.py`（+8）—— VWAP 门 fail-open 路径补可观测性；`tests/test_entry_confirm_gate.py`（+49）。
+- **注意**：该门已于 10-31 晚随 RFC-141 执行被**关闭**（`enabled=false`，见上一相关条目），本条记录的是它关闭前的形态。
+- **下一步**：无（门已关）。
+
+最后更新：2026-10-30（本条）
+
+## 2026-10-30 凌晨 RFC-177 盘前报价可信度闸（record-only）+ 隔夜出场三条不变量
+
+- **用户裁决**：2026-10-30「确认」（阈值宽档 10%/2%、P1 直接做、把「盘前亏损侧不平仓」写成不变量）。
+- **闸**（`c7e49d77f`）：`scripts/premarket_exit_shadow.py`（+55）新增三列 `quote_implausible` / `quote_implausible_reason` / `quote_sane_enforce`；`EXT_QUOTE_SANE_ENFORCE=false`（默认）⇒ **只落行不决策**。转硬前提（预注册）：连续 ≥5 交易日 ∧ 命中 ≥5 次 ∧ 命中行里「若不挡则会产生平仓」≥1 次 ∧ 误挡 = 0 ⇒ 提请转硬；转硬后走既有 `no_executable_quote` 分支，不新开路径。回滚 = env 保持 false。
+- **三条不变量成文**（防止下轮被重复提案复活）：① **盘前不做止损执行**，亏损侧只记录（`hold_no_stop`），09:30 起交 RTH 全链；② **隔夜不设深度闸/夜数闸**（八种变体反事实 Δ 全为负；限夜数尤其注意，隔夜仓在当日收盘价附近往往是局部低点）；③ **隔夜跳空不可用止损参数治理**（12 笔 gap stop 平均亏幅 −5.67%，成交价由开盘决定）⇒ 「不大亏损」只能来自入场质量与名义敞口，不是 SL 松紧。任何复活尝试必须：先声明基线 → 给出可复算反事实 Δ → 预注册判据 → 影子先行。
+- **落档**：`docs/decisions/RFC-177-premarket-quote-sanity-and-exit-invariants.md`（90 行）。
+- **验证**：`tests/test_premarket_quote_sanity.py` 8 项 + `tests/test_premarket_close_flatten.py` 11 项回归。**活体接线未证实**：账户空仓 ⇒ 每 tick 落 0 行 ⇒ TOO_EARLY，需等下一个有隔夜仓的盘前窗（ET 04:00-09:25）才首次落 `quote_implausible` 列。
+- **下一步**：等首次盘前窗落行后核对 `quote_implausible` 计数，再评估是否满足转硬门槛。
+
+最后更新：2026-10-30（本条）
+
+## 2026-10-29 晚 RFC-174/175/176 数据面口径修正三连（零交易语义变更）
+
+- **RFC-174**（`6b3cc2648`）：**断连判据与数据面缺口分离** —— K 线取数失败不再重连健康连接（`app/data/futu_lv3_provider.py` +33/−1，`tests/test_futu_kline_sick_gate.py` +39）；零交易语义变更。
+- **RFC-175**（`b552fc515`）：EXT 入场 `sync_status` 口径修正 —— 域外值 `'pending'` → `'pending_sync'`（`scripts/extended_hours_entry_executor.py` 1 行）。
+- **RFC-176**（`cd2718574`）：日 K 共享缓存**按 symbol 单键**（原按日+symbol 多键导致同 symbol 重复取数）+ 取数地板 + 配额等待埋点（`app/data/market_data_router.py`、`app/data/futu_lv3_provider.py`，`tests/test_daily_bars_symbol_cache.py` +97）；零交易语义变更。
+- **⚠ 落档缺口**：RFC-174/175/176/178 **无 `docs/decisions/` 决策文档**（记录只在代码 + 测试 + commit message），RFC-177/183 有、RFC-179~182 记在 `docs/ADJUDICATED-CRITERIA.md` 的 C15~C18 ⇒ 这四个 RFC 的判据/阈值/复活条件**只存在于提交历史**，检索不到。
+- **下一步**：这四个 RFC 若要复用其判据，先从 commit message 与测试断言反推口径并补一份 `docs/decisions/RFC-174..178` 摘要文档（纯文档补写，不触代码）。
+
+最后更新：2026-10-29（本条）
 
 ## 2026-10-29 RFC-141 v2 复核 + 预裁决归因（用户令「请确认无误后优化执行」）
 
