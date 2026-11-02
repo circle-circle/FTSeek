@@ -280,10 +280,10 @@ def record(self, stock_code: str, ...):
 | `weekly_review.py` | `review/weekly_review.py:5` | 同 daily_review | ✅ | 无 |
 | `monthly_review.py` | `review/monthly_review.py:25-27` | `get_trade_recorder()` → **override** 到 `get_trade_records_db()` | ✅ (override 后读主库) | 无 (已修) |
 | `cohort_ab.py` | `review/cohort_ab.py:20-31` | 双库搜索 (ftseek_us.db 优先, trade_records.db fallback) | ⚠️ | **有漏洞** |
-| `strategy_analysis.py` | `review/strategy_analysis.py:19` | `get_trade_recorder()` → **默认 trade_records.db** | ❌ | **有漏洞** |
-| `psychology_analyzer.py` | `review/psychology_analyzer.py:19` | `get_trade_recorder()` → **默认 trade_records.db** | ❌ | **有漏洞** |
-| `suggestion_engine.py` | `review/suggestion_engine.py:58` | `get_trade_recorder()` → **默认 trade_records.db** | ❌ | **有漏洞** |
-| `improvement_generator.py` | `review/improvement_generator.py:29` | `get_trade_recorder()` → **默认 trade_records.db** | ❌ | **有漏洞** |
+| `strategy_analysis.py` | `review/strategy_analysis.py:19` | `get_trade_recorder()` → **默认 trade_records.db** | ❌ | **已退役 2026-11-01** |
+| `psychology_analyzer.py` | `review/psychology_analyzer.py:19` | `get_trade_recorder()` → **默认 trade_records.db** | ❌ | **已退役 2026-11-01** |
+| `suggestion_engine.py` | `review/suggestion_engine.py:58` | `get_trade_recorder()` → **默认 trade_records.db** | ❌ | **已退役 2026-11-01** |
+| `improvement_generator.py` | `review/improvement_generator.py:29` | `get_trade_recorder()` → **默认 trade_records.db** | ❌ | **已退役 2026-11-01** |
 | `weekly_optimizer.py` | `backtest/weekly_optimizer.py:61-67` | 候选列表: ftseek_us.db 优先 | ⚠️ | **已修 (部分)** |
 | `edge_weekly_report.py` | `decision/edge_weekly_report.py:28-29` | 硬编码 ftseek_us.db | ✅ | 无 (已修) |
 
@@ -347,7 +347,14 @@ DEFAULT_TRADE_DB_CANDIDATES = [
 
 ### 修复建议
 
-- **P0**: 给 `strategy_analysis.py`, `psychology_analyzer.py`, `suggestion_engine.py`, `improvement_generator.py` 加 `monthly_review.py` 同样的 override:
+> ⚠️ **2026-11-01 退役批 (取代下面 P0)**: `strategy_analysis.py` / `psychology_analyzer.py` /
+> `suggestion_engine.py` / `improvement_generator.py` **四个模块已整体删除**。
+> 依据: 全仓零生产调用方 (唯一入口是 `app/review/__init__.py` 的 re-export)、数据源为 0 行遗留库、
+> 最后实质改动 2026-05-20、无 cron/动态导入/台账登记、能力已被
+> `daily_review._generate_suggestions_v2` / `weekly_review._analyze_strategies` 替代。
+> **P0 因此作废, 不要再去给这 4 个模块加 override** (文件已不存在)。下方 P1/P2 仍有效。
+
+- **P0 (作废, 见上方退役说明)**: 给 `strategy_analysis.py`, `psychology_analyzer.py`, `suggestion_engine.py`, `improvement_generator.py` 加 `monthly_review.py` 同样的 override:
   ```python
   self.trade_recorder = get_trade_recorder()
   self.trade_recorder.db_path = get_trade_records_db()
