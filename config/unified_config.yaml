@@ -1230,7 +1230,23 @@ playbook:
     intraday_vol_gate_enabled: true
     chase_vol_ratio_threshold: 0.8
     intraday_vol_gate_grace_min: 15
-    entry_confirm_max_wait_s: 30
+    # 2026-11-03 全链审计 P0-3 (DEB-20261103-full-chain-perf-risk-audit.md H6):
+    #   入场确认窗 30s → 10s。理由: 每笔市价单在 auto_execute 内**同步**等终态至多 30s
+    #   (playbook_service.py:2010 _confirm_order_filled, 每 0.5s 轮询一次 broker) ⇒ N 笔
+    #   = N×30s 串行; "执行优先"把它挪到轮首后, 被它推后的是同轮其余步骤 (catch-up
+    #   生成/推送/补量/定桶) 与下一轮入场, 而非反过来 —— 阻塞量没变, 只是换了被推后者。
+    #   实测轮次间隔 3min09s (2026-11-03 04:45→04:49→04:52→04:55→04:58), 与"非盘中尾睡
+    #   119s"吻合 ⇒ 盘中轮次同样被拖长。
+    #   安全性 (已核代码, 见 DEB §6 P0-3): 超时**不是放弃订单** —— ①提交后立即
+    #   mark_execution_submitted 持久化 broker 订单号, 崩溃/超时都不丢身份; ②超时后
+    #   unlock_execution_if_zero_fill_terminal 仅在 broker 报**终态零成交**时解锁(可重试),
+    #   否则 mark_execution_unknown + _halt_unresolved_live_entry 挂起待对账; ③部分成交
+    #   会撤剩余。⇒ 缩短窗口不产生静默孤儿, 只是"等 30s"变"等 10s 然后挂起对账"。
+    #   预注册判据 (今晚开盘后核, 任一触发即回滚 30 + systemctl restart):
+    #     R1 auto_execute 单轮最长 ≤ 30s  |  R2 轮次间隔 p50 ≤ 100s
+    #     R3 UNCONFIRMED/挂起数 > 当日订单数 20%  ⇒ 回滚  |  R4 入场成交率较 11 月均值 -20% ⇒ 回滚
+    #   ⚠️ playbook.* 键热重载穿不透 ⇒ 改动须 systemctl restart ftseek-us。
+    entry_confirm_max_wait_s: 10
     cooldown_sl_pct: 4.0
     # 2026-08-29 影子毕业 (用户裁决"1批"): 胜出变体 early_tight_30m_mfe0.3 —
     #   影子290样本/5.5周净反事实+27.58pp, 误杀最少(20/47), 救回死单avg+1.2pp/笔.

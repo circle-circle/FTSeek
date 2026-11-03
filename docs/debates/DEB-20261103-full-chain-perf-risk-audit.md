@@ -191,3 +191,70 @@ VmPeak/VmSize；当前进程实测 VmSize 1.71GB / RSS 66–148MB 且 956MB 为 
   哨兵 py-spy dump 实际耗时。
 - `get_kline` 实际 bar 数分布、新闻去重集日增量、web_dashboard 是否同进程。
 - 任何"某步骤必然导致 X"的因果推断，除本文 H1（有 journal+sysstat+时序三重实证）外均标为推测。
+
+## 9. 实施记录（2026-11-03，用户授权后执行）
+
+> 用户裁：实施 **P0-1（cron 错峰）** 与 **P0-3（入场确认阻塞）**；**P0-2（VIX 缓存）本轮不做**
+> （见 §9.4）。
+
+### 9.1 P0-1 cron 分钟错峰（已装机，无需重启）
+
+**改动**：17 行，**只改分钟字段，不改频率、不改小时窗、不改命令**。
+
+| 任务 | 原 | 新 | 说明 |
+|---|---|---|---|
+| `extended_hours_entry_executor.py`（×2 行） | `*/5` | `2-59/5` | 余数类 2 |
+| `event_stream_ingest.py` | `*/5` | `4-59/5` | 余数类 4（写 730MB 库） |
+| `exit_intent_reaper.py` | `*/5` | `1-59/5` | 余数类 1 |
+| `health_check.sh` | `*/10` | `7,17,27,37,47,57` | 全库 integrity_check 错开 |
+| `deploy_freshness_check.py` | `*/10` | `9,19,29,39,49,59` | 与上错开 2min |
+| `error_alert.py`（×4 行） | `*/15` | `4,19,34,49` | 避开 :00/:30 |
+| `sector_pulse.py`（×2 行） | `*/30` | `13,43` | 避开 :00/:30 |
+| `business_heartbeat.sh`（×2 行） | `*/30` | `7,37` | |
+| `tripwire_checker.py` | `*/30` | `23,53` | |
+| `orderflow_forward_capture.py`（×2 行） | `0,30` | `8,38` | 固定分钟族，原样正落在开盘分钟 |
+| `freeze_sentinel.py` / `extended_hours_exit_cron_gate.sh` | `* * * * *` | **不动** | 前者是安全网、后者是出场链路 |
+| 其余固定分钟行（如 `tripwire_checker 55 3,4`、`da_chain_health_report 5 6 * * 6`） | — | **不动** | 匹配时按"行尾注释剥离后的首个脚本"定位，避免误伤 |
+
+**改动前踩坑（已修）**：首版按"命令串含脚本名"匹配，误伤了 `da_chain_health_report.py`
+（其**行尾注释**里提到 `error_alert.py`）与 `tripwire_checker.py 55 3,4`（固定分钟族）
+⇒ 改为「剥离行尾注释 + 取首个真实脚本 + 仅命中 `*/N` 族」双重守卫后才装机。
+
+**效果（按小时窗展开模拟，22 时 = 美股开盘小时）**：
+开盘分钟 `:30` 并发 **12 → 3**（只剩两个轻量每分钟族 + 一次 orderflow）；
+小时内峰值 **12 → 5**（`:49`）。模型与 journal 实证吻合（改前 :30 = 12 个 = journal 的 13 条 CRON）。
+
+**回滚**：`crontab /opt/ftseek/backups/crontab-<ts>.txt`（装机前已备份全量）。
+
+### 9.2 P0-3 入场成交确认窗 30s → 10s（已上线，需重启，已重启）
+
+- 改动：`config/unified_config.yaml` → `playbook.execution_parameters.entry_confirm_max_wait_s: 30 → 10`。
+  **路径已验证**（该键在 `execution_parameters` 扁平层，`PlaybookConfig._load` 只拍平
+  `risk_`/`execution_` 两节；实测 `get_playbook_config().get("entry_confirm_max_wait_s")` = **10** ✓）。
+- 消费点唯一：`app/playbook/playbook_service.py:2012`（`_confirm_order_filled`，每 0.5s 轮询 broker）。
+- **安全性论证（已核代码，超时 ≠ 放弃订单）**：① 提交后立即 `mark_execution_submitted` 持久化
+  broker 订单号 ⇒ 崩溃/超时都不丢身份；② 超时后 `unlock_execution_if_zero_fill_terminal`
+  **仅在 broker 报终态零成交时**解锁（可重试），否则 `mark_execution_unknown` +
+  `_halt_unresolved_live_entry` 挂起待对账；③ 部分成交会 `cancel_order` 撤剩余。
+  ⇒ 缩短窗口**不产生静默孤儿**，只是"等 30s"变成"等 10s 然后挂起对账"。
+- **预注册判据（今晚开盘后核，任一触发即回滚 30 + `systemctl restart`）**：
+  - R1 `auto_execute` 单轮最长 ≤ 30s
+  - R2 轮次间隔 p50 ≤ 100s（改前实测 3min09s）
+  - R3 UNCONFIRMED/挂起数 > 当日订单数 20% ⇒ 回滚
+  - R4 入场成交率较 11 月均值下降 > 20% ⇒ 回滚
+
+### 9.3 部署
+
+- 重启前核①：未平仓 3 笔（US.MRK / US.LMT / US.ACN，非在途出场）；
+  核② `git status --porcelain -- app/ scripts/` 为空（本批唯一上线改动是 config）。
+- `systemctl restart ftseek-us`（13:02:45 起进程）→ `startup_smoke_check.py --wait 90`
+  ⇒ **7/7 全过（exit=0）**（ConfigValidator / 漂移检测 / 热重载 / SSOT 审计 0 BLOCKING /
+  双臂安全确认 / 退出快循环 / 零 Traceback-CRITICAL）。
+- `scripts/config_validate.py` 的 2 项失败（343 未用键 / 135 缺失键）是**既有结构性问题**，
+  与本改动无关（该键有代码引用，不影响两项计数）。
+
+### 9.4 P0-2（VIX 缓存 TTL + key 分离）本轮未做 —— 登记为待办
+
+用户裁"本轮不做"。风险仍在：VIXGuard（入场否决）与 regime 闸当前可读到**最长 900s 前的 VIX**，
+且 VIXY 实时值与 FRED 的 T-1 值写同一 cache key（一次代理失败可把 T-1 值当真值缓存 900s）。
+建议下一批处理（涉及交易与风控取值路径，须先写死判据 + 影子对照）。
