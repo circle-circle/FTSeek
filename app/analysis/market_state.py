@@ -60,6 +60,15 @@ VIX_THRESHOLD = _load_vix_threshold()
 
 # VIX 缓存 TTL 分档 (2026-11-03, 全链审计 P0-2 续): 盘中 60s / 盘外 30min
 VIX_INTRADAY_CACHE_TTL_S = 60
+# FRED 日频序列的**独立**槽位 TTL (2026-11-03 P0-2 续批): 1h
+#   为什么必须独立: VIXCLS 是日频 (每日更新一次), 但盘中实时代理槽位 60s 就过期 ⇒
+#   若日频值与实时值共用一个槽位, 盘中每次活缓存失效都会重下一遍 CSV (timeout=10s),
+#   实时代理不可用时最坏每分钟下一次 ⇒ 配额/延迟双输。独立槽位后 CSV 至多 1h 一次。
+VIX_DAILY_CACHE_TTL_S = 3600
+# 实时代理腿失败冷却 (2026-11-03 P0-2 续批): 每次实时代理都会新建一条 Futu 连接
+#   (实测 41ms, 连接在 finally 干净关闭) ⇒ 代理不可用时每次调用都重建连接 = 连接 churn
+#   + 线程 churn ⇒ 失败后冷却 60s。
+VIX_LIVE_PROBE_COOLDOWN_S = 60
 
 
 class MarketStateChecker:
@@ -67,8 +76,12 @@ class MarketStateChecker:
     
     def __init__(self):
         self._spy_cache: Optional[Tuple[float, float, datetime]] = None  # (price, ma200, cached_at)
-        self._vix_cache: Optional[Tuple[float, datetime]] = None  # (vix, cached_at)
-        self._cache_ttl = timedelta(minutes=30)  # 缓存 30 分钟
+        self._vix_cache: Optional[Tuple[float, datetime]] = None  # (vix, cached_at) — 实时代理槽位
+        # FRED 日频序列独立槽位 (2026-11-03 P0-2 续批): 与实时代理槽位分开, 各自 TTL
+        self._vix_fred_cache: Optional[Tuple[float, datetime]] = None
+        self._vix_live_fail_ts: float = 0.0   # 实时代理失败时间戳 (冷却用)
+        self._vix_last_source: str = "unknown"  # 最近一次取数的来源 (诊断用)
+        self._cache_ttl = timedelta(minutes=30)  # 盘外缓存 30 分钟
         
         logger.info("市场状态检查器已初始化")
     
@@ -171,7 +184,11 @@ class MarketStateChecker:
                 return vix
         vix = self._fetch_vix_data()
         if vix is not None:
-            self._vix_cache = (vix, now)
+            # 写入实时代理槽位 (时间戳用取数完成时刻 ⇒ 60s TTL 计量准确)
+            self._vix_cache = (vix, datetime.now())
+            # 来源留痕 (2026-11-03 P0-2 续批): 日频兜底时来源会是 fred_daily* ——
+            # 日志里能一眼看出"闸门这次读到的是 T-1 日频值还是实时值"。
+            logger.debug("[market_state] VIX 取数完成: %.2f (来源=%s)", vix, self._vix_last_source)
         return vix
 
     def _fetch_vix_data(self) -> Optional[float]:
@@ -214,9 +231,24 @@ class MarketStateChecker:
         try:
             from app.data.vix_source import fetch_vixy_via_opend, is_vixy_proxy_window
             if is_vixy_proxy_window():
-                vixy_vix = fetch_vixy_via_opend()
-                if vixy_vix is not None:
-                    return vixy_vix
+                # 失败冷却 (2026-11-03 P0-2 续批): 每次实时代理都新建一条 Futu 连接
+                # (实测 41ms) ⇒ 代理不可用时每次调用都重建连接 = 连接/线程 churn ⇒ 冷却 60s。
+                import time as _t
+                if (self._vix_live_fail_ts
+                        and (_t.time() - self._vix_live_fail_ts) < VIX_LIVE_PROBE_COOLDOWN_S):
+                    logger.debug("[market_state] 实时代理冷却中 (%.0fs), 本次跳过",
+                                 VIX_LIVE_PROBE_COOLDOWN_S - (_t.time() - self._vix_live_fail_ts))
+                else:
+                    try:
+                        vixy_vix = fetch_vixy_via_opend()
+                    except Exception as _vixy_ex:
+                        self._vix_live_fail_ts = _t.time()
+                        raise _vixy_ex
+                    if vixy_vix is not None:
+                        self._vix_live_fail_ts = 0.0
+                        self._vix_last_source = "vixy_proxy_live"
+                        return vixy_vix
+                    self._vix_live_fail_ts = _t.time()
         except Exception as e:
             # 不许静默降级 (W4 debug-swallow 棘轮): VIXY 代理取不到意味着口径
             #   退化为 FRED 日频 (T-1/T-2) —— 这正是本次审计要暴露的那类退化。
@@ -224,6 +256,16 @@ class MarketStateChecker:
                            e, exc_info=True)
 
         # ★ 优先: FRED CSV (免费公开接口, 无需 key) — 日频, 盘后/周末主源
+        #   2026-11-03 (P0-2 续批): 日频序列走**独立槽位** (VIX_DAILY_CACHE_TTL_S=1h)。
+        #   原实现每次活缓存失效都重下一遍 CSV (timeout=10s) ⇒ 盘中实时代理不可用时
+        #   最坏每分钟下一次 (实时代理槽位 60s 过期) ⇒ 配额/延迟双输。
+        _now = datetime.now()
+        if self._vix_fred_cache:
+            _fv, _fts = self._vix_fred_cache
+            if (_now - _fts).total_seconds() < VIX_DAILY_CACHE_TTL_S:
+                self._vix_last_source = "fred_daily_cached"
+                logger.info(f"VIX 当前值={_fv:.2f} (FRED CSV, 日频槽位缓存)")
+                return _fv
         try:
             fred_url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=VIXCLS"
             response = requests.get(fred_url, timeout=10)
@@ -234,6 +276,9 @@ class MarketStateChecker:
                     parts = last_line.split(',')
                     if len(parts) >= 2 and parts[1]:
                         vix = float(parts[1])
+                        # 写入**日频独立槽位** (不占实时代理槽位 ⇒ 实时代理恢复后可立即回切)
+                        self._vix_fred_cache = (vix, _now)
+                        self._vix_last_source = "fred_daily"
                         logger.info(f"VIX 当前值={vix:.2f} (FRED CSV)")
                         return vix
         except Exception as e:
@@ -260,6 +305,7 @@ class MarketStateChecker:
                     quote = data["Global Quote"]
                     price = float(quote.get("05. price", 0))
                     if price > 0:
+                        self._vix_last_source = "alphavantage"
                         logger.info(f"VIX 当前值={price:.2f} (AlphaVantage)")
                         return price
             except Exception as e:

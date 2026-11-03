@@ -384,3 +384,45 @@ AV provider，而是 `app/analysis/market_state.py::get_vix_cached()`
 **部署**：重启前核①未平仓 3 笔、核②app/scripts 仅 2 个文件（`market_state.py` /
 `vix_source.py`）→ `systemctl restart ftseek-us`（14:05:53）→ `startup_smoke_check --wait 90`
 **7/7 全过（exit=0）**；重启后 0 ERROR/CRITICAL。
+
+### 10.7 续批：FRED 日频槽位在 `market_state` 的那条链上（同一病灶的最后一处）
+
+**为什么还有第三处**：P0-2 前两批修的是「AV provider 那条链」与「闸门的缓存 TTL」，
+但**闸门那条链的取数函数内部**还有两处日频/实时的混用没处理：
+
+1. **日频值每次活缓存失效就重下一遍 CSV**：`_fetch_vix_data()` 的 FRED 腿直接
+   `requests.get(fredgraph.csv, timeout=10)`，**无独立槽位**。上一批把实时代理槽位
+   收到 60s 后，代理不可用时这条链最坏**每分钟下一遍 CSV**（10s 超时）⇒ 这正是
+   P0-2 自己在 AV provider 侧修掉的病灶，在这侧被重新引入。
+2. **代理腿失败无冷却**：每次实时代理都**新建一条 Futu 连接**（`fetch_vixy_via_opend`
+   内部 `OpenQuoteContext(...)`，实测单次 41ms、连接在 finally 干净关闭）⇒ 代理不可用
+   时每次调用都重建连接 = 连接 churn + 线程 churn。
+
+**落法**（`app/analysis/market_state.py`，仍**不动任何消费方**）：
+| 项 | 改前 | 改后 |
+|---|---|---|
+| FRED 日频 | 无槽位，每次活缓存失效重下 CSV | **独立槽位** `_vix_fred_cache`，TTL 3600s（序列每日更新 ⇒ 1h 足够） |
+| 实时代理失败 | 每次调用都重建 Futu 连接 | 失败冷却 60s（`VIX_LIVE_PROBE_COOLDOWN_S`）⇒ 最多 1 次/分钟 |
+| 来源可辨 | 日频值与实时值在日志里**同一句话**，看不出闸门读到的是 T-1 还是实时 | 记 `self._vix_last_source`（`vixy_proxy_live` / `fred_daily` / `fred_daily_cached` / `alphavantage`）并在取数后 debug 留痕 |
+
+**口径不变**：FRED 仍是兜底腿、代理仍是优先腿（`_fetch_vix_data` 的取数顺序与
+"全源失败返回 None"的 fail-close 契约一字未动）；既有契约测试
+`test_vix_single_source_contract.py` / `test_vix_proxy_window_single_source.py`
+**未修改且全绿**。
+
+**验证**：新增 4 例（日频槽位 1h 内命中且不重下 / 1h 后作废重下 / 代理失败冷却期内不重复
+探活 / 代理恢复后回切实时值），`tests/test_vix_gate_freshness.py` 共 **11 passed**；
+全量 VIX + 契约 + 棘轮 + regime + observability **109 passed**；`tests/risk` 仍是那 10 个
+既有红 ⇒ **新增失败 0**。
+**活体验证**（真实 FRED 端点）：第 1 次下载 CSV 45ms（来源 `fred_daily`，日频槽位落库）→
+第 2 次 0.1ms（实时代理槽位命中）→ 清空实时代理槽位后第 3 次 **0ms 且来源
+`fred_daily_cached`** ⇒ 日频槽位独立生效，CSV 不再重复下载。
+
+**部署**：重启前核①未平仓 3 笔、核②app/scripts 仅 1 个文件（`market_state.py`）→
+`systemctl restart ftseek-us`（14:17:47）→ `startup_smoke_check --wait 90` **7/7 全过
+（exit=0）**；重启后 0 ERROR/CRITICAL。
+
+**至此 VIX 三层陈旧全部收口**：
+① AV provider 槽位（60s/600s 上限 + 来源分槽 + 探针冷却）
+② 入场闸缓存 TTL（盘中 60s / 盘外 30min）
+③ 入场闸取数链内部（FRED 日频独立槽位 1h + 代理失败冷却 60s + 来源留痕）

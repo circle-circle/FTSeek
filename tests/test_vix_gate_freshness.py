@@ -113,5 +113,89 @@ def test_none_propagates_for_fail_close(monkeypatch):
     assert calls["n"] == 1
 
 
+# ── 5. FRED 日频独立槽位 + 实时代理失败冷却 (P0-2 续批) ────────────────
+
+class _FakeFRED:
+    """FRED CSV 的最小替身 (market_state 只看 status_code / text)。"""
+
+    def __init__(self, value: float):
+        self.status_code = 200
+        self.text = f"DATE,VIXCLS\n2026-11-02,{value}\n"
+
+    def raise_for_status(self):
+        return None
+
+
+def _wire(monkeypatch, *, live=None, fred=19.42, proxy_window=True):
+    """接管三条腿: 实时代理 (Futu VIXY) / FRED CSV / AV。返回计数 dict。"""
+    calls = {"live": 0, "fred": 0}
+
+    def _live():
+        calls["live"] += 1
+        return live
+
+    def _get(url, *a, **k):
+        calls["fred"] += 1
+        return _FakeFRED(fred)
+
+    monkeypatch.setattr("app.data.vix_source.fetch_vixy_via_opend", _live)
+    monkeypatch.setattr("app.data.vix_source.is_vixy_proxy_window", lambda *a, **k: proxy_window)
+    monkeypatch.setattr("requests.get", _get)
+    return calls
+
+
+def test_fred_daily_slot_hit_within_hour(monkeypatch):
+    """日频槽位独立: 代理不可用时, 第二次调用不得再下一遍 CSV (盘中活槽位 60s 就过期)。"""
+    _phase(monkeypatch, MarketPhase.TRADING)
+    c = MarketStateChecker()
+    calls = _wire(monkeypatch, live=None, fred=19.42)
+
+    assert c.get_vix_cached() == 19.42
+    assert calls["fred"] == 1
+    # 把实时代理槽位作废 (模拟 60s 过期), 日频槽位仍在 1h 内
+    c._vix_cache = None
+    assert c.get_vix_cached() == 19.42
+    assert calls["fred"] == 1, "日频槽位命中 ⇒ 不得重复下载 CSV"
+
+
+def test_fred_daily_slot_expires_after_hour(monkeypatch):
+    """日频槽位 1h 后失效 ⇒ 重新下载 (FRED 每日更新, 1h 足够)。"""
+    _phase(monkeypatch, MarketPhase.TRADING)
+    c = MarketStateChecker()
+    calls = _wire(monkeypatch, live=None, fred=19.42)
+    c._vix_fred_cache = (19.42, datetime.now() - timedelta(seconds=3601))
+    c._vix_cache = None
+
+    assert c.get_vix_cached() == 19.42
+    assert calls["fred"] == 1, "日频槽位超龄 ⇒ 必须重新下载"
+
+
+def test_live_probe_cooldown_after_failure(monkeypatch):
+    """实时代理失败后 60s 内不得再建连接 (每次实时代理都新建一条 Futu 连接)。"""
+    _phase(monkeypatch, MarketPhase.TRADING)
+    c = MarketStateChecker()
+    calls = _wire(monkeypatch, live=None, fred=19.42)
+
+    assert c.get_vix_cached() == 19.42
+    assert calls["live"] == 1
+    c._vix_cache = None                      # 活槽位作废 (模拟 60s 过期)
+    assert c.get_vix_cached() == 19.42
+    assert calls["live"] == 1, "冷却期内不得重复探活 (连接 churn)"
+
+
+def test_live_recovery_takes_over_after_cooldown(monkeypatch):
+    """代理恢复后必须回切实时值 (不再被日频值占住)。"""
+    _phase(monkeypatch, MarketPhase.TRADING)
+    c = MarketStateChecker()
+    _wire(monkeypatch, live=None, fred=19.42)
+    assert c.get_vix_cached() == 19.42       # 代理不可用 → 日频
+
+    c._vix_live_fail_ts = 0.0                # 冷却过期
+    calls = _wire(monkeypatch, live=15.67, fred=19.42)
+    c._vix_cache = None
+    assert c.get_vix_cached() == 15.67, "代理恢复 ⇒ 必须回切实时值"
+    assert calls["live"] == 1
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
