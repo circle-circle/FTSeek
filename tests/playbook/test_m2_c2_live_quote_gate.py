@@ -16,6 +16,7 @@ import pytest
 
 from app.playbook.db import PlaybookDB
 from app.playbook.playbook_service import PlaybookService
+from tests.helpers.notional import qty_above_min_notional  # noqa: E402
 
 
 @pytest.fixture
@@ -72,13 +73,28 @@ def svc(db, monkeypatch, tmp_path, sealed_io):
     main_db = tmp_path / "quote-gate-positions.sqlite"
     conn = sqlite3.connect(main_db)
     try:
-        conn.execute("CREATE TABLE open_positions (symbol TEXT, size REAL, owner_strategy TEXT)")
+        # 表结构对齐 portfolio_heat.open_risk_usd 的 SELECT (原来只有 3 列 ⇒ 读失败
+        # → fail-open, 组合热度判据在测试里根本没生效)
+        conn.execute(
+            "CREATE TABLE open_positions (symbol TEXT, size REAL, owner_strategy TEXT, "
+            "avg_entry_price REAL, current_sl REAL, initial_sl REAL, stop_loss_price REAL)"
+        )
         conn.commit()
     finally:
         conn.close()
     monkeypatch.setattr("app.core.db_utils.get_main_db", lambda: main_db)
     db.db_name = "ftseek_us_live"
     live_ledger = tmp_path / "live-ledger.sqlite"
+    # 2026-11-03: 临时 ledger 原是**空文件**(sqlite3.connect 只建文件不建表) ⇒
+    # `count_open_live_positions` 的 SELECT COUNT(*) FROM trade_records 抛异常 ⇒ 返回
+    # None ⇒ live_arm_gate fail-close (HALT_NEW_LIVE) ⇒ 本该验"无价格必拒"的用例
+    # 先被 arm gate 拦下, 走不到价格分支。补上表结构 (0 行 ⇒ 计数 0 ⇒ 放行到价格检查)。
+    _lc = sqlite3.connect(live_ledger)
+    try:
+        _lc.execute("CREATE TABLE IF NOT EXISTS trade_records (source_type TEXT, exit_time TEXT)")
+        _lc.commit()
+    finally:
+        _lc.close()
     monkeypatch.setattr(
         "app.core.paths.get_trade_records_db_for_arm",
         lambda target_env: live_ledger,
@@ -95,7 +111,10 @@ def _save_inst(db, symbol="US.TEST_C2"):
         "entry_price": 100.0,
         "stop_loss": 95.0,
         "take_profit": 110.0,
-        "position_size": 40,
+        # 2026-11-03: 名义额按**活配置**派生 (min_notional_usd 2500→5500 后, 写死 40 股
+        # = $4,000 会在落库时被 admission 改成 SKIP ⇒ 后续按 direction != 'SKIP' 查不到
+        # ⇒ 恒「指令不存在」⇒ 本文件 32 条守卫静默失效)。详见 tests/helpers/notional.py。
+        "position_size": qty_above_min_notional(100.0),
         "confidence": 70,
         "conditions": ["pullback_to_confirmation"],
         "raw_instruction_json": json.dumps({"source": "test"}),

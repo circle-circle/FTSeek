@@ -75,8 +75,11 @@ DEFAULT_SINCE = "2026-07-11"
 # 代表性价位段 (美元)。$5 = 现行 admission.min_entry_price / UE min_price_floor,
 # 即系统当前允许的最低价 — 放在首行正是为了看清地板有多高。
 PRICE_GRID: Sequence[float] = (5.0, 10.0, 20.0, 30.0, 50.0, 100.0, 250.0, 600.0)
-# 代表性名义额段 (美元)。2500/5900 = 现行可达带两端 (min_notional / 6%帽@~$99k 净值)。
-NOTIONAL_GRID: Sequence[float] = (1000.0, 2500.0, 3000.0, 4200.0, 5000.0, 5900.0,
+# 代表性名义额段 (美元)。5500 = **现行 admission.min_notional_usd** (2026-10-31 P3 用户裁
+#   「P3上」: 2500→5500, DEB-20261031-budget-design §8) —— 必须含现行旋钮值, 否则
+#   报告读不到"现在"在哪一格 (tests/test_ticket_size_breakeven.py 的网格覆盖守卫钉这条);
+#   2500/5900 = 旧旋钮与 6%帽@~$99k 净值两端, 保留作历史对照。
+NOTIONAL_GRID: Sequence[float] = (1000.0, 2500.0, 3000.0, 4200.0, 5000.0, 5500.0, 5900.0,
                                   8000.0, 12000.0, 25000.0, 50000.0)
 
 

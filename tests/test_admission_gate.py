@@ -196,7 +196,8 @@ def test_production_yaml_admission_contract():
 
     assert admission["enabled"] is True
     assert admission["enforce"] is True
-    assert admission["min_notional_usd"] == 2500
+    # 2026-11-03: 2500 → 5500 (2026-10-31 P3, DEB-20261031-budget-design §8, 用户裁「P3上」)
+    assert admission["min_notional_usd"] == 5500
     assert admission["min_entry_price"] == 5.0
     assert admission["min_confidence_buy"] == 0
     assert admission["min_confidence_short"] == 0

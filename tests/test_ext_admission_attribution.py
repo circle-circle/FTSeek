@@ -163,12 +163,19 @@ def test_admission_verdict_is_same_source_as_main_chain():
     """EXT 留痕必须用主链同一 evaluate + 同一生产配置 (不许私配阈值)。"""
     from app.playbook.admission import evaluate, get_admission_config
     cfg = get_admission_config(refresh=True)
-    assert cfg["min_notional_usd"] == 2500 and cfg["min_entry_price"] == 5.0, \
+    # 2026-11-03: 名义额地板 2500 → 5500 (2026-10-31 P3, DEB-20261031-budget-design §8)
+    assert cfg["min_notional_usd"] == 5500 and cfg["min_entry_price"] == 5.0, \
         "生产配置漂移: EXT 留痕口径将失去与主链可比性"
-    # ACN 10/1 实单重放: 取证结论 verdict=PASS (fee_bps≈8.7) 必须可复现
+    # ACN 10/1 实单重放 (23 股 × $212.53 = $4,888): 取证当时的结论是 PASS (旧地板 $2,500
+    # 下 fee_bps≈8.7), 但**当前**口径地板 $5,500 ⇒ 同一单现在是 REJECT (NOTIONAL_TOO_SMALL)
+    # —— 这是**政策变更**的结果, 不是实现漂移 ⇒ 断言改为"与主链当前口径一致"。
     r = evaluate({"date": "2026-10-01", "symbol": "US.ACN", "direction": "SELL_SHORT",
                   "entry_price": 212.53, "position_size": 23, "stop_loss": 223.16})
-    assert r["verdict"] == "PASS"
+    assert r["verdict"] == "REJECT" and any("NOTIONAL_TOO_SMALL" in x for x in r["reasons"])
+    # 合规规模下 PASS 仍可复现 (26 股 = $5,526 ≥ 5,500) ⇒ 判据本身没坏
+    r_ok = evaluate({"date": "2026-10-01", "symbol": "US.ACN", "direction": "SELL_SHORT",
+                     "entry_price": 212.53, "position_size": 26, "stop_loss": 223.16})
+    assert r_ok["verdict"] == "PASS"
     # CTNT 9/17 灾难单重放: 统一口径必须 REJECT ($5 地板同源判据)
     r2 = evaluate({"date": "2026-09-17", "symbol": "US.CTNT", "direction": "BUY",
                    "entry_price": 0.072, "position_size": 4931, "stop_loss": 0})

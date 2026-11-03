@@ -78,7 +78,15 @@ def env(tmp_path, monkeypatch):
 
 
 def _save(db, sym, direction, entry, size=50, did=None):
-    """走真 save_instruction (含真准入门) 并核验方向未被改写。"""
+    """走真 save_instruction (含真准入门) 并核验方向未被改写。
+
+    2026-11-03: 名义额须过**活**地板 (min_notional_usd 2500→5500, 2026-10-31 P3) ——
+    夹具写死 size=50 时, 低价标的的名义额 ($4,965 等) 低于新地板 ⇒ 落库即被准入闸改成
+    SKIP ⇒ `get_instructions_by_date` 虽能查到, 但方向已被改写 ⇒ 本文件 10 条守卫全红。
+    修法: size 取"调用方给的量"与"活地板足额"二者较大 (不改变用例本意, 只别被地板误伤)。
+    """
+    from tests.helpers.notional import qty_above_min_notional
+    size = max(int(size), qty_above_min_notional(entry))
     db.save_instruction({
         "date": _DATE, "symbol": sym, "direction": direction, "entry_price": entry,
         "stop_loss": entry * 0.97, "take_profit": entry * 1.06,

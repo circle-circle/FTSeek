@@ -626,9 +626,20 @@ class TestExecutability:
     """
 
     # 与生产 yaml `playbook.admission` 同值 (下方 yaml 直读钉负责保证它没漂)
+    # 测试**场景**用的 admission 配置 (与生产无关, 只为让本文件的用例可复现)
     PINNED = {"enabled": True, "enforce": True, "min_notional_usd": 2500.0,
               "min_entry_price": 5.0, "max_shares_per_order": 0,
               "min_profit_fee_ratio": 0.0, "max_sl_pct": 0.0}
+
+    # 生产 yaml 的**当前裁决值** (2026-11-03 拆分, 修"长期报红"的红):
+    #   2026-10-31 P3 (DEB-20261031-budget-design §8, 用户裁「P3上」):
+    #   min_notional_usd 2500→5500、max_sl_pct 0→8.0 ⇒ 原先把"生产期望"与"测试场景"
+    #   混在同一份 PINNED 里, 裁决后 PINNED 未同步 ⇒ 漂移探测器持续报红 (守卫失效)。
+    #   现拆开: PINNED 只作场景; PRODUCTION_PINNED 记录**当前裁决值** ——
+    #   以后再改阈值, 必须同步 PRODUCTION_PINNED 并落档 (探测器保持武装)。
+    PRODUCTION_PINNED = {"enabled": True, "enforce": True, "min_notional_usd": 5500.0,
+                         "min_entry_price": 5.0, "max_shares_per_order": 0,
+                         "min_profit_fee_ratio": 0.0, "max_sl_pct": 8.0}
 
     @pytest.fixture(autouse=True)
     def _isolate_admission_cfg(self):
@@ -746,14 +757,15 @@ class TestProductionConfigNotDrifted:
         assert admission_yaml["enforce"] is True
 
     def test_thresholds_match_pinned_values(self, admission_yaml):
-        """本文件 TestExecutability.PINNED 与生产 yaml 同值 — 漂了这里先红。"""
-        assert float(admission_yaml["min_notional_usd"]) == 2500.0
-        assert float(admission_yaml["min_entry_price"]) == 5.0
-        assert int(admission_yaml["max_shares_per_order"]) == 0        # 关
-        assert float(admission_yaml["min_profit_fee_ratio"]) == 0.0    # 关
-        assert float(admission_yaml["max_sl_pct"]) == 0.0              # 关
-        for key, value in TestExecutability.PINNED.items():
-            assert key not in admission_yaml or admission_yaml[key] == value, key
+        """生产 yaml 与**当前裁决值** (PRODUCTION_PINNED) 同值 — 漂了这里先红。
+
+        改生产阈值时必须同步 PRODUCTION_PINNED 并落档 (DEB/ADR), 否则这里会红 ——
+        这正是本守卫的用途 (2026-10-31 P3 裁决后此处长期红 ⇒ 守卫失效 ⇒ 本次拆分)。
+        """
+        for key, value in TestExecutability.PRODUCTION_PINNED.items():
+            assert key not in admission_yaml or admission_yaml[key] == value, (
+                f"{key}: 生产值 {admission_yaml.get(key)!r} ≠ 裁决钉住值 {value!r} "
+                f"(改阈值须同步 PRODUCTION_PINNED 并落档)")
 
     def test_sizing_config_matches_context_reader(self, tmp_path):
         """sizing 侧同理: 预览读的 risk_pct/max_position_pct 必须等于生产 yaml。"""

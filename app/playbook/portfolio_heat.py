@@ -20,8 +20,23 @@ from typing import Any, Dict, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 _DB_PATH = Path(__file__).resolve().parents[2] / "data" / "ftseek_us.db"
-_CACHE: Dict[str, Any] = {"ts": 0.0, "value": None}
+_CACHE: Dict[str, Any] = {"ts": 0.0, "value": None, "path": None}
 _CACHE_TTL_S = 20.0
+
+
+def _db_path() -> Path:
+    """open_positions 所在库路径 (2026-11-03 修 live/sim 切换)。
+
+    原实现硬编码 `data/ftseek_us.db` ⇒ **绕过** `app.core.db_utils.get_main_db()` 的
+    live/sim 切换 ⇒ live 模式下组合在险总帽会读**模拟**库的持仓 (与实际在险不符)。
+    改为走 get_main_db() (它按 is_live_mode() 返回 ftseek_us_live.db / ftseek_us.db),
+    解析失败才回落 _DB_PATH。**缓存键带上路径**, 避免切库后 20s 内串味。
+    """
+    try:
+        from app.core.db_utils import get_main_db
+        return Path(get_main_db())
+    except Exception:
+        return _DB_PATH
 
 
 def _stop_of(row: sqlite3.Row) -> Optional[float]:
@@ -48,10 +63,11 @@ def open_risk_usd(db_path: Optional[Path] = None, *, use_cache: bool = True) -> 
     不臆造风险值 (宁可低估也不虚报)。
     """
     now = time.time()
-    if use_cache and _CACHE["value"] is not None and (now - _CACHE["ts"]) < _CACHE_TTL_S:
+    path = Path(db_path) if db_path is not None else _db_path()
+    if (use_cache and _CACHE["value"] is not None
+            and (now - _CACHE["ts"]) < _CACHE_TTL_S and _CACHE.get("path") == str(path)):
         return _CACHE["value"]  # type: ignore[return-value]
 
-    path = db_path or _DB_PATH
     total = 0.0
     count = 0
     missing = 0
@@ -84,7 +100,7 @@ def open_risk_usd(db_path: Optional[Path] = None, *, use_cache: bool = True) -> 
     if missing:
         logger.warning(f"[portfolio_heat] {missing}/{count} 笔持仓缺止损, 其风险未计入合计")
     result = (round(total, 2), count)
-    _CACHE["ts"], _CACHE["value"] = now, result
+    _CACHE["ts"], _CACHE["value"], _CACHE["path"] = now, result, str(path)
     return result
 
 

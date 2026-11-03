@@ -8,6 +8,7 @@ import sqlite3
 from app.playbook.db import PlaybookDB
 from app.playbook.playbook_service import PlaybookService
 from app.playbook.portfolio_execution_guardrail import evaluate_portfolio_guardrail
+from tests.helpers.notional import qty_above_min_notional  # noqa: E402
 
 
 def _row(row_id, symbol, direction, confidence, sector=""):
@@ -71,21 +72,6 @@ def test_terminal_skip_rows_leave_denominator():
     assert result["active_count"] == 2
 
 
-def _qty_above_floor(entry_price: float) -> int:
-    """按**当下** admission 的 min_notional_usd 算足额股数 (夹具必须跟着活配置走)。
-
-    2026-11-03: 该键 2026-10-31 由 2500 抬到 5500 (用户裁「P3上」) ⇒ 旧夹具
-    (100 股 × $50 = $5,000 / 50 股 × $100 = $5,000) 在**落库时**就被 admission 闸
-    改成 SKIP (skip_reason=NOTIONAL_TOO_SMALL) ⇒ `get_recent_instructions` 的
-    `WHERE direction != 'SKIP'` 查不到 ⇒ `execute_instruction` 恒返回「指令不存在」
-    ⇒ 守卫**静默失效**(实测 5 处红, 同一根因)。
-    夹具写死股数 ⇒ 每次调阈值都会把守卫打红 ⇒ 改为从活配置派生。
-    """
-    from app.playbook.admission import get_admission_config
-    floor = float(get_admission_config().get("min_notional_usd") or 0)
-    return int(floor / float(entry_price)) + 2
-
-
 def test_execute_instruction_blocks_low_confidence_direct_write(monkeypatch, tmp_path):
     """[DEB-20261008 F1] 摘闸后默认为关 — 本用例显式打开开关, 钉住「开关打开时
     行为不变」; 关闸零拦截 + 影子照写见 test_gate_off_allows_but_shadows。"""
@@ -109,7 +95,7 @@ def test_execute_instruction_blocks_low_confidence_direct_write(monkeypatch, tmp
         "entry_price": 100.0,
         "stop_loss": 95.0,
         "take_profit": 110.0,
-        "position_size": _qty_above_floor(100.0),
+        "position_size": qty_above_min_notional(100.0),
         "confidence": 70,
         "conditions": [],
     })
@@ -120,7 +106,7 @@ def test_execute_instruction_blocks_low_confidence_direct_write(monkeypatch, tmp
         "entry_price": 50.0,
         "stop_loss": 47.0,
         "take_profit": 55.0,
-        "position_size": _qty_above_floor(50.0),
+        "position_size": qty_above_min_notional(50.0),
         "confidence": 35,
         "conditions": [],
     })
@@ -131,7 +117,7 @@ def test_execute_instruction_blocks_low_confidence_direct_write(monkeypatch, tmp
         "entry_price": 75.0,
         "stop_loss": 71.0,
         "take_profit": 82.0,
-        "position_size": _qty_above_floor(75.0),
+        "position_size": qty_above_min_notional(75.0),
         "confidence": 50,
         "conditions": [],
     })
@@ -192,7 +178,7 @@ def test_guardrail_skip_does_not_overwrite_booked_row():
         "entry_price": 100.0,
         "stop_loss": 95.0,
         "take_profit": 110.0,
-        "position_size": _qty_above_floor(100.0),
+        "position_size": qty_above_min_notional(100.0),
         "confidence": 35,
         "conditions": [],
     })
@@ -233,7 +219,7 @@ def test_gate_off_allows_but_shadows(monkeypatch, tmp_path):
         "entry_price": 50.0,
         "stop_loss": 47.0,
         "take_profit": 55.0,
-        "position_size": _qty_above_floor(50.0),
+        "position_size": qty_above_min_notional(50.0),
         "confidence": 35,
         "conditions": [],
     })
@@ -244,7 +230,7 @@ def test_gate_off_allows_but_shadows(monkeypatch, tmp_path):
         "entry_price": 100.0,
         "stop_loss": 95.0,
         "take_profit": 110.0,
-        "position_size": _qty_above_floor(100.0),
+        "position_size": qty_above_min_notional(100.0),
         "confidence": 70,
         "conditions": [],
     })

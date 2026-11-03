@@ -76,5 +76,11 @@ def test_missing_table_fails_open(tmp_path):
 
 
 def test_admission_default_is_off():
+    """组合在险总帽的**当前裁决值**。
+
+    2026-11-03: 原断言 `== 0.0` (关) —— 但 2026-10-31 P3 (DEB-20261031-budget-design §8,
+    用户裁「P3上」) 已把 max_open_risk_pct 由 0 抬到 2.5 再到 **4.0** ⇒ 该断言自 10-31 起
+    常驻红 (守卫失效)。现按当前裁决值断言, 并留引用。
+    """
     from app.playbook.admission import get_admission_config
-    assert get_admission_config().get("max_open_risk_pct") == 0.0
+    assert get_admission_config().get("max_open_risk_pct") == 4.0
