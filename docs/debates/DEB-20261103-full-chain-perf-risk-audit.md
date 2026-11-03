@@ -513,3 +513,19 @@ P1 四项：内存 arena 限流（`MALLOC_ARENA_MAX=2` + per-call pool 模块级
 剩余 70 条红集中在 `test_shadow_tracker.py`（18）等，病因是**实现演进、期望未跟上**
 （`'skipped' == 'win'`、`0 == 1`、`None == 500.0`）—— 与配置漂移族不同，需逐条判断
 "该改实现还是该改期望"，属独立工程，不在本批范围。
+
+## 13. P1 收口（2026-11-03 16:30–16:50，用户令「继续完成所有收尾和检查」）
+
+| 项 | 改前 | 改后 | 实测 |
+|---|---|---|---|
+| **AFTER_HOURS 分支异常隔离**（`scheduler_core.py`） | `_process_deferred_audit_queue()` 与 `run_after_hours_llm_scan()` **无调用点 try** ⇒ 任一异常落到最外层 except ⇒ **本分支剩余步骤整段跳过（含 `run_playbook_track` 的 EOD 平仓）** ⇒ 持仓静默过夜、无 SL | 两处各补 try/except：只丢该步，不带走后面的平仓 | 代码事实 |
+| **盘中禁看门狗自愈重启**（`watchdog.py`） | `llm_strategy_loop` 心跳只由主循环**轮首**推进 ⇒ 盘中任一同步长步骤（定桶实测 31.4min = 1884s > 600s×3 = 1800s）即被判"卡死" ⇒ 直接 `systemctl restart` ⇒ **盘中重启 = 内存态持仓与在途委托全丢** | 盘中只告警 + 通知值班，**不重启**；真冻结仍由**外部** `freeze_sentinel`（cron 每分钟）SIGKILL 处置，覆盖不丢 | 代码事实 |
+| **glibc arena 限流**（systemd unit，仓外） | 未设 ⇒ glibc 默认 `MALLOC_ARENA_MAX = 8×ncores = 16` ⇒ 实测 48 段 PROT_NONE 共 **956MB** arena 预留 + 264MB 线程栈 ⇒ **VmSize 1.72GB 而真实 RSS 仅 66–148MB** | unit 加 `MALLOC_ARENA_MAX=2`（**必须写在 unit**：放 `.env.us` 无效 —— dotenv 是进程内才加载，glibc 早已初始化完 malloc） | **VmPeak 1,715,536 kB → 798,408 kB（−917MB）；arena 预留 956MB → 63MB；VmSwap 8.7MB → 0** |
+| **出场扫描孪生行判定加索引**（`trade_store.py`） | `_PB_CLOSED_TWIN_NOT_EXISTS` 按 `futu_order_id` 关联，该列**无索引** ⇒ EXPLAIN `CORRELATED SCALAR SUBQUERY / SCAN t2`（每候选开仓行一次全表扫；744 候选行实测 4.3s，随持仓数线性涨） | 加 `idx_trade_records_futu_order_id` | 计划变为 `MULTI-INDEX OR` + 两个 INDEX SEARCH；**查询 15.6ms → 6.2ms**（3 仓；收益随持仓数放大） |
+
+**自检纪律**：本批新代码自身**不得**再违反本仓棘轮 —— 首次提交前 `except:pass` 棘轮转红
+（905→906：抄了文件里既有的 `except: pass` 风格）与 W4 debug-swallow 棘轮转红（except 块内
+`logger.debug`）⇒ 两处均改为 `warning(..., exc_info=True)`，棘轮 18 passed 复绿。
+
+**回滚**：arena 项 = 删 unit 该行 + `daemon-reload` + 重启（备份
+`/opt/ftseek/backups/ftseek-us.service.<ts>.bak`）；其余三项为代码，`git revert` 即回。
