@@ -180,7 +180,14 @@ class TestR12EntryTimeConvention:
         row = store._get_conn().execute(
             "SELECT entry_time, updated_at FROM open_positions WHERE symbol='US.YYY'"
         ).fetchone()
-        assert row[0] == row[1] and "-04:00" in row[0]
+        # 2026-11-03: 原断言硬编码 "-04:00" (夏令时偏移) ⇒ **每年冬季 (EST) 必红**
+        #   (与 6fc2f13b0 修的 DA bridge 时段判据同一种病: 把随日历变的偏移写死)。
+        #   改为按**当下真实 ET 偏移**判定 (EDT -04 / EST -05)。
+        from app.utils.timezone import now_et
+        _et_offset = now_et().strftime("%z")[:3]      # 例: "-05" (EST) / "-04" (EDT)
+        assert row[0] == row[1], "空串 entry_time 时 entry_time 应等于 updated_at (写入时刻)"
+        assert _et_offset in row[0], (
+            f"写入时刻的时区偏移应为当下 ET 偏移 {_et_offset}, 实得 {row[0]}")
 
     def test_playbook_service_passes_fill_timestamp(self):
         """防"加了参数忘了接线": playbook_service 的 upsert 调用必须传 _now_iso."""
