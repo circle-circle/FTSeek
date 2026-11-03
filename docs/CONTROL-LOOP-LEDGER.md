@@ -108,7 +108,7 @@ PnL 上, 拿 PnL 偏差当纠正信号只会引导对噪声调参。意图只能
 | 2d69370d5c91 | 盘前综合预检 | 0 20 * * 1-5 | 数据源健康+IC+OKR盘前验证 | 数据新鲜度/可用性 |
 | 9ac3efd8c5e7 | Deepulse 科技情报日报 | 30 20 * * 1-5 | 外部情报 (开环输入, 非反馈) | — |
 | 7a40dd7c9e94 | 盘后综合复盘 | 0 5 * * 2-6 (2026-10-11 DST 前置右移) | 归因/告警/方向分析 (合并5旧job) | 成对口径误差 |
-| 3a6c83bbd84c | deep-analysis 盘后复盘+记忆更新 | 0 5 * * 2-6 | 记忆沉淀 | — |
+| 3a6c83bbd84c | deep-analysis 盘后复盘+记忆更新 | 0 5 * * 2-6 | 记忆沉淀: **no-agent** `ops/hermes/deep_analysis_review_carrier.py` (线上副本 sha256 对账=`tests/test_ops_scripts_sync.py`)。2026-11-03 由 agent 模式 (qwen3.8-max pin, 实测 ¥0.3-0.4/次 × 5/周, 每轮 10 次调用全是「跑脚本→回 [SILENT]」零推理) 转载体: 顺序跑 trading_day_check(--market US) → feedback_loop → deadfetus_collector → dc_calibration_collector → deadfetus_adjudicator, 脚本/参数/顺序/timeout 秒数/静默规则逐字照抄原 prompt | 失效模式: ①子脚本失败 rc≠0 ⇒ 输出载体级异常+尾部并以 rc 退出 (Hermes 记 failed ⇒ 与「无交易=静默」可区分); ②Step 1.6 出现「达候选门槛」/ Step 1.7 verdict=GATE_CANDIDATES_FOUND ⇒ 强制输出该步完整报告 (原 prompt 的裁决优先于静默); ③timeout rc=124 只标注不重跑 (原 prompt 2026-09-16 超时纪律); ④记忆沉淀断更无人察觉的风险面: 取证面 `logs/deep_analysis_review.log` 每步 rc + 尾部, 回滚=job 恢复 agent 模式 + model pin 回 qwen3.8-max（prompt 仍在 jobs.json 里, 未删） |
 | 6af0648e3eb3 | alpha-backfill (SPY alpha+论文级IC) | 30 6 * * 2-6 | IC 测量数据回填 | — |
 | 2254de46fe64 | dc双口径日对比 | 40 5 * * 2-6 | 传感器标定: 收盘口径×策略退出配对 | 口径分歧 |
 | 13705b524e2a | FTSeek Insider Signal Monitor | 0 6 * * 2-6 | insider 异常告警 | 异常即报 |
