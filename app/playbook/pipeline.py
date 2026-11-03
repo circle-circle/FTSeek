@@ -26,6 +26,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from app.observability.round_timer import timed_phase
+
 logger = logging.getLogger(__name__)
 
 # [阶段 2a 2026-10-09] voting adapter 本体已迁 pipeline_parts.bridge_adapters;
@@ -1809,6 +1811,7 @@ def _mark_generate_done(today: str) -> None:
         logger.warning(f"[playbook] 生成完成标记写入失败(不影响本次结果): {e}")
 
 
+@timed_phase("playbook.generate")
 def run_playbook_generate(scheduler, *, force: bool = False) -> Optional[Dict[str, Any]]:
     """[阶段 6] 本体迁 generation_flow; 显式注入 pipeline 回调保 monkeypatch 缝。"""
     from app.playbook.pipeline_parts import generation_flow as _gf
@@ -1831,6 +1834,7 @@ def run_playbook_generate(scheduler, *, force: bool = False) -> Optional[Dict[st
 _MORNING_PUSH_STATE = "/opt/ftseek/FTSeek-US/data/playbook_push_state.json"
 
 
+@timed_phase("playbook.morning_push")
 def run_playbook_morning_push(scheduler=None) -> Optional[bool]:
     """[阶段 6] 本体迁 generation_flow; state_path/logger 注入保路径与日志语义。"""
     from app.playbook.pipeline_parts import generation_flow as _gf
@@ -1852,6 +1856,7 @@ def _topup_window(hhmm: int, cfg: Dict[str, Any]) -> Optional[str]:
     return _gf._topup_window(hhmm, cfg)
 
 
+@timed_phase("playbook.topup_supplement")
 def run_playbook_topup_supplement(scheduler=None) -> Optional[Dict[str, Any]]:
     """[阶段 6] 本体迁 generation_flow; 注入时间/退避缓存/回调保测试缝。"""
     from app.playbook.pipeline_parts import generation_flow as _gf
@@ -1885,6 +1890,7 @@ def _gather_intraday_evidence(data_router, symbol: str, direction: str,
     )
 
 
+@timed_phase("playbook.normalize_vol_buckets")
 def run_playbook_normalize_vol_buckets(scheduler=None) -> Optional[Dict[str, Any]]:
     """[阶段 6] 本体迁 generation_flow; 注入 ATR/SLTP 回调保测试缝。"""
     from app.playbook.pipeline_parts import generation_flow as _gf
@@ -2089,6 +2095,7 @@ def _load_execution_budget(today: str):
     )
 
 
+@timed_phase("playbook.auto_execute")
 def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dict[str, Any]]:
     """[阶段11] 本体迁 auto_execute_flow; 显式注入全部 pipeline 回调/状态保 monkeypatch 缝。"""
     from app.playbook.pipeline_parts import auto_execute_flow as _aef
@@ -3557,6 +3564,7 @@ def _pb_exit_bounded_fetch(label: str, fn, timeout_s: float):
     return box.get("r"), False, box.get("e")
 
 
+@timed_phase("playbook.monitor_exits")
 def monitor_playbook_exits(scheduler) -> int:
     """[阶段13] 本体迁 exit_monitor_flow; 注入状态/回调/函数属性保 monkeypatch 缝。"""
     from app.playbook.pipeline_parts import exit_monitor_flow as _emf

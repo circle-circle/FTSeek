@@ -29,6 +29,12 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
+try:  # 动态加载的脚本: app 包不可导入时退化为不计时, 不影响采集
+    from app.observability.round_timer import timed_phase
+except Exception:  # pragma: no cover
+    def timed_phase(_label):
+        return lambda fn: fn
+
 logger = logging.getLogger("ftseek.futu_channel_shadow")
 
 _BASE = Path(__file__).resolve().parents[1]
@@ -456,6 +462,7 @@ def _collect_top_movers(ctx) -> int:
         return 0
 
 
+@timed_phase("shadow.futu_channel_collect")
 def run_collect(scheduler=None, phase: str = "TRADING") -> None:
     """入口 (挂载点显式传 phase). TRADING 节流 300s; AFTER_HOURS 每日 1 次
     (盘后序列才完整)."""

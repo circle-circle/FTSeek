@@ -55,6 +55,7 @@ _DEFAULT_REPORT_S = 600.0
 _DEFAULT_RSS_WARN_MB = 2200
 _DEFAULT_PROBE_S = 5.0
 _DEFAULT_GAP_WARN_S = 15.0
+_DEFAULT_TRIM_RSS_MB = 600
 
 _installed = False
 _frozen = False
@@ -66,6 +67,7 @@ _window_max_ms = 0.0
 _window_max_gen = -1
 _window_pauses = 0
 _total_pauses = 0
+_since_start_max_ms = 0.0
 
 
 def _env_num(name: str, default, cast=float):
@@ -97,9 +99,38 @@ def _rss_mb() -> Optional[float]:
     return None
 
 
+def release_free_memory(reason: str = "periodic") -> Optional[Tuple[float, float]]:
+    """把 glibc 已 free 的堆页还给 OS (malloc_trim), 返回 (前MB, 后MB)。
+
+    为什么重要 (11-02 冻结的物理环节): 本进程峰值 ~1.4GB, 宿主仅 3.5GB 且 swappiness=0
+    (已在最保守档) ⇒ 内核仍把本进程的冷堆页换出; 之后任何一次**全堆 GC** 触碰这些页
+    就要从 swap 回读。实测 05:01 一次 gen1 停顿 7259ms 只回收 288 个对象 —— 时间花在
+    缺页而不是回收。glibc 默认不把 arena 还给 OS, RSS 峰值过后仍虚高, 放大换出概率。
+    定期 trim 把"已释放但未归还"的内存交回, 直接缩小可被换出的冷页集。
+
+    安全: 纯内存归还, 不动任何对象; 失败/非 glibc 平台直接跳过; env 可关。
+    """
+    if not _env_on("FTSEEK_GC_TRIM", True):
+        return None
+    before = _rss_mb()
+    try:
+        import ctypes
+        libc = ctypes.CDLL("libc.so.6")
+        libc.malloc_trim(0)          # 0 = 归还所有可归还的空闲页
+    except Exception as exc:
+        logger.debug("[GC] malloc_trim 不可用 (跳过): %s", exc)
+        return None
+    after = _rss_mb()
+    if before is not None and after is not None and (before - after) >= 20:
+        logger.info("[GC] 归还空闲堆 (%s): RSS %.0fMB → %.0fMB (-%.0fMB)",
+                    reason, before, after, before - after)
+    return (before, after) if before is not None and after is not None else None
+
+
 def _on_gc(phase: str, info: dict) -> None:
     """gc.callbacks 钩子 — 绝不能抛异常, 也不能在 GC 中做重活。"""
     global _window_max_ms, _window_max_gen, _window_pauses, _total_pauses
+    global _since_start_max_ms
     try:
         gen = int(info.get("generation", -1))
         if phase == "start":
@@ -124,6 +155,8 @@ def _on_gc(phase: str, info: dict) -> None:
         if elapsed_ms > _window_max_ms:
             _window_max_ms = elapsed_ms
             _window_max_gen = gen
+        if elapsed_ms > _since_start_max_ms:
+            _since_start_max_ms = elapsed_ms
         warn_ms = _env_num("FTSEEK_GC_PAUSE_WARN_MS", _DEFAULT_WARN_MS)
         if elapsed_ms >= warn_ms:
             logger.warning(
@@ -171,6 +204,14 @@ def _stall_probe_loop(interval_s: float, gap_warn_s: float) -> None:
             logger.debug("[冻结取证] 探针异常 (忽略): %s", exc)
 
 
+def _reset_window() -> None:
+    """清零窗口统计 (供 reporter 每个窗口末尾调用, 报告后清零避免"窗口值"其实是启动以来值)。"""
+    global _window_max_ms, _window_max_gen, _window_pauses
+    _window_max_ms = 0.0
+    _window_max_gen = -1
+    _window_pauses = 0
+
+
 def _report_loop(interval_s: float) -> None:
     """周期汇总: 各代次数/已回收/窗口最长停顿/RSS。"""
     while True:
@@ -184,10 +225,13 @@ def _report_loop(interval_s: float) -> None:
                     f"gen{i}={st.get('collections', 0)}次/{st.get('collected', 0)}回收"
                 )
             logger.info(
-                "[GC] %dmin 汇总: %s | 窗口停顿 %d 次, 最长 %.0fms (gen=%d) | RSS=%.0fMB",
+                "[GC] %dmin 汇总: %s | 本窗口停顿 %d 次, 最长 %.0fms (gen=%d); "
+                "进程启动以来最长 %.0fms | RSS=%.0fMB",
                 int(interval_s // 60), " ".join(parts), _window_pauses,
-                _window_max_ms, _window_max_gen, rss if rss is not None else -1,
+                _window_max_ms, _window_max_gen, _since_start_max_ms,
+                rss if rss is not None else -1,
             )
+            _reset_window()
             rss_warn = _env_num("FTSEEK_GC_RSS_WARN_MB", _DEFAULT_RSS_WARN_MB, int)
             if rss is not None and rss_warn > 0 and rss >= rss_warn:
                 logger.warning(
@@ -195,6 +239,10 @@ def _report_loop(interval_s: float) -> None:
                     "先查缓存/持引用泄漏再谈调参",
                     rss, rss_warn,
                 )
+            # 峰值过后把空闲堆归还 OS: 缩小被内核换出的冷页集 (换出 → 全堆 GC 时缺页 → 长停顿)
+            trim_mb = _env_num("FTSEEK_GC_TRIM_RSS_MB", _DEFAULT_TRIM_RSS_MB, int)
+            if rss is not None and trim_mb > 0 and rss >= trim_mb:
+                release_free_memory("periodic")
         except Exception as exc:  # 观测失败不影响交易
             logger.debug("[GC] 汇总异常 (忽略): %s", exc)
 
@@ -285,6 +333,7 @@ def get_status() -> dict:
         "thresholds": gc.get_threshold(),
         "window_pauses": _window_pauses,
         "window_max_ms": round(_window_max_ms, 1),
+        "since_start_max_ms": round(_since_start_max_ms, 1),
         "window_max_gen": _window_max_gen,
         "total_pauses": _total_pauses,
         "rss_mb": _rss_mb(),

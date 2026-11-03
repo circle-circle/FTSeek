@@ -2230,6 +2230,12 @@ scheduler:
     max_total_timeout_seconds: 600
   event_day_interval_minutes: 3
   event_day_symbols: []
+  # 2026-11-03 开盘卡顿批: 盘中"执行优先" — TRADING 轮次先跑入场执行, 再跑 catch-up
+  #   生成/推送/补量/定桶 (后者顺序同步, 定桶实测最长 31.4min, 整轮实测 122s)。
+  #   执行只依赖 DB "triggered" 指令, 不依赖同轮这些步骤的产出 (均幂等 + 自带时间窗);
+  #   代价: 本轮新生成/补量的指令晚一轮 (~60-180s) 才下单。
+  #   回滚: 本键 false (需重启) 或 FTSEEK_EXEC_FIRST=0 (env, 立即生效)。
+  execution_priority_first: true
   max_positions: 12
   min_consensus_level: 0.25
   min_signal_strength: 60

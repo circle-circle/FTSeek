@@ -21,6 +21,8 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+
+from app.observability.round_timer import timed_phase
 import uuid
 
 logger = logging.getLogger(__name__)
@@ -575,6 +577,7 @@ def run_llm_strategy_scan(scheduler):
 #  盘后/夜盘 LLM 推荐任务
 # ============================================================
 
+@timed_phase("llm.after_hours_scan")
 def run_after_hours_llm_scan(scheduler, phase=None):
     """
     盘后/夜盘/周末 LLM 新闻推荐任务
@@ -1118,6 +1121,7 @@ def _build_watchlist_fallback(plan: dict, scheduler) -> dict:
 # P0 修复 (2026-04-19): 美股盘前计划 + 开盘确认调度
 # ──────────────────────────────────────────────────────────────────────
 
+@timed_phase("llm.open_checker")
 def run_open_checker(scheduler):
     """
     美股开盘确认器 (每日一次, 约 09:15-09:29 ET)
@@ -1183,6 +1187,7 @@ def run_open_checker(scheduler):
         logger.error(f"[开盘确认] ❌ 执行失败: {e}", exc_info=True)
 
 
+@timed_phase("llm.open_price_refresh")
 def run_open_price_refresh(scheduler):
     """
     开盘价刷新 (每日一次, 09:30:00-09:31:00 ET)

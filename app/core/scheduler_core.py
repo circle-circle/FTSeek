@@ -1202,6 +1202,45 @@ class TradingScheduler:
     #   TRADING 分支跑同一件事, 不省时间。
     # 残余 (转 D4(c) 另案): 单步内部不可中断 → 若长尾出在"跨开盘时正在跑的那一步"
     #   (09-03 正是 generate 跑 30.5min 未完成), 本修法救不了, 仍需重活外移 worker 线程。
+    def _exec_first_enabled(self) -> bool:
+        """盘中"执行优先"开关 (2026-11-03 开盘卡顿批).
+
+        True = TRADING 轮次里先跑入场执行 (auto_execute), 再跑 catch-up 生成/推送/补量/定桶;
+        False = 老顺序 (执行排在补量/定桶之后)。
+
+        为什么: 这些步骤是**顺序同步**的, 定桶一步实测最长 31.4min (09-03)、整轮实测 122s
+        (11-02 09:30 ET) — 执行排在它们后面 = 开盘段入场被重活排队。执行只依赖 DB 里
+        "triggered" 指令, 不依赖同轮生成/补量的产出 (那两步都是幂等 + 自己的时间窗),
+        故前置执行不改变门链判定, 只改变"新生成的指令晚一轮 (~60-180s) 才被下单"。
+        回滚: FTSEEK_EXEC_FIRST=0 (env, 立即生效) 或 YAML scheduler.execution_priority_first=false。
+        """
+        env = os.environ.get("FTSEEK_EXEC_FIRST", "")
+        if env != "":
+            return env.strip().lower() not in ("0", "false", "no", "off")
+        try:
+            from app.core.config_container import get_config as _gc
+            _cfg = _gc()
+            return bool(_cfg.get_dotted("scheduler.execution_priority_first", True)) if _cfg else True
+        except Exception:
+            return True
+
+    def _maybe_auto_execute(self, now) -> bool:
+        """盘中自动执行 (含 interval 门 + 异常隔离)。原内联块抽出入方法: 现在两处调用
+        (执行优先 / 老顺序), 抽方法避免复制产生漂移。返回本轮是否真的调用了执行。"""
+        if not hasattr(self, '_playbook_auto_execute_last_run'):
+            self._playbook_auto_execute_last_run = None
+        _last = self._playbook_auto_execute_last_run
+        if _last is not None and (now - _last).total_seconds() < self.PLAYBOOK_AUTO_EXECUTE_INTERVAL_SEC:
+            return False
+        try:
+            from app.playbook.pipeline import run_playbook_auto_execute
+            run_playbook_auto_execute(self)
+            self._playbook_auto_execute_last_run = now
+            return True
+        except Exception as _e:
+            logger.warning(f"[Playbook] 盘中自动执行异常 (已隔离): {_e}")
+            return False
+
     def _premarket_overrun(self, step_name: str) -> bool:
         """盘前轮次是否已跨开盘 (True → 调用方应跳过剩余盘前步骤, continue 回轮顶)。
 
@@ -2288,6 +2327,13 @@ class TradingScheduler:
                 self._wd_open_round_heartbeat(phase)
 
                 if phase == MarketPhase.TRADING:
+                    # 2026-11-03 开盘卡顿批: 执行优先 — 入场执行排在 catch-up 生成/推送/
+                    #   补量/定桶之前。理由: 这些步骤顺序同步, 定桶实测最长 31.4min、整轮
+                    #   122s, 执行排后面就是被重活排队; 执行只依赖 DB "triggered" 指令。
+                    #   回滚: FTSEEK_EXEC_FIRST=0 (env) / scheduler.execution_priority_first=false。
+                    if self._exec_first_enabled():
+                        self._maybe_auto_execute(now)
+
                     # Catch-up: 盘前因重启/超时错过生成时的补救 (DB幂等, 已有指令则跳过)
                     try:
                         from app.playbook.pipeline import run_playbook_generate
@@ -2334,17 +2380,10 @@ class TradingScheduler:
                     # 2026-09-15: 硬编码 300 → self.PLAYBOOK_AUTO_EXECUTE_INTERVAL_SEC (默认 180,
                     #   配置键 scheduler.playbook_auto_execute_interval_sec). 用户裁"执行": 缩短
                     #   门禁解除→进场的响应延迟. 单轮耗时实测 p50=1s/p90=9s, 调用余量充足.
-                    if not hasattr(self, '_playbook_auto_execute_last_run'):
-                        self._playbook_auto_execute_last_run = None
-                    
-                    if (self._playbook_auto_execute_last_run is None or 
-                        (now - self._playbook_auto_execute_last_run).total_seconds() >= self.PLAYBOOK_AUTO_EXECUTE_INTERVAL_SEC):
-                        try:
-                            from app.playbook.pipeline import run_playbook_auto_execute
-                            run_playbook_auto_execute(self)
-                            self._playbook_auto_execute_last_run = now
-                        except Exception as _e:
-                            logger.warning(f"[Playbook] 盘中自动执行异常 (已隔离): {_e}")
+                    # 2026-11-03: interval 门 + 异常隔离已抽到 _maybe_auto_execute()。
+                    #   执行优先模式 (_exec_first_enabled) 下本块在轮首已执行过, 这里由
+                    #   interval 门自然变成 no-op; 老顺序模式 (FTSEEK_EXEC_FIRST=0) 下保持原语义。
+                    self._maybe_auto_execute(now)
 
                     # 盘中再入场扫描 (2026-08-06 用户指示: sim 直上线快速验真):
                     #   当日非硬亏平仓标的 回踩VWAP+slope转正+量比/spread 确认 → 重武装指令走全门链.
