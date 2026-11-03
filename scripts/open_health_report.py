@@ -96,9 +96,13 @@ def _gc_summary(lines):
 
 
 def _phase_stats(lines):
-    """[轮次计时] 长尾: label → [耗时...] + RSS 台阶行数。"""
+    """[轮次计时] 长尾: label → [耗时...] + RSS 台阶行数 + RSS 释放行数。
+
+    台阶 = 堆被撑大 (告警); 释放 = GC/malloc_trim 归还 (非告警, 单列不混进台阶)。
+    """
     ph = defaultdict(list)
     rss_steps = Counter()
+    rss_releases = Counter()
     for ln in lines:
         if "[轮次计时]" not in ln:
             continue
@@ -106,9 +110,12 @@ def _phase_stats(lines):
         if not m:
             continue
         ph[m.group(1)].append(float(m.group(2)))
-        if "RSS " in ln:
+        if ", 释放)" in ln:
+            rss_releases[m.group(1)] += 1
+        elif "RSS " in ln:
+            # 新格式带 ", 台阶)" 标签; 旧格式 (2026-11-03 修正前) 无标签 ⇒ 按台阶计
             rss_steps[m.group(1)] += 1
-    return ph, rss_steps
+    return ph, rss_steps, rss_releases
 
 
 def _freeze_events(day: str):
@@ -213,13 +220,14 @@ def main() -> int:
         verdict.append("rss")
 
     # 3. 轮次计时
-    ph, rss_steps = _phase_stats(lines)
+    ph, rss_steps, rss_releases = _phase_stats(lines)
     if ph:
         rows = sorted(ph.items(), key=lambda kv: -max(kv[1]))[:6]
         out.append("· 最慢同步步骤 (次数/最长/累计):")
         for label, ds in rows:
             out.append(f"   {label:34s} n={len(ds):<3d} max={max(ds):6.1f}s sum={sum(ds):7.1f}s"
-                       + (f"  RSS台阶x{rss_steps[label]}" if rss_steps[label] else ""))
+                       + (f"  RSS台阶x{rss_steps[label]}" if rss_steps[label] else "")
+                       + (f"  RSS释放x{rss_releases[label]}" if rss_releases[label] else ""))
         top = rows[0]
         if max(top[1]) >= 30:
             out.append(f"   ⚠️ 长尾 {top[0]} {max(top[1]):.0f}s ≥30s — 重活外移候选")

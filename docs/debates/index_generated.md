@@ -1,9 +1,9 @@
 # 辩论库机器索引 (index_generated.md)
 
-> **本文件由 `scripts/build_debate_index.py` 生成** (2026-11-02), 请勿手改。
+> **本文件由 `scripts/build_debate_index.py` 生成** (2026-11-03), 请勿手改。
 > 决策摘要以 [README.md](README.md) 手工索引为准; 本页只做全量清单与漏登对账。
 
-共 **210** 个 DEB 文件。
+共 **211** 个 DEB 文件。
 
 ## 漏登对账
 
@@ -404,3 +404,4 @@
 | [DEB-20261028-bucket-layering-and-tiered-exit](DEB-20261028-bucket-layering-and-tiered-exit.md) | 2026-10-28 | 进行中 / 第一批（P0+E1+A0）已实施；A1/A1b 完成（REVIEW_ONLY）；C 预注册 + C0 保真门 FIDELITY_FAIL（0.678<0.80，未读 C1/C2）；§18 事后审计修补批完成（3 处计数/披露口径修复 + 索引生成物重跑，逐字段复跑证读数不变）；A2/B/E3 待裁 | 3 | 2118 |
 | [DEB-20261028-observability-and-ssot-batch](DEB-20261028-observability-and-ssot-batch.md) | 2026-10-28 | (未标注) | - | 220 |
 | [DEB-20261028-ratchet-three-reds-cleanup](DEB-20261028-ratchet-three-reds-cleanup.md) | 2026-10-28 | (未标注) | - | 136 |
+| [DEB-20261103-open-freeze-and-perf-hotfix-review](DEB-20261103-open-freeze-and-perf-hotfix-review.md) | 2026-11-03 | 已决策（复核结论：技术实现成立；3 处缺陷已修正并通过测试；治理缺口以本文件 + handoff 条目补齐） | - | 251 |

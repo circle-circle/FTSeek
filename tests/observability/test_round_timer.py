@@ -3,6 +3,7 @@
 守什么:
 1. `timed_phase` 不改变被装饰函数的返回值/异常语义 (它只包一层计时)。
 2. 阈值语义: ≥warn 打 WARNING (单步长尾会阻塞同轮入场执行), ≥info 打 INFO, 低于阈值静默。
+3. RSS 方向语义: 上涨 ≥阈值 = "台阶" (告警), 下降 ≥阈值 = "释放" (只 INFO, 不告警)。
 3. 计时本身抛异常也不得影响业务调用。
 4. `release_free_memory` 在 FTSEEK_GC_TRIM=0 时一个字节都不动 (回滚路径真实可用)。
 """
@@ -93,7 +94,7 @@ def test_trim_enabled_returns_rss_pair(monkeypatch):
     assert out is None or (len(out) == 2 and out[0] > 0)
 
 def test_rss_step_triggers_warning_without_long_duration(monkeypatch, caplog):
-    """短耗时但 RSS 台阶 ≥ 阈值也要报 (堆被撑大是 GC 停顿的放大器)。"""
+    """短耗时但 RSS 上涨 ≥ 阈值也要报 (堆被撑大是 GC 停顿的放大器)。"""
     monkeypatch.setenv("FTSEEK_PHASE_INFO_S", "5")
     monkeypatch.setenv("FTSEEK_PHASE_WARN_S", "30")
     monkeypatch.setenv("FTSEEK_PHASE_RSS_MB", "50")
@@ -108,5 +109,30 @@ def test_rss_step_triggers_warning_without_long_duration(monkeypatch, caplog):
         return 1
 
     assert _fn() == 1
-    assert "RSS 300→780MB (+480)" in caplog.text
-    assert "单步长尾/RSS 台阶" in caplog.text
+    assert "RSS 300→780MB (+480, 台阶)" in caplog.text
+    assert "RSS 台阶" in caplog.text
+    # 耗时没到长尾线 ⇒ 不得声称"该步把后续步骤全排队"
+    assert "单步长尾" not in caplog.text
+
+
+def test_rss_release_is_not_reported_as_long_tail(monkeypatch, caplog):
+    """RSS 下降 (GC / malloc_trim 归还) 是释放不是长尾 ⇒ 只 INFO, 不打 WARNING。"""
+    monkeypatch.setenv("FTSEEK_PHASE_INFO_S", "5")
+    monkeypatch.setenv("FTSEEK_PHASE_WARN_S", "30")
+    monkeypatch.setenv("FTSEEK_PHASE_RSS_MB", "50")
+    clock = iter([0.0, 0.2])
+    monkeypatch.setattr(round_timer.time, "perf_counter", lambda: next(clock))
+    rss = iter([780.0, 300.0])
+    monkeypatch.setattr(round_timer, "_rss_mb", lambda: next(rss))
+    caplog.set_level("INFO")
+
+    @round_timer.timed_phase("demo.release")
+    def _fn():
+        return 1
+
+    assert _fn() == 1
+    assert "RSS 780→300MB (-480, 释放)" in caplog.text
+    assert "RSS 释放" in caplog.text
+    assert "单步长尾" not in caplog.text
+    assert "RSS 台阶" not in caplog.text
+    assert not [r for r in caplog.records if r.levelname == "WARNING"]

@@ -20,7 +20,6 @@ from datetime import datetime
 # Add project root
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.data.market_data_router import MarketDataRouter
 from app.us_pipeline.battle_plan_manager import USBattlePlanManager
 from app.push import HubTextAdapter
 from app.push.message import Category as _CtOpen

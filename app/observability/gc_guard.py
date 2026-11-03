@@ -213,7 +213,11 @@ def _reset_window() -> None:
 
 
 def _report_loop(interval_s: float) -> None:
-    """周期汇总: 各代次数/已回收/窗口最长停顿/RSS。"""
+    """周期汇总: 各代次数/已回收/窗口最长停顿/RSS。
+
+    口径: `gc.get_stats()` 的代计数是**进程累计值** (只能靠与上次快照做差得到窗口值),
+    故日志里显式标"启动以来"; 只有停顿计数 (_window_*) 是本窗口值 (报告后清零)。
+    """
     while True:
         try:
             time.sleep(interval_s)
@@ -225,7 +229,7 @@ def _report_loop(interval_s: float) -> None:
                     f"gen{i}={st.get('collections', 0)}次/{st.get('collected', 0)}回收"
                 )
             logger.info(
-                "[GC] %dmin 汇总: %s | 本窗口停顿 %d 次, 最长 %.0fms (gen=%d); "
+                "[GC] %dmin 汇总: 启动以来 %s | 本窗口停顿 %d 次, 最长 %.0fms (gen=%d); "
                 "进程启动以来最长 %.0fms | RSS=%.0fMB",
                 int(interval_s // 60), " ".join(parts), _window_pauses,
                 _window_max_ms, _window_max_gen, _since_start_max_ms,

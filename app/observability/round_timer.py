@@ -55,6 +55,11 @@ def timed_phase(label: str):
     极可能是某一个批量步骤 (逐标的全量拉取/pandas 合并) 临时膨胀。这里在每步前后读一次
     /proc/self/status 的 VmRSS (两次文件读, 微秒级), 增量 ≥ 阈值就打出来, 直接把
     "哪一步撑大堆" 从猜变成读; 堆大小正是 GC 停顿时长的放大器。
+
+    方向语义 (2026-11-03 复核修正): RSS **上涨** ≥ 阈值 = "台阶" (堆被撑大, 告警);
+    RSS **下降** ≥ 阈值 = "释放" (GC / malloc_trim 归还, 非问题) ⇒ 只记 INFO。
+    原实现用 abs(delta) 判, 一次堆回落会被误报成"该步长尾, 同轮后续步骤全被它排队" ——
+    归因错误且制造噪声。告警文案按"长尾(耗时驱动)"与"台阶(内存驱动)"分列。
     """
     _DEFAULT_RSS_DELTA_MB = 50.0
 
@@ -75,16 +80,29 @@ def timed_phase(label: str):
                     delta = None
                     if rss_before is not None and rss_after is not None:
                         delta = rss_after - rss_before
+                    grew = delta is not None and rss_s > 0 and delta >= rss_s
+                    freed = delta is not None and rss_s > 0 and delta <= -rss_s
                     rss_note = ""
-                    if delta is not None and rss_s > 0 and abs(delta) >= rss_s:
-                        rss_note = f"; RSS {rss_before:.0f}→{rss_after:.0f}MB ({delta:+.0f})"
-                    if (warn_s > 0 and dt >= warn_s) or rss_note:
+                    if grew or freed:
+                        tag = "台阶" if grew else "释放"
+                        rss_note = f"; RSS {rss_before:.0f}→{rss_after:.0f}MB ({delta:+.0f}, {tag})"
+                    if warn_s > 0 and dt >= warn_s:
                         logger.warning(
-                            "[轮次计时] %s %.1fs%s — 单步长尾/RSS 台阶: 同轮后续步骤 (含入场执行) 全被它排队",
+                            "[轮次计时] %s %.1fs%s — 单步长尾: 同轮后续步骤 (含入场执行) 全被它排队",
+                            label, dt, rss_note,
+                        )
+                    elif grew:
+                        logger.warning(
+                            "[轮次计时] %s %.1fs%s — RSS 台阶: 堆被撑大, 全堆 GC 停顿时长的放大器",
+                            label, dt, rss_note,
+                        )
+                    elif freed:
+                        logger.info(
+                            "[轮次计时] %s %.1fs%s — RSS 释放 (非告警)",
                             label, dt, rss_note,
                         )
                     elif info_s > 0 and dt >= info_s:
-                        logger.info("[轮次计时] %s %.1fs%s", label, dt, rss_note)
+                        logger.info("[轮次计时] %s %.1fs", label, dt)
                 except Exception as _dt_err:  # 计时不能成为新的故障点, 但失败要留痕
                     logger.debug("[轮次计时] 计时失败 (忽略): %s", _dt_err)
 

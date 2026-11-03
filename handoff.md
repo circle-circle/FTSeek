@@ -1,5 +1,23 @@
 # FTSeek-US · HANDOFF
 
+## 2026-11-03 另 agent 优化批复核 + 3 处修正 + 补落档（观测口径修正，零交易语义变更）
+
+- **触发**：用户令「请检查另外 agent 的优化修复点，是否合理正常」。复核对象 = 4 个已上线 hotfix：`6fc2f13b0`（DA bridge 相位判据）、`73c970e05`（开盘冻结归因 + GC 风暴护栏）、`7afc587f7`（protobuf upb + 执行优先 + 轮次计时/堆归还）、`4fe1c2946`（数据源单例收敛 + 步骤 RSS 归因 + 开盘速判器）。
+- **复核结论**：四项技术实现**成立**，核心断言经独立复算/实跑为真 —— ①protobuf 实测 `api_implementation.Type()='upb'`、`pip check` 干净、futu 的 `*_pb2.py` 用 `builder` 新式 API（无 4.x 兼容坑）、10:25 起 Futu LV3 已连且 ERROR/CRITICAL=0；②GC 降频倍数复算 **178.6x**（700×10×10 vs 20000×25×25）自述一致、冻结与阈值均已在日志生效、休市 RSS 130–148MB（对比 11-02 峰值 1.45GB）；③数据源单例是既有契约（`get_market_data_router()` 2026-07-11 建、`scheduler_core.py:305-317` 注册）的漏用，且**全仓无任何调用方 close 共享 router**（排掉「关掉进程级 router」这一致命面）；④执行优先的「只依赖 DB triggered 指令」成立，并另排掉两个排序隐患（`run_playbook_generate` 不写已有指令；`premarket_invalidation` 是 record-only 影子），vol_bucket 无缺口（generate 同轮定桶、reentry 按设计不走桶）。
+- **棘轮基线 900→905 独立复算为真**：同正则同排除面复算 HEAD=905、批前 `5bec3843d`=905 ⇒ 「905 早于本批存在、本批净贡献 0、原 900 已陈旧」成立 ⇒ 该校准是**恢复信号**不是放宽掩盖。
+- **已修 3 处**（只动观测/标签/死代码，零交易语义变更）：
+  1. **RSS 台阶方向语义**（`app/observability/round_timer.py`）：原用 `abs(delta)` 判，堆**回落** ≥50MB 会打 WARNING 且文案自称「单步长尾…同轮后续步骤全被它排队」⇒ 归因错误 + 噪声。改为：上涨=「台阶」(WARNING, 内存驱动) / 下降=「释放」(INFO, 非告警) / 耗时≥30s 才是「单步长尾」(WARNING, 耗时驱动)，三者分列；记号 `RSS a→bMB (±d, 台阶|释放)`。
+  2. **GC 汇总口径**（`app/observability/gc_guard.py`）：`gc.get_stats()` 是**进程累计值**，却与「本窗口停顿」并排放在「10min 汇总」标签下 ⇒ 改为显式写「启动以来 gen0=…」，只有停顿计数算窗口值（`_reset_window()` 口径不变）。`scripts/open_health_report.py` 的解析正则是子串搜索，新文案全部命中，解析器无需改。
+  3. **死 import**（`app/us_pipeline/open_checker.py:23`）：删已改走 `get_market_data_router()` 后残留的 `MarketDataRouter` 导入。
+- **测试**：新增/改动 5 个测试文件 **28 passed**；`py_compile` 四个改动文件通过；`scripts/open_health_report.py` 实跑输出自洽；except-pass 棘轮计数不变（本批未新增 `except: pass`）。
+- **落档**：`docs/debates/DEB-20261103-open-freeze-and-perf-hotfix-review.md`（新建：逐项核验表 + 6 处问题 + 修正记录 + 治理偏差登记 + 今晚待复核 4 项）；`docs/debates/README.md` 索引行同步。
+- **登记不改**：`market_data_router.py:115` 仍自建 AV provider ⇒ **每进程 AV 实例预期为 2**（router 1 + 单例 1，各带独立 500/日配额），不改的理由：它每进程只建 1 个（无浪费），而收敛它会把 router 侧 VIX 的缓存 TTL 换成默认 900s ⇒ 动 regime 侧 VIX 新鲜度语义，收益为负。
+- **治理偏差（已登记，未隐藏）**：①4 个提交上线时**未落档、handoff 停更在 2026-11-02**（本条 + DEB 为事后补正，不等于流程合规）；②「执行优先」是盘中交易路径行为变更，**未影子先行**即默认上线（仅回滚闸 + 预注册停止条件 S1/S2/S3）；③同批一次动了 4 个独立变量（protobuf / 执行优先 / GC / 单例），首场异常无法归因；④分支领先 origin **2 个提交未推送**（生产已生效、远端无记录）。
+- **待复核（今晚 21:30 CST 美股开盘后核）**：①完整交易时段内 `[AlphaVantage] 初始化完成` / `[MarketDataRouter] 初始化完成` 各 ≤2 次（不回到 137/17 量级）；②protobuf 4.25.3 下美股推送解码正常、价格实时跳动、0 ERROR；③执行优先的 trigger→成交 p90 不比改动前更差（>+60s 即触发 S2 回滚）；④开盘洪峰期 GC 停顿与 RSS 不复现 11-02 的 7259ms/1.45GB 形态。
+- **下一步**：本次修正为 Python 源码变更，**需重启才生效**（AGENT.md）→ 重启前核在途出场（`SELECT symbol FROM trade_records WHERE exit_time IS NULL`）+ `git status --porcelain -- app/ scripts/`（工作树另有另一 agent 的 `obsidian_vault` 产物 33 改 + 8 新，**不属于本次上线范围**），重启后必跑 `scripts/startup_smoke_check.py --wait 90`（注意：该脚本带「启动段早于本次重启」过期判据，须在重启后 120s 内跑）。提交范围只含本批 8 个文件（app/ 3 + scripts/ 1 + tests/ 1 + docs/ 2 + handoff 1），**不得**顺带提交 `obsidian_vault` 的在途 WIP；推送用普通 `git push`（非 force）。
+
+最后更新：2026-11-03（本条）
+
 ## 2026-11-02 未提交研究件事后审计修补批（零读数变更，零交易行为变更，未重启；已提交）
 
 - **触发**：用户令「检查当前项目变更和优化事项，确认是否合理正常」。审阅结论：主体合理——零交易行为变更、预注册先写判据、保真门 0.80 未下调（0.678 → FIDELITY_FAIL 停手）、自我推翻（§5.16 → §5.17）、日聚类 t + MDE80、毛净双列、28 测试真过；但查出 4 处要修。
