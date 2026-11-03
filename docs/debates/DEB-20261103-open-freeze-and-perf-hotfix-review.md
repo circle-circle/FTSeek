@@ -47,7 +47,12 @@
   py-spy + SIGUSR1 + SIGKILL；SIGUSR1 进程内快照抓到
   `Current thread ... Garbage-collecting @ scheduler_core.run_forever`；
   同期日志 0 行而 journald/cron 有记录 ⇒ 冻结是进程级而非单个线程。
-- 同日该进程 RSS 峰值 1.45GB，宿主 3.5GB 且 `swappiness=0`。
+- 同日该进程内存峰值口径 **1.45GB（⚠️ 2026-11-03 全链审计后标注为"待核"：11-02 冻结时刻无
+  `/proc/<pid>/status` 快照留存，无法确认它是 RSS 还是 VmPeak/VmSize）**；宿主 3.5GB 且
+  `swappiness=0`。**当前进程实测：VmSize/VmPeak = 1.71GB，而 RSS 仅 66–148MB**，
+  `/proc/maps` 显示 **956MB 是 glibc malloc arena 的 PROT_NONE 预留（15 段 × 64MB）+ 264MB
+  线程栈（33×8MB）** ⇒ 同量级的"1.4GB"极可能是**虚拟地址空间而非驻留内存**。
+  该口径问题已单列进全链审计（见 `DEB-20261103-full-chain-perf-risk-audit.md`）。
 - 11-03 上午连续 6 次重启/部署（09:34 / 09:40 / 09:41 / 09:47 / 10:16 / 10:25），
   每次都带一批热修。
 
@@ -64,7 +69,8 @@
 | 活体链路 | `logs/ftseek_us.log` 10:25:20 起 | `[MarketDataRouter] Futu LV3 提供商已初始化`、`[富途] 连接成功 127.0.0.1:11111 env=模拟` ✓ |
 | 重启后错误面 | 同上 | ERROR/CRITICAL = **0** ✓ |
 
-**结论成立。** 唯一未覆盖面：美股推送解码路径需美股开盘（今晚 21:30 CST）自然复核
+**结论成立。** 唯一未覆盖面：美股推送解码路径需美股开盘（今晚 **22:30 CST** —— 11-01 起美东
+转 EST，09:30 ET = 22:30 CST，不是夏令时口径的 21:30）自然复核
 （提交自述已如实标注）。**风险登记**：升级属二进制依赖变更，回滚需同时覆盖 venv
 覆盖件 + `requirements.lock` + 重启（提交已留备份目录 `/opt/ftseek/backups/protobuf-3.20.3-*/`）。
 
@@ -75,7 +81,7 @@
 | 降频倍数 | 复算：原 700×10×10=70,000 次分配一次全堆扫描 → 新 20000×25×25=12,500,000 次 | **178.6x**（提交自述 178x ✓） |
 | 线上生效 | 日志 `[GC] 阈值 (700, 10, 10) → (20000, 25, 25)` | ✓ |
 | 冻结生效 | 日志 `[GC] 长命对象已冻结 (startup)` | ✓ |
-| 堆水位 | `[GC] 10min 汇总` RSS=148MB → 130MB（对比 11-02 峰值 1.45GB） | ✓（休市时段，非开盘洪峰口径） |
+| 堆水位 | `[GC] 10min 汇总` RSS=148MB → 130MB（对比 11-02 的 1.45GB **口径待核**，见 §1 与全链审计） | ✓（休市时段，非开盘洪峰口径） |
 | 接线安全 | `main.py`：`install_gc_guard()`（启动早期）+ `freeze_long_lived()`（`run_forever` 前），两处均 try/except 包裹 | ✓ 启动不可被护栏搞挂 |
 | `malloc_trim` | `ctypes.CDLL("libc.so.6").malloc_trim(0)`，glibc only，失败跳过；CDLL 调用释放 GIL | ✓ 安全（arena 锁保护） |
 
@@ -226,14 +232,14 @@
   （S1 当日前 3 小时成交笔数 < 近 5 日同时段均值 70%；S2 trigger→成交 p90 反而 >+60s；
   S3 同标的同轮重复下单/双平仓任一起）。任一条触发 ⇒ 当天回滚 `FTSEEK_EXEC_FIRST=0`。
 
-## 6. 待复核（需今晚 21:30 CST 美股开盘）
+## 6. 待复核（需今晚 22:30 CST 美股开盘，EST 口径）
 
 | # | 待核项 | 判据 | 工具 |
 |---|---|---|---|
 | 6.1 | 数据源单例真实效果 | 一个完整交易时段内 `[AlphaVantage] 初始化完成` / `[MarketDataRouter] 初始化完成` 各 ≤ 2 次（2 = §5.1 的 router + 单例），**不回到 137/17 量级** | `grep -c` 主日志 |
 | 6.2 | protobuf 4.25.3 下的美股推送解码 | 开盘后 Futu LV3 推送解码正常、价格实时跳动、0 ERROR | `logs/ftseek_us.log` |
 | 6.3 | 执行优先的入场延迟 | trigger→成交 p90 不比改动前更差（>+60s 即触发 S2） | `scripts/open_health_report.py`（入场执行段）+ 成交笔数对比 |
-| 6.4 | GC 停顿 | 开盘洪峰期 gen2 停顿与 RSS 不复现 11-02 的 7259ms/1.45GB 形态 | `[GC] 10min 汇总` + `open_health_report.py` |
+| 6.4 | GC 停顿 | 开盘洪峰期 gen2 停顿与 RSS 不复现 11-02 的 7259ms 形态（1.45GB 那条口径待核，见 §1） | `[GC] 10min 汇总` + `open_health_report.py` |
 
 ## 7. 治理偏差登记（不隐藏）
 
