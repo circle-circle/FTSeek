@@ -14,7 +14,8 @@
 - **登记不改**：`market_data_router.py:115` 仍自建 AV provider ⇒ **每进程 AV 实例预期为 2**（router 1 + 单例 1，各带独立 500/日配额），不改的理由：它每进程只建 1 个（无浪费），而收敛它会把 router 侧 VIX 的缓存 TTL 换成默认 900s ⇒ 动 regime 侧 VIX 新鲜度语义，收益为负。
 - **治理偏差（已登记，未隐藏）**：①4 个提交上线时**未落档、handoff 停更在 2026-11-02**（本条 + DEB 为事后补正，不等于流程合规）；②「执行优先」是盘中交易路径行为变更，**未影子先行**即默认上线（仅回滚闸 + 预注册停止条件 S1/S2/S3）；③同批一次动了 4 个独立变量（protobuf / 执行优先 / GC / 单例），首场异常无法归因；④分支领先 origin **2 个提交未推送**（生产已生效、远端无记录）。
 - **待复核（今晚 21:30 CST 美股开盘后核）**：①完整交易时段内 `[AlphaVantage] 初始化完成` / `[MarketDataRouter] 初始化完成` 各 ≤2 次（不回到 137/17 量级）；②protobuf 4.25.3 下美股推送解码正常、价格实时跳动、0 ERROR；③执行优先的 trigger→成交 p90 不比改动前更差（>+60s 即触发 S2 回滚）；④开盘洪峰期 GC 停顿与 RSS 不复现 11-02 的 7259ms/1.45GB 形态。
-- **下一步**：本次修正为 Python 源码变更，**需重启才生效**（AGENT.md）→ 重启前核在途出场（`SELECT symbol FROM trade_records WHERE exit_time IS NULL`）+ `git status --porcelain -- app/ scripts/`（工作树另有另一 agent 的 `obsidian_vault` 产物 33 改 + 8 新，**不属于本次上线范围**），重启后必跑 `scripts/startup_smoke_check.py --wait 90`（注意：该脚本带「启动段早于本次重启」过期判据，须在重启后 120s 内跑）。提交范围只含本批 8 个文件（app/ 3 + scripts/ 1 + tests/ 1 + docs/ 2 + handoff 1），**不得**顺带提交 `obsidian_vault` 的在途 WIP；推送用普通 `git push`（非 force）。
+- **部署（已完成）**：提交 `9d0e76cf0`（9 文件，不含 `obsidian_vault` 在途 WIP）→ `git push` 推 `rfc-060-phase1-hotfixes`（`73c970e05..9d0e76cf0`，非 force）→ 重启前核未平仓 3 笔（US.MRK / US.LMT / US.ACN，非在途出场）+ `git status -- app/ scripts/` 干净 → `systemctl restart ftseek-us`（11:16:07 起进程）→ `startup_smoke_check.py --wait 90` **7/7 全过（exit=0）**；重启后 0 ERROR/CRITICAL、持仓按 `open_positions` SSOT 恢复 3 只、源码 mtime 早于进程启动 ⇒ 跑的是修正后代码。
+- **下一步（今晚 21:30 CST 开盘后）**：按上方「待复核」4 项逐条核（单例计数 ≤2 次/时段、protobuf 下美股推送解码正常、trigger→成交 p90 不恶化 >+60s、GC 停顿与 RSS 不复现 11-02 形态）；任一触发即按预注册停止条件回滚 `FTSEEK_EXEC_FIRST=0`（env，立即生效）。**注意**：`startup_smoke_check.py` 带「启动段早于本次重启」过期判据，须在重启后 120s 内跑，超时再跑必 exit=2（那是判据设计，不是服务异常）。
 
 最后更新：2026-11-03（本条）
 

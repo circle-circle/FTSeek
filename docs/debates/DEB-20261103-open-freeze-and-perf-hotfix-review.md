@@ -184,10 +184,28 @@
 
 - `pytest tests/observability/test_round_timer.py tests/observability/test_gc_guard.py
   tests/test_provider_singleton.py tests/test_exec_priority_first.py
-  tests/test_except_pass_ratchet.py` → **28 passed**。
+  tests/test_except_pass_ratchet.py` → **28 passed**；扩测（含 `test_market_regime.py`）
+  **57 passed**。
 - `py_compile` 四个改动文件 → 通过。
 - `scripts/open_health_report.py` 实跑 → 输出自洽。
 - except-pass 棘轮计数不变（本批修正未新增 `except: pass`）。
+
+### 4.6 部署记录（2026-11-03 11:16 CST，用户授权后执行）
+
+- 提交：`9d0e76cf0`（9 文件：app 3 + scripts 1 + tests 1 + docs 3 + handoff 1），
+  **未**带入工作树里另一 agent 的 `obsidian_vault` 33 改 8 新。
+- 推送：`git push origin rfc-060-phase1-hotfixes` ⇒ `73c970e05..9d0e76cf0`
+  （普通推送，非 force）⇒ 生产已生效但远端无记录的两个 hotfix 一并补上远端记录。
+- 重启前核①未平仓 3 笔（US.MRK / US.LMT / US.ACN，均非在途出场）；核②
+  `git status --porcelain -- app/ scripts/` 为空（已提交）。
+- 重启：`systemctl restart ftseek-us` ⇒ 11:16:07 起进程；
+  `scripts/startup_smoke_check.py --wait 90` ⇒ **7/7 全过（exit=0）**
+  （ConfigValidator / 漂移检测 / 热重载 / SSOT 审计 0 BLOCKING / 双臂安全确认 /
+  退出快循环 / 零 Traceback-CRITICAL）。
+- 重启后：0 ERROR/CRITICAL；持仓按 `open_positions` SSOT 恢复 3 只
+  （US.ACN / US.LMT / US.MRK，与重启前核一致）；`[GC] 阈值 → (20000,25,25)` 与
+  `长命对象已冻结 (startup)` 均已落日志；源码 mtime（11:02:25–11:02:59）早于进程
+  启动（11:16:07）⇒ **跑的是修正后代码**。
 
 ## 5. 登记：本次有意不改的项与理由
 
@@ -246,5 +264,8 @@
 ## 9. 讨论记录
 
 - 2026-11-03：复核方（本次会话）按 AGENTS.md 必读顺序读 `AGENT.md` / `handoff.md` /
-  宪章 / OKR-2026-11，逐项复算 4 个提交的自述断言；结论见 §0。修正批未重启即生效
-  前提：Python 源码变更需重启（AGENT.md），故修正落地后需按 §7.5 说明补一次重启 + 冒烟。
+  宪章 / OKR-2026-11，逐项复算 4 个提交的自述断言；结论见 §0。修正批落地后经用户授权
+  完成重启 + 冒烟（见 §4.6）。
+- 2026-11-03（修正）：§3.1/§3.2/§3.3 三处代码缺陷已修并加测；§5.1/§5.2 登记不改项；
+  §3.5 治理缺口以本文件 + handoff 条目补正；§3.6 的影子先行缺口**未**在本文强改，
+  以「预注册停止条件 S1/S2/S3 + 今晚盘中四项复核」替代（诚实边界：这不是影子对照）。
