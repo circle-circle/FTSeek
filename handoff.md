@@ -1,6 +1,6 @@
 # FTSeek-US · HANDOFF
 
-## 2026-11-03 全链路性能与风险审计（只读；0 生产代码/配置变更；P0 三项待裁决）
+## 2026-11-03 全链路性能与风险审计（P0 三项 + P1 四项均已实施；详见 §13 与后续条目）
 
 - **触发**：用户令「在整个全链路上，是否还有其他遗漏的性能异常和风险问题」。做法 = 五个只读探查 agent 分层扫（调度器/LLM 管线、数据层、入场出场+SQLite、推送/监控/cron、内存/长命对象）+ 审计方逐条独立复核（读代码 / EXPLAIN QUERY PLAN / 合成年龄实验 / `/proc` 实测 / sysstat 历史 / journal 实证 / 离线测 import 成本）。
 - **最重要的一条（触发源不在进程内）**：11-02 冻结的最可疑触发源是**开盘分钟的 cron 踩踏**——journal 实证 2026-11-02 **22:30:02 同秒起 13 个 cron 任务**；实测每个 cron 解释器仅 import 就吃 **67–100MB**（`import futu` 84MB / `app.core.scheduler_core` 100MB，各 1–2s）⇒ 瞬时 ~1.1GB 砸向只剩 **1453MB 可用**的宿主（3563MB 总，swappiness=0）⇒ sysstat 22:30→22:40 **buffcache 134→28MB、swap 多用 239MB**，22:50 `%memused=93.45%` ⇒ 服务冷页被换出 ⇒ 下一次全堆 GC 缺页 ⇒ **冻结起点 22:30:53 = 齐发后 51 秒**。**上一批 hotfix（upb/GC 阈值/freeze/trim）只加固了受害者，没移除触发器，今晚会原样重演。** `*/5`/`*/10`/`*/15`/`*/30` 全在 `:00/:30` 重合 ⇒ 开盘分钟重合度最高。
@@ -38,8 +38,9 @@
   - **运行态验收**：单例收敛（本次重启后 AV 初始化 **1** 次、router **1** 次）/ protobuf **upb** / 执行优先 **True** / 入场确认窗 **10** / GC 阈值 (20000,25,25)+冻结均落日志、RSS 66–148MB / cron 错峰后**每分钟 2–3 个**任务（改前 6–12 个）且窗口内任务全部正常产出 / 两个库 `quick_check=ok`、生产库行数与审计基线一致（trade_records 1098 / instructions 4685 / open 3）⇒ **测试未污染生产库**（conftest 硬闸全程生效）。
   - **盘中预演（真实网络，相位强制 TRADING）**：①AV provider 306ms 取实时 15.67 → 0.1ms 命中 → 61s 后 460ms 重取（**60s 上限真生效**）②入场闸 1623ms 取实时 → 清空槽位后 52ms 回切实时、**日频槽位为空 ⇒ 没下 CSV** ③**Futu VIXY 实时 15.67 = AV provider 盘中读到的 15.67（同源，差 0）** ⇒ 口径分裂消除。
   - **静默吞错**：`premarket_invalidation` 影子**当前健康**（11-02 写 50 行，未停摆），但两处 except 块内 debug 已提级为 warning（影子停采 = 证据流断档，必须可见）。
-- **下一步（今晚 22:30 CST 开盘后复核 6 项）**：CRON 启动数（现 12→3）/ sysstat buffcache+swap+%memused / 服务 RSS（现 66–148MB）/ VmPeak+PROT_NONE 段数（现 1.71GB、48 段 956MB）/ 轮次间隔（现 3min09s，目标 ≤100s）/ VIX 刷新间隔（预期 ≤900s，实测偏长）。另按 P0-3 的 R1–R4 判据核入场确认改动。
-- **仍然待办**：P1 四项（内存 arena 限流 `MALLOC_ARENA_MAX=2` + per-call pool 模块级化 / 盘后分支异常隔离防持仓静默过夜 / watchdog 盘中禁自愈重启 / 出场扫描 DB 索引 + position_sync 事务外做网络调用）；另两条本审计发现未修：`market_state` 实时腿每次新建 Futu 连接（盘中已降到每分钟 1 次）、`vix_monitor` 看板链的 FRED 腿无独立槽位（180s 缓存已兜底）。
+- **P0/P1 现状（本条之后的条目已全部实施）**：P0-1 cron 错峰（开盘分钟 12→3）/ P0-2 VIX 三层收口 / P0-3 入场确认 30s→10s / P1-1 arena 限流（**VmPeak 1.72GB→798MB**）/ P1-2 盘后分支隔离 / P1-3 盘中禁自愈重启 / P1-4 出场扫描索引（**15.6→6.2ms**）。详见下方「P1 收口」与「守卫套件审计」条目。
+- **下一步（今晚 22:30 CST 开盘后复核 6 项）**：CRON 启动数（现 12→3）/ sysstat buffcache+swap+%memused / 服务 RSS（现 66–148MB）/ VmPeak+PROT_NONE 段数（**已由 1.71GB/48 段 956MB 降至 798MB/34 段 63MB**）/ 轮次间隔（现 3min09s，目标 ≤100s）/ VIX 刷新间隔（预期 ≤900s）。另按 P0-3 的 R1–R4 判据核入场确认改动。
+- **仍然待办**：①**剩余 70 条红基线**（`test_shadow_tracker.py` 18 等）—— 病因是**实现演进、期望未跟上**，需逐条判断"改实现还是改期望"，属独立工程；②`position_sync` 事务跨网络调用（未拆）；③`market_state` 实时腿每次新建 Futu 连接（盘中已降到每分钟 1 次）；④`vix_monitor` 看板链 FRED 腿无独立槽位（180s 缓存已兜底）；⑤每标的新建 ThreadPoolExecutor → arena/线程 churn（arena 已限流，池仍未模块级化）。
 
 最后更新：2026-11-03（本条）
 
