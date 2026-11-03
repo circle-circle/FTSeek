@@ -2524,7 +2524,14 @@ class TradingScheduler:
 
                 elif phase == MarketPhase.AFTER_HOURS:
                     # 盘后: 处理盘中排队的 LLM 审计
-                    self._process_deferred_audit_queue()
+                    #   2026-11-03 (全链审计 P1-2) 补隔离: 本分支后续含 **EOD 持仓平仓**
+                    #   (run_playbook_track)。此前这两步无调用点 try ⇒ 任一异常直接落到
+                    #   最外层 except ⇒ **本分支剩余步骤整段跳过 (含 EOD 平仓)** ⇒ 持仓静默
+                    #   过夜、无 SL。隔离开后: 单步失败只丢该步, 不带走后面的平仓。
+                    try:
+                        self._process_deferred_audit_queue()
+                    except Exception as _e:
+                        logger.warning(f"[LLM策略] 盘后审计队列处理异常 (已隔离): {_e}", exc_info=True)
 
                     # 富途通道影子·盘后收尾采集 (DEB-20260812): 盘后序列才完整,
                     # 每日 1 次全量拉取 (函数内按日幂等). 回滚同 TRADING 挂载.
@@ -2537,7 +2544,11 @@ class TradingScheduler:
                     # 盘后: 每2小时采集新闻 + LLM 推荐 (不执行交易)
                     if last_afterhours_run is None or (now - last_afterhours_run).total_seconds() >= 7200:
                         logger.debug("[LLM策略] 盘后夜盘 → 新闻采集 + LLM 推荐 (关停时函数内静默)")
-                        run_after_hours_llm_scan(self, phase=phase)
+                        try:
+                            run_after_hours_llm_scan(self, phase=phase)
+                        except Exception as _e:
+                            # 同上 (P1-2): 盘后新闻/LLM 失败不得带走后面的 EOD 平仓
+                            logger.warning(f"[LLM策略] 盘后新闻采集异常 (已隔离): {_e}", exc_info=True)
                         last_afterhours_run = now
                         _persist_ah(now)
 

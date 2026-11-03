@@ -146,6 +146,35 @@ class Watchdog:
         if os.environ.get("WATCHDOG_AUTO_HEAL", "1") == "0":
             logger.warning("[Watchdog.heal] skip: WATCHDOG_AUTO_HEAL=0")
             return
+        # 2026-11-03 (全链审计 P1-3): **盘中不做自愈重启**。
+        #   llm_strategy_loop 的心跳只由主循环**轮首**推进 ⇒ 盘中任一同步长步骤
+        #   (定桶实测 31.4min = 1884s > 阈值 600s × 3 = 1800s) 就会被判成"主循环卡死"
+        #   ⇒ 旧实现直接 `systemctl restart ftseek-us` ⇒ **盘中重启 = 内存态持仓与在途委托
+        #   全丢** (比慢一轮更糟)。真冻结由**外部** freeze_sentinel (cron, 每分钟) 负责
+        #   SIGKILL (DEB-20261023-freeze-fast-lane), 覆盖不受影响。
+        #   盘中改为: 只告警 + 通知值班, 不重启。
+        try:
+            from app.core.scheduler_triggers import get_market_phase, MarketPhase
+            if get_market_phase() == MarketPhase.TRADING:
+                logger.error(
+                    "[Watchdog.heal] 盘中不自动重启 (长步骤≠卡死; 内存态持仓/在途委托会丢) — "
+                    "已告警, 真冻结交外部 freeze_sentinel 处置: %s stale %.0fs",
+                    name, elapsed)
+                try:
+                    from app.utils.critical_alerts import send_critical
+                    send_critical(
+                        f"Watchdog: {name} 无心跳 {elapsed:.0f}s, 盘中未自动重启 "
+                        f"(长步骤非卡死), 请人工确认; 真冻结由 freeze_sentinel 处置",
+                        async_mode=True)
+                except Exception as _ce:
+                    # 通知失败必须留痕 (R5; except:pass 棘轮) —— 这条告警本身就是
+                    # "盘中不自动重启" 的唯一通知渠道, 静默失败等于值班人不知情。
+                    logger.warning("[Watchdog.heal] 盘中不重启告警发送失败: %s", _ce, exc_info=True)
+                return
+        except Exception as _ph_err:
+            # 阶段判定失败 ⇒ 回落"按原逻辑"(可能重启)。这是安全相关的判断 ⇒ 必须可见
+            # (R5; W4 debug-swallow 棘轮)。
+            logger.warning("[Watchdog.heal] 阶段判定失败, 继续按原逻辑: %s", _ph_err, exc_info=True)
         now = _t.time()
         if now - self._heal_last_attempt < 60:
             return

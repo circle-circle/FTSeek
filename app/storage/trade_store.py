@@ -235,6 +235,11 @@ class TradeStore:
 
                 # 统一记录索引
                 for idx_def in [
+                    # 2026-11-03 (全链审计 P1-4): 出场扫描的"同源孪生行"判定按 futu_order_id
+                    #   关联 (app/playbook/pipeline.py::_PB_CLOSED_TWIN_NOT_EXISTS), 该列此前
+                    #   **无索引** ⇒ EXPLAIN 实测为 `CORRELATED SCALAR SUBQUERY / SCAN t2`
+                    #   (每个候选开仓行一次全表扫; 744 候选行实测 4.3s, 随持仓数线性涨)。
+                    "CREATE INDEX IF NOT EXISTS idx_trade_records_futu_order_id ON trade_records(futu_order_id)",
                     "CREATE INDEX IF NOT EXISTS idx_source_type ON trade_records(source_type)",
                     "CREATE INDEX IF NOT EXISTS idx_entry_reason ON trade_records(entry_reason)",
                     "CREATE INDEX IF NOT EXISTS idx_symbol_source ON trade_records(symbol, source_type)",
