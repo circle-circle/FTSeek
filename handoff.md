@@ -1,5 +1,22 @@
 # FTSeek-US · HANDOFF
 
+## 2026-11-03 晚 · 11-02 复盘驱动修复批（commit b7e6e115d，已部署待今晚验收）
+
+- **触发**：用户令「基于昨日的美股交易链路和结果复查」→「按建议执行」。
+- **11-02 当日解剖**（证据：trade_records 1754-1767 / playbook_instructions 5076-5099 / ftseek_us.log-20261103）：净 +$114.07 / 13 笔 / 胜率 92.3% / 费毛比 32.7%；唯一亏损 ORCL SL_INITIAL −$144.78（MFE 仅 0.47%，恰好高于 dead_signal 0.2% 阈值 0.27pp ⇒ 死信号腿不适用，硬扛 6 小时满止损 −4.9%）；注意 **ORCL 仓位含"sim采集期"CAUTIOUS 乘数 0.5→1.0 覆写**（深跳空降仓 47→23 已挽回一半），生产等价口径应记 ~−$73。延迟 5 分钟反事实 7:6 平衡（入场速度健康）；VIX 全天新鲜（15.27→14.84）。
+- **已实施 4 修**（详见 commit b7e6e115d 正文）：①日报"过夜持仓"口径扩到全部未平仓（11-02 实证盲区：MRK/LMT 10-30 开仓持有到第 3 日，postmarket 只列了 ACN）；②`sync_recovery_backfill` 补录行回填 entry_vix（新缝合 `_fetch_entry_vix_for_backfill`，收养时刻口径 metadata 留痕）；③`get_summary_stats` 补 already_held 排除（对齐既有约定）；④pretrade 卡片审计收窄到漏斗行 + 检查项分两层（prompt 侧 10 个未接线字段移入"规格缺口层"只披露不计入——补齐它们须改 DA prompt = PROMPT_HASH 断点 ⇒ **须另立 DEB**）。
+- **顺带**：`progress_beat.py` W4 棘轮违规修复（今早 5eb37184e 新文件里的 debug 吞错 → warning+exc_info）。
+- **今晚（11-03 美股时段）验收项**（并入上一条目"22:30 开盘后复核"清单）：
+  - A1 入场窗（22:30–23:00 CST）零重启（Watchdog 启动记录 = 盘前仅 1 次）；
+  - A2 新成交的 trade_records.entry_vix > 0 占比 = 100%（含回填行——若发生回填，其 metadata 应带 entry_vix_at_adoption）；
+  - A3 UNCONFIRMED 告警数 = 0（P0-3 确认窗 10s + 盘中禁自愈的联合效果）；
+  - A4 明日 postmarket 文档"过夜持仓"段应列出**全部**未平仓（含 MRK/LMT 若仍持有）。
+- **待立项议题（下次 DEB）**：horizon=short 持仓的 T+2 论点时效复审——MRK/LMT 日内论点（财报动量/合同催化）持有到第 3 个交易日，现行"EOD 兜底豁免水下仓持夜 + W_WEEK 豁免"合规但无 time-stop 复审环节；问题 = 论点失效但价格未触 invalidation 时，持仓靠什么理由继续存在。**只立项评估，不改规则**（出场参数族已有 10-28 四连否纪律，本议题聚焦"论点时效"而非"出场宽度"）。
+- **明确不动**（纪律）：出场参数放宽（10-28 RFC-160 四连否）；$5,500 名义额地板（budget_p3_sizing 影子观察中，11-02 拦 GS $5439 差 1.1%）；费用门（10-31 读数无可立项轴）；entry_confirm 门（10-31 用户裁关门）。
+- **验证**：棘轮家族全套 + 受影响套件全绿（position_sync 系 257 / review 161 / ratchet 49）；新增钉住测试 2 例。
+
+最后更新：2026-11-03（本条）
+
 ## 2026-11-03 全链路性能与风险审计（P0 三项 + P1 四项均已实施；详见 §13 与后续条目）
 
 - **触发**：用户令「在整个全链路上，是否还有其他遗漏的性能异常和风险问题」。做法 = 五个只读探查 agent 分层扫（调度器/LLM 管线、数据层、入场出场+SQLite、推送/监控/cron、内存/长命对象）+ 审计方逐条独立复核（读代码 / EXPLAIN QUERY PLAN / 合成年龄实验 / `/proc` 实测 / sysstat 历史 / journal 实证 / 离线测 import 成本）。
