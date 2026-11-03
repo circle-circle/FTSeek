@@ -34,6 +34,18 @@ FREE_CALLS_PER_MINUTE = 5
 FREE_CALLS_PER_DAY = 500
 REFILL_INTERVAL_SEC = 60.0 / FREE_CALLS_PER_MINUTE  # 12s/call
 
+# ── VIX 缓存槽位 (2026-11-03 全链审计 P0-2) ────────────────────────
+# 缺陷: 实时代理 (VIXY) 与日频序列 (FRED) 曾写同一个 cache_key="vix", 读取端不看
+#       source ⇒ 一次代理失败即可让 T-1 值占住实时槽位最多 900s, 代理恢复后也读不到
+#       实时值; 且 60s/600s 的"盘中/盘外"分档被当成 min_age (防抖) 传入, 真实上限是
+#       provider 的 cache_ttl=900s ⇒ 盘中"每 60s 刷新"从未发生。
+# 修法: 两个来源两个槽位 + 强制"上限 TTL" + 读端校验 source + 代理探针失败冷却。
+_VIX_LIVE_CACHE_KEY = "vix"        # 实时代理 (VIXY) 专用槽位
+_VIX_FRED_CACHE_KEY = "vix_fred"   # 日频序列 (FRED) 专用槽位
+_VIX_FRED_MAX_AGE_S = 3600         # FRED VIXCLS 每日更新 ⇒ 1h 上限足够 (少下 CSV)
+_VIX_PROBE_COOLDOWN_S = 60         # 代理探针失败冷却: 实时槽位 60s 到期后若不冷却,
+                                   # 每次调用都会重打一次 Finnhub ⇒ 配额与延迟双输
+
 
 class _RateLimiter:
     """令牌桶限速器（线程安全）"""
@@ -167,6 +179,8 @@ class AlphaVantageProvider:
         # 缓存
         self.cache: Dict[str, Dict[str, Any]] = {}
         self.cache_time: Dict[str, datetime] = {}
+        # VIXY 探针失败时间戳 (2026-11-03 P0-2): 冷却期内不再打 Finnhub
+        self._vix_probe_fail_ts: float = 0.0
         
         # HTTP Session (连接复用)
         self._session = requests.Session()
@@ -262,6 +276,24 @@ class AlphaVantageProvider:
         
         # 最大年龄检查 (超时失效)
         return age.total_seconds() < self.cache_ttl.total_seconds()
+
+    def _cache_entry_within(self, key: str, max_age_s: float) -> Optional[Dict[str, Any]]:
+        """取缓存条目并**强制**判定"年龄 ≤ max_age_s"; 超龄/缺失一律返回 None (强制重取)。
+
+        与 `_is_cache_valid` 的区别 (2026-11-03 P0-2): 后者的 `min_age_seconds` 是
+        **最小年龄**(防抖语义 —— 值越旧越该重取), 无法表达"这个值最多只能活 N 秒"。
+        VIX 急变捕捉要的是**上限**语义: 盘中超过 60s 的值必须作废重取, 否则"确保能捕捉
+        VIX 急变"只是注释里的愿望 (实测旧实现盘中可陈旧 900s)。
+        """
+        if key not in self.cache:
+            return None
+        ts = self.cache_time.get(key)
+        if not ts:
+            return None
+        age = (datetime.now() - ts).total_seconds()
+        if age > max_age_s:
+            return None
+        return self.cache.get(key)
     
     def _symbol_to_ticker(self, symbol: str) -> str:
         """转换代码格式 (US.AAPL → AAPL)"""
@@ -518,41 +550,58 @@ class AlphaVantageProvider:
         FRED-first, 与执行门/regime 的 VIXY-first 分裂 (实测同刻 17.84 vs 14.71)。
         方向按 2026-08-03 事故证据 (盘前 FRED 滞后 2-3 天污染 regime) 统一为盘前
         也走代理; 窗口判据收敛到单一真源。
-        ⚠️ 缓存 TTL **仍按 is_trading 分档** (60s 盘中 / 600s 盘外) — 两件事:
-        TTL 管的是"多久允许再打一次 API"(急变捕捉 vs 调用频率), 窗口管的是
-        "哪个源优先"。盘前不必 60s 轮询 (VIXY 盘前成交稀疏), 故刻意**不**合并,
-        避免顺手把 API 调用率抬 10 倍。
+
+        2026-11-03 (全链审计 P0-2): 两处语义修正 ——
+        ① **60s/600s 从"最小年龄"改为"最大年龄"(上限 TTL)**: 原实现把它传给
+           `_is_cache_valid(min_age_seconds=…)`, 而该参数是防抖语义 ⇒ 真实上限是
+           provider 的 cache_ttl=900s, 盘中"每 60s 刷新"从未发生 (合成年龄实测
+           880s 仍命中缓存)。现改为**强制上限**: 盘中 60s / 盘外 600s 过期即重取。
+        ② **来源分槽 + 读端校验 source**: 实时代理 (VIXY) 与日频序列 (FRED) 曾写
+           同一个 cache_key ⇒ 一次代理失败就让 T-1 值占住实时槽位最多 900s, 代理
+           恢复后也读不到实时值。现分为 `vix` (实时) / `vix_fred` (日频, 上限 1h)
+           两个槽位, 读取时各自校验 source。
+        ⚠️ 本函数体内的 `is_trading` 比较是**契约要求**, 不得外提 helper ——
+           见 tests/test_vix_proxy_window_single_source.py (AST 断言: 阶段比较必须
+           留在 get_vix_or_none 体内, 窗口判据须来自 is_vixy_proxy_window 单一真源)。
 
         Returns:
             VIX 真实值, 或 None (所有源均失败).
         """
         try:
-            cache_key = "vix"
-            # 交易时段缩短缓存至 60s (原 600s)，确保能捕捉 VIX 急变
             from app.core.scheduler_triggers import get_market_phase, MarketPhase
             phase = get_market_phase()
             is_trading = phase == MarketPhase.TRADING
-            cache_ttl = 60 if is_trading else 600
-            if self._is_cache_valid(cache_key, min_age_seconds=cache_ttl):
-                # cache 仅在真实获取成功时写入, 故命中即为真值
-                return self.cache.get(cache_key, {}).get("vix")
+            # 实时槽位的**上限**年龄 (盘中 60s 才能捕捉 VIX 急变; 盘外 600s 少打 API)
+            live_max_age_s = 60 if is_trading else 600
 
             from app.data.vix_source import is_vixy_proxy_window
             if is_vixy_proxy_window(phase):
                 # ── 代理窗口 (盘前/交易时段): 优先 Finnhub VIXY 实时代理 ──
-                vix = self._fetch_finnhub_vixy(cache_key)
+                hit = self._cache_entry_within(_VIX_LIVE_CACHE_KEY, live_max_age_s)
+                if hit is not None and hit.get("source") == "finnhub_vixy":
+                    return hit.get("vix")
+                vix = self._fetch_live_vix(_VIX_LIVE_CACHE_KEY)
                 if vix is not None:
                     return vix
-                # VIXY 失败 → FRED 日频 fallback
-                vix = self._fetch_fred_vix(cache_key)
+                # VIXY 失败 → FRED 日频 fallback (独立槽位, 不占实时位)
+                hit = self._cache_entry_within(_VIX_FRED_CACHE_KEY, _VIX_FRED_MAX_AGE_S)
+                if hit is not None and hit.get("source") == "fred":
+                    return hit.get("vix")
+                vix = self._fetch_fred_vix(_VIX_FRED_CACHE_KEY)
                 if vix is not None:
                     return vix
             else:
                 # ── 盘后/隔夜/周末: FRED 日频优先 (T-1 收盘此刻是真值) → VIXY fallback ──
-                vix = self._fetch_fred_vix(cache_key)
+                hit = self._cache_entry_within(_VIX_FRED_CACHE_KEY, _VIX_FRED_MAX_AGE_S)
+                if hit is not None and hit.get("source") == "fred":
+                    return hit.get("vix")
+                vix = self._fetch_fred_vix(_VIX_FRED_CACHE_KEY)
                 if vix is not None:
                     return vix
-                vix = self._fetch_finnhub_vixy(cache_key)
+                hit = self._cache_entry_within(_VIX_LIVE_CACHE_KEY, live_max_age_s)
+                if hit is not None and hit.get("source") == "finnhub_vixy":
+                    return hit.get("vix")
+                vix = self._fetch_live_vix(_VIX_LIVE_CACHE_KEY)
                 if vix is not None:
                     return vix
 
@@ -561,8 +610,31 @@ class AlphaVantageProvider:
 
         return None
 
+    def _fetch_live_vix(self, cache_key: str) -> Optional[float]:
+        """代理探针的**唯一入口** (2026-11-03 P0-2): 冷却判定 + 异常防御都在这一层。
+
+        冷却为什么必须在这一层而不是内层 `_fetch_finnhub_vixy`: 内层会被测试/桩替换掉,
+        冷却若只写在内层, 一旦内层被替换, "每次调用都重打 Finnhub" 的洞就回来了。
+        """
+        now = time.time()
+        last_fail = getattr(self, "_vix_probe_fail_ts", 0.0)
+        if last_fail and (now - last_fail) < _VIX_PROBE_COOLDOWN_S:
+            return None
+        try:
+            return self._fetch_finnhub_vixy(cache_key)
+        except Exception as exc:
+            self._vix_probe_fail_ts = time.time()
+            logger.debug(f"[Finnhub] VIXY 探针异常 (已隔离, 冷却 {_VIX_PROBE_COOLDOWN_S}s): {exc}")
+            return None
+
     def _fetch_finnhub_vixy(self, cache_key: str) -> Optional[float]:
-        """Finnhub VIXY 实时报价 → VIX 估算 (VIXY×0.85 contango 校准). 失败返回 None."""
+        """Finnhub VIXY 实时报价 → VIX 估算 (VIXY×0.85 contango 校准). 失败返回 None.
+
+        2026-11-03 (P0-2): 冷却判定在包装层 `_fetch_live_vix` (唯一入口); 本函数只负责
+        "成功 ⇒ 写槽位并清冷却 / 失败 ⇒ 记冷却时间戳"。实时槽位上限缩到 60s 后若不冷却,
+        每次调用 (position_sync 每 30s + exit_monitor + regime) 都会重打一次 Finnhub
+        ⇒ 配额与延迟双输。
+        """
         try:
             finnhub_key = os.environ.get("FINNHUB_API_KEY", "")
             if not finnhub_key:
@@ -579,13 +651,17 @@ class AlphaVantageProvider:
                 from app.data.vix_source import vixy_to_vix
                 vix_est = vixy_to_vix(fh_price)
                 if vix_est is None:
+                    self._vix_probe_fail_ts = time.time()
                     return None
                 result = {"vix": vix_est, "source": "finnhub_vixy"}
                 self.cache[cache_key] = result
                 self.cache_time[cache_key] = datetime.now()
+                self._vix_probe_fail_ts = 0.0     # 成功 ⇒ 清冷却
                 logger.info(f"[Finnhub] VIX (VIXY代理): VIXY=${fh_price:.2f} → VIX≈{vix_est:.2f}")
                 return vix_est
+            self._vix_probe_fail_ts = time.time()   # 报价不可用 (非 0)
         except Exception as fh_e:
+            self._vix_probe_fail_ts = time.time()
             logger.debug(f"[Finnhub] VIXY 代理获取失败: {fh_e}")
         return None
 

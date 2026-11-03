@@ -258,3 +258,94 @@ VmPeak/VmSize；当前进程实测 VmSize 1.71GB / RSS 66–148MB 且 956MB 为 
 用户裁"本轮不做"。风险仍在：VIXGuard（入场否决）与 regime 闸当前可读到**最长 900s 前的 VIX**，
 且 VIXY 实时值与 FRED 的 T-1 值写同一 cache key（一次代理失败可把 T-1 值当真值缓存 900s）。
 建议下一批处理（涉及交易与风控取值路径，须先写死判据 + 影子对照）。
+
+## 10. P0-2 实施（2026-11-03，用户授权后执行）
+
+> 用户裁"恐慌温度计请执行优化"。只动 `app/data/alphavantage_provider.py` 的 VIX 取值层，
+> **不改任何消费方**（VIXGuard / regime / position_sync / exit_monitor 的读法一字未动）。
+
+### 10.1 两个已证实的缺陷（复核证据见 §2 H3）
+
+1. **TTL 分档从未生效**：`get_vix_or_none` 把 `60/600` 传给 `_is_cache_valid(min_age_seconds=…)`，
+   而该参数是**最小年龄**（防抖语义）⇒ 真实上限是 provider 的 `cache_ttl=900s`。
+   合成年龄实测：30/90/300/700/880s 全部"命中缓存"，950s 才失效。
+   与本函数自己的注释"交易时段缩短缓存至 60s…确保能捕捉 VIX 急变"**语义相反**。
+2. **来源键冲突**：`_fetch_finnhub_vixy`（实时代理）与 `_fetch_fred_vix`（T-1 日频）
+   写同一个 `cache_key="vix"`，读取端不看 `source` ⇒ 一次代理失败即可让 T-1 值
+   占住实时槽位最多 900s，**即使代理随后恢复也读不到实时值**。
+
+### 10.2 落法（provider 内，不改消费方）
+
+| 项 | 改前 | 改后 |
+|---|---|---|
+| 实时槽位 TTL | 无（实际 900s 上限，60/600 只当防抖下限） | **强制上限**：盘中 60s / 盘外 600s |
+| 日频槽位 | 与实时共用 `"vix"` | 独立槽位 `"vix_fred"`，上限 3600s（FRED 日频序列，1h 足够） |
+| 来源校验 | 无 | 实时槽位只接受 `source=="finnhub_vixy"`；日频槽位只接受 `source=="fred"` |
+| 代理探针失败 | 每次调用都重打 Finnhub（实时槽位 60s 过期后） | **失败冷却 60s**（`_vix_probe_fail_ts`）：实时槽位变短后若不冷却，每次调用都会打一次 → 配额与延迟双输 |
+
+**为什么"上限 TTL"同时满足两处既有说法**：
+① 代码注释"缩短缓存至 60s，确保能捕捉 VIX 急变"要的是**上限**（旧值要尽快作废）；
+② 契约测试 `tests/test_vix_proxy_window_single_source.py` 注释所述"多久允许再打一次 API"
+指的是**调用频率**——上限 60s 同样把 API 调用率钉在 ≤1 次/分钟。
+⇒ 两种语义**都满足**，且旧实现两者都没满足（既不丢弃旧值，也不限频率）。
+
+### 10.3 预注册判据（今晚开盘后核，任一触发即回滚）
+
+- V1 VIX 刷新间隔：盘中实测 **≤90s**（若 >120s ⇒ 回滚）
+- V2 VIX 值新鲜度：`[Finnhub] VIX (VIXY代理)` 日志时间戳间隔 ≤90s
+- V3 代理恢复后回切：代理失败 → 恢复，**≤90s 内**读到实时值（旧实现要等 900s）
+- V4 regime 判定无突变：VIX 变动不引起 `vix_uncertain` 频发（`[Regime] VIX 所有源均失败` 计数 ≤1/日）
+- V5 无新增告警面：`[AlphaVantage]` 级别的 WARNING/ERROR 不因本改动增多
+- V6 调用率不失控：Finnhub VIXY 请求 ≤2 次/分钟/实例
+
+### 10.4 风险与边界
+
+- **值会变**：VIX 变新鲜 ⇒ `position_sync._get_vix_factor`（仓位缩放因子 vix/20）与
+  `exit_monitor._get_vix`（出场缩放）读到的值可能与改动前不同 ⇒ **这是本改动的目的**
+  （原先读到的是最多 900s 前的旧值）。若缩放行为异常，按 V1–V6 回滚。
+- **不改消费方**：`get_vix()` / `get_vix_or_none()` 的返回契约（float 或 None）不变，
+  `get_vix()` 的 20.0 兜底语义不变；`market_regime` 的"全源失败 → 20.0 + uncertain"路径不变。
+- **契约测试兼容**：`tests/test_vix_proxy_window_single_source.py` 的 AST 断言要求
+  `== MarketPhase.TRADING` 的比较**必须留在 `get_vix_or_none` 体内** ⇒ TTL 计算留在该函数内，
+  不外提 helper；该测试**不需要修改**。
+
+### 10.5 实施结果（已上线）
+
+**改动文件**：`app/data/alphavantage_provider.py`（**只动 VIX 取值层，不动任何消费方**）
++ 新增 `tests/test_vix_cache_ttl_semantics.py`（8 例）。
+
+| 落点 | 内容 |
+|---|---|
+| 模块常量 | `_VIX_LIVE_CACHE_KEY="vix"` / `_VIX_FRED_CACHE_KEY="vix_fred"` / `_VIX_FRED_MAX_AGE_S=3600` / `_VIX_PROBE_COOLDOWN_S=60` |
+| `__init__` | 新增 `self._vix_probe_fail_ts` |
+| 新方法 `_cache_entry_within(key, max_age_s)` | **强制上限**语义（与既有 `_is_cache_valid` 的"最小年龄"并存，不改后者语义 ⇒ 其余 5 个调用点零影响） |
+| `get_vix_or_none` | 槽位分离 + source 校验 + 60s/600s 上限 TTL；`is_trading` 比较**留在该函数体内**（契约要求） |
+| 新方法 `_fetch_live_vix` | 代理探针**唯一入口**：冷却判定 + 异常防御 |
+| `_fetch_finnhub_vixy` | 只负责"成功 ⇒ 写槽位并清冷却 / 失败 ⇒ 记冷却时间戳"；冷却判定上移一层 |
+
+**过程中被测试逼出来的两个真问题**（都已修）：
+1. 冷却判定最初写在 `_fetch_finnhub_vixy` 内层 ⇒ 内层一旦被测试/桩替换，冷却就失效
+   （"每次调用都重打 Finnhub"的洞回来）⇒ **上移到包装层 `_fetch_live_vix`**。
+2. 探针抛异常时冷却时间戳不会被写（内层只在自己 catch 时写）⇒ 包装层补异常防御。
+
+**验证**：
+- 新增 `tests/test_vix_cache_ttl_semantics.py` **8 passed**（盘中 60s 上限 / 60s 内命中 /
+  盘外 600s 上限 / FRED 不占实时槽位 / 代理恢复即回切 / source 不匹配拒收 /
+  探针冷却不重打 / 冷却到期可重探）。
+- 既有契约测试**未修改且全绿**：`test_vix_single_source_contract.py`、
+  `test_vix_proxy_window_single_source.py`（含 AST 断言：阶段比较必须留在
+  `get_vix_or_none` 体内、0.85 系数单一真源、代理窗口单一真源）。
+- 回归：`tests/test_market_regime.py` / `test_provider_singleton.py` /
+  `test_except_pass_ratchet.py` / `tests/observability/` / `tests/playbook/test_exit_compensation.py`
+  全绿；`tests/risk` **10 红与改动前逐条一致**（既有红基线，根因是测试夹具里的
+  "指令不存在"，与 VIX 语义无关）⇒ **本改动新增失败 0**。
+- 活体验证（新进程外单跑）：首次取数落到 **FRED 日频槽位**（`vix_fred`，实时槽位保持为空），
+  第二次调用 **0.1ms 命中缓存**（未打网络）⇒ 槽位分离与缓存生效。
+
+**缺陷的历史实证（改动前）**：11-02 盘中 `[Finnhub] VIX (VIXY代理)` 的实际刷新间隔
+min=1s / **中位 266s / max 2412s（40 分钟）** ⇒ 与"盘中每 60s 刷新"的意图相差 40 倍，
+且最长 40 分钟的空窗正是"恐慌从 15 冲到 25 而闸门看不见"的形状。
+
+**部署**：重启前核①未平仓 3 笔（US.MRK/US.LMT/US.ACN，非在途出场）、核②app/scripts 仅本批
+一个文件 → `systemctl restart ftseek-us`（13:28:43）→ `startup_smoke_check.py --wait 90`
+**7/7 全过（exit=0）**；重启后 0 ERROR/CRITICAL，VIX 监控器正常初始化。
