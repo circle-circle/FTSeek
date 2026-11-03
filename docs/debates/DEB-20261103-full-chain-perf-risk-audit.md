@@ -485,3 +485,31 @@ P1 四项：内存 arena 限流（`MALLOC_ARENA_MAX=2` + per-call pool 模块级
 另：**本审计过程中发现但未修**的两条待定项 —— ①`market_state` 的实时腿每次都新建 Futu
 连接（盘中 60s 一次 = 连接 churn，虽已从"每次调用"降到"每分钟"）；②`vix_monitor`
 （看板链）的 FRED 腿无独立槽位（180s 缓存已兜底，影响小于闸门链）。
+
+## 12. 守卫套件审计（2026-11-03 15:00–16:30）
+
+### 12.1 口径
+"红着的守卫 = 失效的守卫"。把 54 个 ratchet/guard/contract/invariant/hygiene 文件当守卫套件
+整体跑，并与改动前基线（`5bec3843d` 的 worktree）**同口径逐条 diff**。
+
+### 12.2 结果：守卫套件从 4 红到**全绿**；全仓红基线 123 → 70，零新增失败
+
+| # | 红因（族群） | 影响 | 处置 |
+|---|---|---|---|
+| G1 | **夹具名义额写死 ⇒ 落库即被 admission 改成 SKIP ⇒ 守卫静默失效**。根因：`min_notional_usd` 2026-10-31 由 2500 抬到 5500（用户裁「P3上」），而夹具按 $3,000–$5,000 造指令 ⇒ `skip_reason=NOTIONAL_TOO_SMALL` ⇒ `get_recent_instructions` 的 `WHERE direction != 'SKIP'` 查不到 ⇒ 恒「指令不存在」 | **61 条** | 新增共享 helper `tests/helpers/notional.py::qty_above_min_notional`（按活配置派生股数），4 个文件统一改用 ⇒ 以后再调阈值不会把守卫打红 |
+| G2 | **生产阈值契约未随 10-31 P3 裁决同步** | 6 条 | 逐处更新为当前裁决值并留 DEB 引用；`test_ue_planned_executability` 另把「测试场景 PINNED」与「生产裁决值 PRODUCTION_PINNED」**拆成两份**（原先混在一起 ⇒ 裁决后未同步 ⇒ 漂移探测器长期报红 = 守卫失效） |
+| G3 | **R-12b 契约硬编码夏令时偏移 `-04:00`** ⇒ 每年冬季必红（与 DA bridge 时段判据同病） | 1 条 | 改为按当下真实 ET 偏移判定 |
+| G4 | **网格未含现行旋钮** ⇒ 报告读不到"现在"在哪一格 | 1 条 | `scripts/ticket_size_breakeven.py` 的 `NOTIONAL_GRID` 补 5500 |
+| G5 | **陈旧索引守卫失明**：`HIST_DEPTH=40` ⇒ 看不见 40 个提交前的旧快照（把 478 个提交前的旧 blob stage 进去 = 删掉 2382 行并行 agent 的工作，守卫直接放行） | 守卫本身失效 | 深度 40→500 + `hist_blobs` 改 2 次子进程（`git log --raw` + `cat-file --batch-check`）+ 假阳判据按运行期语义复算；实测 depth=40/60 放行、depth=500 拦截；自检 1/2 → 2/2 |
+| G6 | **三份 `intraday_diagnose.py` 副本分叉**（cron 活体与仓内一致，上游 skill 副本陈旧） | 1 条 | 同步上游副本（差异经核对语义等价）；三份 md5 一致 |
+
+### 12.3 生产代码修复 1 处：`portfolio_heat` 跟随 live/sim 切库
+`app/playbook/portfolio_heat.py` 的 `_DB_PATH` **硬编码 `data/ftseek_us.db`**，绕过
+`app.core.db_utils.get_main_db()` 的 live/sim 切换 ⇒ **live 模式下组合在险总帽会读模拟库的
+持仓**（与实际在险不符）。改为走 `get_main_db()`（按 `is_live_mode()` 返回 live/sim 库），
+解析失败才回落旧常量；**缓存键带上路径**，避免切库后 20s 内串味。
+
+### 12.4 仍未修（另一族，需单独工程）
+剩余 70 条红集中在 `test_shadow_tracker.py`（18）等，病因是**实现演进、期望未跟上**
+（`'skipped' == 'win'`、`0 == 1`、`None == 500.0`）—— 与配置漂移族不同，需逐条判断
+"该改实现还是该改期望"，属独立工程，不在本批范围。
