@@ -1658,8 +1658,12 @@ class PlaybookDB:
         ).fetchone()[0]
 
         # 执行了的
+        # 2026-11-03: 补 already_held 排除 — 与 count_executed_by_direction (DEB-fullchain
+        #   #20) / factor_analyzer (RFC-112) 既有约定对齐; 幻影行 (executed=1, price=0,
+        #   无真实下单, 如 11-02 的 LMT/MRK 再提名行) 此前虚增执行数。
         executed = conn.execute(
-            "SELECT COUNT(*) FROM playbook_instructions WHERE executed = 1"
+            "SELECT COUNT(*) FROM playbook_instructions WHERE executed = 1 "
+            "AND COALESCE(outcome, '') != 'already_held'"
         ).fetchone()[0]
 
         # 胜率
@@ -1673,9 +1677,10 @@ class PlaybookDB:
         # 总盈亏 (2026-08-07 修复: 排除 outcome='void' — 19 笔 void 中 10 笔 pnl 非零
         #   (6/30-7/15 ghost 交易 BABA+63.5/COIN+77.2/AMZN-58.0), 合计 +$11.23 持续
         #   污染 total_pnl; void 本就不计入 win_rate 分母, 口径应一致)
+        # 2026-11-03: 同法排除 already_held (幻影行, 理由见上方 executed 计数注释)。
         total_pnl = conn.execute(
             "SELECT COALESCE(SUM(pnl), 0) FROM playbook_instructions "
-            "WHERE executed = 1 AND COALESCE(outcome, '') != 'void'"
+            "WHERE executed = 1 AND COALESCE(outcome, '') NOT IN ('void', 'already_held')"
         ).fetchone()[0]
 
         decided = wins + losses

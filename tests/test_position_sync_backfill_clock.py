@@ -36,6 +36,9 @@ def _backfill(tmp_path, monkeypatch, symbol="US.TEST"):
     from app.storage.trade_store import TradeStore
     TradeStore(str(db_path))
     monkeypatch.setattr(ps, "_get_db_path", lambda: str(db_path))
+    # 2026-11-03: entry_vix 取数缝钉死 — 生产走 MarketStateChecker (触网),
+    #   测试环境必须 hermetic (conftest socket 边界守卫实证拦截)
+    monkeypatch.setattr(ps, "_fetch_entry_vix_for_backfill", lambda: None)
     inst = object.__new__(ps.USPositionSync)  # 该方法不触碰实例属性
     ok = ps.USPositionSync._backfill_playbook_trade_record(
         inst, symbol=symbol, direction="LONG", qty=100,
@@ -97,3 +100,59 @@ def test_no_naive_cst_clock_left_in_backfill_source():
     src = Path(ps.__file__).read_text(encoding="utf-8")
     assert "datetime.now().astimezone().isoformat()" not in src
     assert "now_et" in src
+
+
+def test_backfill_records_entry_vix_at_adoption(tmp_path, monkeypatch):
+    """钉住 2026-11-03 新语义: 补录行写入 entry_vix (收养时刻口径留痕)。
+
+    11-02 实证: 4/14 笔 backfill 行 entry_vix=0.0 (CHKP/SPOT/SPCX/META),
+    因子/IC 研究按 entry_vix 分桶被零值污染。修复后: 缝合函数有值 →
+    trade_records.entry_vix 落库 + metadata.entry_vix_at_adoption 留痕;
+    缝合函数回落 None → entry_vix 0.0 且不加 metadata 键 (不伪造口径)。
+    """
+    import json
+
+    db_path = tmp_path / "ftseek_test.db"
+    from app.storage.trade_store import TradeStore
+    TradeStore(str(db_path))
+    monkeypatch.setattr(ps, "_get_db_path", lambda: str(db_path))
+    monkeypatch.setattr(ps, "_fetch_entry_vix_for_backfill", lambda: 15.25)
+    inst = object.__new__(ps.USPositionSync)
+    ok = ps.USPositionSync._backfill_playbook_trade_record(
+        inst, symbol="US.VIX", direction="LONG", qty=100,
+        entry=50.0, sl=48.0, tp=55.0, trace_id="vix-1", broker_env="sim",
+        futu_order_id='CLOCK-1', order_evidence=_receipt(),
+        broker_position={'qty': 100, 'direction': 'LONG'},
+    )
+    assert ok is True
+    conn = sqlite3.connect(db_path)
+    try:
+        entry_vix, metadata_json = conn.execute(
+            "SELECT entry_vix, metadata_json FROM trade_records WHERE symbol='US.VIX'"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert entry_vix == 15.25
+    assert json.loads(metadata_json).get("entry_vix_at_adoption") == 15.25
+
+    # None 回落分支: 不伪造口径 (entry_vix 0.0 + 无 adoption 键)
+    # (独立 futu_order_id — 同 order_id 会撞既有行查重, 返回 False)
+    monkeypatch.setattr(ps, "_fetch_entry_vix_for_backfill", lambda: None)
+    ok2 = ps.USPositionSync._backfill_playbook_trade_record(
+        inst, symbol="US.VIXNONE", direction="LONG", qty=100,
+        entry=50.0, sl=48.0, tp=55.0, trace_id="vix-2", broker_env="sim",
+        futu_order_id='CLOCK-2',
+        order_evidence={'confirmed': True, 'order_id': 'CLOCK-2',
+                        'dealt_qty': 100, 'price': 50.0},
+        broker_position={'qty': 100, 'direction': 'LONG'},
+    )
+    assert ok2 is True
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT entry_vix, metadata_json FROM trade_records WHERE symbol='US.VIXNONE'"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row[0] == 0.0
+    assert "entry_vix_at_adoption" not in json.loads(row[1])

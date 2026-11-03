@@ -217,20 +217,39 @@ def test_pretrade_card_coverage_names_missing_fields():
             "2026-09-18", "US.A", json.dumps(context), "2026-09-18T13:01:00Z",
         ),
     )
+    # 非漏斗行 (bridge 未提名: direction=SKIP, entry_price=0, 未触发未执行)
+    #   — 2026-11-03 口径收窄: 这类行恒无卡片字段, 不计入审计分母
+    connection.execute(
+        "insert into playbook_instructions(date,symbol,direction,entry_price,stop_loss,"
+        "take_profit,thesis,invalidation,raw_instruction_json,metadata_json,decision_id,"
+        "config_version,model_used,decision_conf) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "2026-09-18", "US.SKIP", "SKIP", 0.0, 0.0, 0.0, "", "",
+            json.dumps({}), json.dumps({}), "", "v1", "test-model", None,
+        ),
+    )
 
     coverage = build_actionability_diagnostics(connection, "2026-09-18", None)[
         "pretrade_card"
     ]
 
+    # 2026-11-03 新语义: ①只数漏斗行 (US.SKIP 排除) ②prompt 侧未接线字段
+    #   (candidate_top5/scenarios 等) 属规格缺口层 — 标注在 spec_gap_fields,
+    #   不计入 missing_fields/完整率 (补齐须改 DA prompt = PROMPT_HASH 断点 ⇒ DEB)。
     assert coverage["instruction_count"].value == 1
-    assert coverage["complete_card_count"].value == 0
-    missing = coverage["cases"].value[0]["missing_fields"]
-    assert "prompt_secondary_class" in missing
-    assert "prompt_version" in missing
-    assert "candidate_top5" in missing
-    assert "rejection_reasons" in missing
-    assert "scenario_trend_continuation" in missing
-    assert "rescue_actions" in missing
+    assert coverage["complete_card_count"].value == 1
+    case = coverage["cases"].value[0]
+    assert case["symbol"] == "US.A"
+    assert case["missing_fields"] == []
+    spec_gap = case["spec_gap_fields"]
+    assert "prompt_secondary_class" in spec_gap
+    assert "prompt_version" in spec_gap
+    assert "candidate_top5" in spec_gap
+    assert "rejection_reasons" in spec_gap
+    assert "scenario_trend_continuation" in spec_gap
+    assert "rescue_actions" in spec_gap
+    # prompt_primary_class 可经 strategy_type 产出 ⇒ 不在缺口层
+    assert "prompt_primary_class" not in spec_gap
 
 
 def test_bundle_renders_actionability_summary_without_bars():

@@ -230,6 +230,22 @@ def _entry_time_epoch(entry_time) -> Optional[float]:
         return None
 
 
+def _fetch_entry_vix_for_backfill() -> Optional[float]:
+    """补录路径的 entry_vix 取数缝 (2026-11-03) — 独立成模块级函数以便测试钉住/hermetic。
+
+    生产语义: 走入场闸同一真源 (MarketStateChecker.get_vix_cached); 任何失败回落
+    None (不阻断补录)。测试须 monkeypatch 本函数 — 直调会触网 (Futu/FRED),
+    撞 conftest 的 socket 边界守卫 (2026-11-03 实证: test_backfill_entry_time_is_et_aware)。
+    """
+    try:
+        from app.analysis.market_state import get_checker
+        return get_checker().get_vix_cached()
+    except Exception as _vix_ex:
+        logger.warning("[US Sync·P3] 补录取 entry_vix 失败 (回落 NULL): %s",
+                       _vix_ex, exc_info=True)
+        return None
+
+
 def upsert_external_close_trade_record(
     conn, *, symbol, direction, entry_time, entry_price, exit_price, quantity,
     realized_pnl, pnl_pct, trade_mode, created_at, trace_id=None, signal_id=None,
@@ -558,6 +574,15 @@ class USPositionSync:
             _entry_dt = _parse_entry_ts(entry_ts)
             _entry_iso = _entry_dt.isoformat() if _entry_dt is not None else now_iso
             _entry_session_p3 = _entry_session_from_ts(entry_ts)
+            # 2026-11-03 复查 (11-02 实证): 回填路径补 entry_vix — 此前补录行
+            #   entry_vix 恒 0.0 (当日 4/14 笔: CHKP/SPOT/SPCX/META), 因子/IC
+            #   研究按 entry_vix 分桶时被零值污染。取数走入场闸同一真源
+            #   (MarketStateChecker.get_vix_cached); 此刻无打开的事务 (今日
+            #   be88bc7d5: 网络 I/O 不得持有主库写锁), 失败回落 None 不阻断补录。
+            #   ⚠️ 口径: 收养时刻值 ≠ 入场时刻值 (重启后补录, 通常差秒级~分钟级),
+            #   metadata.entry_vix_at_adoption 留痕, 研究侧可按
+            #   entry_price_source='sync_recovery_backfill' 过滤或单独分层。
+            _entry_vix_p3 = _fetch_entry_vix_for_backfill()
             _meta_p3 = {
                 "stop_loss": sl,
                 "take_profit": tp,
@@ -573,6 +598,8 @@ class USPositionSync:
             #   已平仓单永久停在 outcome='holding' (CAT 净 +11.89 却未结算)。补上即闭环。
             if instruction_id:
                 _meta_p3["playbook_instruction_id"] = int(instruction_id)
+            if _entry_vix_p3 is not None:
+                _meta_p3["entry_vix_at_adoption"] = _entry_vix_p3
             record = {
                 "trace_id": trace_id,
                 "trade_date": _entry_iso[:10],
@@ -592,6 +619,7 @@ class USPositionSync:
                 "futu_order_id": futu_order_id,
                 "decision_id": decision_id or "",
                 "entry_session": _entry_session_p3,
+                "entry_vix": _entry_vix_p3,
                 "source_type": "PLAYBOOK_LIVE" if broker_env == "real" else "PLAYBOOK_SIM",
                 "entry_reason": "sync_recovery_backfill",
                 "owner_strategy": "playbook_live" if broker_env == "real" else "playbook_sim",

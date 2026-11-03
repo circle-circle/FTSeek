@@ -91,7 +91,27 @@ class DailyReviewGenerator:
             (date, date)
         )
         closed_trades = [t for t in trades if t.get('exit_price') and t.get('exit_price') > 0]
-        
+
+        # 2026-11-03 复查修复 (11-02 实证): open_trades 口径从"当日进场未平"扩到
+        #   "全部未平仓" — 原 trades 查询按 trade_date/exit_date=当日过滤, 跨日
+        #   遗留仓 (如 MRK/LMT 10-30 开仓持有到第 3 个交易日) 在日报"过夜持仓"段
+        #   完全隐形 (当日 postmarket 只列了 ACN)。此处单独查全量未平仓再按 id
+        #   去重合并; 不进 trades/closed_trades ⇒ 当日胜率/笔数/PnL 口径不变。
+        _open_same_day = [t for t in trades
+                          if not (t.get('exit_price') and t.get('exit_price') > 0)]
+        _open_all = self._query(
+            "SELECT * FROM trade_records "
+            "WHERE (exit_price IS NULL OR exit_price <= 0) "
+            "AND source_type IN ('PLAYBOOK_SIM', 'PLAYBOOK_LIVE') "
+            "AND (exit_reason IS NULL OR exit_reason != 'PHANTOM_RECONCILE_VOID') "
+            "ORDER BY trade_date, id"
+        )
+        _seen_open_ids = {t.get('id') for t in _open_same_day}
+        open_trades = _open_same_day + [
+            t for t in _open_all if t.get('id') not in _seen_open_ids
+        ]
+
+        # ── 数据源采集 ──
         # ── 数据源采集 ──
         signal_funnel = self._get_signal_funnel(date)
         rejection_analysis = self._get_rejection_analysis(date)
@@ -117,8 +137,8 @@ class DailyReviewGenerator:
             'trade_identity': summarize_trade_identity(closed_trades),
             # 2026-08-27 收盘审计④: 当日进场但未平仓 (持夜) 的交易 — 供 postmarket
             #   笔记渲染"过夜持仓"段, 消除 total_trades(按进场计) 与明细(按已平计) 口径差。
-            'open_trades': [t for t in trades
-                            if not (t.get('exit_price') and t.get('exit_price') > 0)],
+            #   2026-11-03: 改为上方合并后的全量未平仓 (含跨日遗留仓)。
+            'open_trades': open_trades,
             'signal_funnel': signal_funnel,
             'rejection_analysis': rejection_analysis,
             'capital_state': capital_state,

@@ -244,6 +244,13 @@ def render_md(bundle: Bundle, escalated: Optional[Dict[str, Any]] = None) -> Tup
             f"- Regret price：{regret_price['profitable_candidate_count']['value']} / {regret_price['evaluated_count']['value']}（缺 bar {regret_price['bar_unavailable_count']['value']}）。",
             f"- 延迟 5 分钟：实际更优 {delay_5['actual_better_count']['value']}，延迟更优 {delay_5['delayed_better_count']['value']}，持平 {delay_5['neutral_count']['value']}，缺 bar {delay_5['bar_unavailable_count']['value']}。",
             f"- Pretrade 卡片完整率：{pretrade_card['complete_card_count']['value']} / {pretrade_card['instruction_count']['value']}（{_ratio(pretrade_card['coverage_ratio']['value'])}）。",
+            # 2026-11-03: 规格缺口层披露 — 这些字段当前管线从未产出 (须改 DA prompt,
+            #   动 PROMPT_HASH ⇒ 走 DEB), 不计入上方完整率, 只在此声明, 防误读为退化。
+            *(
+                [f"- Pretrade 规格缺口（未接线字段，不计入完整率）：{', '.join(sorted({f for c in pretrade_card['cases']['value'] for f in c.get('spec_gap_fields', [])}))}。"]
+                if any(c.get("spec_gap_fields") for c in pretrade_card["cases"]["value"])
+                else []
+            ),
             "",
         ]
     )

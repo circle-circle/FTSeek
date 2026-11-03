@@ -516,6 +516,8 @@ def _build_pretrade_card_coverage(
             "date", "symbol", "direction", "thesis", "invalidation",
             "raw_instruction_json", "metadata_json", "decision_id", "config_version",
             "model_used", "decision_conf", "confidence",
+            # 2026-11-03: 卡片审计范围收窄所需的漏斗标记列
+            "entry_price", "triggered", "executed",
         ]
         available_columns = _available_columns(connection, "playbook_instructions")
         selected_columns = [
@@ -531,6 +533,16 @@ def _build_pretrade_card_coverage(
                 key: row[key] for key in row.keys()
             }
             for row in instruction_rows
+        ]
+        # 2026-11-03 复查修复 (11-02 实证 0/71): 审计范围收窄到**进入漏斗的指令行**
+        #   (有计划价/已触发/已执行)。"非当前通道候选(bridge未提名)"行 (11-02 共 47 行,
+        #   direction=SKIP 且 entry_price=0) 从未进入生成环节, 恒无卡片字段, 把它们
+        #   计入分母让完整率恒为 0% = 死指标。收窄后口径 = 当日真实候选 (11-02 为 24)。
+        instructions = [
+            row for row in instructions
+            if (row.get("entry_price") or 0) > 0
+            or row.get("triggered")
+            or row.get("executed")
         ]
     context_map = {}
     if _table_exists(connection, "playbook_signal_context"):
@@ -569,31 +581,40 @@ def _build_pretrade_card_coverage(
             raw.get("rescue_actions") or raw.get("pre_registered_rescue_actions")
             or metadata.get("rescue_actions")
         )
-        checks = {
+        # 2026-11-03 复查修复: 检查项分两层 —
+        #   可产出层 (计入完整率): 当前管线不靠改 prompt 就能提供的字段;
+        #   规格缺口层 (只标注不计入): prompt_primary/secondary_class, prompt_version,
+        #   candidate_top5, rejection_reasons, scenarios×4, rescue_actions — 实测
+        #   raw_instruction_json/metadata_json 从未产出过这些字段 (11-02 全 24 行皆缺),
+        #   要补齐须改 DA 生成 prompt = PROMPT_HASH 断点 ⇒ 属 DEB 流程, 不是审计缺陷。
+        _spec_gap = {
             "prompt_primary_class": bool(primary),
             "prompt_secondary_class": bool(secondary),
-            "prompt_confidence": (
-                instruction.get("decision_conf") is not None
-                or instruction.get("confidence") is not None
-            ),
             "prompt_version": bool(prompt_version),
-            "config_version": bool(instruction.get("config_version")),
-            "data_source_time": bool(data_source_time),
             "candidate_top5": bool(candidate_top5),
             "rejection_reasons": bool(rejection_reasons),
-            "selected_symbol_rationale": bool(
-                instruction.get("thesis") or raw.get("da_thesis")
-            ),
             "scenario_trend_continuation": bool(scenarios.get("trend_continuation")),
             "scenario_spike_and_fail": bool(scenarios.get("spike_and_fail")),
             "scenario_direct_failure": bool(scenarios.get("direct_failure")),
             "scenario_low_vol_sideways": bool(scenarios.get("low_vol_sideways")),
+            "rescue_actions": bool(rescue_actions),
+        }
+        checks = {
+            "prompt_confidence": (
+                instruction.get("decision_conf") is not None
+                or instruction.get("confidence") is not None
+            ),
+            "config_version": bool(instruction.get("config_version")),
+            "data_source_time": bool(data_source_time),
+            "selected_symbol_rationale": bool(
+                instruction.get("thesis") or raw.get("da_thesis")
+            ),
             "invalidation": bool(
                 instruction.get("invalidation") or raw.get("invalidation")
             ),
-            "rescue_actions": bool(rescue_actions),
         }
         missing = [field for field, present in checks.items() if not present]
+        spec_gap_missing = [field for field, present in _spec_gap.items() if not present]
         if not missing:
             complete_count += 1
         cases.append(
@@ -602,6 +623,7 @@ def _build_pretrade_card_coverage(
                 "symbol": instruction.get("symbol"),
                 "direction": instruction.get("direction"),
                 "missing_fields": missing,
+                "spec_gap_fields": spec_gap_missing,
                 "complete": not missing,
                 "verdict": "coverage_audit_not_verdict",
             }

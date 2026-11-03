@@ -55,5 +55,7 @@ def progress_ping(force: bool = False) -> bool:
         _progress_path.touch()
         return True
     except Exception as exc:  # noqa: BLE001
-        logger.debug("[progress] 进度打点失败 (忽略): %s", exc)
+        # W4 棘轮 (2026-11-03): debug 吞错违规 — 打点失败 = 冻结检测降级,
+        #   必须可见且带栈 (不抛异常的约定不变, 仍降级返回 False)。
+        logger.warning("[progress] 进度打点失败 (冻结检测降级): %s", exc, exc_info=True)
         return False
