@@ -140,3 +140,27 @@ class TestGuardCoverage:
             assert "run_playbook_auto_execute(self)" in _SRC, (
                 "_maybe_auto_execute 包装器内必须真的调用 run_playbook_auto_execute "
                 "(空壳包装 = 静默不执行)")
+
+
+def test_after_hours_steps_are_isolated():
+    """AFTER_HOURS 分支的每一步都须自带 try/except。
+
+    2026-11-03 (全链审计 P1-2): 该分支末尾含 **EOD 持仓平仓** (run_playbook_track)。
+    此前 `_process_deferred_audit_queue()` 与 `run_after_hours_llm_scan()` **无调用点 try**
+    ⇒ 任一异常直接落到最外层 except ⇒ **本分支剩余步骤整段跳过 (含 EOD 平仓)**
+    ⇒ 持仓静默过夜、无 SL。隔离开后单步失败只丢该步, 不带走后面的平仓。
+
+    本用例钉住"每一步自带 try/except"这条不变量 (源码级, 与本文件既有风格一致)。
+    """
+    ah = _branch("AFTER_HOURS")
+    lines = ah.splitlines()
+    for step in ("_process_deferred_audit_queue(", "run_after_hours_llm_scan("):
+        idxs = [i for i, ln in enumerate(lines) if step in ln]
+        assert idxs, f"AFTER_HOURS 分支找不到 {step}"
+        i = idxs[0]
+        before = lines[max(0, i - 2):i]
+        after = lines[i + 1:i + 3]
+        assert any("try:" in ln for ln in before), (
+            f"{step} 之前没有 try: ⇒ 异常会跳到最外层, 连带跳过 EOD 平仓")
+        assert any("except" in ln for ln in after), (
+            f"{step} 之后没有 except ⇒ 异常会跳到最外层, 连带跳过 EOD 平仓")

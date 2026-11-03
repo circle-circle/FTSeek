@@ -281,3 +281,57 @@ class TestEndToEndAgainstRealWatchdog:
         """对照组: 同一条轮次关掉护航 → 复现 09-03 的 stale 误报 (证明测试确实在压这条路径)。"""
         sched._WD_ROUND_INTERVAL_SEC = 0.12
         assert len(self._run_round(sched, monkeypatch, self._make_wd(), escorted=False)) >= 1
+
+
+class TestNoSelfHealDuringTrading:
+    """2026-11-03 (全链审计 P1-3): **盘中不做自愈重启**。
+
+    背景: `llm_strategy_loop` 的心跳只由主循环**轮首**推进 ⇒ 盘中任一同步长步骤
+    (定桶实测 31.4min = 1884s > 阈值 600s × 3 = 1800s) 就会被 watchdog 判成"主循环卡死"
+    ⇒ 旧实现直接 `systemctl restart ftseek-us` ⇒ **盘中重启 = 内存态持仓与在途委托全丢**
+    (比慢一轮更糟)。真冻结仍由**外部** freeze_sentinel (cron 每分钟) SIGKILL 处置。
+
+    本类钉住: 盘中 ⇒ 只告警不重启; 非盘中 ⇒ 仍按原逻辑重启 (不是一刀切禁用自愈)。
+    """
+
+    def _wd(self, monkeypatch, phase):
+        import app.core.scheduler_triggers as st
+        from app.observability.watchdog import Watchdog
+        monkeypatch.setattr(st, "get_market_phase", lambda: phase)
+        wd = Watchdog()
+        wd._heal_enabled = True
+        wd._heal_last_attempt = 0.0
+        wd._heal_max_per_day = 3
+        return wd
+
+    def test_trading_phase_does_not_restart(self, monkeypatch):
+        wd = self._wd(monkeypatch, MarketPhase.TRADING)
+        restarts = []
+        alerts = []
+        monkeypatch.setattr("subprocess.run",
+                            lambda *a, **k: restarts.append(a))
+        import app.utils.critical_alerts as ca
+        monkeypatch.setattr(ca, "send_critical",
+                            lambda msg, async_mode=False: alerts.append(msg))
+
+        wd._self_heal("llm_strategy_loop", 1900.0, 600.0)
+
+        time.sleep(0.2)   # 给 (不该存在的) 重启线程一点机会
+        assert not restarts, f"盘中不得自动重启交易服务 (会丢内存态持仓/在途委托): {restarts}"
+        assert not wd._heal_history, "盘中不入 heal 历史 (不该消耗当日自愈配额)"
+        assert any("盘中未自动重启" in m for m in alerts), (
+            f"盘中不重启必须留一条可见告警 (值班人要知道): {alerts}")
+
+    def test_non_trading_phase_still_heals(self, monkeypatch):
+        """反向钉住: 非盘中仍按原逻辑重启 (自愈不能被一刀切关掉)。"""
+        wd = self._wd(monkeypatch, MarketPhase.AFTER_HOURS)
+        restarts = []
+        monkeypatch.setattr("subprocess.run", lambda *a, **k: restarts.append(a))
+        import app.utils.critical_alerts as ca
+        monkeypatch.setattr(ca, "send_critical",
+                            lambda msg, async_mode=False: None)
+
+        wd._self_heal("llm_strategy_loop", 1900.0, 600.0)
+        time.sleep(0.3)
+        assert restarts, "非盘中仍应自愈重启 (真卡死靠它兜底)"
+        assert any("restart" in str(a) for a in restarts), f"应是 systemctl restart: {restarts}"
