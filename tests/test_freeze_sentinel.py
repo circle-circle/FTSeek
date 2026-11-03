@@ -240,3 +240,53 @@ def test_sentinel_run_lock_prevents_overlap():
     src = (REPO / "scripts" / "freeze_sentinel.py").read_text(encoding="utf-8")
     body = src[src.index("def main()"):]
     assert body.index("acquire_run_lock()") < body.index("evaluate_liveness(")
+
+
+# ── 长轮次豁免 (2026-11-03): 主线程进度心跳 vs 出场心跳 ────────────────────
+
+def _fast_prog(now, age, prog_age=None, exempt=None, fresh=None, stale=None):
+    return fs.evaluate_fast(
+        now, None if age is None else now - age,
+        "active", "running", True, None, now - 3600,
+        stale,
+        None if prog_age is None else now - prog_age,
+        fresh,
+        exempt,
+    )
+
+
+def test_progress_exempts_slow_round():
+    """11-02 形态: 出场心跳 120s 停滞, 但主线程 10s 前还在逐条推进 ⇒ 不杀。"""
+    a, r = _fast_prog(NOW, 120, prog_age=10)
+    assert a == "skip" and r.startswith("progressing("), r
+
+
+def test_progress_stale_still_kills():
+    """真冻结: 心跳与进度都停 ⇒ 必须照旧 SIGKILL (豁免不得掩盖真冻结)。"""
+    a, r = _fast_prog(NOW, 120, prog_age=120)
+    assert a == "enforce", r
+
+
+def test_progress_exempt_is_bounded():
+    """超过豁免上限 (默认 300s) 即使进度新鲜也照杀 — 防出场线程独死被长期掩盖。"""
+    a, r = _fast_prog(NOW, fs.PROGRESS_EXEMPT_MAX_S + 1, prog_age=5)
+    assert a == "enforce", r
+    assert _fast_prog(NOW, fs.PROGRESS_EXEMPT_MAX_S, prog_age=5)[0] == "skip"  # 边界含等号
+
+
+def test_progress_exempt_disabled_by_env_zero():
+    """回滚阀: FTSEEK_SENTINEL_PROGRESS_EXEMPT_S=0 ⇒ 与被测前行为完全一致。"""
+    a, r = _fast_prog(NOW, 120, prog_age=5, exempt=0)
+    assert a == "enforce", r
+
+
+def test_progress_missing_is_old_behavior():
+    """读不到进度文件 (旧进程/未部署) ⇒ 不可豁免, 与旧行为一致。"""
+    a, r = _fast_prog(NOW, 120, prog_age=None)
+    assert a == "enforce", r
+
+
+def test_progress_freshness_window_default_45():
+    assert fs.PROGRESS_FRESH_S == 45
+    assert _fast_prog(NOW, 120, prog_age=45)[0] == "skip"     # 边界含等号
+    assert _fast_prog(NOW, 120, prog_age=46)[0] == "enforce"  # 超出即视为停滞

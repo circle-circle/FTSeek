@@ -6,6 +6,9 @@
 from __future__ import annotations
 
 import time
+
+# 2026-11-03 冻结长轮次: 逐条入库的进度心跳 (见 app/observability/progress_beat.py)
+from app.observability.progress_beat import progress_ping  # noqa: E402
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional
 
@@ -186,6 +189,8 @@ def run_playbook_generate(
         # 入库
         saved = 0
         for inst in instructions:
+            # 2026-11-03: 逐条入库推进 ⇒ 进度心跳 (见 app/observability/progress_beat.py)
+            progress_ping()
             try:
                 inst_dict = instruction_to_db_dict(inst, regime_ctx, today)
                 # [2026-08-17 根源修复] 覆盖仲裁已下沉 save_instruction SQL 层

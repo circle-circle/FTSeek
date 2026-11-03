@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import json
+
+# 2026-11-03 冻结长轮次: 主线程进度心跳 (与出场快循环心跳分离, 见 progress_beat)
+from app.observability.progress_beat import progress_ping  # noqa: E402
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
@@ -195,6 +198,11 @@ def run_playbook_auto_execute(
         #   sqlite3.connect (N+1), 现循环级懒建一次、循环尾关闭; 查询失败自动回退逐条建连.
         _ah_conn = None
         for inst in instructions:
+            # 2026-11-03 (冻结长轮次): 主线程每处理一条指令打一次"进度"心跳 (5s 节流)。
+            #   与出场快循环的 /run/ftseek-heartbeat 分开 (语义=有进展, 非"活着"),
+            #   供 freeze_sentinel 在有界窗口内区分"慢轮次"与"真冻结"。
+            #   progress_ping 自身绝不抛异常 ⇒ 调用点无需 try (except:pass 棘轮)。
+            progress_ping()
             # 跳过已执行、SKIP 方向的指令
             if inst.get("executed"):
                 continue

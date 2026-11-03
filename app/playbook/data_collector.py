@@ -18,6 +18,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
+# 2026-11-03 冻结长轮次: 主线程进度心跳 (见 app/observability/progress_beat.py)
+from app.observability.progress_beat import progress_ping  # noqa: E402
+
 
 @dataclass
 class FundamentalData:
@@ -257,6 +260,8 @@ class PlaybookDataCollector:
                 pool.submit(self.collect, symbol): symbol for symbol in symbols
             }
             for future in as_completed(future_to_symbol):
+                # 2026-11-03: 主线程逐标的推进 ⇒ 进度心跳 (与出场心跳分离, 见 progress_beat)
+                progress_ping()
                 symbol = future_to_symbol[future]
                 try:
                     data = future.result()

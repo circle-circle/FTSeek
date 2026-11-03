@@ -83,6 +83,20 @@ def _env_int(name: str, default: int) -> int:
 # 0 = 只保留 420s 旧层 (快速层回滚阀).
 FAST_STALE_S = _env_int("FTSEEK_SENTINEL_FAST_S", 90)
 
+# ── 长轮次豁免 (2026-11-03): 主线程"进度"心跳 ──────────────────────────────
+#   问题: /run/ftseek-heartbeat 的唯一写入者是出场快循环; 主策略轮连续持 GIL >90s
+#   (11-02 首轮 122s, GC/GIL 形态) 时它拿不到 CPU ⇒ 心跳停 ⇒ 本层 SIGKILL 一个
+#   "只是慢"的进程 (内存态持仓/在途委托全丢)。
+#   修法: 主线程在逐条指令/逐标的循环里另写 /run/ftseek-progress-main (语义=有进展)。
+#   判定 (三条互斥, 见 evaluate_fast):
+#     · 心跳停 + 进度新鲜 + 停滞 ≤ 豁免上限 ⇒ skip(progressing), 不杀 (告警留痕)
+#     · 心跳停 + 进度也停                 ⇒ enforce (真冻结, 与旧行为一致)
+#     · 心跳停 + 进度新鲜但超豁免上限        ⇒ enforce (出场线程可能独死, 不许被掩盖)
+#   回滚: FTSEEK_SENTINEL_PROGRESS_EXEMPT_S=0 (等价于旧行为, 零代码).
+PROGRESS = Path(os.environ.get("FTSEEK_PROGRESS_FILE", "/run/ftseek-progress-main"))
+PROGRESS_FRESH_S = _env_int("FTSEEK_SENTINEL_PROGRESS_FRESH_S", 45)
+PROGRESS_EXEMPT_MAX_S = _env_int("FTSEEK_SENTINEL_PROGRESS_EXEMPT_S", 300)
+
 
 # ── 纯决策 (单元测试锚点) ─────────────────────────────────────────────────
 
@@ -138,7 +152,9 @@ def evaluate(now_ts: float, hb_mtime, service_active: bool,
 
 def evaluate_fast(now_ts: float, hb_mtime, active_state: str, sub_state: str,
                   phase_allows: bool, last_enforce_ts, started_ts,
-                  fast_stale_s: int = None) -> tuple:
+                  fast_stale_s: int = None, progress_mtime=None,
+                  progress_fresh_s: int = None,
+                  progress_exempt_max_s: int = None) -> tuple:
     """快速冻结层纯决策 (DEB-20261023). 返回 (action, reason); action ∈ ok|skip|enforce.
 
     与 420s 旧层互补: 旧层等内部 heal 先出手; 快速层针对"内部 heal 也无法执行"的
@@ -161,6 +177,14 @@ def evaluate_fast(now_ts: float, hb_mtime, active_state: str, sub_state: str,
         return "skip", f"startup_grace({int(now_ts - started_ts)}s<{STARTUP_GRACE_S}s)"
     if not phase_allows:
         return "skip", "stale_but_not_trading"
+    # 长轮次豁免 (2026-11-03): 主线程仍在推进 ⇒ 是慢, 不是死。
+    _exempt_max = PROGRESS_EXEMPT_MAX_S if progress_exempt_max_s is None else progress_exempt_max_s
+    _fresh_s = PROGRESS_FRESH_S if progress_fresh_s is None else progress_fresh_s
+    if _exempt_max > 0 and progress_mtime is not None and age <= _exempt_max:
+        prog_age = now_ts - progress_mtime
+        if prog_age <= _fresh_s:
+            return "skip", (f"progressing(hb_age={age:.0f}s<={_exempt_max}s, "
+                            f"progress_age={prog_age:.0f}s<={_fresh_s}s)")
     if last_enforce_ts is not None and now_ts - last_enforce_ts < RESTART_COOLDOWN_S:
         return "skip", f"cooldown({int(now_ts - last_enforce_ts)}s<{RESTART_COOLDOWN_S}s)"
     return "enforce", f"age={age:.0f}s>{stale_s}s"
@@ -457,6 +481,11 @@ def main() -> int:
         hb_mtime = HEARTBEAT.stat().st_mtime
     except Exception:
         hb_mtime = None
+    # 主线程"进度"心跳 (2026-11-03 长轮次豁免): 读不到 = None (不可豁免, 与旧行为一致)
+    try:
+        progress_mtime = PROGRESS.stat().st_mtime
+    except Exception:
+        progress_mtime = None
     phase_ok, basis = market_phase_allows(now_cst)
     active_state, sub_state, result, started_ts = service_runtime_state()
 
@@ -482,7 +511,8 @@ def main() -> int:
 
     # ── 快速冻结层 (DEB-20261023): 出场快循环是心跳源, 它卡住 = 退出监控停摆 ──
     faction, freason = evaluate_fast(now_ts, hb_mtime, active_state, sub_state,
-                                     phase_ok, last_enforce_ts(), started_ts)
+                                     phase_ok, last_enforce_ts(), started_ts,
+                                     progress_mtime=progress_mtime)
     if faction == "enforce":
         pid = resolve_main_pid()
         stack_file = dump_stacks(pid, ts) if pid else "(pid 未解析, 跳过 py-spy)"
@@ -500,6 +530,10 @@ def main() -> int:
         return 0
     if faction == "skip" and hb_mtime is not None and (now_ts - hb_mtime) > FAST_STALE_S:
         print(f"[{ts}] fast skip: {freason} ({basis})")
+        # 长轮次豁免必须留痕: 这是"本该杀但没杀"的唯一证据, 事后要能数出豁免了多少次。
+        if freason.startswith("progressing("):
+            alert(f"⏳ [freeze-sentinel·长轮次豁免] 出场心跳停滞 {int(now_ts - hb_mtime)}s 但主线程仍在推进"
+                  f" ({freason}) — 不杀 (慢≠死); 超过 {PROGRESS_EXEMPT_MAX_S}s 仍未恢复则照旧 SIGKILL")
 
     action, reason = evaluate(now_ts, hb_mtime, active_state == "active",
                               phase_ok, last_enforce_ts())
