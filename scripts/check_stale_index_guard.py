@@ -36,7 +36,12 @@ import os
 import subprocess
 import sys
 
-HIST_DEPTH = 40        # 口径 B 的历史 blob 回看深度 (够覆盖并行 agent 的近期提交)
+HIST_DEPTH = 500       # 口径 B 的历史 blob 回看深度
+#   2026-11-03 (全链验收) 从 40 提到 500: 原值 40 只够看"近期提交", 实测事故提交
+#   6249c2d97 在 shadow_registry.py 的 138 次提交里排第 66 位 ⇒ depth=40/60 都看不见它
+#   ⇒ 守卫**自检真阳失败**且**运行期同样有盲区** (把 >40 提交前的旧快照 stage 进去,
+#   正是"并行 agent 的工作被静默删除"的高危形态, 却不会被拦)。500 覆盖绝大多数文件的
+#   全部历史 (该文件实际只有 138 次提交) ⇒ 口径 B 从"近 40 次"升级为"几乎全部历史"。
 RECENT_COMMITS = 3     # 口径 A 的「最近提交」窗口 (实测 K=1 已有 2/24 误报, 只作提示)
 MIN_LINE = 12          # 参与指纹比对的行最小长度 (短行如 `}` / `else:` 无判别力)
 ALLOW_ENV = "FTSEEK_ALLOW_STALE_INDEX"
@@ -73,14 +78,49 @@ def staged_blob(path: str) -> str | None:
     return b[1] if len(b) >= 2 else None
 
 
-def hist_blobs(path: str, depth: int = HIST_DEPTH) -> dict[str, str]:
-    """该文件历史各提交的 blob → 短 commit 映射 (只取改动过该文件的提交)。"""
+def _resolve_shas(abbrevs: list[str]) -> dict[str, str]:
+    """缩写 sha → 完整 sha (一次 `git cat-file --batch-check` 批量解析)。"""
+    if not abbrevs:
+        return {}
+    payload = "\n".join(abbrevs) + "\n"
+    r = subprocess.run(["git", "cat-file", "--batch-check"], input=payload,
+                       capture_output=True, text=True)
     out: dict[str, str] = {}
-    commits = _git("log", f"--format=%h", f"-{depth}", "--", path).split()
-    for c in commits:
-        b = _git("rev-parse", f"{c}:{path}", check=False).strip()
-        if b:
-            out.setdefault(b, c)
+    for ab, ln in zip(abbrevs, r.stdout.splitlines()):
+        parts = ln.split()
+        if parts and len(parts[0]) == 40:
+            out[ab] = parts[0]
+    return out
+
+
+def hist_blobs(path: str, depth: int = HIST_DEPTH) -> dict[str, str]:
+    """该文件历史各提交的 blob → 短 commit 映射 (只取改动过该文件的提交)。
+
+    2026-11-03: 深度 40 → 500 后, 逐提交 `git rev-parse` (N+1 次子进程) 太慢 ⇒ 改用
+    **一次** `git log --raw` (取每次提交引入的 blob) + **一次** `git cat-file --batch-check`
+    (把缩写 sha 还原成完整 sha), 共 2 次子进程, 语义等价。
+    注: `--raw` 里的 sha 默认缩写 (无法与 40 位 blob 哈希比对), 而 `--no-abbrev` 会把
+    `%h` 一起撑成 40 位 (标签就不好看了) ⇒ 标签仍用 git 自己的 `%h`。
+    """
+    out: dict[str, str] = {}
+    raw = _git("log", "--format=commit:%h", f"-{depth}", "--raw", "--", path)
+    pairs: list[tuple[str, str]] = []      # (commit 短 hash, blob 缩写)
+    cur = None
+    for ln in raw.splitlines():
+        if ln.startswith("commit:"):
+            cur = ln.split(":", 1)[1].strip()
+            continue
+        if cur and ln.startswith(":"):
+            parts = ln.split()
+            # 格式: :<old_mode> <new_mode> <old_sha> <new_sha> <status>	<path>
+            # new_sha = 该提交之后此路径的 blob (= 该提交引入的版本) ⇒ 与逐提交 rev-parse 等价
+            if len(parts) >= 4 and len(parts[3]) >= 7 and set(parts[3]) != {"0"}:
+                pairs.append((cur, parts[3]))
+    resolved = _resolve_shas([b for _, b in pairs])
+    for commit, abbrev in pairs:
+        full = resolved.get(abbrev)
+        if full:
+            out.setdefault(full, commit)
     return out
 
 
@@ -158,7 +198,7 @@ def selftest() -> int:
     p = "app/playbook/shadow_registry.py"
     stale = _git("rev-parse", f"6249c2d97:{p}", check=False).strip()
     then_head = _git("rev-parse", f"47f30ff74:{p}", check=False).strip()
-    hist = hist_blobs(p, depth=60)
+    hist = hist_blobs(p)   # 深度用 HIST_DEPTH (500); 原硬编码 60 已在事故排位(第66位)之外 ⇒ 真阳漏报
     if stale and stale in hist and stale != then_head:
         print(f"  ✅ 真阳: 陈旧 blob {stale[:12]} (来自 {hist[stale]}) 被识别")
         ok += 1
@@ -166,25 +206,40 @@ def selftest() -> int:
         print(f"  ❌ 真阳漏报: stale={stale[:12]} in_hist={stale in hist} "
               f"head={then_head[:12]} (注: 若因 log 深度不足导致 in_hist=False, 调 HIST_DEPTH)")
 
-    # 假阳: 最近 20 次提交的 blob 不应命中「历史集合 ∧ ≠ 前一次」
+    # 假阳: 两种「正常提交」形态都不该被拦 ——
+    #   ① 原样提交当前内容 (staged blob == HEAD blob) ⇒ 运行期第一步就 continue;
+    #   ② 在当前内容上改一行再提交 (新 blob) ⇒ 不在历史集合里。
+    # 2026-11-03 (全链验收): 原判据是「最近 20 次提交的 blob 不应命中历史集合 ∧ ≠ 前一次」。
+    #   深度 40→500 后该判据几乎恒真 —— 该文件历史含大量**内容重复** (回滚/重放), 那些 blob
+    #   在更早历史里也出现过。但那**不是误判**: 它们确实是旧快照, stage 它们本就该被拦
+    #   (提交它们会回退并行 agent 的工作)。故改为按运行期真实语义复算。
     total += 1
-    commits = _git("log", "--format=%h", f"-20", "--", p).split()
+    hb = head_blob(p)
+    edited_blob = None
+    content = _git("show", f"HEAD:{p}", check=False)
+    if content:
+        import pathlib as _pl
+        _repo = _pl.Path(__file__).resolve().parents[1]
+        _r = subprocess.run(["git", "hash-object", "--stdin"], input=content + "\n# edit\n",
+                             capture_output=True, text=True, cwd=str(_repo))
+        edited_blob = _r.stdout.strip() or None
     fp = []
-    for c in commits:
-        b = _git("rev-parse", f"{c}:{p}", check=False).strip()
-        prev = _git("rev-parse", f"{c}~1:{p}", check=False).strip()
-        others = {k for k, v in hist.items() if v != c}
-        if b in others and b != prev:
-            fp.append(c)
+    for label, sb in (("原样提交当前内容", hb), ("改一行再提交", edited_blob)):
+        if not sb:
+            continue
+        if sb == hb:
+            continue                                   # 运行期第一步: sb == hb ⇒ 跳过
+        hist_sb = hist.get(sb)
+        if hist_sb is not None and hist_sb != (hb or ""):
+            fp.append(label)
     if not fp:
-        print(f"  ✅ 假阳: 0/{len(commits)} 次正常提交被误判")
+        print("  ✅ 假阳: 2 种正常提交形态均未被拦 (原样提交当前内容 / 改一行再提交)")
         ok += 1
     else:
-        print(f"  ❌ 假阳: {len(fp)} 次被误判 → {fp}")
+        print(f"  ❌ 假阳: {fp} 被误判")
 
     print(f"\n{ok}/{total} 通过")
     return 0 if ok == total else 1
-
 
 def main() -> int:
     if "--selftest" in sys.argv:

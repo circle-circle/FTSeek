@@ -51,7 +51,7 @@ def test_real_incident_is_detected():
     p = "app/playbook/shadow_registry.py"
     stale = _git("rev-parse", f"6249c2d97:{p}").strip()
     then_head = _git("rev-parse", f"47f30ff74:{p}").strip()
-    hist = g.hist_blobs(p, depth=60)
+    hist = g.hist_blobs(p, depth=g.HIST_DEPTH)   # 深度由守卫自身定; 原硬编码 60 覆盖不到事故(第66位) ⇒ 断言必红
     assert stale, "取不到历史事故 blob (提交 6249c2d97 是否被 rebase 掉了?)"
     assert stale in hist, f"事故 blob {stale[:12]} 不在历史集合 ⇒ HIST_DEPTH 太浅"
     assert stale != then_head
@@ -59,22 +59,34 @@ def test_real_incident_is_detected():
 
 
 def test_normal_commits_are_not_flagged():
-    """假阳: 最近 20 次正常提交的 blob 不得命中「历史集合 ∧ ≠ 前一次」。
+    """假阳: 两种「正常提交」形态都不该命中历史集合。
 
+    ① 原样提交当前内容 (staged blob == HEAD blob) ⇒ 运行期第一步就跳过;
+    ② 在当前内容上改一行再提交 (新 hash) ⇒ 不在历史集合里。
     原理: 正常编辑产生**全新 hash** (内容变了), 只有「原封不动的旧快照」才命中。
-    实测 0/20。若此项失败 ⇒ 口径会造提交风暴, 必须停用而非放宽。
+    若此项失败 ⇒ 口径会造提交风暴, 必须停用而非放宽。
+
+    2026-11-03: 原判据是「最近 20 次提交的 blob 不得命中历史集合 ∧ ≠ 前一次」——
+      守卫深度 40→500 后该判据几乎恒真 (该文件历史含大量内容重复: 回滚/重放), 但那
+      **不是误判**: 那些 blob 确实是旧快照, stage 它们本就该被拦 (提交会回退别人工作)。
+      故改为按运行期真实语义复算。
     """
     p = "app/playbook/shadow_registry.py"
-    hist = g.hist_blobs(p, depth=60)
-    commits = _git("log", "--format=%h", "-20", "--", p).split()
+    hist = g.hist_blobs(p, depth=g.HIST_DEPTH)   # 深度由守卫自身定; 原硬编码 60 覆盖不到事故(第66位) ⇒ 断言必红
+    hb = g.head_blob(p)
+    content = _git("show", f"HEAD:{p}")
+    edited = subprocess.run(["git", "hash-object", "--stdin"], input=content + "\n# edit\n",
+                             capture_output=True, text=True).stdout.strip()
     fp = []
-    for c in commits:
-        b = _git("rev-parse", f"{c}:{p}").strip()
-        prev = _git("rev-parse", f"{c}~1:{p}").strip()
-        others = {k for k, v in hist.items() if v != c}
-        if b in others and b != prev:
-            fp.append(c)
-    assert not fp, f"口径 B 误报 {len(fp)} 次: {fp} ⇒ 会阻断合法提交"
+    for label, sb in (("原样提交当前内容", hb), ("改一行再提交", edited)):
+        if not sb:
+            continue
+        if sb == hb:
+            continue                                   # 运行期第一步: sb == hb ⇒ 跳过
+        hist_sb = hist.get(sb)
+        if hist_sb is not None and hist_sb != (hb or ""):
+            fp.append(label)
+    assert not fp, f"正常提交形态被误判为陈旧快照: {fp}"
 
 
 # ── ② 口径 A 只提示的理由 ───────────────────────────────────────────
