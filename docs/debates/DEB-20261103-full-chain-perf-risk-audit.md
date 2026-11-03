@@ -543,3 +543,33 @@ P1 四项：内存 arena 限流（`MALLOC_ARENA_MAX=2` + per-call pool 模块级
 | 出场扫描查询 | 15.6ms（`SCAN t2`） | **6.2ms**（`MULTI-INDEX OR`） |
 | cron 每分钟并发（开盘分钟） | 12–13 个 | **2–3 个** |
 | 剩余 60 条红 | — | 集中在 `test_shadow_tracker.py`（18）等，病因是**实现演进、期望未跟上**（`'skipped' == 'win'` / `0 == 1` / `None == 500.0`）⇒ 需逐条判断"改实现还是改期望"，属独立工程 |
+
+## 14. 终验（2026-11-03 17:10）
+
+### 14.1 全量测试：8167 passed / 60 failed / 72 skipped（基线 8104 / 123 / 72）
+逐条 diff（vs 基线 `5bec3843d` worktree 的同 27 文件对照）：**零新增失败**，净多修 63 条。
+剩余 60 条集中在 `test_shadow_tracker.py`（18）等，病因是**实现演进、期望未跟上**
+（`'skipped' == 'win'` / `0 == 1` / `None == 500.0`）⇒ 需逐条判断"改实现还是改期望"，
+属独立工程，不在本批范围。
+
+### 14.2 本批全部改动的运行态终态
+| 项 | 终态 |
+|---|---|
+| 服务 | `active`，17:05:51 重启后 **0 ERROR/CRITICAL**，启动冒烟 **7/7**（exit=0） |
+| 内存 | `MALLOC_ARENA_MAX=2` 生效（进程 environ 已含）⇒ **VmPeak 1.72GB → 993MB**（含 264MB 线程栈），arena 预留 956MB → 63MB，VmSwap 0 |
+| cron 错峰 | 生产实测**每分钟 2–4 个任务**（改前整点 6–12、开盘分钟 13） |
+| 线程/FD | 37 线程 / 28 FD（与改前同量级，无泄漏） |
+| DB | 两库 `quick_check=ok`；生产库行数与审计基线一致（trade_records 1098 / instructions 4685 / open 3）⇒ **全程未污染生产库** |
+
+### 14.3 本批落地清单（8 个提交，均已推送）
+`1e9f70be8` VIX 缓存语义修正 · `51b5973e1` 入场闸 30 分钟缓存收成盘中 60s ·
+`317450503` FRED 日频独立槽位 + 代理冷却 · `c3d1bb590` 验收批（日志卫生棘轮 + 执行优先契约 +
+admission 缺 logger）· `f7c1a512c` 陈旧索引守卫失明修复 · `10784e77c` 守卫被配置漂移打红 ·
+`bbabadea3` 守卫套件全绿 + portfolio_heat live/sim 切库 · `2337b2357` P1 收口 ·
+`8f1...`(position_sync 事务修复) + 两条新测试 + 落档。
+
+### 14.4 尚未做（明确边界）
+① 剩余 60 条红（实现演进 vs 期望未跟上）；②`market_state` 实时腿每次新建 Futu 连接
+（盘中已降到每分钟 1 次）；③`vix_monitor` 看板链 FRED 腿无独立槽位（180s 缓存已兜底）；
+④每标的新建 ThreadPoolExecutor → 线程 churn（arena 已限流，池未模块级化）；
+⑤`event_stream.db` 730MB（14 天全文留存设计，周频 VACUUM，磁盘 58GB 可用）。
