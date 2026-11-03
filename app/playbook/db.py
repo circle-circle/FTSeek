@@ -47,6 +47,46 @@ ROW_KIND_EXCLUDE_PLACEHOLDER_SQL = (
     "COALESCE(row_kind, 'instruction') <> 'supply_placeholder'")
 
 
+# ── [2026-11-03 台账口径] broker 已有持仓 ⇒ 本系统未下单 (幻影行) ─────────────
+#   根因 (11-03 LMT/MRK 实锤, 同型可回溯至 8 月): auto_execute 的 already_held 分支
+#   为防重试写 executed=1, 却**不写 execution_state** (它不在 _TRACKING_FIELDS 白名单),
+#   行停在 PENDING ⇒ 下次启动 _backfill_execution_state 把 executed=1 且
+#   outcome='already_held' 的行映射成 'BOOKED'。
+#   BOOKED 是 broker 镜像状态机的终态 "已成交且已入账"; 幻影行没有 broker_order_id、
+#   execution_price=0、trade_records 里没有对应成交 ⇒ 台账/日报/看板/Push 把
+#   "按防重复规则跳过的指令" 读成 "已成交" (11-03 Push 报 "执行 8/16", 实际 6 笔)。
+#   处置: ①写入面改用 mark_instruction_existing_position() 直写本状态;
+#         ②回填把 already_held 幻影行单独归类; ③读数面用 is_phantom_execution()。
+#   注: executed=1 保留 —— 它是 save_instruction 覆盖仲裁的 "已认领/不得重写" 闩,
+#   与 "是否真的有单" 是两件事。判 "有没有成交" 一律走 is_phantom_execution()。
+EXISTING_POSITION_STATE = "SKIPPED_EXISTING_POSITION"
+ALREADY_HELD_OUTCOME = "already_held"
+REAL_EXECUTION_SQL = f"COALESCE(outcome, '') <> '{ALREADY_HELD_OUTCOME}'"
+
+
+def is_phantom_execution(row) -> bool:
+    """executed=1 但从未下单的幻影行 (broker 已有持仓 → 跳过)。
+
+    判据 = outcome='already_held' 且 execution_price<=0 (与
+    scripts/entry_gate_daily_report.py::_is_filled 同口径)。
+    兼容 dict 与 sqlite3.Row: Row 没有 .get(), 一律按列名取并吞 KeyError/IndexError
+    (缺失列 ⇒ 非幻影, 保持既有 "executed 即成交" 语义, 不因缺列改变统计)。
+    """
+    def _cell(name, default):
+        try:
+            value = row[name]
+        except (KeyError, IndexError, TypeError):
+            return default
+        return default if value is None else value
+
+    if str(_cell("outcome", "") or "").strip() != ALREADY_HELD_OUTCOME:
+        return False
+    try:
+        return not float(_cell("execution_price", 0) or 0) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 # ── [DEB-20260902-stale-bridge P1-② 2026-09-02] 陈旧 decision_id 覆盖守卫 ────────
 #   RFC-066 覆盖仲裁按源类分级 (DA-/universe_expansion/intraday_reentry=3), 对
 #   decision_id 内嵌的决策日期无感 → 同 prio "同源类替换" 允许 T-1 决策覆盖当日决策。
@@ -430,16 +470,37 @@ class PlaybookDB:
         conn.commit()
 
     def _backfill_execution_state(self, conn) -> None:
-        """安全回填旧行：历史 executed 行绝不因加列默认值变回可重试。"""
+        """安全回填旧行：历史 executed 行绝不因加列默认值变回可重试。
+
+        2026-11-03: already_held 幻影行 (executed=1 / price=0 / 无 broker_order_id /
+        trade_records 无对应成交) 不再映射成 'BOOKED' —— 见本文件顶部
+        EXISTING_POSITION_STATE 注记。state 的 "绝不回到可重试" 语义不变:
+        新状态同样是非 PENDING 的终态, 循环/抢占都不认它。
+        """
         conn.execute(
             "UPDATE playbook_instructions SET execution_state = CASE "
-            "WHEN COALESCE(executed, 0) = 0 THEN 'PENDING' "
+            f"WHEN COALESCE(executed, 0) = 0 THEN 'PENDING' "
+            f"WHEN COALESCE(outcome, '') = '{ALREADY_HELD_OUTCOME}' "
+            "  AND COALESCE(execution_price, 0) <= 0 "
+            "  AND COALESCE(broker_order_id, '') = '' "
+            f"THEN '{EXISTING_POSITION_STATE}' "
             "WHEN COALESCE(execution_price, 0) > 0 "
-            "  OR COALESCE(outcome, '') IN ('holding', 'win', 'loss', 'void', 'already_held') "
+            "  OR COALESCE(outcome, '') IN ('holding', 'win', 'loss', 'void') "
             "THEN 'BOOKED' ELSE 'LEGACY_LOCKED' END "
             "WHERE execution_state IS NULL OR execution_state = '' "
             "OR (execution_state = 'PENDING' AND COALESCE(executed, 0) = 1 "
             "    AND COALESCE(execution_attempt, 0) = 0)"
+        )
+        # 存量纠正 (幂等): 旧 CASE 已把已存在的幻影行标成 BOOKED ⇒ 上面的 WHERE 不再覆盖。
+        # 只动 "无单号 + 无成交价 + outcome=already_held" 的行, 真正的 BOOKED 行
+        # (有 order_id / 有价) 逐字不动; 不改 updated_at (不伪造最近活动时间)。
+        conn.execute(
+            "UPDATE playbook_instructions "
+            f"SET execution_state = '{EXISTING_POSITION_STATE}' "
+            f"WHERE execution_state = 'BOOKED' "
+            f"  AND COALESCE(outcome, '') = '{ALREADY_HELD_OUTCOME}' "
+            "  AND COALESCE(execution_price, 0) <= 0 "
+            "  AND COALESCE(broker_order_id, '') = ''"
         )
         conn.execute(
             "UPDATE playbook_instructions SET execution_attempt = 0 "
@@ -813,7 +874,7 @@ class PlaybookDB:
         row = conn.execute(
             "SELECT COUNT(*) FROM playbook_instructions "
             "WHERE date = ? AND direction = ? AND executed = 1 "
-            "AND COALESCE(outcome, '') != 'already_held'",
+            f"AND {REAL_EXECUTION_SQL}",
             (date, direction),
         ).fetchone()
         return int(row[0] or 0) if row else 0
@@ -912,6 +973,40 @@ class PlaybookDB:
             values
         )
         conn.commit()
+
+    def mark_instruction_existing_position(self, instruction_id: int,
+                                           observed_at: str) -> bool:
+        """broker 已有持仓 (外部/手动/ORB) ⇒ 本系统不下单, 写**诚实**终态。
+
+        与 update_instruction_tracking 分开写的原因: 后者只写 _TRACKING_FIELDS
+        白名单列, 而 execution_state 不在其中 (它由 broker 镜像状态机的 CAS 方法独占)。
+        这里是一次定向单行更新, 不动任何在途/已成交行:
+
+          · executed=1  -> 保留 "已认领/不得重写" 闩 (save_instruction 仲裁按它判,
+                            改 0 会让盘中再生成覆盖已落库的生成字段);
+          · execution_state='SKIPPED_EXISTING_POSITION'
+                          -> 不再冒充 BOOKED (BOOKED = 已成交且已入账);
+          · execution_price=0 / outcome='already_held'
+                          -> 读数面 is_phantom_execution() 据此剔除;
+          · skip_reason='' -> 维持 executed=1 ⇒ skip_reason 必须空的单一不变式
+                            (2026-09-09 REVIEW F-2)。
+
+        Returns: True=已写入; False=行不满足条件 (已有单号/在途/已成交), 调用方无需处理。
+        """
+        conn = self._conn()
+        cursor = conn.execute(
+            "UPDATE playbook_instructions SET executed = 1, execution_price = 0, "
+            "execution_time = ?, outcome = ?, skip_reason = '', "
+            "execution_state = ?, updated_at = ? "
+            "WHERE id = ? "
+            "  AND COALESCE(broker_order_id, '') = '' "
+            "  AND COALESCE(execution_state, 'PENDING') NOT IN "
+            "      ('SUBMITTED', 'FILLED_UNBOOKED', 'BOOKED')",
+            (observed_at, ALREADY_HELD_OUTCOME, EXISTING_POSITION_STATE,
+             now_utc().isoformat(), instruction_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
 
     def mark_instruction_guardrail_skip(
         self, instruction_id: int, reason: str
@@ -1663,7 +1758,7 @@ class PlaybookDB:
         #   无真实下单, 如 11-02 的 LMT/MRK 再提名行) 此前虚增执行数。
         executed = conn.execute(
             "SELECT COUNT(*) FROM playbook_instructions WHERE executed = 1 "
-            "AND COALESCE(outcome, '') != 'already_held'"
+            f"AND {REAL_EXECUTION_SQL}"
         ).fetchone()[0]
 
         # 胜率

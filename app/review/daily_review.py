@@ -941,10 +941,17 @@ class DailyReviewGenerator:
                     risk_tags.append('UE_DA_REVERSE_CHALLENGER_ABSTAIN')
                     reverse_abstain_symbols.append(row['symbol'])
 
-                final_state = (
-                    'EXECUTED' if row.get('executed')
-                    else (row.get('skip_reason') or row.get('execution_state') or 'PENDING')
-                )
+                # 2026-11-03 台账口径: 幻影行 (broker 已有持仓 → 本系统未下单) 不是 EXECUTED,
+                #   否则 planned_details 的 "已执行" 与实际成交集合对不上
+                #   (11-03 LMT/MRK 实锤: 日报把 6 笔成交写成 8 笔)。
+                from app.playbook.db import is_phantom_execution as _is_phantom_row
+                if row.get('executed') and _is_phantom_row(row):
+                    final_state = 'SKIPPED_EXISTING_POSITION'
+                elif row.get('executed'):
+                    final_state = 'EXECUTED'
+                else:
+                    final_state = (
+                        row.get('skip_reason') or row.get('execution_state') or 'PENDING')
                 result['planned_details'].append({
                     'symbol': row['symbol'],
                     'decision_id': row.get('decision_id') or '',

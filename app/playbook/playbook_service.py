@@ -452,7 +452,12 @@ class PlaybookService:
         buy_count = sum(1 for i in today_instructions if i.get("direction") == "BUY")
         short_count = sum(1 for i in today_instructions if i.get("direction") == "SELL_SHORT")
         skip_count = sum(1 for i in today_instructions if i.get("direction") == "SKIP")
-        executed_count = sum(1 for i in today_instructions if i.get("executed"))
+        # 2026-11-03: 幻影行 (broker 已有持仓 → 本系统未下单) 不计入 "已执行"。
+        from app.playbook.db import is_phantom_execution as _is_phantom
+        executed_count = sum(
+            1 for i in today_instructions
+            if i.get("executed") and not _is_phantom(i)
+        )
 
         return {
             **stats,

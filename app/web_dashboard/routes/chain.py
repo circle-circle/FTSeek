@@ -17,6 +17,9 @@ from datetime import datetime
 from fastapi import APIRouter
 
 from app.web_dashboard.data_service import get_data_service, safe_float, et_today, et_days_ago
+# 2026-11-03 台账口径: 幻影行 (broker 已有持仓 → 本系统未下单) 不算 "成交"。
+#   模块级导入 — 漏斗与链路详情两处消费方共用同一判据 (函数内导入会漏作用域)。
+from app.playbook.db import is_phantom_execution as _is_phantom_row
 
 logger = logging.getLogger("ftseek_us.routes.chain")
 router = APIRouter()
@@ -75,10 +78,14 @@ def register(app, templates):
         def _has_outcome(r):
             return bool((r.get("outcome") or "").strip())
 
+        # 2026-11-03 台账口径: 幻影行 (broker 已有同向持仓 → 本系统未下单) 不是 "成交",
+        #   单列 stage "已有持仓跳过" (11-03 LMT/MRK 实锤: 旧看板把 6 笔成交显示成 8)。
         actionable = [r for r in rows if not _is_skip(r)]
         skipped = [r for r in rows if _is_skip(r)]
         triggered = [r for r in actionable if r.get("triggered")]
-        executed = [r for r in actionable if r.get("executed")]
+        phantom = [r for r in actionable if _is_phantom_row(r)]
+        executed = [r for r in actionable
+                    if r.get("executed") and not _is_phantom_row(r)]
         exited = [r for r in executed if _has_outcome(r)]
         holding = [r for r in executed if not _has_outcome(r)]
 
@@ -90,11 +97,12 @@ def register(app, templates):
                 "confidence": r.get("confidence"),
                 "thesis": (r.get("thesis") or "")[:80],
                 "triggered": bool(r.get("triggered")),
-                "executed": bool(r.get("executed")),
+                "executed": bool(r.get("executed")) and not _is_phantom_row(r),
                 "outcome": r.get("outcome") or "",
                 "pnl_pct": r.get("pnl_pct"),
                 "exit_reason": r.get("exit_reason") or "",
                 "skip_reason": (r.get("skip_reason") or "")[:40],
+                "phantom": _is_phantom_row(r),
             }
 
         # 转化率 (相邻两跳)
@@ -109,6 +117,7 @@ def register(app, templates):
                  "rate": _rate(len(actionable), candidates)},
                 {"key": "triggered", "label": "触发", "count": len(triggered),
                  "rate": _rate(len(triggered), len(actionable))},
+                {"key": "phantom_skip", "label": "已有持仓跳过", "count": len(phantom)},
                 {"key": "executed", "label": "成交", "count": len(executed),
                  "rate": _rate(len(executed), len(triggered))},
                 {"key": "holding", "label": "持仓", "count": len(holding)},
@@ -175,8 +184,9 @@ def register(app, templates):
         if instr:
             hops.append({
                 "stage": "指令", "icon": "📋",
-                "status": "done" if instr.get("executed") else (
-                    "skip" if (instr.get("skip_reason") or "").strip() else "pending"),
+                "status": "done" if (instr.get("executed") and not _is_phantom_row(instr)) else (
+                    "skip" if ((instr.get("skip_reason") or "").strip()
+                               or _is_phantom_row(instr)) else "pending"),
                 "title": "生成 playbook 指令",
                 "ts": instr.get("created_at"),
                 "detail": {

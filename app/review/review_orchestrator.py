@@ -484,7 +484,12 @@ class RichContextBuilder:
         """
         try:
             by_direction = self._query(
-                "SELECT direction, executed, COUNT(*) as cnt "
+                "SELECT direction, "
+                "  CASE WHEN COALESCE(executed, 0) = 1 AND NOT "
+                "    (COALESCE(execution_price, 0) <= 0 "
+                "     AND COALESCE(outcome, '') = 'already_held') "
+                "  THEN 1 ELSE 0 END as executed, "
+                "  COUNT(*) as cnt "
                 "FROM playbook_instructions WHERE date = ? "
                 "GROUP BY direction, executed ORDER BY cnt DESC",
                 (date,)
@@ -502,16 +507,28 @@ class RichContextBuilder:
             )
             
             total = self._query(
-                "SELECT COUNT(*) as total, SUM(executed) as executed "
+                "SELECT COUNT(*) as total, "
+                "SUM(CASE WHEN executed = 1 THEN 1 ELSE 0 END) as executed "
                 "FROM playbook_instructions WHERE date = ?",
+                (date,)
+            )
+            # 2026-11-03 台账口径: 幻影行 (broker 已有持仓 → 未下单) 从 "已执行" 剔除,
+            #   与 db.count_executed_by_direction / get_summary_stats / Push 同口径。
+            _phantom = self._query(
+                "SELECT COUNT(*) as cnt FROM playbook_instructions "
+                "WHERE date = ? AND COALESCE(executed, 0) = 1 "
+                "AND COALESCE(execution_price, 0) <= 0 "
+                "AND COALESCE(outcome, '') = 'already_held'",
                 (date,)
             )
             
             t = total[0] if total else {}
+            _phantom_cnt = int((_phantom[0] or {}).get("cnt") or 0) if _phantom else 0
+            _executed_real = int(t.get("executed") or 0) - _phantom_cnt
             return {
                 "source": "playbook_instructions",
                 "total_decisions": t.get("total") or 0,
-                "executed": t.get("executed") or 0,
+                "executed": max(_executed_real, 0),
                 "by_direction_executed": by_direction,
                 "by_confidence": by_confidence,
             }

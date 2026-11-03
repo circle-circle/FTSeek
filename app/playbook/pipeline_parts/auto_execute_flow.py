@@ -303,7 +303,10 @@ def run_playbook_auto_execute(
                         )
                     else:
                         logger.info(f"[playbook] {_symbol} broker已有持仓 (外部/手动/ORB), 跳过 (防重复下单)")
-                        db.update_instruction_tracking(inst["id"], {"executed": 1, "execution_price": 0, "execution_time": _now_et_iso, "outcome": "already_held"})
+                        # 2026-11-03 台账口径: 直写非 BOOKED 终态 (幻影行), 见
+                        #   db.py EXISTING_POSITION_STATE 注记。executed=1 仍为
+                        #   "已认领/不得重写" 闩; 读数面用 is_phantom_execution() 剔除。
+                        db.mark_instruction_existing_position(inst["id"], _now_et_iso)
                     skipped_count += 1
                     continue
             except Exception as _bh_err:

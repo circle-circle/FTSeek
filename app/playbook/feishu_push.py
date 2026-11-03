@@ -301,6 +301,12 @@ class PlaybookPusher:
             if instruction.get("direction") != "SKIP"
         ]
         skip_count = len(instructions) - len(active_instructions)
+        # 2026-11-03 台账口径: 幻影行 (broker 已有同向持仓 → 本系统未下单) 单列,
+        #   既不算 "已执行" 也不算 "错失" (11-03 LMT/MRK 实锤: 旧 Push 报 8/16)。
+        from app.playbook.db import is_phantom_execution as _is_phantom_row
+        _phantom_count = sum(
+            1 for _i in active_instructions if _is_phantom_row(_i))
+        _exec_denominator = max(len(active_instructions) - _phantom_count, 0)
         executed_count = 0
         closed_net_pnl = 0.0
         holding_pnl = 0.0
@@ -311,8 +317,12 @@ class PlaybookPusher:
 
             sym = inst.get("symbol", "?")
             direction = inst.get("direction", "?")
-            executed = inst.get("executed", 0)
             outcome = inst.get("outcome", "")
+            # 2026-11-03 台账口径: 幻影行 (broker 已有持仓 → 本系统未下单) 不是 "已执行",
+            #   否则 Push 末尾 "执行 N/M" 会把被防重复规则跳过的指令算成成交
+            #   (11-03 实锤: 报 8/16, 实际 6 笔)。
+            from app.playbook.db import is_phantom_execution as _is_phantom
+            executed = inst.get("executed", 0) and not _is_phantom(inst)
             pnl = inst.get("pnl", 0)
             mfe = inst.get("max_favorable_excursion", 0)
             mae = inst.get("max_adverse_excursion", 0)
@@ -348,7 +358,11 @@ class PlaybookPusher:
             else:
                 shadow = inst.get("shadow_pnl") or 0
                 _sign = '+' if shadow >= 0 else ''
-                if inst.get("triggered"):
+                if _is_phantom(inst):
+                    # broker 已有同向持仓 → 按防重复规则跳过; 本系统没下单, 既不是成交
+                    # 也不是 "未触发"
+                    lines.append("   ⏭ 已有持仓跳过(防重复下单) | 本系统未下单")
+                elif inst.get("triggered"):
                     # 真正错失: 已触发入场条件但未执行 (资金/时段/执行失败)
                     lines.append(f"   ❌ 触发未执行 | 错失: {_sign}${shadow:.0f}")
                 else:
@@ -457,8 +471,8 @@ class PlaybookPusher:
             lines.append("")
 
         lines.append(
-            f"今日总结: 执行 {executed_count}/{len(active_instructions)} "
-            f"(SKIP {skip_count})"
+            f"今日总结: 执行 {executed_count}/{_exec_denominator} "
+            f"(已有持仓跳过 {_phantom_count}, SKIP {skip_count})"
         )
         pnl_parts = []
         if any(instruction.get("outcome") in ("win", "loss") for instruction in instructions):
