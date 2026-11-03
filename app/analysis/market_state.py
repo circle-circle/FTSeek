@@ -163,7 +163,8 @@ class MarketStateChecker:
             # 判据取不到 ⇒ 回落盘外 TTL (30min)。异常必须留痕 (R5: except:pass 棘轮
             # + W4 debug-swallow 棘轮都禁静默吞错), 但不该升到 WARNING (取数频率问题,
             # 不是交易失败) ⇒ debug 级。
-            logger.debug("[market_state] 盘中 TTL 判定失败 → 回落盘外 30min: %s", _ttl_err)
+            logger.warning("[market_state] 盘中 TTL 判定失败 → 回落盘外 30min (VIX 新鲜度退化): %s",
+                           _ttl_err, exc_info=True)
         return self._cache_ttl
 
     def get_vix_cached(self) -> Optional[float]:

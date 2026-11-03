@@ -44,7 +44,7 @@ MAX_SYMBOLS = 40
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [obf] %(levelname)s: %(message)s",
                     handlers=[logging.FileHandler(LOG), logging.StreamHandler()])
-logger = logging.getLogger("orderflow_forward")
+logger = logging.getLogger("ftseek.orderflow.forward_capture")
 
 
 def _make_ctx(host, port):
@@ -59,7 +59,7 @@ def _make_ctx(host, port):
         _ftl.logger.file_level = logging.WARNING
         _ftl.logger.console_level = logging.WARNING
     except Exception as e:  # noqa: BLE001 — 留痕
-        logger.debug("ft_logger 静音失败: %s", e)
+        logger.warning("ft_logger 静音失败 (富途库日志将更吵): %s", e, exc_info=True)
     from futu import OpenQuoteContext, SysConfig
     SysConfig.enable_proto_encrypt(False)
     last = None
@@ -73,7 +73,7 @@ def _make_ctx(host, port):
             try:
                 ctx.close()
             except Exception as e:  # noqa: BLE001
-                logger.debug("close 失败: %s", e)
+                logger.warning("close 失败 (OpenD 上下文未干净关闭): %s", e, exc_info=True)
         except Exception as e:  # noqa: BLE001
             last = e
         time.sleep(2)
@@ -102,14 +102,14 @@ def _universe():
         try:
             pos = con.execute("SELECT symbol FROM open_positions").fetchall()
         except Exception as e:  # noqa: BLE001
-            logger.warning("open_positions 读取失败: %s", e)
+            logger.warning("open_positions 读取失败: %s", e, exc_info=True)
             pos = []
         for r in pos:
             if r["symbol"] not in ctx_info:
                 syms.append(r["symbol"])
         con.close()
     except Exception as e:  # noqa: BLE001
-        logger.warning("universe 从 DB 读取失败 (回落核心名单): %s", e)
+        logger.warning("universe 从 DB 读取失败 (回落核心名单): %s", e, exc_info=True)
     for s in CORE:
         if s not in ctx_info:
             syms.append(s)
@@ -279,12 +279,12 @@ def capture_once(argv, force=False):
         try:
             ctx.unsubscribe(syms, [SubType.ORDER_BOOK, SubType.TICKER])
         except Exception as e:  # noqa: BLE001
-            logger.debug("unsubscribe 失败: %s", e)
+            logger.warning("unsubscribe 失败 (退订未确认; OpenD 侧可能残留订阅): %s", e, exc_info=True)
     finally:
         try:
             ctx.close()
         except Exception as e:  # noqa: BLE001
-            logger.debug("close 失败: %s", e)
+            logger.warning("close 失败 (OpenD 上下文未干净关闭): %s", e, exc_info=True)
 
     if rows:
         # 幂等: 同 (date, symbol, slot) 已存在则跳过 (重跑/cron 重叠安全)
@@ -325,7 +325,7 @@ def settle(days=5):
             try:
                 j = json.loads(f.read_text())
             except Exception as e:  # noqa: BLE001
-                logger.warning("bar 读失败 %s: %s", f.name, e)
+                logger.warning("bar 读失败 %s: %s", f.name, e, exc_info=True)
                 continue
             byday = defaultdict(dict)
             for r in j:

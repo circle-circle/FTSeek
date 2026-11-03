@@ -624,7 +624,8 @@ class AlphaVantageProvider:
             return self._fetch_finnhub_vixy(cache_key)
         except Exception as exc:
             self._vix_probe_fail_ts = time.time()
-            logger.debug(f"[Finnhub] VIXY 探针异常 (已隔离, 冷却 {_VIX_PROBE_COOLDOWN_S}s): {exc}")
+            logger.warning(f"[Finnhub] VIXY 探针异常 (已隔离, 冷却 {_VIX_PROBE_COOLDOWN_S}s; VIX 口径将退化为日频): {exc}",
+                           exc_info=True)
             return None
 
     def _fetch_finnhub_vixy(self, cache_key: str) -> Optional[float]:

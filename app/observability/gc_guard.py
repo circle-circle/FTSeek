@@ -118,7 +118,7 @@ def release_free_memory(reason: str = "periodic") -> Optional[Tuple[float, float
         libc = ctypes.CDLL("libc.so.6")
         libc.malloc_trim(0)          # 0 = 归还所有可归还的空闲页
     except Exception as exc:
-        logger.debug("[GC] malloc_trim 不可用 (跳过): %s", exc)
+        logger.warning("[GC] malloc_trim 不可用 (跳过; 空闲堆无法归还 OS): %s", exc, exc_info=True)
         return None
     after = _rss_mb()
     if before is not None and after is not None and (before - after) >= 20:
@@ -165,7 +165,7 @@ def _on_gc(phase: str, info: dict) -> None:
                 elapsed_ms, warn_ms, gen, info.get("collected"), _rss_mb() or -1,
             )
     except Exception as _gc_cb_err:  # 钩子内异常会污染 GC 状态, 但失败要留痕
-        logger.debug("[GC] 停顿回调异常 (忽略): %s", _gc_cb_err)
+        logger.warning("[GC] 停顿回调异常 (忽略; GC 停顿取证失灵): %s", _gc_cb_err, exc_info=True)
 
 
 def _stall_probe_loop(interval_s: float, gap_warn_s: float) -> None:
@@ -201,7 +201,7 @@ def _stall_probe_loop(interval_s: float, gap_warn_s: float) -> None:
                     _window_max_ms, _rss_mb() or -1,
                 )
         except Exception as exc:  # 观测失败不影响交易
-            logger.debug("[冻结取证] 探针异常 (忽略): %s", exc)
+            logger.warning("[冻结取证] 探针异常 (忽略; 停摆探针失明): %s", exc, exc_info=True)
 
 
 def _reset_window() -> None:
@@ -248,7 +248,7 @@ def _report_loop(interval_s: float) -> None:
             if rss is not None and trim_mb > 0 and rss >= trim_mb:
                 release_free_memory("periodic")
         except Exception as exc:  # 观测失败不影响交易
-            logger.debug("[GC] 汇总异常 (忽略): %s", exc)
+            logger.warning("[GC] 汇总异常 (忽略; GC 观测汇总失灵): %s", exc, exc_info=True)
 
 
 def install_gc_guard() -> bool:

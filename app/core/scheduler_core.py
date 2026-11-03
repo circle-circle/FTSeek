@@ -2354,7 +2354,10 @@ class TradingScheduler:
                         from app.playbook.premarket_invalidation import run_check as _pm_inv
                         _pm_inv(self)
                     except Exception as _e:
-                        logger.debug(f"[playbook] 盘前失效评估异常 (已隔离): {_e}")
+                        # 2026-11-03 (全链审计复核): 影子停采 = 证据流断档, 静默不得留。
+                        # (原为 debug ⇒ LOG_LEVEL=INFO 下完全不可见; WARNING 不被
+                        #  error_alert 计数 ⇒ 无推送噪音)
+                        logger.warning(f"[playbook] 盘前失效评估异常 (已隔离, 本日证据断档): {_e}", exc_info=True)
 
                     # 2026-07-24 (用户裁决): topup 盘中窗 (默认 10:30-11:30 ET) — 实时价重评
                     #   回调窗, 捕捉当日跌进窗的标的; 盘前窗命中 PRE_MARKET 分支的同一调用。

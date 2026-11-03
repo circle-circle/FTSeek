@@ -78,7 +78,7 @@ def open_risk_usd(db_path: Optional[Path] = None, *, use_cache: bool = True) -> 
                 continue
             total += abs(entry - stop) * qty
     except Exception as exc:  # noqa: BLE001 — fail-open 是设计意图
-        logger.warning(f"[portfolio_heat] 读 open_positions 失败, 本次不拦: {exc}")
+        logger.warning(f"[portfolio_heat] 读 open_positions 失败, 本次不拦: {exc}", exc_info=True)
         return (0.0, 0)
 
     if missing:

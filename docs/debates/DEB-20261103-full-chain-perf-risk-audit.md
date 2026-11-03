@@ -426,3 +426,62 @@ AV provider，而是 `app/analysis/market_state.py::get_vix_cached()`
 ① AV provider 槽位（60s/600s 上限 + 来源分槽 + 探针冷却）
 ② 入场闸缓存 TTL（盘中 60s / 盘外 30min）
 ③ 入场闸取数链内部（FRED 日频独立槽位 1h + 代理失败冷却 60s + 来源留痕）
+
+## 11. 全量验收（2026-11-03 14:20–15:00）
+
+### 11.1 全仓测试：与改动前基线**逐条一致** ⇒ 零影响
+- 基线 = `5bec3843d`（4 个 hotfix 之前的提交），用 `git worktree` 起独立副本对照。
+- 全量：`8104 passed / 123 failed / 72 skipped`（11m46s）。
+- **逐条 diff**（当前 vs 基线，同 27 个失败文件）：失败集合**完全一致**，
+  唯一差异是 `test_premarket_overrun_cancel.py::test_trading_branch_runs_auto_execute`
+  —— 基线绿、当前红 ⇒ **真回归**，处置见 §11.3。
+- ⇒ **本批全部改动（他人的 4 个 hotfix + 本审计的 8 个提交）对全仓测试零影响**；
+  那 123 个失败是**改动前就存在的红基线**（夹具缺数据等环境性原因）。
+
+### 11.2 卫生棘轮：发现**上一批 hotfix 留下的红**，已修
+跑 `tests/test_w456_log_hygiene_ratchet.py`（W4 debug-swallow / W5 裸 logger 名 /
+W6 无栈告警）时**转红**，逐条查证**全部不是本审计引入**：
+
+| 违规 | 来源批次 | 处置 |
+|---|---|---|
+| `app/observability/gc_guard.py` ×4（except 块内 `logger.debug`） | 73c970e05（GC 护栏新文件） | → warning + exc_info=True |
+| `app/observability/round_timer.py` ×1 | 7afc587f7（round_timer 新文件） | → warning + exc_info=True |
+| `scripts/orderflow_forward_capture.py` ×4（debug ×3 + W5 裸 logger 名） | 10-31 批（DEB-20261031） | → warning + exc_info=True；logger 名改 `ftseek.orderflow.forward_capture` |
+| `app/playbook/admission.py` ×1、`portfolio_heat.py` ×1 | 更早批次 | → warning + exc_info=True |
+| `app/playbook/premarket_invalidation.py` ×2、`market_state.py` ×1、`alphavantage_provider.py` ×1 | **本审计引入** | → warning + exc_info=True |
+
+**教训**：上一批 hotfix 交付时只跑了 56 项测试，**从未跑过本仓的日志卫生棘轮** ⇒
+"测试全绿"的声明不成立。棘轮当场转红并已修绿（16 passed）。
+（`WARNING` 不会被 `error_alert` 计数（只扫 ERROR/CRITICAL）⇒ 不产生推送噪音；
+intraday_heartbeat 会计 WARNING 数但仅作"top_warning"展示，实测这 9 处失败路径近 3 天
+**触发 0 次** ⇒ 无噪音。）
+
+### 11.3 执行优先留下的红契约测试：已修（不削弱守护力）
+`tests/test_premarket_overrun_cancel.py::test_trading_branch_runs_auto_execute` 断言
+TRADING 分支里出现字面量 `run_playbook_auto_execute(self)`；执行优先批把内联调用抽成
+`_maybe_auto_execute(now)` ⇒ **字面量消失、行为仍在**（分支确实仍执行入场）。
+**处置**：断言改为"分支内存在入场执行调用（直接调用或 `_maybe_auto_execute` 包装）"，
+并在包装形态下**额外要求包装器内真的调用 `run_playbook_auto_execute`**（防"空壳包装"
+变成静默不执行）。
+**变异验证**：把包装器掏空（不真的执行）⇒ 该用例**当场转红** ⇒ 守护力未被削弱 ✓。
+
+### 11.4 运行态验收（休市 + 盘中预演）
+| 项 | 结果 |
+|---|---|
+| 单例收敛 | 本次重启后 `[AlphaVantage] 初始化完成` = **1**、`[MarketDataRouter] 初始化完成` = **1** ✓ |
+| protobuf | 运行时 `api_implementation.Type()` = **upb** ✓ |
+| 执行优先 | `scheduler.execution_priority_first` = **True**（env 未设）✓ |
+| 入场确认窗 | `entry_confirm_max_wait_s` = **10**（服务内读取）✓ |
+| GC 护栏 | 阈值 (20000,25,25) + `长命对象已冻结` 均落日志；RSS 66–148MB 区间、VmSize 1.71GB（其中 956MB 为 arena 预留、264MB 线程栈）✓ |
+| cron 错峰 | 13:01 重载后**每分钟 2–3 个**任务（改前同分钟 6–12 个）；窗口内该跑的任务全部正常产出（event_stream_ingest status=OK / exit_intent_reaper 未检出账实不符 / health_check 通过）✓ |
+| DB | 两个库 `quick_check=ok`，WAL 119KB；生产库行数与审计基线一致（trade_records 1098 / instructions 4685 / open 3）⇒ **测试未污染生产库** ✓ |
+| 盘中预演（真实网络） | ①AV provider：306ms 取实时值 15.67 → 0.1ms 命中 → 61s 后 460ms 重取（60s 上限真生效）②入场闸：1623ms 取实时值 → 清空槽位后 52ms 回切实时、**日频槽位为空 ⇒ 没下 CSV** ③**Futu VIXY 实时 15.67 = AV provider 盘中读到的 15.67（同源，差 0）** ⇒ 口径分裂消除 ✓ |
+| 静默吞错 | 盘前失效影子**当前健康**（11-02 写 50 行，未停摆）；但两处 except 块内 debug 静默已提级为 warning（影子停采 = 证据流断档，必须可见）✓ |
+
+### 11.5 仍然待办（不属本批）
+P1 四项：内存 arena 限流（`MALLOC_ARENA_MAX=2` + per-call pool 模块级化）、
+盘后分支异常隔离（防持仓静默过夜）、watchdog 盘中禁自愈重启、
+出场扫描 DB 索引 + position_sync 事务外做网络调用。
+另：**本审计过程中发现但未修**的两条待定项 —— ①`market_state` 的实时腿每次都新建 Futu
+连接（盘中 60s 一次 = 连接 churn，虽已从"每次调用"降到"每分钟"）；②`vix_monitor`
+（看板链）的 FRED 腿无独立槽位（180s 缓存已兜底，影响小于闸门链）。

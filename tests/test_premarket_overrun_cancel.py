@@ -123,5 +123,20 @@ class TestGuardCoverage:
                 f"{step} 被盘前跨界跳过后, TRADING 分支缺 catch-up 调用 {fn} → 会丢功能/丢记录")
 
     def test_trading_branch_runs_auto_execute(self):
-        """跳过盘前步骤的**目的**: TRADING 分支里有入场执行 (否则取消毫无意义)。"""
-        assert "run_playbook_auto_execute(self)" in _branch("TRADING")
+        """跳过盘前步骤的**目的**: TRADING 分支里有入场执行 (否则取消毫无意义)。
+
+        2026-11-03 (执行优先批): 内联调用被抽成 `_maybe_auto_execute(now)`
+        (interval 门 + 异常隔离), 直接调用字面量随之消失 ⇒ 断言改为"分支内存在入场执行
+        调用"(两种形态都算)。**意图不变且不削弱**: 包装形态下额外确认包装器里真的调了
+        `run_playbook_auto_execute` (防"空壳包装"变成静默不执行)。
+        """
+        trading = _branch("TRADING")
+        direct = "run_playbook_auto_execute(self)" in trading
+        wrapped = "_maybe_auto_execute(" in trading
+        assert direct or wrapped, (
+            "TRADING 分支必须含入场执行调用 (直接调用或 _maybe_auto_execute 包装) "
+            "—— 否则盘前取消守卫跳过步骤后, 入场就没人做了")
+        if wrapped and not direct:
+            assert "run_playbook_auto_execute(self)" in _SRC, (
+                "_maybe_auto_execute 包装器内必须真的调用 run_playbook_auto_execute "
+                "(空壳包装 = 静默不执行)")

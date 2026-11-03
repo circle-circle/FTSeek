@@ -80,7 +80,11 @@ def _observe_enabled() -> bool:
         from app.core.config_container import ConfigContainer
         return bool(ConfigContainer.get_instance().get_dotted(
             "playbook.premarket_invalidation_observe", True))
-    except Exception:
+    except Exception as _cfg_err:
+        # 2026-11-03 (全链审计复核): 配置读取失败 ⇒ 影子**静默停采** ⇒ 证据流干涸而
+        # 无人知情。按 R5「新增异常处理必须 warn 留痕」提级 (原为无声 return False)。
+        # WARNING 不被 error_alert 计数 (只扫 ERROR/CRITICAL) ⇒ 不产生推送噪音。
+        logger.warning("[盘前失效] 观察开关读取失败 ⇒ 本次不采集 (影子停采): %s", _cfg_err, exc_info=True)
         return False
 
 
@@ -143,5 +147,7 @@ def run_check(scheduler=None) -> int:
         logger.info(f"[盘前失效] 评估落盘 {written} 行 (命中规则 {flagged} 条) → {_OUTPUT_PATH.name}")
         return written
     except Exception as e:
-        logger.debug(f"[盘前失效] 评估异常 (已隔离): {e}")
+        # 2026-11-03: 评估失败 ⇒ 本日证据断档。静默死亡族 (R5: 异常必须 warn 留痕)。
+        # WARNING 不被 error_alert 计数 ⇒ 无推送噪音。
+        logger.warning(f"[盘前失效] 评估异常 (已隔离, 本日证据断档): {e}", exc_info=True)
         return 0

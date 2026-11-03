@@ -33,7 +33,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Dict, List, Optional, Tuple
+
+# 2026-11-03 (全链验收): 本模块此前**没有任何 logger 定义**, 而 :252 的异常处理里用了
+#   `logger.warning(...)` ⇒ 一旦 portfolio_heat 判定抛异常, except 块自身会抛
+#   NameError 并向外传播 ⇒ "组合帽永不阻断 (fail-open)" 的保证被打破 (异常从兜底块里
+#   再抛出去)。该行本轮因日志卫生棘轮补 exc_info 被改动 ⇒ pre-commit 的未定义名检查
+#   当场抓出。修复: 按仓内惯例补模块级 logger。
+logger = logging.getLogger(__name__)
 
 # ── LIVE 工程探针豁免 (2026-10-06, 用户裁「1只股真实试运行」) ─────────────
 # 只豁免**经济性**判据; 安全性判据 (SL_STOP_TOO_WIDE / PRICE_TOO_LOW /
@@ -249,7 +257,7 @@ def evaluate(inst: Dict[str, Any]) -> Dict[str, Any]:
                 reasons.append(_heat)
             metrics["candidate_risk"] = round(_cand_risk, 2)
         except Exception as exc:  # noqa: BLE001 — 组合帽永不阻断 (fail-open)
-            logger.warning(f"[admission] portfolio heat 判定失败, 跳过该判据: {exc}")
+            logger.warning(f"[admission] portfolio heat 判定失败, 跳过该判据: {exc}", exc_info=True)
 
     # 弱信号审计标记 (2026-08-07 用户哲学"不强不做"): 辩论一方弃权 = 弱信号。
     #   record-only (不强拦): sim 采集期供给优先 + confidence 类无 IC 证据;

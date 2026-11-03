@@ -104,7 +104,7 @@ def timed_phase(label: str):
                     elif info_s > 0 and dt >= info_s:
                         logger.info("[轮次计时] %s %.1fs", label, dt)
                 except Exception as _dt_err:  # 计时不能成为新的故障点, 但失败要留痕
-                    logger.debug("[轮次计时] 计时失败 (忽略): %s", _dt_err)
+                    logger.warning("[轮次计时] 计时失败 (忽略; 该步耗时未记录): %s", _dt_err, exc_info=True)
 
         return _wrapped
 
