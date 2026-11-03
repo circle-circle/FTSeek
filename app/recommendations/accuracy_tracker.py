@@ -340,10 +340,15 @@ class AccuracyTracker:
         return results
 
     def _get_data_router(self) -> Any:
-        """懒加载行情数据源"""
+        """懒加载行情数据源 (2026-11-03: 走进程级共享单例).
+
+        原实现每次调用都 new MarketDataRouter() —— 每个实例新建一条 Futu LV3 连接
+        + 30s 健康守护线程 + 三个数据源 (各自 requests.Session)。实测一个交易时段
+        13 次 "FutuLV3 正在连接 OpenD"、17 次 router 初始化, 全部来自这类旁路构造。
+        """
         try:
-            from app.data.market_data_router import MarketDataRouter
-            return MarketDataRouter(
+            from app.data.market_data_router import get_market_data_router
+            return get_market_data_router(
                 twelvedata_api_key=os.environ.get("TWELVEDATA_API_KEY"),
                 finnhub_api_key=os.environ.get("FINNHUB_API_KEY"),
                 alphavantage_api_key=os.environ.get("ALPHAVANTAGE_API_KEY"),

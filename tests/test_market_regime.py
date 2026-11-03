@@ -226,9 +226,12 @@ class TestMarketRegimeGate:
     def test_no_router_no_av(self):
         """测试无 Router 和 AV 时不崩溃 (密封: 阻断默认实例自动创建)"""
         # 2026-07-11 起构造器会自动创建共享 router/AV 实例; 测试密封为创建失败路径
+        # 2026-11-03: AV 构造点已收敛到进程级单例 get_alpha_vantage_provider()
+        #   (原每实例 new AlphaVantageProvider)。密封目标随之迁移到新缝 —— 守卫的语义
+        #   ("两个默认实例都建不出来时不崩") 未变, 只换了打桩对象。
         with patch("app.playbook.market_regime.get_market_data_router",
                    side_effect=Exception("sealed")), \
-             patch("app.playbook.market_regime.AlphaVantageProvider",
+             patch("app.playbook.market_regime.get_alpha_vantage_provider",
                    side_effect=Exception("sealed")):
             gate = MarketRegimeGate(None, None)
         ctx = gate.assess()

@@ -91,3 +91,22 @@ def test_trim_enabled_returns_rss_pair(monkeypatch):
     monkeypatch.delenv("FTSEEK_GC_TRIM", raising=False)
     out = gc_guard.release_free_memory("test")
     assert out is None or (len(out) == 2 and out[0] > 0)
+
+def test_rss_step_triggers_warning_without_long_duration(monkeypatch, caplog):
+    """短耗时但 RSS 台阶 ≥ 阈值也要报 (堆被撑大是 GC 停顿的放大器)。"""
+    monkeypatch.setenv("FTSEEK_PHASE_INFO_S", "5")
+    monkeypatch.setenv("FTSEEK_PHASE_WARN_S", "30")
+    monkeypatch.setenv("FTSEEK_PHASE_RSS_MB", "50")
+    clock = iter([0.0, 0.2])
+    monkeypatch.setattr(round_timer.time, "perf_counter", lambda: next(clock))
+    rss = iter([300.0, 780.0])
+    monkeypatch.setattr(round_timer, "_rss_mb", lambda: next(rss))
+    caplog.set_level("INFO")
+
+    @round_timer.timed_phase("demo.rss")
+    def _fn():
+        return 1
+
+    assert _fn() == 1
+    assert "RSS 300→780MB (+480)" in caplog.text
+    assert "单步长尾/RSS 台阶" in caplog.text

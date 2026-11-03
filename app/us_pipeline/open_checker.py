@@ -42,7 +42,10 @@ class USOpenChecker:
         
         # Initialize Market Data Router
         # Reusing existing logic to get keys
-        self.router = MarketDataRouter(
+        # 2026-11-03 性能批: 共享单例 (原盘前检查每次 new router → 额外 Futu 连接+守护线程);
+        #   kwargs 仅在单例尚未创建时生效, 主进程里 scheduler 已注册带 Futu 的实例。
+        from app.data.market_data_router import get_market_data_router
+        self.router = get_market_data_router(
             twelvedata_api_key=os.environ.get("TWELVEDATA_API_KEY"),
             finnhub_api_key=os.environ.get("FINNHUB_API_KEY"),
             alphavantage_api_key=os.environ.get("ALPHAVANTAGE_API_KEY"),

@@ -2361,8 +2361,11 @@ class ExitMonitor:
 
         # ── 优先: AlphaVantage ^VIX 现货 (精确值) ──
         try:
-            from app.data.alphavantage_provider import AlphaVantageProvider
-            provider = AlphaVantageProvider()
+            # 2026-11-03 性能批: 原每次 new AlphaVantageProvider() → 每轮一条
+            #   requests.Session + 新的日配额计数器 (实测一个时段 137 次初始化)。
+            #   改共享单例; 本方法自身 300s 缓存语义不变。
+            from app.data.alphavantage_provider import get_alpha_vantage_provider
+            provider = get_alpha_vantage_provider()
             vix = provider.get_vix()
             if vix and vix > 0:
                 self._vix_cached = float(vix)

@@ -827,6 +827,28 @@ class AlphaVantageProvider:
         logger.info("[AlphaVantage] 连接已关闭")
 
 
+# ── 进程级共享单例 (2026-11-03 性能批) ─────────────────────────────
+# 根因: AlphaVantageProvider() 在调用点被反复 new —— 实测一个交易时段 137 次
+#   "初始化完成" (position_exit_monitor._get_vix 每次、position_sync._get_vix_factor
+#   每次、MarketRegimeGate 每次)。每次 new 都会:
+#     ①新建 requests.Session (丢弃连接池) ②新建 _RateLimiter (日配额计数器归零 →
+#   配额门形同虚设, 可能真的把 500/日 打爆) ③丢失 provider 内部缓存。
+# 本单例只解决"反复构造"; 是否复用缓存值仍由调用方自己的 TTL 决定 (get_vix_or_none
+# 内部还有按交易时段的 60s/600s 缓存), 因此不会让 VIX 变旧。
+_shared_av_provider = None
+_shared_av_lock = threading.Lock()
+
+
+def get_alpha_vantage_provider() -> "AlphaVantageProvider":
+    """返回进程级共享的 AlphaVantageProvider (懒创建, 线程安全, 双重检查锁)。"""
+    global _shared_av_provider
+    if _shared_av_provider is None:
+        with _shared_av_lock:
+            if _shared_av_provider is None:
+                _shared_av_provider = AlphaVantageProvider()
+    return _shared_av_provider
+
+
 # 测试脚本
 if __name__ == "__main__":
     import json

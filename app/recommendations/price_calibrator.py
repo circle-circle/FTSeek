@@ -72,9 +72,10 @@ class PriceCalibrator:
         if self._router is not None:
             return self._router
         try:
-            from app.data.market_data_router import MarketDataRouter
+            # 2026-11-03 性能批: 共享单例 (原每实例自建 router → 额外 Futu 连接+守护线程)
+            from app.data.market_data_router import get_market_data_router
 
-            self._router = MarketDataRouter()
+            self._router = get_market_data_router()
         except Exception as e:
             logger.warning(f"[PriceCalibrator] MarketDataRouter 初始化失败: {e}")
             self._router = None

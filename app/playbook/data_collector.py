@@ -473,8 +473,9 @@ class PlaybookDataCollector:
             return PlaybookDataCollector._router_instance
         try:
             import os
-            from app.data.market_data_router import MarketDataRouter
-            PlaybookDataCollector._router_instance = MarketDataRouter(
+            # 2026-11-03 性能批: 共享单例 (原类内自建 router → 额外 Futu 连接+守护线程)
+            from app.data.market_data_router import get_market_data_router
+            PlaybookDataCollector._router_instance = get_market_data_router(
                 twelvedata_api_key=os.environ.get("TWELVEDATA_API_KEY"),
                 finnhub_api_key=os.environ.get("FINNHUB_API_KEY"),
                 alphavantage_api_key=os.environ.get("ALPHAVANTAGE_API_KEY"),

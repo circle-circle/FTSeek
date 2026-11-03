@@ -20,7 +20,7 @@ from enum import Enum
 from dataclasses import dataclass
 
 from app.data.market_data_router import MarketDataRouter, get_market_data_router
-from app.data.alphavantage_provider import AlphaVantageProvider
+from app.data.alphavantage_provider import AlphaVantageProvider, get_alpha_vantage_provider
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +145,9 @@ class MarketRegimeGate:
         
         if not self.av:
             try:
-                self.av = AlphaVantageProvider()
+                # 2026-11-03 性能批: 与 router 一样走进程级单例 (原每个 regime 实例 new 一个,
+                #   实测一个交易时段 137 次 AlphaVantage 初始化)。模块级 import 便于测试打桩。
+                self.av = get_alpha_vantage_provider()
             except Exception as e:
                 logger.warning(f"Failed to create AlphaVantageProvider: {e}")
     

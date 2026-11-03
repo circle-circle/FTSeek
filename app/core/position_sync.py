@@ -2890,8 +2890,9 @@ class USPositionSync:
         获取失败时返回 1.0 (不缩放).
         """
         try:
-            from app.data.alphavantage_provider import AlphaVantageProvider
-            vix = AlphaVantageProvider().get_vix()
+            # 2026-11-03 性能批: 共享单例 (原每次 _get_vix_factor 都 new 一个 provider)
+            from app.data.alphavantage_provider import get_alpha_vantage_provider
+            vix = get_alpha_vantage_provider().get_vix()
             if vix and vix > 0:
                 factor = max(1.0, min(float(vix) / 20.0, 2.5))
                 return factor

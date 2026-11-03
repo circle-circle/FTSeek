@@ -36,29 +36,57 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _rss_mb():
+    """当前进程 RSS (MB); 读不到返回 None (绝不抛)。"""
+    try:
+        with open("/proc/self/status", "r") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024.0
+    except Exception:
+        return None
+    return None
+
+
 def timed_phase(label: str):
-    """装饰器: 计时某个同步步骤, 超阈值写日志 (不改变返回值/异常语义)。"""
+    """装饰器: 计时某个同步步骤 + 记录该步 RSS 增量, 超阈值写日志 (不改变返回值/异常语义)。
+
+    为什么加 RSS: 11-02 进程峰值 1.45GB (宿主 3.5GB), 但"谁把堆撑起来的"没有归属 ——
+    极可能是某一个批量步骤 (逐标的全量拉取/pandas 合并) 临时膨胀。这里在每步前后读一次
+    /proc/self/status 的 VmRSS (两次文件读, 微秒级), 增量 ≥ 阈值就打出来, 直接把
+    "哪一步撑大堆" 从猜变成读; 堆大小正是 GC 停顿时长的放大器。
+    """
+    _DEFAULT_RSS_DELTA_MB = 50.0
 
     def _decorator(fn):
         @functools.wraps(fn)
         def _wrapped(*args, **kwargs):
             t0 = time.perf_counter()
+            rss_before = _rss_mb()
             try:
                 return fn(*args, **kwargs)
             finally:
                 try:
                     dt = time.perf_counter() - t0
+                    rss_after = _rss_mb()
                     info_s = _env_float("FTSEEK_PHASE_INFO_S", _DEFAULT_INFO_S)
                     warn_s = _env_float("FTSEEK_PHASE_WARN_S", _DEFAULT_WARN_S)
-                    if warn_s > 0 and dt >= warn_s:
+                    rss_s = _env_float("FTSEEK_PHASE_RSS_MB", _DEFAULT_RSS_DELTA_MB)
+                    delta = None
+                    if rss_before is not None and rss_after is not None:
+                        delta = rss_after - rss_before
+                    rss_note = ""
+                    if delta is not None and rss_s > 0 and abs(delta) >= rss_s:
+                        rss_note = f"; RSS {rss_before:.0f}→{rss_after:.0f}MB ({delta:+.0f})"
+                    if (warn_s > 0 and dt >= warn_s) or rss_note:
                         logger.warning(
-                            "[轮次计时] %s %.1fs ≥ %.0fs — 单步长尾: 同轮后续步骤 (含入场执行) 全被它排队",
-                            label, dt, warn_s,
+                            "[轮次计时] %s %.1fs%s — 单步长尾/RSS 台阶: 同轮后续步骤 (含入场执行) 全被它排队",
+                            label, dt, rss_note,
                         )
                     elif info_s > 0 and dt >= info_s:
-                        logger.info("[轮次计时] %s %.1fs", label, dt)
-                except Exception:  # 计时不能成为新的故障点
-                    pass
+                        logger.info("[轮次计时] %s %.1fs%s", label, dt, rss_note)
+                except Exception as _dt_err:  # 计时不能成为新的故障点, 但失败要留痕
+                    logger.debug("[轮次计时] 计时失败 (忽略): %s", _dt_err)
 
         return _wrapped
 

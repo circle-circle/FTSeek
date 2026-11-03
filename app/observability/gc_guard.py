@@ -164,8 +164,8 @@ def _on_gc(phase: str, info: dict) -> None:
                 "该线程此间独占 GIL, 其它循环与心跳全部静默",
                 elapsed_ms, warn_ms, gen, info.get("collected"), _rss_mb() or -1,
             )
-    except Exception:  # GM 钩子内异常会污染 GC 状态, 一律吞掉
-        pass
+    except Exception as _gc_cb_err:  # 钩子内异常会污染 GC 状态, 但失败要留痕
+        logger.debug("[GC] 停顿回调异常 (忽略): %s", _gc_cb_err)
 
 
 def _stall_probe_loop(interval_s: float, gap_warn_s: float) -> None:
