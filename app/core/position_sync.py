@@ -1334,6 +1334,14 @@ class USPositionSync:
         # 2026-08-22 audit: 循环外预载 playbook 未平仓集合 (原逐 symbol 一连接 = N+1)
         from app.playbook.pipeline import load_playbook_open_symbols, playbook_open_check
         _pb_open_syms = load_playbook_open_symbols()
+        # 2026-11-03 (全链审计 P1-4): Futu 当日委托查询**提到事务之外**。
+        #   python sqlite3 legacy 模式: 首个 DML 自动 BEGIN, 直到 commit 才释放写锁 ⇒
+        #   原先这段 broker 网络调用夹在事务中间 (首个 DELETE 在上方 1378, commit 在末尾),
+        #   broker 慢/无响应时**整个主库写锁被网络 I/O 持有** ⇒ 与入场 claim / 出场落账
+        #   争锁 ⇒ "database is locked"。实测该调用无显式 timeout, 持锁时长不可控。
+        #   本循环不依赖该结果 (已核: 循环体内 0 处引用), 故提前取, 语义不变。
+        _today_orders = self._query_today_futu_orders()
+        self._today_orders = _today_orders  # 供 _sync_to_position_store_locked 使用
         for symbol in db_symbols - futu_symbols:
             # P0 修复 2026-07-06: Playbook SIM 仓位由 playbook exit monitor 独占管理,
             # position_sync 不应将其标记为 ghost. 2026-07-16: 统一用 is_playbook_open_position.
@@ -1509,9 +1517,6 @@ class USPositionSync:
         except Exception:
             pass
 
-        # P3 修复 (2026-06-09): 查询 Futu 当日委托 (DB INSERT 和 position_store 共用)
-        _today_orders = self._query_today_futu_orders()
-        self._today_orders = _today_orders  # 供 _sync_to_position_store_locked 使用
 
         # P3 修复 (2026-06-12): 查询 manual_order_audit 今日手动订单，防止被误标为 auto_main
         _manual_today = set()
