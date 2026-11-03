@@ -522,6 +522,7 @@ P1 四项：内存 arena 限流（`MALLOC_ARENA_MAX=2` + per-call pool 模块级
 | **盘中禁看门狗自愈重启**（`watchdog.py`） | `llm_strategy_loop` 心跳只由主循环**轮首**推进 ⇒ 盘中任一同步长步骤（定桶实测 31.4min = 1884s > 600s×3 = 1800s）即被判"卡死" ⇒ 直接 `systemctl restart` ⇒ **盘中重启 = 内存态持仓与在途委托全丢** | 盘中只告警 + 通知值班，**不重启**；真冻结仍由**外部** `freeze_sentinel`（cron 每分钟）SIGKILL 处置，覆盖不丢 | 代码事实 |
 | **glibc arena 限流**（systemd unit，仓外） | 未设 ⇒ glibc 默认 `MALLOC_ARENA_MAX = 8×ncores = 16` ⇒ 实测 48 段 PROT_NONE 共 **956MB** arena 预留 + 264MB 线程栈 ⇒ **VmSize 1.72GB 而真实 RSS 仅 66–148MB** | unit 加 `MALLOC_ARENA_MAX=2`（**必须写在 unit**：放 `.env.us` 无效 —— dotenv 是进程内才加载，glibc 早已初始化完 malloc） | **VmPeak 1,715,536 kB → 798,408 kB（−917MB）；arena 预留 956MB → 63MB；VmSwap 8.7MB → 0** |
 | **出场扫描孪生行判定加索引**（`trade_store.py`） | `_PB_CLOSED_TWIN_NOT_EXISTS` 按 `futu_order_id` 关联，该列**无索引** ⇒ EXPLAIN `CORRELATED SCALAR SUBQUERY / SCAN t2`（每候选开仓行一次全表扫；744 候选行实测 4.3s，随持仓数线性涨） | 加 `idx_trade_records_futu_order_id` | 计划变为 `MULTI-INDEX OR` + 两个 INDEX SEARCH；**查询 15.6ms → 6.2ms**（3 仓；收益随持仓数放大） |
+| **`position_sync` 事务跨网络调用**（`position_sync.py`） | python sqlite3 legacy 模式：首个 DML 自动 BEGIN、末尾 commit 才释放写锁；而 `_query_today_futu_orders()`（broker 网络调用、**无显式 timeout**）夹在事务中间 ⇒ broker 慢/无响应时**整个主库写锁被网络 I/O 持有** ⇒ 与入场 claim / 出场落账争锁 ⇒ `database is locked` | 把该查询提到 DML 循环**之前**（已核：循环体内 0 处引用其结果 ⇒ 取值时点提前不改语义，只是把网络等待移出锁区间） | 代码事实 + 87 项相关用例通过 |
 
 **自检纪律**：本批新代码自身**不得**再违反本仓棘轮 —— 首次提交前 `except:pass` 棘轮转红
 （905→906：抄了文件里既有的 `except: pass` 风格）与 W4 debug-swallow 棘轮转红（except 块内
@@ -529,3 +530,16 @@ P1 四项：内存 arena 限流（`MALLOC_ARENA_MAX=2` + per-call pool 模块级
 
 **回滚**：arena 项 = 删 unit 该行 + `daemon-reload` + 重启（备份
 `/opt/ftseek/backups/ftseek-us.service.<ts>.bak`）；其余三项为代码，`git revert` 即回。
+
+### 13.1 收口后的终态（2026-11-03 17:05）
+
+| 指标 | 收口前 | 收口后 |
+|---|---|---|
+| 全仓测试 | 123 failed / 8104 passed | **60 failed / 8167 passed**（净修 63 条，**零新增失败**；逐条 diff 基线） |
+| 守卫/棘轮/契约套件（54 文件） | 4 红 | **全绿** |
+| 进程 VmPeak | 1,715,536 kB | **798,408 kB**（arena 限流后） |
+| arena 虚拟预留 | 48 段 / 956MB | **34 段 / 63MB** |
+| VmSwap | 8.7MB | **0** |
+| 出场扫描查询 | 15.6ms（`SCAN t2`） | **6.2ms**（`MULTI-INDEX OR`） |
+| cron 每分钟并发（开盘分钟） | 12–13 个 | **2–3 个** |
+| 剩余 60 条红 | — | 集中在 `test_shadow_tracker.py`（18）等，病因是**实现演进、期望未跟上**（`'skipped' == 'win'` / `0 == 1` / `None == 500.0`）⇒ 需逐条判断"改实现还是改期望"，属独立工程 |

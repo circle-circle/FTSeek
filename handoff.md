@@ -40,7 +40,9 @@
   - **静默吞错**：`premarket_invalidation` 影子**当前健康**（11-02 写 50 行，未停摆），但两处 except 块内 debug 已提级为 warning（影子停采 = 证据流断档，必须可见）。
 - **P0/P1 现状（本条之后的条目已全部实施）**：P0-1 cron 错峰（开盘分钟 12→3）/ P0-2 VIX 三层收口 / P0-3 入场确认 30s→10s / P1-1 arena 限流（**VmPeak 1.72GB→798MB**）/ P1-2 盘后分支隔离 / P1-3 盘中禁自愈重启 / P1-4 出场扫描索引（**15.6→6.2ms**）。详见下方「P1 收口」与「守卫套件审计」条目。
 - **下一步（今晚 22:30 CST 开盘后复核 6 项）**：CRON 启动数（现 12→3）/ sysstat buffcache+swap+%memused / 服务 RSS（现 66–148MB）/ VmPeak+PROT_NONE 段数（**已由 1.71GB/48 段 956MB 降至 798MB/34 段 63MB**）/ 轮次间隔（现 3min09s，目标 ≤100s）/ VIX 刷新间隔（预期 ≤900s）。另按 P0-3 的 R1–R4 判据核入场确认改动。
-- **仍然待办**：①**剩余 70 条红基线**（`test_shadow_tracker.py` 18 等）—— 病因是**实现演进、期望未跟上**，需逐条判断"改实现还是改期望"，属独立工程；②`position_sync` 事务跨网络调用（未拆）；③`market_state` 实时腿每次新建 Futu 连接（盘中已降到每分钟 1 次）；④`vix_monitor` 看板链 FRED 腿无独立槽位（180s 缓存已兜底）；⑤每标的新建 ThreadPoolExecutor → arena/线程 churn（arena 已限流，池仍未模块级化）。
+- **P1-4 收尾**：`position_sync` 的 Futu 当日委托查询（broker 网络调用、**无显式 timeout**）原夹在事务中间（python sqlite3 legacy：首个 DML 自动 BEGIN、末尾 commit 才释放写锁）⇒ broker 慢时**整个主库写锁被网络 I/O 持有** ⇒ 与入场 claim / 出场落账争锁 ⇒ 已提到 DML 循环之前（循环体内 0 处引用其结果 ⇒ 语义不变）。
+- **终态**：全仓测试 **60 failed / 8167 passed**（基线 123 failed ⇒ 净修 63 条，**零新增失败**，逐条 diff）；守卫/棘轮/契约套件（54 文件）**全绿**；VmPeak **1.72GB→798MB**；arena 预留 **956MB→63MB**；VmSwap **8.7MB→0**；出场扫描查询 **15.6ms→6.2ms**；cron 开盘分钟并发 **12→3**。
+- **仍然待办**：①**剩余 60 条红基线**（`test_shadow_tracker.py` 18 等）—— 病因是**实现演进、期望未跟上**，需逐条判断"改实现还是改期望"，属独立工程；②`position_sync` 事务跨网络调用（未拆）；③`market_state` 实时腿每次新建 Futu 连接（盘中已降到每分钟 1 次）；④`vix_monitor` 看板链 FRED 腿无独立槽位（180s 缓存已兜底）；⑤每标的新建 ThreadPoolExecutor → arena/线程 churn（arena 已限流，池仍未模块级化）。
 
 最后更新：2026-11-03（本条）
 
