@@ -58,6 +58,9 @@ def _load_vix_threshold() -> int:
 
 VIX_THRESHOLD = _load_vix_threshold()
 
+# VIX 缓存 TTL 分档 (2026-11-03, 全链审计 P0-2 续): 盘中 60s / 盘外 30min
+VIX_INTRADAY_CACHE_TTL_S = 60
+
 
 class MarketStateChecker:
     """市场状态检查器"""
@@ -124,6 +127,32 @@ class MarketStateChecker:
         # HTTP API 全部不可用 (key=***), 静默跳过
         return None
 
+    def _vix_ttl(self) -> timedelta:
+        """VIX 缓存 TTL: 盘中 60s, 盘外 30min。
+
+        2026-11-03 (全链审计 P0-2 续) —— 为什么入场否决闸要单独修这条链:
+        `playbook_service.py` 开仓前与 `order_executor.py` 下单前的 VIXGuard 都读
+        `get_vix_cached()` (本类), 而 2026-09-14 为"让盘中 VIX 冲高在门上可见"加的
+        VIXY 实时代理腿, 被这里的 **30 分钟缓存**挡住: 活腿每 30 分钟才被问一次
+        ⇒ 盘中冲高最长 30 分钟在闸门上不可见 ⇒ 那次修复被缓存半废。
+        盘中改 60s 后实时腿才真正生效。盘外保持 30min: 收盘后无"冲高"可捕捉,
+        且避免无谓的 FRED CSV 下载。实测 `fetch_vixy_via_opend` 单次 41ms
+        (连接干净关闭) ⇒ 每分钟一次完全可负担。
+
+        阶段判据走 `app/data/vix_source.py::is_trading_phase` (生产者不得自行比较
+        MarketPhase.TRADING —— 见 tests/test_vix_proxy_window_single_source.py 的 AST 契约)。
+        """
+        try:
+            from app.data.vix_source import is_trading_phase
+            if is_trading_phase():
+                return timedelta(seconds=VIX_INTRADAY_CACHE_TTL_S)
+        except Exception as _ttl_err:
+            # 判据取不到 ⇒ 回落盘外 TTL (30min)。异常必须留痕 (R5: except:pass 棘轮
+            # + W4 debug-swallow 棘轮都禁静默吞错), 但不该升到 WARNING (取数频率问题,
+            # 不是交易失败) ⇒ debug 级。
+            logger.debug("[market_state] 盘中 TTL 判定失败 → 回落盘外 30min: %s", _ttl_err)
+        return self._cache_ttl
+
     def get_vix_cached(self) -> Optional[float]:
         """带 30min 缓存的 VIX 读取, 取不到返回 None (fail-close 友好).
 
@@ -138,7 +167,7 @@ class MarketStateChecker:
         now = datetime.now()
         if self._vix_cache:
             vix, cached_at = self._vix_cache
-            if now - cached_at < self._cache_ttl:
+            if now - cached_at < self._vix_ttl():
                 return vix
         vix = self._fetch_vix_data()
         if vix is not None:
@@ -293,7 +322,7 @@ class MarketStateChecker:
         now = datetime.now()
         if self._vix_cache:
             vix, cached_at = self._vix_cache
-            if now - cached_at < self._cache_ttl:
+            if now - cached_at < self._vix_ttl():
                 result = vix < VIX_THRESHOLD
                 logger.debug(f"使用缓存的 VIX 数据：vix={vix:.2f}, below_25={result}")
                 return result

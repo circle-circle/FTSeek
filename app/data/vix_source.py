@@ -90,6 +90,31 @@ def vixy_to_vix(vixy_price: Optional[float]) -> Optional[float]:
 #   行为变更, 须另开辩论。
 VIXY_PROXY_PHASES = ("PRE_MARKET", "TRADING")
 
+# 盘中阶段 (2026-11-03, 全链审计 P0-2 续) —— 判据同样收敛到本模块
+TRADING_PHASES = ("TRADING",)
+
+
+def is_trading_phase(phase=None) -> bool:
+    """当前 (或给定) 阶段是否 TRADING —— 单一真源入口 (2026-11-03 P0-2 续)。
+
+    为什么需要: `app/analysis/market_state.py` 的 VIX 缓存 TTL 要按"盘中/盘外"分档
+    (盘中 60s 才能捕捉 VIX 急变; 盘外 30min 少打 API), 但生产者**不得**在体内直接
+    比较 `MarketPhase.TRADING` —— `tests/test_vix_proxy_window_single_source.py` 的
+    AST 契约要求阶段判据一律走本模块。故判据落在这里, 生产者只调不写。
+
+    fail-closed 方向: 取不到 phase ⇒ 回落 False (用盘外的 30min TTL) ——
+    宁可多缓存一会儿, 也不要在"时钟坏了"时把取数频率抬到每分钟。
+    """
+    if phase is None:
+        try:
+            from app.core.scheduler_triggers import get_market_phase
+            phase = get_market_phase()
+        except Exception as _e:
+            logger.warning("[vix_source] 市场阶段判定失败 → 盘中判定回落 False (用盘外 TTL): %s",
+                           _e, exc_info=True)
+            return False
+    return getattr(phase, "name", str(phase)) in TRADING_PHASES
+
 
 def is_vixy_proxy_window(phase=None) -> bool:
     """当前 (或给定) 市场阶段是否处于 **VIXY 实时代理优先** 窗口 — 唯一判据入口。

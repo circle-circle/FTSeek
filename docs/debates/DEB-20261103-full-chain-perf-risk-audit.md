@@ -349,3 +349,38 @@ min=1s / **中位 266s / max 2412s（40 分钟）** ⇒ 与"盘中每 60s 刷新
 **部署**：重启前核①未平仓 3 笔（US.MRK/US.LMT/US.ACN，非在途出场）、核②app/scripts 仅本批
 一个文件 → `systemctl restart ftseek-us`（13:28:43）→ `startup_smoke_check.py --wait 90`
 **7/7 全过（exit=0）**；重启后 0 ERROR/CRITICAL，VIX 监控器正常初始化。
+
+### 10.6 续：入场否决闸那条链（`market_state`）—— 复核时发现的第二层陈旧
+
+**复核 §2 H3 时顺链核对消费方，发现 P0-2 只修了一半**：入场否决闸（VIXGuard）读的不是
+AV provider，而是 `app/analysis/market_state.py::get_vix_cached()`
+（`playbook_service.py:1239` 开仓前、`order_executor.py:3675` 下单前），
+而该处是**固定 30 分钟**缓存（`market_state.py:68` `_cache_ttl = 30min`）。
+
+⇒ **2026-09-14 为"让盘中 VIX 冲高在门上可见"而加的 VIXY 实时代理腿，被这个缓存挡住：
+活腿每 30 分钟才被问一次，盘中冲高最长 30 分钟在闸门上不可见 ⇒ 那次修复被缓存半废。**
+
+**口径对照（本次实测）**：同刻 Futu VIXY 实时口径 = **15.67**，FRED 日频口径 = **19.42**，
+差 **3.75 个 VIX 点**；而 regime 阈值就卡在 15–20（+1）与 20–30（−2）之间 ⇒
+"读到哪条腿"足以翻转 regime 判定，也足以决定"恐慌升高时该不该拦你入场"。
+
+**落法**（同样**不动任何消费方**）：
+| 项 | 改前 | 改后 |
+|---|---|---|
+| `market_state` VIX 缓存 TTL | 固定 30min（盘中盘外一样） | **盘中 60s / 盘外 30min**（盘外行为零变化） |
+| 阶段判据 | — | 收敛到新单一真源 `app/data/vix_source.py::is_trading_phase()` |
+| 取数成本 | — | 实测 `fetch_vixy_via_opend` 单次 **41ms**（连接在 finally 里干净关闭）⇒ 每分钟一次完全可负担 |
+
+**为什么不用 `== MarketPhase.TRADING` 直接判**：`tests/test_vix_proxy_window_single_source.py`
+的 AST 契约禁止 4 个生产者在体内直接比较 `MarketPhase.TRADING` ⇒ 判据必须落在真源模块
+（`vix_source.py` 不在生产者名单内，可安全持有阶段常量）。既有契约测试**未修改**。
+
+**验证**：新增 `tests/test_vix_gate_freshness.py` **8 passed**（盘中 60s 上限 / 60s 内命中 /
+盘外 30min 不变 / 盘外 31min 作废 / fail-close 的 None 仍如实传播 / `is_trading_phase`
+四个阶段取值 / AST 级"生产者不得自行比较阶段"自检）；既有 VIX 契约测试**未修改且全绿**。
+**棘轮再次抓到本批一处违规**：初版 `_vix_ttl()` 里写了 `except Exception: pass` ⇒
+`test_except_pass_ratchet` 转红 ⇒ 改成 `logger.debug(...)` 留痕后恢复绿（棘轮按设计生效）。
+
+**部署**：重启前核①未平仓 3 笔、核②app/scripts 仅 2 个文件（`market_state.py` /
+`vix_source.py`）→ `systemctl restart ftseek-us`（14:05:53）→ `startup_smoke_check --wait 90`
+**7/7 全过（exit=0）**；重启后 0 ERROR/CRITICAL。
