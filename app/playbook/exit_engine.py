@@ -1028,6 +1028,12 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
         if bool(_pb_cfg.get("dead_signal_overnight_daily_reset_enabled", True)) \
                 and _is_overnight_position(entry_time_str):
             _ds_held_minutes = float(minutes_from_open or 0)
+        if _ds_held_minutes >= _ds_minutes and meta.get("_mfe_gate_pct") is None:
+            # DEB-20261104 D2: 记录死信号闸门**评估时刻**读到的 peak (首次评估为准).
+            #   零行为变更 — 只写 meta, 不参与任何判定; 落库成 mfe_gate_pct 列, 复现
+            #   "豁免/死信号当时的真实口径". 落库 mfe_pct 是出场重算的全程峰值 (含隔夜尖峰),
+            #   与本列语义不同 (实测 DA 133 笔中两者 63% 不等) ⇒ 不得互相替代.
+            meta["_mfe_gate_pct"] = round(float(peak_profit_pct or 0.0), 4)
         if _ds_held_minutes >= _ds_minutes and peak_profit_pct < _ds_mfe_pct:
             # 8/17 净口径: 豁免的"水下"判定用净盈亏 — 毛 0<毛<费用 的微盈仓是净水下,
             #   同样在修复窗口内, 不该因"毛利>0"被误判失去豁免而出场白跑 (NVDA 8/17 实弹).

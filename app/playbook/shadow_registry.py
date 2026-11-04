@@ -4530,6 +4530,43 @@ REGISTRY: list[ShadowItem] = [
               "计数轴=检出条数 (非样本累积), 故 min_n=1 即表示「发生过一次」。回滚: 摘 cron 行 "
               "(不影响出场管线任何行为)。",
     ),
+    ShadowItem(
+        id="wweek_peak_axis_shadow",
+        name="W_WEEK 隔夜豁免 · peak 轴 vs 深度轴 (纯观测, 无毕业门)",
+        status=ShadowStatus.OBSERVING,
+        description="多模型辩论 (GLM-5.3 / Kimi-K3.1-Pro) 实证: 被 W_WEEK 水下豁免放行"
+                    "隔夜的仓里, 有一档「当日完全没走方向」(入场后 60 分钟 peak 仅 "
+                    "0.03~0.08%) 的单在隔夜跳空里各亏 5~6% (日志实锤 2026-10-09 "
+                    "SNDK/AMD、10-27 CRM)。豁免的裁决基础 (2026-08-15 用户裁, n=15 "
+                    "多日回放修复率 73%) 假设「水下 = 方向对但回吐了」, 而 peak≈0 的单"
+                    "是「从没对过」⇒ 两类仓被混为一谈。**纯观测**: 人群 = "
+                    "metadata_json.overnight_arm.source='w_week' 的已平仓仓, 只按 peak "
+                    "分档记账, **不改任何豁免行为 / 不设毕业门 / 不进任何 live 路径**。"
+                    "两轴对照读数: 深度轴 (B19 同轴, EOD 判定时刻净水深 ≤ -2.5%, 结果"
+                    "变量时点晚) vs peak 轴 (闸门评估时刻 peak < 0.1%, 过程变量时点早) "
+                    "—— 机制上 peak 轴可能触及深度轴触及不到的笔。",
+        data_path="data/shadow/wweek_peak_axis.jsonl",
+        config_key=None,
+        min_n=30,
+        graduation_criteria="**无毕业门 — 纯观测** (PERMANENT_MEASURE)。核心读数 = 两轴命中集"
+                            "重合度: 若 peak 命中集完全含于 depth 命中集 ⇒ 本议题关闭 "
+                            "(DEB-20261104 §D4 预注册关闭条件: 同族换判据轴不产生新信息, "
+                            "B19 eod_depth_gate 已终裁 GATE_NOT_WORTH)。若 peak 轴触及 "
+                            "depth 轴触及不到的笔 ⇒ 两轴非同一集合, 继续观测; **任何提案"
+                            "须另立 RFC + 用户裁**, 且必须自证不违反 C11/C14/C15/C16/C17 "
+                            "五条已终裁红线。",
+        eval_script="scripts/wweek_peak_axis_shadow.py",
+        eval_on_demand=False,
+        created="2026-11-04",
+        no_adjudication_reason="PERMANENT_MEASURE: 纯观测无毕业门; 唯一裁决动作 = DEB §D4 "
+                               "预注册的「两轴命中集完全重合 ⇒ 关闭」自动条件",
+        notes="DEB-20261104 §D4/E7 (用户 2026-11-04 裁「按建议执行」)。**降级理由**: 原提案"
+              "(带毕业判据的影子) 撞 C11/C14/C15/C16/C17 五条终裁红线 + B19 已终裁 + "
+              "B15 已存在隔夜臂判罪线 ⇒ 只能作 B15 下的子集细化, 不另开平行判据。"
+              "依赖 mfe_gate_pct / mfe_tick_pct 两列 (DEB §D2 新增, 2026-11-04 迁移); "
+              "列未迁移时人群仍可算 (peak 轴空), 深度轴读数不受影响。"
+              "回滚: 摘 cron 行 + 删本条目 + 删脚本 (产物留档)。",
+    ),
 ]
 
 

@@ -576,6 +576,44 @@ def _check_fee_bps_anomaly(rec, db_path=None) -> dict:
     return out
 
 
+def _check_qoder_agents_health(rec) -> dict:
+    """W10: Qoder 多模型 agent 注册表健康 (2026-11-04, DEB-20261104 §D6).
+
+    病灶 (实测): 一个坏的模型字面量 (如 `Kimi-K3` 从服务端模型目录下架) 会让
+    AgentRegistry 加载该 agent 失败 ⇒ **整组 User agent 全部不可调度** (Agent 工具对
+    glm-verifier / qwen-architect / kimi-reviewer 三个全报 `Unknown agent type`),
+    而 `qoder agents list` **照样把它们列出来、总数不变** ⇒ 静默失效, 跨厂商辩论
+    退化成"以为有三家、其实只有主会话一家"。
+
+    判据: `qoder agents list` 输出出现 "error loading agent configs" ⇒ 红灯。
+    只读; CLI 缺失/超时/未登录 ⇒ 标 skipped (环境问题不当失败, 防误报)。
+    回滚: 删 main() 注册行 + 本函数。
+    """
+    out = {"checked": 0, "errors": 0}
+    try:
+        import subprocess
+        proc = subprocess.run(
+            ["qoder", "agents", "list"], capture_output=True, text=True, timeout=120,
+            cwd=str(Path(__file__).resolve().parent.parent))
+        out["checked"] = 1
+        blob = f"{proc.stdout}\n{proc.stderr}"
+        if "error loading agent configs" in blob:
+            out["errors"] = 1
+            line = next((ln.strip() for ln in blob.splitlines()
+                         if "error loading agent configs" in ln), "error loading agent configs")
+            rec("W10_qoder_agents_registry_error", "-", "-",
+                f"{line} ⇒ User 组 agent 可能整体不可调度 (模型字面量失效? 见 "
+                f"~/.qoder/agents/*.md 与 peer-team/lineup.conf)")
+    except FileNotFoundError:
+        out["checked"] = 0
+    except subprocess.TimeoutExpired:
+        out["checked"] = 0
+    except Exception as e:
+        if not _is_structural_error(e):
+            rec("W10_detector_error", "-", "-", f"{type(e).__name__}: {e}")
+    return out
+
+
 def _check_lexicon_consistency(rec) -> dict:
     """W9: 词典↔注册表一致性 (2026-10-16, 用户令「推送/展示随源头调整自动体现」).
 
@@ -1298,6 +1336,10 @@ def main(push_enabled: bool = True) -> int:
     #    注册表进终态而词典(手写文案)措辞仍活跃 ⇒ 次日可见, 不再靠人记得改文案 ──
     lexicon_consistency = _check_lexicon_consistency(rec)
 
+    # ── W10 Qoder 多模型 agent 注册健康 (2026-11-04, DEB-20261104 §D6):
+    #     坏模型字面量 ⇒ 整组 User agent 不可调度, 而 agents list 照样列出 ⇒ 必须有守卫 ──
+    qoder_agents_health = _check_qoder_agents_health(rec)
+
     # ── W1_* 关键违反直推: **必须在覆写 OUT 之前** (防刷屏判据读的是上一轮 OUT 里的
     #    w1_direct_push 状态; 先覆写就永远读到本轮自己 ⇒ 首次告警即被自我抑制)。──
     if push_enabled:
@@ -1319,6 +1361,7 @@ def main(push_enabled: bool = True) -> int:
         "chg_denominator": chg_denominator,   # W7 两影子昨收分母口径分叉 (pmi 快照 vs ctx 缓存)
         "fee_bps_anomaly": fee_bps_anomaly,   # W8 仙股/最低佣金异常 (>200bps, DEB-20261009-event §30)
         "lexicon_consistency": lexicon_consistency,  # W9 词典↔注册表终态一致性 (2026-10-16)
+        "qoder_agents_health": qoder_agents_health,  # W10 Qoder agent 注册健康 (2026-11-04)
         "w1_direct_push": w1_push,            # W1 事件型直推回执 (DEB-20260909 §7.7⑤)
         "settled_all_sources": settled_all,   # I11~I14 覆盖面 (全部 source_type)
         "settled_exempt_marked": exempt,      # data_quality 已标记坏行 (豁免告警, 数量增长需人工看)
@@ -1335,4 +1378,13 @@ def main(push_enabled: bool = True) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # 2026-11-04 (DEB-20261104 §D6 实施记录): 此前 `main(push_enabled=False)`
+    #   这条"演练/测试不外发"路径**从命令行不可达** (无任何参数解析) ⇒ 任何演练跑法
+    #   都会真发钉钉 (本次实测踩到: 传 --dry 仍真推了一条)。补 --no-push 开关,
+    #   用 parse_known_args 保证 cron 现有调用方式零影响。
+    import argparse as _argparse
+    _ap = _argparse.ArgumentParser(description="每日不变量自检")
+    _ap.add_argument("--no-push", action="store_true",
+                     help="走完整违反路径但不真发钉钉 (演练/测试专用)")
+    _args, _unknown = _ap.parse_known_args()
+    sys.exit(main(push_enabled=not _args.no_push))

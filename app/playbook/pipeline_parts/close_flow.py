@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from typing import Any, Callable, Optional
 
 from app.risk.exit_reasons import normalize_exit_reason
@@ -138,6 +139,7 @@ def _close_trade_record(
         #   修复: mfe_pct 缺失/为0时, 用真峰值 peak_price + entry_price/direction 反算真实 MFE%.
         #   历史无 intraday 缓存无法回填, 此修复对新平仓的单子向前生效 (纯 surgical, 不碰热路径).
         _mfe_pct = 0.0
+        _mfe_tick_pct = 0.0
         _mfe_accum = 0.0
         _mae_pct = 0.0
         try:
@@ -164,6 +166,10 @@ def _close_trade_record(
                             _calc_mfe = (_entry - _peak) / _entry * 100
                         if _calc_mfe > _mfe_pct:
                             _mfe_pct = round(_calc_mfe, 4)
+                        # DEB-20261104 D2: tick 通道单独一路 (不加已落袋兜底) ——
+                        #   镜像在线闸门 (exit_engine:383 peak_profit_pct 同源) 的读数口径.
+                        if _pk_key == "peak_price" and _calc_mfe > _mfe_tick_pct:
+                            _mfe_tick_pct = round(_calc_mfe, 4)
                 # 2026-07-16: MAE 对称反算 — 与 MFE 同理, mae_pct 缺失时从 trough_price 反算.
                 #   根因: trough_price 入场写入 + 每轮更新 (与 peak 对称), 但 close 时从未回算成 mae_pct,
                 #   导致 MAE 常年为 0, 无法评估止损距离/浮亏承受度. 纯 surgical, 对新平仓向前生效.
@@ -182,6 +188,9 @@ def _close_trade_record(
                 _realized_fav = round(pnl_pct * 100, 4)
                 if _realized_fav > _mfe_pct:
                     _mfe_pct = _realized_fav
+                # mfe_tick_pct / mfe_gate_pct **不加**已落袋兜底 (刻意) ——
+                #   前者镜像在线闸门读数, 后者是闸门评估时刻的实际读数;
+                #   加兜底会把"闸门当时看到的"污染成"出场时的结果".
                 # 对称兜底: 亏损单的 MAE 必须 ≥ 已实现的不利变动 (谷值轮询未抓到最低点时不低估 MAE).
                 _realized_adv = round(-pnl_pct * 100, 4)
                 if _realized_adv > _mae_pct:
@@ -383,18 +392,53 @@ def _close_trade_record(
         #   输出比例量纲, 与 mfe/mae 的百分比量纲差 100 倍 (注释自述"同量纲"不成立)。
         #   mfe/mae 均已方向归一化 (SHORT 对称), 本公式 LONG/SHORT 通用。
         _max_dd_val = _max_drawdown_from_mfe_mae(_mfe_pct, _mae_pct)
+        # DEB-20261104 D2: 闸门评估时刻 peak 落库 (缺失留 NULL, 绝不猜 — 军规: 不得用
+        #   默认值填充会制造"看起来有留痕"的假象). 单位 = 百分比, 与 mfe_pct 同.
+        _mfe_gate_pct_db = None
+        try:
+            _gate_raw = _meta.get("_mfe_gate_pct")
+            if _gate_raw is not None:
+                _mfe_gate_pct_db = round(float(_gate_raw), 4)
+        except (TypeError, ValueError):
+            _mfe_gate_pct_db = None
         if close_futu_order_id:
-            _closed_row = conn.execute("""
+            _sql_new = """
+                UPDATE trade_records
+                SET exit_price=?, exit_time=?, exit_reason=?, realized_pnl=?, pnl_pct=?, holding_hours=?, close_futu_order_id=?, mfe_pct=?, mae_pct=?, max_drawdown=?, mfe_tick_pct=?, mfe_gate_pct=?
+                WHERE id=? AND (exit_time IS NULL OR exit_time='') AND (exit_price IS NULL OR exit_price=0)
+            """
+            _sql_old = """
                 UPDATE trade_records
                 SET exit_price=?, exit_time=?, exit_reason=?, realized_pnl=?, pnl_pct=?, holding_hours=?, close_futu_order_id=?, mfe_pct=?, mae_pct=?, max_drawdown=?
                 WHERE id=? AND (exit_time IS NULL OR exit_time='') AND (exit_price IS NULL OR exit_price=0)
-            """, (exit_price, now_iso, exit_reason, round(pnl, 2), round(pnl_pct, 4), round(holding_hours, 1), close_futu_order_id, round(_mfe_pct, 4), round(_mae_pct, 4), _max_dd_val, trade_id))
+            """
+            _params_old = (exit_price, now_iso, exit_reason, round(pnl, 2), round(pnl_pct, 4), round(holding_hours, 1), close_futu_order_id, round(_mfe_pct, 4), round(_mae_pct, 4), _max_dd_val, trade_id)
+            _params_new = _params_old[:-1] + (round(_mfe_tick_pct, 4), _mfe_gate_pct_db, trade_id)
         else:
-            _closed_row = conn.execute("""
+            _sql_new = """
+                UPDATE trade_records
+                SET exit_price=?, exit_time=?, exit_reason=?, realized_pnl=?, pnl_pct=?, holding_hours=?, mfe_pct=?, mae_pct=?, max_drawdown=?, mfe_tick_pct=?, mfe_gate_pct=?
+                WHERE id=? AND (exit_time IS NULL OR exit_time='') AND (exit_price IS NULL OR exit_price=0)
+            """
+            _sql_old = """
                 UPDATE trade_records
                 SET exit_price=?, exit_time=?, exit_reason=?, realized_pnl=?, pnl_pct=?, holding_hours=?, mfe_pct=?, mae_pct=?, max_drawdown=?
                 WHERE id=? AND (exit_time IS NULL OR exit_time='') AND (exit_price IS NULL OR exit_price=0)
-            """, (exit_price, now_iso, exit_reason, round(pnl, 2), round(pnl_pct, 4), round(holding_hours, 1), round(_mfe_pct, 4), round(_mae_pct, 4), _max_dd_val, trade_id))
+            """
+            _params_old = (exit_price, now_iso, exit_reason, round(pnl, 2), round(pnl_pct, 4), round(holding_hours, 1), round(_mfe_pct, 4), round(_mae_pct, 4), _max_dd_val, trade_id)
+            _params_new = _params_old[:-1] + (round(_mfe_tick_pct, 4), _mfe_gate_pct_db, trade_id)
+        # 缺列 fail-open (同族取舍, 见 AGENT.md 军规"新增落库字段"与 intraday_indicators 同款):
+        #   旧库/最小夹具 DB 没有新列时, UPDATE 在 PREPARE 阶段就失败 (无任何行被写) ⇒
+        #   可安全回退到不含新列的原语句。**只吞 "no such column"**, 其它异常照旧抛出
+        #   (不得把真实写失败静默掉)。
+        try:
+            _closed_row = conn.execute(_sql_new, _params_new)
+        except sqlite3.OperationalError as _new_col_err:
+            if "no such column" not in str(_new_col_err).lower():
+                raise
+            logger.debug(
+                "[_close_trade_record] mfe 口径新列缺失 (旧库/夹具), 回退旧语句: %s", _new_col_err)
+            _closed_row = conn.execute(_sql_old, _params_old)
         if _closed_row.rowcount != 1:
             raise ValueError("exit owner row is no longer open")
         # 2026-07-30 (DEB-fee-net-pnl): 净额列跟随主 UPDATE 落库 — pnl_net = 毛 - 估算费;
