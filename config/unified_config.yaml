@@ -1242,11 +1242,22 @@ playbook:
     #   unlock_execution_if_zero_fill_terminal 仅在 broker 报**终态零成交**时解锁(可重试),
     #   否则 mark_execution_unknown + _halt_unresolved_live_entry 挂起待对账; ③部分成交
     #   会撤剩余。⇒ 缩短窗口不产生静默孤儿, 只是"等 30s"变"等 10s 然后挂起对账"。
-    #   预注册判据 (今晚开盘后核, 任一触发即回滚 30 + systemctl restart):
-    #     R1 auto_execute 单轮最长 ≤ 30s  |  R2 轮次间隔 p50 ≤ 100s
-    #     R3 UNCONFIRMED/挂起数 > 当日订单数 20%  ⇒ 回滚  |  R4 入场成交率较 11 月均值 -20% ⇒ 回滚
-    #   ⚠️ playbook.* 键热重载穿不透 ⇒ 改动须 systemctl restart ftseek-us。
-    entry_confirm_max_wait_s: 10
+    #   预注册判据 (首夜 11-03 已核; 判据语义重写见 DEB §15.3 R1-R5, 本节只记实测):
+    #     R1 auto_execute 单轮最长 ≤ 30s        → 实测 46.5s (字面触发, 但不影响成交)
+    #     R2 轮次间隔 p50 ≤ 100s                → **判据作废**: 系统节拍恒为配置 180s
+    #        (实测 187s vs 11-02 基线 188s); "≤100s" 从未成立过, 属误写, 改判"不劣于基线"
+    #     R3 UNCONFIRMED 次数 > 当日订单 20%     → 字面 33%(3/9); 但**真挂起 = 0**
+    #        (3 笔全部 BOOKED 且成交价=执行价) ⇒ 判据按语义改为"真挂起单数"
+    #     R4 入场成交率较 11 月均值 -20%         → 83.3% vs 84.2% (−0.9pp) 未触发
+    #   2026-11-04 (首夜实测驱动): 10s → **15s**。理由: 首夜 3/9 笔在 10s 内状态仍为
+    #     SUBMITTED, 虽全部成交但**落账延后约 1 轮 (65-77s)**, 期间仓位在券商侧已成交而
+    #     本系统尚未登记 ⇒ 无退出监控/SL (裸奔窗口)。15s 覆盖典型 SIM 状态回读延迟,
+    #     仍比原始 30s 砍半。回滚: 改回 10 (或 30) + systemctl restart ftseek-us。
+    #     ⚠️ 证据分歧留痕: DEB §15.2 记"确认延迟 p90 ≤10s", 本轮实测却有 3/9 笔在 10s
+    #       仍是 SUBMITTED ⇒ 两者分母不同 (p90 看已确认样本; 比例看全部订单)。故取 15s,
+    #       并预注册: 若含入场轮次 p90 比本轮 (46.5s) 再涨 >5s, 或次日 UNCONFIRMED 仍 >20%,
+    #       立即回滚 10。
+    entry_confirm_max_wait_s: 15
     cooldown_sl_pct: 4.0
     # 2026-08-29 影子毕业 (用户裁决"1批"): 胜出变体 early_tight_30m_mfe0.3 —
     #   影子290样本/5.5周净反事实+27.58pp, 误杀最少(20/47), 救回死单avg+1.2pp/笔.
