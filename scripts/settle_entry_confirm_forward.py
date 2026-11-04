@@ -102,6 +102,15 @@ SL_INIT_MAX_LOSS_PER_TRADE = -40.0   # 判据1: v2 25%线 −40.58; −40 取严
 SL_INIT_MAX_N = 1              # 判据1 或: 族 n ≤ 1
 MIN_AVOID = 0.30               # 判据3
 MAX_OPP = 0.3                  # 判据3
+
+# ── RFC-158 (2026-11-05 重开预注册) 阈值 —— 读数前写死, 窗内禁改 ──────────────
+RFC158_M3_MAX_GAP = 0.15       # M3: |SHORT放弃率 − LONG放弃率| ≤ 15pp (防砍唯一赚钱侧)
+RFC158_M4_MIN_RATIO = 1.2      # M4: 净经济价值 = (避免额 + 省下往返费) / 机会成本 ≥ 1.2
+RFC158_M2_MAX_OPP_MEAN = 0.35  # M2: opp_cost **均值** ≤ 0.35% (上一段实测 0.313%; 中位仅披露)
+RFC158_E1_RELAX_RATIO = 0.5    # E1: 族净均 ≥ 基线 × 50% (= −$81.17), 且 族 n ≥ 10
+RFC158_E1_MIN_N = 10
+RFC158_COOLDOWN_AFTER_REOPEN = "2026-11-05"  # 新 cohort 起点 (宪章第2律: 开门日重起 cohort)
+RFC158_HOLDOUT_MIN_N = 20      # 对照臂样本门 (20% holdout 必须够, 否则读数不可归因)
 # WINNER_MEAN_FLOOR / _CLEAN 由 winner_floor() 从 BASELINE 派生 (见下方), 单一真源
 # 判据4 两端同尺 (RFC-141 §5.6 / DEB §33.3): v2 基线 (8/1–10/9) rest +$9.7353 含 2 笔
 # fee_bps>100 的费用异常单 (CTNT 915.1 / GIPR 203.6, 均 9/17), 剔后 +$10.9854 ⇒ 剔费地板
@@ -171,7 +180,7 @@ def load_rows():
     """
     if not FWD.exists():
         return []
-    rows, bad, post = [], 0, 0
+    rows, bad, post, post_list = [], 0, 0, []
     for line in open(FWD, encoding="utf-8"):
         line = line.strip()
         if not line:
@@ -186,6 +195,7 @@ def load_rows():
             continue
         if r.get("type") == "entry_confirm_post":
             post += 1                      # 观测行: 计数披露, 不进判据人群
+            post_list.append(r)            # RFC-158 M4 用它估「被弃笔避免的亏损额」(短窗估计)
             continue
         if r.get("schema") in (SCHEMA_V1, SCHEMA_V2) and r.get("type") == "entry_confirm":
             r["_gen"] = "v2" if r.get("schema") == SCHEMA_V2 else "v1"
@@ -198,6 +208,7 @@ def load_rows():
               file=sys.stderr)
     load_rows.bad_lines = bad
     load_rows.post_rows = post
+    load_rows.post_rows_list = post_list
     return rows
 
 
@@ -498,23 +509,122 @@ def main():
     c4_full = (p_rest["net_mean"] is not None
                and p_rest["net_mean"] >= WINNER_MEAN_FLOOR)
 
+    # ── RFC-158 (2026-11-05 重开预注册) 新判据 M3 / M4 ─────────────────────────
+    # M3 分方向放弃率差: |SHORT放弃率 − LONG放弃率| ≤ 15pp
+    #   目的: 防门系统性砍掉唯一赚钱侧 (上一段空头放弃率 57.9% vs 多头 44%)。
+    # M4 净经济价值 = (避免的亏损额 + 被弃笔省下的往返费) / 确认笔机会成本 ≥ 1.2
+    #   目的: 上一段关门依据①「净经济价值≈0」只算两栏, 漏了"被弃笔省下的往返费"
+    #         ⇒ 本条补齐三栏。三栏全用 bps ⇒ 不依赖名义额。
+    #   「避免的亏损额」用 entry_confirm_post 补记行 (弃单后 +5m/+10m 的价格变动) 做
+    #   **短窗估计** (不是全程结局; 保守方向: 只计朝不利方向的变动)。
+    _post_by_did = defaultdict(list)
+    for _r in getattr(load_rows, "post_rows_list", []) or []:
+        _post_by_did[_r.get("decision_id")].append(_r)
+
+    def _avoided_bps(r) -> Optional[float]:
+        """被弃笔在 +5m/+10m 窗口里朝不利方向的变动 (bps)。取更晚的 horizon。"""
+        posts = _post_by_did.get(r.get("decision_id")) or []
+        if not posts:
+            return None
+        pick = None
+        for p in posts:
+            if p.get("horizon") == "+10m":
+                pick = p
+                break
+        if pick is None:
+            pick = posts[0]
+        mv = pick.get("mid_move_pct")
+        if mv is None:
+            return None
+        mv = float(mv)
+        d = str(r.get("direction") or "").upper()
+        if d == "LONG" and mv < 0:
+            return -mv * 100.0
+        if d in ("SHORT", "SELL_SHORT", "SELL") and mv > 0:
+            return mv * 100.0
+        return 0.0
+
+    _short_rows = [r for r in treat_cur if str(r.get("direction") or "").upper()
+                   in ("SHORT", "SELL_SHORT", "SELL")]
+    _long_rows = [r for r in treat_cur if str(r.get("direction") or "").upper() == "LONG"]
+    a_short = _agg(_short_rows, fills)
+    a_long = _agg(_long_rows, fills)
+    _ab_rate_s = a_short.get("avoidance_rate")
+    _ab_rate_l = a_long.get("avoidance_rate")
+    _m3_gap = (round(abs(_ab_rate_s - _ab_rate_l), 4)
+               if (_ab_rate_s is not None and _ab_rate_l is not None) else None)
+    m3 = _m3_gap is not None and _m3_gap <= RFC158_M3_MAX_GAP
+
+    _ab_rows = [r for r in treat_cur
+                if r.get("status") == "ok" and not r.get("still_triggers")]
+    _avoid_list = [v for v in (_avoided_bps(r) for r in _ab_rows) if v is not None]
+    _avoid_sum = sum(_avoid_list)
+    _fee_bps_med = None
+    try:
+        _fb = [fee_bps(r) for r in sim]
+        _fb = [x for x in _fb if x is not None]
+        if _fb:
+            _fee_bps_med = round(statistics.median(_fb), 2)
+    except Exception:
+        _fee_bps_med = None
+    _opp_bps_sum = sum(float(r.get("opp_cost_pct") or 0) * 100.0
+                        for r in treat_cur
+                        if r.get("status") == "ok" and r.get("still_triggers")
+                        and r.get("opp_cost_pct") is not None)
+    _saved_fee_bps = (len(_ab_rows) * _fee_bps_med) if _fee_bps_med is not None else 0.0
+    m4_ratio = (round((_avoid_sum + _saved_fee_bps) / _opp_bps_sum, 4)
+                if _opp_bps_sum > 0 else None)
+    m4 = m4_ratio is not None and m4_ratio >= RFC158_M4_MIN_RATIO
+
     sample_ok = (p_all["n"] >= MIN_SIM_N) or (p_all["days"] >= MIN_SIM_DAYS)
+    # RFC-158: 对照臂样本门 (20% holdout 必须够, 否则读数不可归因)
+    a_hold = _agg(hold, fills)
+    holdout_ok = a_hold["n"] >= RFC158_HOLDOUT_MIN_N
+
+    # ── RFC-158 (2026-11-05 重开) 新判据裁决 ──────────────────────────────────
+    # 样本门: 走门臂 (n≥60 ∨ ≥10 交易日) ∧ 对照臂 n≥20 ⇒ 否则 INSUFFICIENT
+    #   (INSUFFICIENT **不是 FAIL**, 也不许当 PASS — RFC-141 §5.5 教训: 上一段就是
+    #    因为族样本不足被误当 FAIL 而关门, 预注册明文要求「裁决须等族样本到位」。)
+    # PASS = M1∧M2∧M3∧M4 ∧ E1∧E2;  OBSERVE = M 全过但 E 有不过;  FAIL = M 有不过
+    _m1 = a_t.get("avoidance_rate") is not None and a_t["avoidance_rate"] >= MIN_AVOID
+    _m2 = (a_t.get("opp_cost_mean_pct") is not None
+           and a_t["opp_cost_mean_pct"] <= RFC158_M2_MAX_OPP_MEAN)
+    _e1_floor = round(BASELINE["sl_initial"]["net_mean"] * RFC158_E1_RELAX_RATIO, 2)
+    _e1 = (sl_mean is not None and sl_mean >= _e1_floor
+           and p_sl["n"] >= RFC158_E1_MIN_N)
+    _e2 = c4  # 非 SL_INITIAL 族净均 ≥ 剔费地板 +$8.79 (沿用 RFC-141 判据④, 机制未改)
 
     if not sample_ok:
         verdict = "INSUFFICIENT"
         verdict_why = (f"样本未达门: n={p_all['n']}<{MIN_SIM_N} 且 "
                        f"交易日={p_all['days']}<{MIN_SIM_DAYS} — 不作 PASS 也不作 FAIL")
-    elif c1 and c2 and c3 and c4:
+    elif not holdout_ok:
+        verdict = "INSUFFICIENT"
+        verdict_why = (f"对照臂样本未达门: n={a_hold['n']}<{RFC158_HOLDOUT_MIN_N} "
+                       f"⇒ 无同期对照臂 ⇒ 读数不可归因 (RFC-158 §3.1)")
+    elif _m1 and _m2 and m3 and m4 and _e1 and _e2:
         verdict = "PASS"
-        verdict_why = "判据 1∧2∧3∧4 全过 → 呈用户裁 SIM 常态化 (REAL 另须签字)"
-    elif c1 and not (c2 and c4):
+        verdict_why = ("RFC-158 判据 M1∧M2∧M3∧M4 ∧ E1∧E2 全过 → 呈用户裁 "
+                       "(REAL 另须签字, 不自动)")
+    elif _m1 and _m2 and m3 and m4:
         verdict = "OBSERVE"
-        verdict_why = ("判据1 过 (病灶对了) 但 2 或 4 不过 (总量没转好) → 不行动, "
-                       "轴维持 OBSERVING")
+        verdict_why = (f"机制量 M1~M4 全过但经济量未收敛 (E1={_e1} E2={_e2}; "
+                       f"族净均={sl_mean} vs 地板 {_e1_floor} 且族 n={p_sl['n']}) → "
+                       f"轴维持 OBSERVING, 不行动")
     else:
         verdict = "FAIL"
-        verdict_why = (f"判据1 明确不过 (SL_INITIAL 族强度未收敛: n={p_sl['n']} "
-                       f"净均={sl_mean}) → 轴 KILLED, enabled=false, 产物留档")
+        _fail_parts = []
+        if not _m1:
+            _fail_parts.append(f"M1 避免率={a_t.get('avoidance_rate')} (需≥{MIN_AVOID})")
+        if not _m2:
+            _fail_parts.append(f"M2 opp_cost均值={a_t.get('opp_cost_mean_pct')}% "
+                               f"(需≤{RFC158_M2_MAX_OPP_MEAN}%)")
+        if not m3:
+            _fail_parts.append(f"M3 分方向放弃率差={_m3_gap} (需≤{RFC158_M3_MAX_GAP})")
+        if not m4:
+            _fail_parts.append(f"M4 净经济价值={m4_ratio} (需≥{RFC158_M4_MIN_RATIO})")
+        verdict_why = ("机制量有不过 ⇒ 轴 FAIL, 提请裁关门: " + "; ".join(_fail_parts)
+                       + " ⇒ **只出报告, 不自动改配置** (上一段就是自动关门翻车)")
 
     # R1 分层只印不判 (现行代行, 与判据③ 同人群)
     r1 = [r for r in treat_cur if r.get("direction") == "SHORT"
@@ -563,6 +673,41 @@ def main():
             "c4_fee_bps_anomaly_threshold": FEE_BPS_ANOMALY,
             "c4_caliber": ("裁决用剔费口径 (两端同尺); 全量口径只并陈不裁决"),
             "sample_ok": sample_ok,
+            # ── RFC-158 (2026-11-05 重开预注册) 新判据 —— **裁决用这一组** ──
+            # RFC-141 §4 的判据已被 10-31 INSUFFICIENT 裁决消耗 (族绝对严线 −$40 在族样本
+            # n 小时统计上不可达), 故重开另立判据; 上面 c1~c4 保留为历史口径留档。
+            "rfc158": {
+                "rfc": "RFC-158",
+                "cohort_since": RFC158_COOLDOWN_AFTER_REOPEN,
+                "M1_avoidance_rate": {"ok": _m1, "value": a_t.get("avoidance_rate"),
+                                      "floor": MIN_AVOID},
+                "M2_opp_cost_mean_pct": {"ok": _m2, "value": a_t.get("opp_cost_mean_pct"),
+                                         "max": RFC158_M2_MAX_OPP_MEAN,
+                                         "median_disclosure_only": a_t.get("opp_cost_median_pct")},
+                "M3_direction_abandon_gap": {"ok": m3, "gap": _m3_gap,
+                                             "max": RFC158_M3_MAX_GAP,
+                                             "short_avoidance": _ab_rate_s,
+                                             "long_avoidance": _ab_rate_l},
+                "M4_net_economic_value": {"ok": m4, "ratio": m4_ratio,
+                                         "min": RFC158_M4_MIN_RATIO,
+                                         "avoided_bps_sum": round(_avoid_sum, 2),
+                                         "saved_fee_bps_sum": round(_saved_fee_bps, 2),
+                                         "opp_cost_bps_sum": round(_opp_bps_sum, 2),
+                                         "n_abandoned": len(_ab_rows),
+                                         "fee_bps_median": _fee_bps_med,
+                                         "note": "避免额用 +5m/+10m 补记行做**短窗估计**, 非全程结局 (保守方向)"},
+                "E1_family_convergence": {"ok": _e1, "sl_net_mean": sl_mean,
+                                          "floor_relative": _e1_floor,
+                                          "base_mean": BASELINE["sl_initial"]["net_mean"],
+                                          "family_n": p_sl["n"],
+                                          "min_n": RFC158_E1_MIN_N},
+                "E2_winners_not_hurt": {"ok": _e2,
+                                        "rest_net_mean": p_rest_clean.get("net_mean"),
+                                        "floor_clean": WINNER_MEAN_FLOOR_CLEAN},
+                "holdout_sample_gate": {"ok": holdout_ok, "n": a_hold["n"],
+                                        "min_n": RFC158_HOLDOUT_MIN_N},
+                "verdict": verdict, "verdict_why": verdict_why,
+            },
         },
         "mechanism_trace": {
             "n_rows": len(rows), "all": a_all, "treatment": a_t,

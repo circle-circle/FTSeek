@@ -2355,7 +2355,11 @@ REGISTRY: list[ShadowItem] = [
     ShadowItem(
         id="entry_confirm_forward",
         name="RFC-141 入场延迟确认门 SIM 实弹前瞻 (D2' forward, 2026-10-10 用户裁)",
-        status=ShadowStatus.KILLED,
+        # 2026-11-05 重开 (用户裁「重开 entry_confirm v2 形态」): KILLED → OBSERVING。
+        #   复活血路「带 20% 对照臂」已落实 (config entry_confirm_holdout_pct: 0 → 20)。
+        #   判据走 RFC-158 新预注册 (RFC-141 §4 的判据已被 10-31 INSUFFICIENT 裁决消耗, 不沿用)。
+        #   历史 verdict_history 保留 (不删行, 判据被推翻时改状态留痕 — §使用规则 4)。
+        status=ShadowStatus.OBSERVING,
         description="触发后 120s 复核: 价格仍站 reprice 执行锚同侧→放行, 反转→ABANDONED 放弃 "
                     "(落 guardrail SKIP reason=entry_confirm_reversed 可追溯)。"
                     "载体=10s 退出快循环 sweep (非 180s 主循环 — 防静默落地 3-5min 未预注册变体, "
@@ -2405,7 +2409,19 @@ REGISTRY: list[ShadowItem] = [
                                       "靶心族 n=5 −$120.37/笔 从未收敛 (判据① FAIL)。"
                                       "⚠️ 副作用已披露: 同模块 RFC-153 FADE_SHORT 追价帽一并失效 "
                                       "(键只在本模块被读), 其轴 (5 处理/10 对照) 停粮; 重开走 RFC-158 新预注册。"
-                                      "复活血路: 带 20% 对照臂 (holdout_pct=20) 重开 —— 无对照臂就永远不可归因。"}],
+                                      "复活血路: 带 20% 对照臂 (holdout_pct=20) 重开 —— 无对照臂就永远不可归因。"},
+                            {"date": "2026-11-05", "verdict": "REOPENED",
+                             "evidence": "用户裁「重开 entry_confirm v2 形态」(直接查看结果; 本周损失过大)。"
+                                         "执行: config entry_confirm_enabled true + holdout_pct 0→20 (复活血路) "
+                                         "+ **同模块 RFC-153 FADE_SHORT 追价帽显式关** (键只在本模块被读 ⇒ "
+                                         "门一开它就一起回来 = 第二个行为变更, 且其判据从未被裁决 ⇒ 一次一变量)。"
+                                         "形态不变: v2 (mid-vs-mid + grace 2-of-3, delay 120s = 影子唯一裁过的腿)。"
+                                         "**新判据走 RFC-158 预注册** (RFC-141 §4 判据已被 10-31 INSUFFICIENT 消耗, "
+                                         "其中族净均绝对严线 −$40 在族样本 n 小时统计上不可达)。"
+                                         "读数: cron 37 6 * * 2-6 settler 每日出 entry_confirm_forward_latest.json。"
+                                         "已知副作用必须持续披露: 通过率约 51% (门砍一半触发) / 空头通过率 42.1% "
+                                         "vs 多头 56% (空头被砍更狠, 而空头是 10 月唯一赚钱侧) / 上一段"
+                                         "『误杀 0』系事后族标签口径的幸存者偏差 (live 前瞻里被掐的 22 个空头方向偏正)。"}],
         notes="形态=SIM 实弹全量 (holdout_pct=0, 2026-10-10 用户裁: 留对照臂会稀释 SIM 结果)。"
               "强制披露: ①confirm_gate 反向先验 +0.50%/笔 t=5.67 (域不同, 盘前注入 vs 开盘窗微结构) "
               "②ALL 人群历史回放平 (t=−0.16/误杀58%), 达标证据全在 SL_INITIAL 事后族 "

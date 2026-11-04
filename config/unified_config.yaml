@@ -1291,7 +1291,22 @@ playbook:
     #   ⚠️ 键名与既有 entry_confirm_max_wait_s 无关 (那是下单**后**确认成交的 30s 等待窗,
     #   消费点 playbook_service.py:1851); 本节是入场**前**延迟确认。grep entry_confirm 会
     #   同时命中两者, 改动须看清语义 — 2026-10-10 撞车登记。
-    entry_confirm_enabled: false      # 2026-10-31 用户裁「关门」(RFC-141 §5 案例3 预注册后果): 判据1 FAIL
+    entry_confirm_enabled: true      # 2026-11-05 用户裁「重开 entry_confirm v2 形态」(直接查看结果, 本周损失过大)。
+      # 形态 = v2 (mid-vs-mid 同尺 + grace 2-of-3), 键值不变: ruler=mid / grace_sweeps=3 / grace_votes=2 / delay_sec=120。
+      #   ⚠️ delay_sec=120 是影子唯一裁过的腿 (RFC-141 §4: 不得升 5min/180s, 那是未预注册变体)。
+      #   ⚠️ 上一段 (10-16~10-30, v2 代) 的读数**不是机制证伪**: 全体净均 −$0.80 → +$3.78,
+      #      净和 −$352.67 → +$332.85, SL_INITIAL 族 −$162.34 → −$127.08, 非族 +$9.74 → +$15.09,
+      #      避免率 42.9% / opp_cost 中位 0.208%。判决 FAIL 是被「族净均绝对严线 −$40」卡住
+      #      (n=7 时该目标统计上不可达) + opp_cost 均值 0.313 vs 上限 0.3 (差 4bps) + 开盘窗子集变差。
+      #      ⇒ 新判据走 RFC-158 新预注册 (不沿用已被消耗的 RFC-141 §4)。
+      #   ⚠️ 三块已知副作用必须持续披露: ①上一段通过率仅 51.2% ⇒ 门会砍掉约一半触发;
+      #      ②空头通过率 42.1% vs 多头 56% ⇒ 空头被砍更狠, 而空头是 10 月唯一赚钱侧;
+      #      ③上一段"误杀 0"是事后族标签口径的幸存者偏差, live 前瞻里被掐的 22 个空头方向偏正。
+      #   回滚 = 本键改 false + 重启 (孤儿自愈零卡单) + holdout_pct 归 0。
+    entry_confirm_holdout_pct: 20     # 对照臂%: 2026-10-31 关门裁决写明「复活须带 20% 对照臂 (无对照臂永远不可归因)」。
+      #   10-10 的「全量走门 (0)」裁决已被 10-31 的关门裁决推翻 ⇒ 取更新的更高优先级裁决。
+      #   代价: 约 20% 触发不走门 (≈2 笔/日) ⇒ 收益少拿约 $6/日 (按上一段门净贡献 $53/日折算),
+      #   换来同期对照臂 ⇒ 「直接查看结果」变成可归因读数 (可剥离「少做一半交易」的幸存者偏差)。
                                       # (SL_INITIAL 族 n=5 −120.37/笔 ≥−$40 门不过) ⇒ 轴 KILLED, enabled=false。
                                       # 依据 DEB-20261031 §六; 反事实: 门净经济价值≈0 而交易量腰斩(51.2%通过)、
                                       # 空头被砍六成(42.1%通过)、等待成本 34.6bps = 全链唯一可回收成本段(36.3bps)。
@@ -1302,7 +1317,8 @@ playbook:
     #   holdout 归零 (2026-10-10 用户裁「直接走 sim 交易链路, 不用影子攒样, 看 sim 交易结果」):
     #   留 20% 对照臂会稀释 SIM 结果 ⇒ 全量走门。裁决基准改为开门前预注册基线 (RFC-141 §4),
     #   代价=无同期对照臂, 市况变化混淆 (披露见 RFC §5.4)。机制保留 inert, 需要对照时改本值。
-    entry_confirm_holdout_pct: 0      # 对照臂%: 0=全量走门 (实测 pct=0 命中 0/200, 边界安全)
+    #   ⚠️ 2026-11-05 重开: 该「归零」裁决已被 10-31 关门裁决推翻 (复活须带 20% 对照臂) ⇒
+    #   实际生效值见上方 entry_confirm_holdout_pct: 20 (本键为历史留痕, 已删除以免 YAML 重复键)。
     entry_confirm_ttl_sec: 600        # pending 超期即 EXPIRED (不计样本, 防跨时段卡死)
     # 2026-10-21 计划锚冲突审计 (record-only): 执行锚偏离 DA 计划锚 ≥ 阈值时,
     #   在前瞻行打 plan_gap_shadow, 供按 archetype/plan-gap 分桶; 不改变入场判定.
@@ -1325,7 +1341,11 @@ playbook:
     #   30 日 FADE_SHORT 开盘组净 -$446.69, 其中开盘+计划锚偏离>200bps 净 -$549.34。
     #   只作用于 FADE_SHORT + 开盘 15 分钟; 其余 archetype 零改动。
     #   回滚: entry_confirm_fade_short_chase_cap_enabled=false + 重启。
-    entry_confirm_fade_short_chase_cap_enabled: true
+    # 2026-11-05 重开 entry_confirm 时**显式关闭**同模块的 FADE_SHORT 追价帽:
+    #   该键只在 entry_confirm_gate 模块内被读 ⇒ 门一开它就一起回来 = 第二个行为变更,
+    #   而它的判据从未被裁决 (词典: 该轴 5 处理/10 对照, 读数"方向偏正但不显著" ⇒ 不构成开门依据)。
+    #   一次一变量 ⇒ 本次只重开主门, 追价帽另立 RFC 预注册后再单独开。回滚 = true + restart。
+    entry_confirm_fade_short_chase_cap_enabled: false
     entry_confirm_fade_short_max_opp_pct: 1.0
     entry_confirm_fade_short_window_min: 15
 

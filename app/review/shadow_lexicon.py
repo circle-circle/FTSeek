@@ -219,7 +219,7 @@ SHADOW_LEXICON: dict[str, dict[str, str]] = {
     },
     "entry_confirm_forward": {
         "plain": "触发后等 2 分钟再进场（价格还站在触发方向才进）, 到底救不救得回『一进场就反向』那族亏损",
-        "conclusion": "**已关门（2026-10-31 用户裁, status=KILLED）** —— 按 RFC-141 §5 案例3 预注册后果执行: `entry_confirm_enabled: false` + restart (20:48 CST, 快循环已启动/0 ERROR/2 持仓不变)。三块独立依据: ①净经济价值≈0 (弃单躲 $1.6–2.3k vs 等待成本 $1.69k); ②交易量腰斩 (通过率 51.2%, 15 日弃 81 笔) 且空头被砍六成 (42.1% vs 多头 56%), 而空头是当下唯一赚钱侧; ③等待成本 34.6bps = 全链唯一可回收成本段 (开盘→执行锚 36.3bps)。⚠️ 同模块 RFC-153「FADE_SHORT 快跌不追」追价帽随门一并失效 (键只在本模块被读), 其轴停粮, 重开走 RFC-158。复活须带 20% 对照臂 (holdout_pct=20) —— 无对照臂永远不可归因",
+        "conclusion": "**已重开（2026-11-05 用户裁「重开 entry_confirm v2 形态」, status=OBSERVING）** —— 执行: `entry_confirm_enabled: true` + holdout_pct 0→**20** (10-31 关门裁决写明的复活血路: 无对照臂永远不可归因) + 同模块 RFC-153 FADE_SHORT 追价帽**显式关** (一次一变量, 其判据从未被裁决)。形态 v2 不变 (mid-vs-mid + grace 2-of-3, delay 120s = 影子唯一裁过的腿); **新判据走 RFC-158 预注册** (RFC-141 §4 已被 10-31 INSUFFICIENT 消耗)。⚠️ 上一段(10-16~10-30)判决 FAIL **不是机制证伪**: 全体净均 −$0.80→+$3.78、净和 −$352.67→+$332.85、SL_INITIAL 族 −$162.34→−$127.08、非族 +$9.74→+$15.09、避免率 42.9%、opp_cost 中位 0.208% —— 卡在「族净均绝对严线 −$40」(n=7 时不可达) + opp_cost 均值 0.313 vs 0.3 (差 4bps) + 开盘窗子集变差。**持续披露三块已知副作用**: ①通过率约 51% ⇒ 门砍掉约一半触发; ②空头通过率 42.1% vs 多头 56% ⇒ 空头被砍更狠, 而空头是 10 月唯一赚钱侧; ③上一段「误杀 0」系事后族标签口径的幸存者偏差 (live 前瞻里被掐的 22 个空头方向偏正, n=47 均 +0.990%)。读数: cron 37 6 * * 2-6 settler 每日出 entry_confirm_forward_latest.json",
         "cls": "AUTO_WATCH",
     },
     "instruction_conflict_shadow": {
