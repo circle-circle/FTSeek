@@ -69,7 +69,6 @@ def _persist_signal_context(
     try:
         from app.playbook.db import PlaybookDB
         from dataclasses import asdict, is_dataclass
-        import json as _json
 
         db = PlaybookDB()
         ctx: Dict[str, Any] = {"date": date, "symbol": symbol}
@@ -139,34 +138,23 @@ def _persist_signal_context(
         except Exception:
             pass
 
+        # ── 推理留痕 (2026-11-04 重接现役链路) ──────────────────────────────
+        # 旧实现: 按 decision_id 查 decisions.db.model_votes (3 模型投票)。
+        # 实锤: 该表最后一行 2026-07-12T05:50 (投票退役日), 而现役链路是 DA→bridge→DB,
+        #   BridgeVotingAdapter 从不产 model_votes ⇒ 本块恒空 ⇒ playbook_signal_context
+        #   .llm_reasoning_json 1668 行 100% 为空 (2026-10-01 起), "模型当时怎么想"不可回溯。
+        # 现改接**现役** bridge 返回的 thesis (逐字透传, 不臆造): 无 thesis 则留空列表,
+        #   绝不写占位串 (否则又变成"看起来有留痕")。
         if vote_result:
-            decision_id = vote_result.get("decision_id", "")
-            if decision_id:
-                try:
-                    import sqlite3
-                    root = Path(module_file).resolve().parent.parent.parent
-                    decisions_db = root / "data" / "decisions.db"
-                    if decisions_db.exists():
-                        connection = sqlite3.connect(str(decisions_db))
-                        connection.row_factory = sqlite3.Row
-                        rows = connection.execute(
-                            "SELECT model_id, direction, strength, confidence, reasoning "
-                            "FROM model_votes WHERE decision_id = ?",
-                            (decision_id,),
-                        ).fetchall()
-                        connection.close()
-                        ctx["llm_reasoning"] = [
-                            {
-                                "model_id": row["model_id"],
-                                "direction": row["direction"],
-                                "strength": row["strength"],
-                                "confidence": row["confidence"],
-                                "reasoning": row["reasoning"] or "",
-                            }
-                            for row in rows
-                        ]
-                except Exception:
-                    pass
+            _thesis = str(vote_result.get("thesis") or "").strip()
+            if _thesis:
+                ctx["llm_reasoning"] = [{
+                    "model_id": str(vote_result.get("strategy_id") or "da_bridge"),
+                    "direction": vote_result.get("direction"),
+                    "strength": vote_result.get("final_strength"),
+                    "confidence": vote_result.get("final_confidence"),
+                    "reasoning": _thesis,
+                }]
 
         try:
             raw_data = asdict(data) if is_dataclass(data) else {}
@@ -175,32 +163,22 @@ def _persist_signal_context(
 
         raw_data["key_levels"] = compute_key_levels(data)
 
-        try:
-            reasoning_value = ""
-            if vote_result:
-                reasoning_value = str(vote_result.get("reasoning", "") or "")
-            elif ctx.get("llm_reasoning"):
-                first = (
-                    ctx["llm_reasoning"][0]
-                    if isinstance(ctx["llm_reasoning"], list) else {}
-                )
-                reasoning_value = (
-                    str(first.get("reasoning", "") or "")
-                    if isinstance(first, dict) else ""
-                )
-            if "|" in reasoning_value:
-                json_part = reasoning_value.rsplit("|", 1)[-1].strip()
-                brief_data = (
-                    _json.loads(json_part) if json_part.startswith("{") else {}
-                )
-                for brief_field in (
-                    "brief_conclusion", "brief_reasons", "brief_risks",
-                    "entry_strategy", "key_support", "key_resistance", "stop_trigger",
-                ):
-                    if brief_field in brief_data:
-                        raw_data[brief_field] = brief_data[brief_field]
-        except Exception:
-            pass
+        # ── 结论/理由/风险字段 (2026-11-04 重接现役链路) ──────────────────────
+        # 旧实现: 从 vote_result["reasoning"] 里拆 "文本|JSON" 尾巴 —— 该格式属已退役的
+        #   投票输出 (现役 BridgeVotingAdapter 不返回 reasoning 键) ⇒ 五个 brief_* 字段恒空
+        #   (实测 US.COIN 2026-11-03 raw_data 里 brief_conclusion/reasons/risks 全 None)。
+        # 现直接从现役字段映射; 值为空则跳过, 不写空串/占位 (不制造"有留痕"的假象)。
+        if vote_result:
+            for _field, _key in (
+                ("brief_conclusion", "thesis"),
+                ("brief_reasons", "conditions"),
+                ("brief_risks", "risks"),
+                ("entry_strategy", "entry_strategy"),
+                ("stop_trigger", "invalidation"),
+            ):
+                _value = vote_result.get(_key)
+                if _value:
+                    raw_data[_field] = _value
 
         ctx["raw_data"] = raw_data
         db.save_signal_context(ctx)
