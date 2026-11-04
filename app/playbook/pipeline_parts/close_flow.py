@@ -392,19 +392,28 @@ def _close_trade_record(
         #   输出比例量纲, 与 mfe/mae 的百分比量纲差 100 倍 (注释自述"同量纲"不成立)。
         #   mfe/mae 均已方向归一化 (SHORT 对称), 本公式 LONG/SHORT 通用。
         _max_dd_val = _max_drawdown_from_mfe_mae(_mfe_pct, _mae_pct)
-        # DEB-20261104 D2: 闸门评估时刻 peak 落库 (缺失留 NULL, 绝不猜 — 军规: 不得用
+        # DEB-20261104 D2: 时间检查点 peak 落库 (缺失留 NULL, 绝不猜 — 军规: 不得用
         #   默认值填充会制造"看起来有留痕"的假象). 单位 = 百分比, 与 mfe_pct 同.
+        #   _mfe_t15_pct = 入场后 15min 检查点 (速死族前置读数)
+        #   _mfe_gate_pct = 入场后 60min 检查点 (豁免/死信号判定口径)
+        _mfe_t15_pct_db = None
         _mfe_gate_pct_db = None
         try:
-            _gate_raw = _meta.get("_mfe_gate_pct")
-            if _gate_raw is not None:
-                _mfe_gate_pct_db = round(float(_gate_raw), 4)
+            _raw15 = _meta.get("_mfe_t15_pct")
+            if _raw15 is not None:
+                _mfe_t15_pct_db = round(float(_raw15), 4)
+        except (TypeError, ValueError):
+            _mfe_t15_pct_db = None
+        try:
+            _raw60 = _meta.get("_mfe_gate_pct")
+            if _raw60 is not None:
+                _mfe_gate_pct_db = round(float(_raw60), 4)
         except (TypeError, ValueError):
             _mfe_gate_pct_db = None
         if close_futu_order_id:
             _sql_new = """
                 UPDATE trade_records
-                SET exit_price=?, exit_time=?, exit_reason=?, realized_pnl=?, pnl_pct=?, holding_hours=?, close_futu_order_id=?, mfe_pct=?, mae_pct=?, max_drawdown=?, mfe_tick_pct=?, mfe_gate_pct=?
+                SET exit_price=?, exit_time=?, exit_reason=?, realized_pnl=?, pnl_pct=?, holding_hours=?, close_futu_order_id=?, mfe_pct=?, mae_pct=?, max_drawdown=?, mfe_tick_pct=?, mfe_t15_pct=?, mfe_gate_pct=?
                 WHERE id=? AND (exit_time IS NULL OR exit_time='') AND (exit_price IS NULL OR exit_price=0)
             """
             _sql_old = """
@@ -413,11 +422,11 @@ def _close_trade_record(
                 WHERE id=? AND (exit_time IS NULL OR exit_time='') AND (exit_price IS NULL OR exit_price=0)
             """
             _params_old = (exit_price, now_iso, exit_reason, round(pnl, 2), round(pnl_pct, 4), round(holding_hours, 1), close_futu_order_id, round(_mfe_pct, 4), round(_mae_pct, 4), _max_dd_val, trade_id)
-            _params_new = _params_old[:-1] + (round(_mfe_tick_pct, 4), _mfe_gate_pct_db, trade_id)
+            _params_new = _params_old[:-1] + (round(_mfe_tick_pct, 4), _mfe_t15_pct_db, _mfe_gate_pct_db, trade_id)
         else:
             _sql_new = """
                 UPDATE trade_records
-                SET exit_price=?, exit_time=?, exit_reason=?, realized_pnl=?, pnl_pct=?, holding_hours=?, mfe_pct=?, mae_pct=?, max_drawdown=?, mfe_tick_pct=?, mfe_gate_pct=?
+                SET exit_price=?, exit_time=?, exit_reason=?, realized_pnl=?, pnl_pct=?, holding_hours=?, mfe_pct=?, mae_pct=?, max_drawdown=?, mfe_tick_pct=?, mfe_t15_pct=?, mfe_gate_pct=?
                 WHERE id=? AND (exit_time IS NULL OR exit_time='') AND (exit_price IS NULL OR exit_price=0)
             """
             _sql_old = """
@@ -426,7 +435,7 @@ def _close_trade_record(
                 WHERE id=? AND (exit_time IS NULL OR exit_time='') AND (exit_price IS NULL OR exit_price=0)
             """
             _params_old = (exit_price, now_iso, exit_reason, round(pnl, 2), round(pnl_pct, 4), round(holding_hours, 1), round(_mfe_pct, 4), round(_mae_pct, 4), _max_dd_val, trade_id)
-            _params_new = _params_old[:-1] + (round(_mfe_tick_pct, 4), _mfe_gate_pct_db, trade_id)
+            _params_new = _params_old[:-1] + (round(_mfe_tick_pct, 4), _mfe_t15_pct_db, _mfe_gate_pct_db, trade_id)
         # 缺列 fail-open (同族取舍, 见 AGENT.md 军规"新增落库字段"与 intraday_indicators 同款):
         #   旧库/最小夹具 DB 没有新列时, UPDATE 在 PREPARE 阶段就失败 (无任何行被写) ⇒
         #   可安全回退到不含新列的原语句。**只吞 "no such column"**, 其它异常照旧抛出

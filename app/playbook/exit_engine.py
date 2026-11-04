@@ -386,6 +386,19 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     else:
         peak_profit_pct = 0
 
+    # ── DEB-20261104 D2: 峰值时间检查点捕获 (只写不读判定, 零行为变更) ──
+    #   t≈15min 与 t≈60min 两个固定检查点, 各取「首次达到该持有时长时读到的 peak」。
+    #   用途: 复现「入场后多久价格从未朝有利方向走」这一**过程量** —— 死单识别的
+    #   前置读数 (落库 mfe_pct 是出场重算的**全程峰值**, 含隔夜尖峰 ⇒ 语义不同,
+    #   不得互相替代; 实测 DA 133 笔中两者 63% 不等)。
+    #   ⚠️ 捕获点不可用性: 持有 <15min 就被打死的单 (实测 0.1h 一族) 任何检查点都
+    #   救不了 ⇒ 读数里必须并列「死于检查点之前」的笔数, 否则会高估检查点覆盖力。
+    #   ⚠️ 早于 15min 的死单 (实测 0.2h/12min 一笔) 落在 15min 窗之外 ⇒ 不可救。
+    if meta.get("_mfe_t15_pct") is None and held_minutes >= 15:
+        meta["_mfe_t15_pct"] = round(float(peak_profit_pct or 0.0), 4)
+    if meta.get("_mfe_gate_pct") is None and held_minutes >= 60:
+        meta["_mfe_gate_pct"] = round(float(peak_profit_pct or 0.0), 4)
+
     # ── 读取 horizon 配置 + 因子退出规则 (Phase 3 2026-06-30) ──
     _cohort = meta.get("cohort", "A")
     _horizon = meta.get("horizon", "short")
@@ -1028,12 +1041,6 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
         if bool(_pb_cfg.get("dead_signal_overnight_daily_reset_enabled", True)) \
                 and _is_overnight_position(entry_time_str):
             _ds_held_minutes = float(minutes_from_open or 0)
-        if _ds_held_minutes >= _ds_minutes and meta.get("_mfe_gate_pct") is None:
-            # DEB-20261104 D2: 记录死信号闸门**评估时刻**读到的 peak (首次评估为准).
-            #   零行为变更 — 只写 meta, 不参与任何判定; 落库成 mfe_gate_pct 列, 复现
-            #   "豁免/死信号当时的真实口径". 落库 mfe_pct 是出场重算的全程峰值 (含隔夜尖峰),
-            #   与本列语义不同 (实测 DA 133 笔中两者 63% 不等) ⇒ 不得互相替代.
-            meta["_mfe_gate_pct"] = round(float(peak_profit_pct or 0.0), 4)
         if _ds_held_minutes >= _ds_minutes and peak_profit_pct < _ds_mfe_pct:
             # 8/17 净口径: 豁免的"水下"判定用净盈亏 — 毛 0<毛<费用 的微盈仓是净水下,
             #   同样在修复窗口内, 不该因"毛利>0"被误判失去豁免而出场白跑 (NVDA 8/17 实弹).

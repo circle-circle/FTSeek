@@ -181,9 +181,11 @@ class TradeStore:
                         -- MFE 口径三列 (DEB-20261104 D2): 单位均为**百分比** (3.72 = 3.72%)
                         --   mfe_pct      = 全程峰值 = max(tick峰, bar峰, 已落袋) — 语义不变 (A11 判据口径)
                         --   mfe_tick_pct = tick 通道全程峰值 — 复现在线闸门 (exit_engine) 读到的口径
-                        --   mfe_gate_pct = 死信号闸门**评估时刻**读到的 peak — 复现豁免/死信号判定口径
+                        --   mfe_t15_pct  = 入场后 15 分钟检查点读到的 peak (速死族的前置读数)
+                        --   mfe_gate_pct = 入场后 60 分钟检查点读到的 peak (豁免/死信号判定口径)
                         mfe_tick_pct      REAL,    -- tick 通道全程峰值 (复现在线闸门口径)
-                        mfe_gate_pct      REAL,    -- 死信号闸门评估时刻 peak (豁免判定口径)
+                        mfe_t15_pct       REAL,    -- 入场后 15min 检查点 peak (速死族前置读数)
+                        mfe_gate_pct      REAL,    -- 入场后 60min 检查点 peak (豁免判定口径)
                         trace_id          TEXT,    -- 全链路归因 ID (Phase 2)
                         created_at        TEXT NOT NULL
                     )
@@ -421,6 +423,7 @@ class TradeStore:
                     "ALTER TABLE trade_records ADD COLUMN mfe_pct REAL",
                     # DEB-20261104 D2: MFE 口径分列 (只加列, 不改 mfe_pct 语义 → 零行为变更)
                     "ALTER TABLE trade_records ADD COLUMN mfe_tick_pct REAL",
+                    "ALTER TABLE trade_records ADD COLUMN mfe_t15_pct REAL",
                     "ALTER TABLE trade_records ADD COLUMN mfe_gate_pct REAL",
                     "ALTER TABLE open_positions ADD COLUMN account_type TEXT",
                     "ALTER TABLE open_positions ADD COLUMN entry_broker_order_id TEXT",

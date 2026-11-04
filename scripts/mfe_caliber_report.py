@@ -77,7 +77,7 @@ def report(conn, date_from: str, date_to: str, source: str) -> dict:
         params,
     ).fetchall()
     total = len(rows)
-    have_new = _has_columns(conn, ("mfe_tick_pct", "mfe_gate_pct"))
+    have_new = _has_columns(conn, ("mfe_tick_pct", "mfe_t15_pct", "mfe_gate_pct"))
 
     def dead_rate(getter) -> dict:
         vals = [getter(r) for r in rows]
@@ -104,6 +104,7 @@ def report(conn, date_from: str, date_to: str, source: str) -> dict:
     out["calibers"]["db_mfe_pct"] = dead_rate(lambda r: r["mfe_pct"])
     if have_new:
         out["calibers"]["tick_mfe_pct"] = dead_rate(lambda r: r["mfe_tick_pct"])
+        out["calibers"]["t15_mfe_pct"] = dead_rate(lambda r: r["mfe_t15_pct"])
         out["calibers"]["gate_mfe_pct"] = dead_rate(lambda r: r["mfe_gate_pct"])
         # 落库 vs tick 分歧 (DA 133 笔中 84 笔 = 63% 的可复现基准)
         pairs = [(r["mfe_pct"], r["mfe_tick_pct"]) for r in rows
@@ -115,7 +116,9 @@ def report(conn, date_from: str, date_to: str, source: str) -> dict:
             "db_ne_tick_ratio": round(len(diff) / len(pairs), 4) if pairs else None,
             "db_gt_tick": sum(1 for a, b in pairs if float(a) > float(b) + 1e-6),
         }
-        for name, col in (("mfe_tick_pct", "mfe_tick_pct"), ("mfe_gate_pct", "mfe_gate_pct")):
+        for name, col in (("mfe_tick_pct", "mfe_tick_pct"),
+                          ("mfe_t15_pct", "mfe_t15_pct"),
+                          ("mfe_gate_pct", "mfe_gate_pct")):
             st = _stats([r[col] for r in rows])
             st["fill_ratio"] = round(st["n"] / total, 4) if total else None
             out["cardinality"][name] = st

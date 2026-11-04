@@ -72,17 +72,18 @@ Kimi 口径下真实可寻址上限 ≈$396。
 
 | 项 | 内容 |
 |---|---|
-| 加列 | `trade_records.mfe_tick_pct REAL`（tick 通道**全程**峰值）、`mfe_gate_pct REAL`（**闸门评估时刻**读到的 peak）；单位均为**百分比**（3.72 = 3.72%） |
+| 加列 | `trade_records.mfe_tick_pct REAL`（tick 通道**全程**峰值）、`mfe_t15_pct REAL`（**入场后 15 分钟检查点**读到的 peak，覆盖速死族）、`mfe_gate_pct REAL`（**入场后 60 分钟检查点**读到的 peak，覆盖"整日没走"族）；单位均为**百分比**（3.72 = 3.72%） |
 | 不改 | `mfe_pct` **语义保持不变**（全程峰值 = max(tick, bar, 已落袋)） |
-| 写入 | `app/playbook/pipeline_parts/close_flow.py` 平仓 UPDATE 增两列 |
-| 捕获 | `app/playbook/exit_engine.py` 死信号闸门首次评估时刻写 `meta["_mfe_gate_pct"]` |
+| 写入 | `app/playbook/pipeline_parts/close_flow.py` 平仓 UPDATE 增三列 |
+| 捕获 | `app/playbook/exit_engine.py` 峰值追踪后**无条件**捕获两个检查点（各取"首次达到该持有时长时"的 peak）；**不挂在 `dead_signal_exit_enabled` 开关下**（否则关掉该规则会连带停止采集 ⇒ 度量链断档） |
 | 缺列容错 | 旧库/最小夹具 DB 无新列 ⇒ UPDATE 在 PREPARE 阶段失败（**无任何行被写**）⇒ 安全回退旧语句；**只吞 "no such column"**，其它异常照旧抛出 |
 | 消费方 | `scripts/mfe_caliber_report.py`（三口径并列 + distinct 基数自检 + 填充率告警）—— **新列的唯一消费方**，防 write-only 字段（军规 P7） |
 
-**不变式（AST 契约钉住，`tests/test_mfe_caliber_contract.py` 13 例）**：
+**不变式（AST 契约钉住，`tests/test_mfe_caliber_contract.py` 14 例）**：
 ① `mfe_pct` 仍取 max(tick, bar) + 已落袋兜底；② `mfe_tick_pct` **不加**已落袋兜底（镜像闸门读数）；
-③ `mfe_gate_pct` 缺失留 **NULL** 不猜；④ **`_mfe_gate_pct` 从不进入任何 Compare** ⇒ 只写不读判定；
-⑤ 死信号条件 `peak_profit_pct < _ds_mfe_pct` 逐字未改。
+③ `mfe_t15_pct` / `mfe_gate_pct` 缺失留 **NULL** 不猜；④ **三个新列从不进入任何 Compare** ⇒ 只写不读判定；
+⑤ 死信号条件 `peak_profit_pct < _ds_mfe_pct` 逐字未改；
+⑥ **检查点捕获必须无条件**（不在 `dead_signal_exit_enabled` 分支内）—— 否则关掉该规则会连带停止采集、度量链静默断档（与 W2/W10 同族失效）。
 
 **⚠️ 任何门禁改读新列 = 行为变更**（`symbol_streak_ban` / `e60_ok` / I4 / DEB 探针），
 **须独立立项 + 影子先行**，本批刻意未动。

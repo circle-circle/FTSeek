@@ -47,9 +47,12 @@ def _assigned_names(tree) -> dict:
 
 
 # ── 1. schema ────────────────────────────────────────────────────────────
+NEW_MFE_COLS = ("mfe_tick_pct", "mfe_t15_pct", "mfe_gate_pct")
+
+
 def test_schema_declares_three_mfe_columns():
     src = TRADE_STORE.read_text(encoding="utf-8")
-    for col in ("mfe_pct", "mfe_tick_pct", "mfe_gate_pct"):
+    for col in ("mfe_pct",) + NEW_MFE_COLS:
         assert col in src, f"trade_store 缺列声明: {col}"
 
 
@@ -58,8 +61,8 @@ def test_migration_list_contains_new_columns():
     ddl = [n.value for n in _all_nodes(tree, ast.Constant)
            if isinstance(n.value, str) and "ALTER TABLE trade_records ADD COLUMN mfe" in n.value]
     joined = "\n".join(ddl)
-    assert "mfe_tick_pct" in joined, "迁移清单缺 mfe_tick_pct (全新/旧库都会缺列)"
-    assert "mfe_gate_pct" in joined, "迁移清单缺 mfe_gate_pct (全新/旧库都会缺列)"
+    for col in NEW_MFE_COLS:
+        assert col in joined, f"迁移清单缺 {col} (全新/旧库都会缺列)"
 
 
 def test_new_columns_units_declared_as_percentage():
@@ -108,7 +111,7 @@ def test_update_writes_all_three_columns():
            if isinstance(n.value, str) and "UPDATE trade_records" in n.value and "mfe_pct=?" in n.value]
     assert sql, "找不到平仓 UPDATE 语句"
     joined = "\n".join(sql)
-    for col in ("mfe_pct=?", "mfe_tick_pct=?", "mfe_gate_pct=?"):
+    for col in ("mfe_pct=?", "mfe_tick_pct=?", "mfe_t15_pct=?", "mfe_gate_pct=?"):
         assert col in joined, f"平仓 UPDATE 未写列: {col}"
 
 
@@ -123,20 +126,37 @@ def test_gate_peak_captured_in_exit_engine():
 def test_gate_peak_never_used_in_a_condition():
     """核心不变式: 新字段只写不读判定 ⇒ 零行为变更 (DEB §D2/V1).
 
-    唯一允许的读法是捕获一次的记忆化守卫 `meta.get("_mfe_gate_pct") is None`;
+    唯一允许的读法是捕获一次的记忆化守卫 `meta.get("<col>") is None`;
     任何把它与其它值比较的写法都判失败。
     """
     tree = _tree(EXIT_ENGINE)
     for cmp_node in _all_nodes(tree, ast.Compare):
         dumped = ast.dump(cmp_node)
-        if "_mfe_gate_pct" not in dumped:
+        if not any(col in dumped for col in NEW_MFE_COLS):
             continue
-        # 允许: meta.get("_mfe_gate_pct") is None  (记忆化守卫)
+        # 允许: meta.get("<col>") is None  (记忆化守卫)
         if "Is()" in dumped and "Constant(value=None)" in dumped \
                 and "attr='get'" in dumped:
             continue
         raise AssertionError(
-            "_mfe_gate_pct 出现在判定条件里 ⇒ 行为变更, 违反 DEB §D2 (须影子先行)")
+            "MFE 新列出现在判定条件里 ⇒ 行为变更, 违反 DEB §D2 (须影子先行)")
+
+
+def test_checkpoints_captured_unconditionally():
+    """两个检查点捕获必须**无条件** (不挂在死信号开关下) —— 否则关掉该规则会连带
+    停止采集, 让度量链断档 (与 W2/W10 同族的静默失效)。"""
+    tree = _tree(EXIT_ENGINE)
+    src = ast.dump(tree)
+    for key in ("_mfe_t15_pct", "_mfe_gate_pct"):
+        assert key in src, f"exit_engine 未捕获检查点 {key}"
+    # 捕获语句不得位于 dead_signal_exit_enabled 的 if 分支内
+    for node in _all_nodes(tree, ast.If):
+        test_src = ast.dump(node.test)
+        if "dead_signal_exit_enabled" not in test_src:
+            continue
+        body_src = "\n".join(ast.dump(stmt) for stmt in node.body)
+        assert "_mfe_t15_pct" not in body_src and "_mfe_gate_pct" not in body_src, \
+            "检查点捕获被塞进死信号开关分支 ⇒ 关掉该规则会连带停止采集"
 
 
 def test_dead_signal_condition_unchanged():
