@@ -1096,6 +1096,9 @@ class DailyReviewGenerator:
                 'total_pnl': 0,
                 'win_rate': 0,
                 'avg_pnl': 0,
+                'total_pnl_net': 0,
+                'total_pnl_gross': 0,
+                'fees_total': 0,
             }
             if capital:
                 base['equity_snapshot'] = {
@@ -1109,6 +1112,12 @@ class DailyReviewGenerator:
         net_pnls = [(t.get('pnl_net') if t.get('pnl_net') is not None else (t.get('realized_pnl', 0) or 0))
                     for t in closed_trades]
         total_pnl = sum(net_pnls)
+        # 毛口径 (2026-11-04 修复): 本行 sum 的是净额, 而推送格式化器把 total_pnl 印成"毛 $"。
+        #   2026-08-01 DEB-20260730 D1 把 total_pnl 从毛改净后, 日报口径未同步 → 屏幕上
+        #   "毛 -188.58 | 费 42.92 | 净 -188.58" 自相矛盾 (毛-费≠净)。周报 total_pnl 至今仍是
+        #   sum(realized_pnl) 毛利 ⇒ 同一字段名两种语义, 共享格式化器无法区分。
+        #   现在显式产出 total_pnl_gross 供渲染, total_pnl/total_pnl_net 语义保持不变 (对外契约不动)。
+        total_pnl_gross = sum((t.get('realized_pnl', 0) or 0) for t in closed_trades)
         winning = [pnl for pnl in net_pnls if pnl > 0]
         fees_total = sum(t.get('fees_est', 0) or 0 for t in closed_trades)
         fake_wins = sum(1 for t, p in zip(closed_trades, net_pnls)
@@ -1136,6 +1145,8 @@ class DailyReviewGenerator:
             'pnl_basis': 'net: COALESCE(pnl_net, realized_pnl) (DEB-20260730 D1)',
             'fees_total': round(fees_total, 2),
             'total_pnl_net': round(total_pnl, 2),
+            # 毛利口径 (2026-11-04): 仅供渲染"毛|费|净"三列, 不参与任何裁决/门禁
+            'total_pnl_gross': round(total_pnl_gross, 2),
             'winning_trades_net': len(winning),
             'win_rate_net': round(len(winning) / len(closed_trades), 4),
             'fake_wins': fake_wins,

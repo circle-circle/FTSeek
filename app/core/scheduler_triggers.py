@@ -1291,11 +1291,32 @@ def _format_daily_review(report: dict) -> str:
         _fees = summary.get('fees_total') or 0
         _wr_net = (summary.get('win_rate_net') or 0) * 100
         _fake = summary.get('fake_wins', 0)
+        _gross = summary.get('total_pnl_gross')
         header_emoji = "🟢" if pnl_net > 0 else "🔴" if pnl_net < 0 else "⚪"
+        if _gross is None:
+            # 旧 JSON (2026-11-04 前生成) 无 total_pnl_gross, 而 total_pnl 语义为净额
+            #   ⇒ 不得把净额顶替"毛"打印 (2026-11-03 日报实见 "毛 -188.58 | 费 42.92 | 净 -188.58")
+            _money = f"• 总盈亏：净 ${pnl_net:+.2f} | 费 ${_fees:.2f}（旧 JSON 无毛额, 不回填）"
+        else:
+            _money = f"• 总盈亏：毛 ${_gross:+.2f} | 费 ${_fees:.2f} | 净 ${pnl_net:+.2f}"
+        # 跨夜分账 (2026-11-04): overnight_risk 早已由 daily_review._analyze_overnight_risk 产出,
+        #   但此前只写 Obsidian 笔记, 推送里看不到 ⇒ 一次隔夜跳空会把当日净额整体拉负却无解释。
+        _ov = report.get('overnight_risk') or {}
+        _ov_n = _ov.get('legacy_exit_count') or 0
+        _ov_tail = ""
+        if _ov_n:
+            _ov_tail = f"\n• 跨夜 {_ov_n} 笔：净 ${float(_ov.get('legacy_exit_net_pnl') or 0):+.2f}"
+            _gap_n = _ov.get('overnight_gap_stop_count') or 0
+            if _gap_n:
+                _ov_tail += (f"（含 OVERNIGHT_GAP_STOP {_gap_n} 笔 "
+                             f"${float(_ov.get('overnight_gap_stop_net_pnl') or 0):+.2f}")
+                if _ov.get('worst_legacy_symbol'):
+                    _ov_tail += f"，最差 {_ov['worst_legacy_symbol']} ${float(_ov.get('worst_legacy_net_pnl') or 0):+.2f}"
+                _ov_tail += "）"
         pnl_lines = (
             f"• 胜率：{win_rate*100:.1f}% (净 {_wr_net:.1f}%"
             + (f", 假盈利 {_fake} 笔" if _fake else "") + ")\n"
-            f"• 总盈亏：毛 ${pnl:+.2f} | 费 ${_fees:.2f} | 净 ${pnl_net:+.2f}"
+            + _money + _ov_tail
         )
     else:
         header_emoji = pnl_emoji
