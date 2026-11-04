@@ -117,3 +117,51 @@ class TestReal20261103Regression:
         text = _format_daily_review(report=data)
         assert f"毛 ${s['total_pnl_gross']:+.2f}" in text
         assert "跨夜" in text
+
+
+class TestConcentrationFacts:
+    """P3: 只披露事实, 不加门。近 21 个交易日(≥3笔)有 7 天单笔 ≥ 当日净额。"""
+
+    def _report(self, trades):
+        gen = DailyReviewGenerator.__new__(DailyReviewGenerator)
+        s = gen._generate_summary(trades, trades, None)
+        return {"report_date": "2026-11-03", "summary": s}
+
+    def test_summary_exposes_share(self):
+        s = self._report([_closed("BIG", -264.35, 4.0, -264.35), _closed("A", 26.11, 4.0, 26.11),
+                          _closed("B", 21.28, 4.0, 21.28), _closed("C", 28.38, 4.0, 28.38)])["summary"]
+        assert s["max_single_symbol"] == "BIG"
+        assert s["max_single_net_pnl"] == pytest.approx(-264.35)
+        assert s["single_trade_share_abs"] > 1.0
+
+    def test_concentration_line_when_single_trade_decides(self):
+        text = _format_daily_review(report=self._report([
+            _closed("MRK", -264.35, 4.34, -264.35), _closed("ACN", 30.36, 4.25, 26.11),
+            _closed("CRM", 127.31, 4.28, 123.03)]))
+        assert "集中度：最大单笔 MRK $-264.35" in text
+        assert "单笔决定当日符号" in text
+
+    def test_no_concentration_line_on_small_sample(self):
+        text = _format_daily_review(report=self._report([
+            _closed("MRK", -264.35, 4.34, -264.35), _closed("ACN", 30.36, 4.25, 26.11)]))
+        assert "集中度" not in text
+
+    def test_no_concentration_line_when_net_dominated_by_many(self):
+        text = _format_daily_review(report=self._report([
+            _closed("A", 100.0, 4.0, 96.0), _closed("B", 100.0, 4.0, 96.0),
+            _closed("C", 100.0, 4.0, 96.0), _closed("D", -10.0, 4.0, -14.0)]))
+        assert "集中度" not in text
+
+    def test_fee_drag_line_only_when_gross_positive_and_material(self):
+        # 毛利 100 / 费 60 → 60% ⇒ 打
+        text = _format_daily_review(report=self._report([
+            _closed("A", 100.0, 60.0, 40.0), _closed("B", 0.0, 0.0, 0.0)]))
+        assert "费占毛利 60%" in text
+        # 毛利 100 / 费 10 → 10% ⇒ 不打
+        text2 = _format_daily_review(report=self._report([
+            _closed("A", 100.0, 10.0, 90.0), _closed("B", 0.0, 0.0, 0.0)]))
+        assert "费占毛利" not in text2
+        # 毛亏时不打 (净亏已在头部)
+        text3 = _format_daily_review(report=self._report([
+            _closed("A", -100.0, 10.0, -110.0), _closed("B", -10.0, 5.0, -15.0)]))
+        assert "费占毛利" not in text3

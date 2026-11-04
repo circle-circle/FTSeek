@@ -1099,6 +1099,9 @@ class DailyReviewGenerator:
                 'total_pnl_net': 0,
                 'total_pnl_gross': 0,
                 'fees_total': 0,
+                'max_single_net_pnl': 0,
+                'max_single_symbol': '',
+                'single_trade_share_abs': None,
             }
             if capital:
                 base['equity_snapshot'] = {
@@ -1118,6 +1121,13 @@ class DailyReviewGenerator:
         #   sum(realized_pnl) 毛利 ⇒ 同一字段名两种语义, 共享格式化器无法区分。
         #   现在显式产出 total_pnl_gross 供渲染, total_pnl/total_pnl_net 语义保持不变 (对外契约不动)。
         total_pnl_gross = sum((t.get('realized_pnl', 0) or 0) for t in closed_trades)
+        # 单笔集中度 (2026-11-04 P3, 纯事实陈述, 不是门): 近 21 个交易日(≥3笔)里 7 天
+        #   (33%) 的最大单笔绝对值 ≥ 当日净亏绝对值 ⇒ 单日符号由 1 笔决定, 不适合当决策依据
+        #   (A3 已裁「单日集中度不加门」——这里只披露, 不拦任何动作)。
+        _max_i = max(range(len(net_pnls)), key=lambda i: abs(net_pnls[i])) if net_pnls else None
+        max_single_net = net_pnls[_max_i] if _max_i is not None else 0.0
+        max_single_symbol = closed_trades[_max_i].get('symbol') if _max_i is not None else ''
+        single_share = (abs(max_single_net) / abs(total_pnl)) if total_pnl else None
         winning = [pnl for pnl in net_pnls if pnl > 0]
         fees_total = sum(t.get('fees_est', 0) or 0 for t in closed_trades)
         fake_wins = sum(1 for t, p in zip(closed_trades, net_pnls)
@@ -1147,6 +1157,10 @@ class DailyReviewGenerator:
             'total_pnl_net': round(total_pnl, 2),
             # 毛利口径 (2026-11-04): 仅供渲染"毛|费|净"三列, 不参与任何裁决/门禁
             'total_pnl_gross': round(total_pnl_gross, 2),
+            # 单笔集中度 (纯披露): share = |最大单笔净额| / |当日净额|; 净额为 0 时为 None
+            'max_single_net_pnl': round(max_single_net, 2),
+            'max_single_symbol': max_single_symbol,
+            'single_trade_share_abs': (round(single_share, 4) if single_share is not None else None),
             'winning_trades_net': len(winning),
             'win_rate_net': round(len(winning) / len(closed_trades), 4),
             'fake_wins': fake_wins,

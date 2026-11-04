@@ -1313,10 +1313,21 @@ def _format_daily_review(report: dict) -> str:
                 if _ov.get('worst_legacy_symbol'):
                     _ov_tail += f"，最差 {_ov['worst_legacy_symbol']} ${float(_ov.get('worst_legacy_net_pnl') or 0):+.2f}"
                 _ov_tail += "）"
+        # 事实陈述 (2026-11-04 P3): 只披露, 不加门/不改评分。两条各自独立出现:
+        #   ① 单笔主导 — 最大单笔 |净| ≥ |当日净| ⇒ 当日符号由 1 笔决定 (n≥3 才判, 避免单笔假象)
+        #   ② 费吃毛利 — 毛利为正但费用占毛利 ≥50% ⇒ "赚的是账面粉色"
+        _facts = ""
+        _share = summary.get('single_trade_share_abs')
+        if closed >= 3 and _share is not None and _share >= 1.0:
+            _facts += (f"\n• 集中度：最大单笔 {summary.get('max_single_symbol') or 'n/a'} "
+                       f"${float(summary.get('max_single_net_pnl') or 0):+.2f} = 当日净额的 {_share*100:.0f}%"
+                       "（单笔决定当日符号）")
+        if _gross is not None and _gross > 0 and _fees > 0 and (_fees / _gross) >= 0.5:
+            _facts += f"\n• 费占毛利 {(_fees / _gross) * 100:.0f}%（费 ${_fees:.2f} / 毛 ${_gross:+.2f}）"
         pnl_lines = (
             f"• 胜率：{win_rate*100:.1f}% (净 {_wr_net:.1f}%"
             + (f", 假盈利 {_fake} 笔" if _fake else "") + ")\n"
-            + _money + _ov_tail
+            + _money + _ov_tail + _facts
         )
     else:
         header_emoji = pnl_emoji
