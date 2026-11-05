@@ -221,3 +221,51 @@
 - 特别是“非 SL_INITIAL 小赢家减少”“成交数下降”“胜率下降”本身不再是失败；只有总净额护栏恶化才构成经济反证。
 - §3.5 的“对照臂第一次 SL_INITIAL 净均更好就立即停门”由本节取代：小样本单侧波动不能自动关门。
 - `TOO_EARLY / INSUFFICIENT / OBSERVE` 均表示尚未证明优势，不表示已经减亏；现役开门是用户批准的 SIM 实验。
+
+---
+
+## 附录 A — mid 尺子按天静默降级的根因修复 (2026-11-06, 缺陷修复 L1)
+
+### A.1 现象
+
+重开首日 (11-05) 4 笔 arm 全部 `mid_arm=None / ruler_used=legacy`，与"v2 = mid-vs-mid 同尺"
+不符。历史窗口内并非如此：10-16~10-30 的 170 条 treatment 里 `mid` 61 / `legacy` 55，
+且呈**按天聚簇**（10-22/10-29 全 legacy，10-30 全 mid）。
+
+### A.2 根因（两层订阅台账都只记 symbol、不记 type）
+
+1. `futu_lv3_provider.subscribe()`：`new_symbols = [s for s in syms if s not in _subscribed_symbols]`，
+   而 `retry_symbols` 只覆盖"**曾失败**的类型"。一个先用精简集 (QUOTE+K_1M) 订过的 symbol，
+   后来请求 ORDER_BOOK/TICKER 时 —— 从未申请过该类型 ⇒ 既不在 new 也不在 retry ⇒ 整只跳过。
+   `subscription_manager.ensure_subscribed()` 的 `_subscribed_codes` 同病。
+2. 生产时序（11-05 复现）：重启后 `PositionMonitorLoop` 先用精简集订 44 只扫描池（含
+   GOOG/CRM/BA/LMT），240ms 后活跃集才带 ORDER_BOOK 订基准 4 只；等到活跃集 17 只来补时，
+   11 只已被判"已订阅"⇒ 全天无盘口推送。
+3. 无盘口 ⇒ `market_data_router` 以 `last_price` 顶 bid/ask (`book_is_proxy=True`) ⇒
+   `entry_confirm_gate._current_quotes()` 判 mid 无效 ⇒ 该笔回落 legacy 混尺（留痕 `ruler_used`）。
+   实测 TCA 台账：11-05 CRM/BA `bid==ask==成交价, mid=null, book_is_proxy=true`。
+
+### A.3 影响量化（修复前实测）
+
+- 61 条两端都有真盘口的 treatment 行：legacy 判 pass 28、mid 判 pass 34 ⇒ **6 条 (9.8%) 结论相反**；
+  opp_cost 均值 legacy +0.066% vs mid −0.032%（混尺系统性高估机会成本）。
+- 即"mid 未生效"不是显示问题，它按天改写了 1/10 的入场判定。
+
+### A.4 修法（类型权威只留 provider 一处）
+
+- provider 新增 `_sub_types_by_symbol`：按 per-symbol 已成功类型算 `missing_types`，只补缺失类型
+  （不重订已有类型）；失败仍落 `_failed_sub_types` 供下轮重试；四类清场点（disconnect /
+  force_reconnect / close / unsubscribe_all）同步清空。
+- manager 侧**删掉符号级短路**（原 `if not new_codes: return`）：请求一律转发给 gateway，
+  由 provider 判类型差集。类型全齐时 provider 是零 SDK 调用的空操作 ⇒ 也不引入并行台账。
+  这一层原有 `+N` 日志在实测中是虚报（manager 打 `+14`，provider 实际只新订 3 只）。
+- 不动的部分：`data_sources.futu_lv3.stock_sub_types` 仍为精简集（ADR-013 的 CPU 取舍不变）；
+  只有**进入活跃集**的标的才会新增 ORDER_BOOK/TICKER，订阅失败按类型留 warning。
+
+### A.5 行为含义与回滚
+
+- 本修复使 mid 尺子**真的生效** ⇒ 同一样本上入场判定约 9.8% 翻转（方向：更少弃单）。
+  属恢复 §5.10 设计语义，但效果仍是"门放开一点"，与本 RFC 的 treatment/holdout 读数一并观察。
+- 回滚：`git revert <提交>` + `systemctl restart ftseek-us`；无需改配置。
+- 验收：重启后日志出现 `[FutuLV3] 补订缺失订阅类型 …`，且原 44 池标的的 ORDER_BOOK 订阅
+  出现在 `✅ 已订阅 N 只美股 ORDER_BOOK` 列表内；次日 RTH 的 `ruler_used` 应恢复 mid 占比。

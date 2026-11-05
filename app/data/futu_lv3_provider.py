@@ -352,6 +352,14 @@ class FutuLV3Provider:
         self._sub_lock = threading.Lock()
         # 类型级订阅失败追踪: futu_symbol → 失败 sub_type 集 (下次 subscribe 自动补订)
         self._failed_sub_types: Dict[str, set] = {}
+        # 2026-11-06 (RFC-158 附录): 逐 symbol 已成功订阅的**类型**集。
+        #   原实现只有符号级 _subscribed_symbols ⇒ "先按精简集 (QUOTE+K_1M) 订阅过、
+        #   后要求 ORDER_BOOK/TICKER" 的**类型升级永远不执行** (整只 symbol 被判已订阅;
+        #   retry 只覆盖"曾失败的类型", 而从未申请过的类型连失败记录都没有)。
+        #   生产后果: 44 只扫描池先订精简集 → 进活跃集的标的拿不到盘口推送 →
+        #   market_data_router 以 last_price 顶 bid/ask (book_is_proxy=True) →
+        #   entry_confirm 的 mid 尺子逐笔回落 legacy 混尺。
+        self._sub_types_by_symbol: Dict[str, set] = {}
 
         # Push 行情缓存 (由 Handler 异步更新，扫描循环主动读取)
         self._push_quote_cache: Dict[str, Any] = {}  # symbol -> quote dict
@@ -918,23 +926,43 @@ class FutuLV3Provider:
             return False
 
         futu_symbols = [self._to_futu_symbol(s) for s in symbols]
+        # 默认订阅类型 ([ADR-013] 可配置精简集, 默认 QUOTE+K_1M; 覆盖重连恢复路径)
+        # ⚠ 必须在过滤前解析: 下面要按「请求类型集 − 该 symbol 已订类型集」算缺哪些类型
+        if sub_types is None:
+            sub_types = _configured_stock_sub_types()
+        _requested = list(dict.fromkeys(sub_types))
+
         # DEB-20260903 #16: 读-过滤在锁内 (与 unsubscribe/clear 竞态)
         with self._sub_lock:
             new_symbols = [s for s in futu_symbols if s not in self._subscribed_symbols]
             # 已订阅但有类型级失败记录的标的 → 本次补订其失败类型
             retry_symbols = [s for s in futu_symbols
                              if s not in new_symbols and self._failed_sub_types.get(s)]
+            # 2026-11-06 (RFC-158 附录): 已订阅但**缺类型**的标的 → 补订缺失类型。
+            #   原实现只补"曾失败的类型", 从未申请过的类型连失败记录都没有 ⇒ 后到的
+            #   ORDER_BOOK/TICKER 请求被符号级去重静默吞掉。
+            missing_types: Dict[str, set] = {}
+            for _s in futu_symbols:
+                if _s in new_symbols:
+                    continue
+                _have = self._sub_types_by_symbol.get(_s, set())
+                _miss = {t for t in _requested if t not in _have}
+                if _miss:
+                    missing_types[_s] = _miss
 
-        if not new_symbols and not retry_symbols:
+        if not new_symbols and not retry_symbols and not missing_types:
             logger.debug(f"[FutuLV3] 已订阅 {len(futu_symbols)} 只美股, 无需重复订阅")
             return True
 
+        if missing_types:
+            logger.info(
+                f"[FutuLV3] 补订缺失订阅类型 (符号级去重曾吞掉升级): "
+                f"{len(missing_types)} 只缺 "
+                f"{sorted({t for _m in missing_types.values() for t in _m})}"
+            )
+
         try:
             from futu import SubType
-
-            # 默认订阅类型 ([ADR-013] 改为可配置精简集, 默认 QUOTE+K_1M; 覆盖重连恢复路径)
-            if sub_types is None:
-                sub_types = _configured_stock_sub_types()
 
             # DEB-20260903 #16: 复用模块级 SSOT 映射 (与重试/退订路径一致)
             sub_type_map = _futu_sub_type_map()
@@ -942,17 +970,22 @@ class FutuLV3Provider:
             # DEB-20260903 #16: 按类型记录成功/失败 — 原实现部分/全部失败仍
             # 无条件标记已订阅并返回 True, 造成假订阅状态 (无推送但显示健康)
             failed_this_round: Dict[str, set] = {}
+            ok_by_type: Dict[str, List[str]] = {}
             any_success = False
             for st_name in sub_types:
                 sub_type = sub_type_map.get(st_name)
                 if sub_type is None:
                     logger.warning(f"[FutuLV3] 未知订阅类型: {st_name}")
                     continue
-                # 新标的全类型订阅; 老标的仅补订其失败类型
+                # 新标的全类型订阅; 老标的仅补订其失败类型; 已订阅但缺该类型的补订
                 targets = list(new_symbols)
                 for _rs in retry_symbols:
                     if st_name in self._failed_sub_types.get(_rs, set()):
                         targets.append(_rs)
+                for _ms, _miss in missing_types.items():
+                    if st_name in _miss:
+                        targets.append(_ms)
+                targets = list(dict.fromkeys(targets))  # 去重 (同一 symbol 可同时命中两类)
                 if not targets:
                     continue
                 ret, data = quote_ctx.subscribe(targets, [sub_type], subscribe_push=True)
@@ -965,6 +998,7 @@ class FutuLV3Provider:
                         failed_this_round.setdefault(_s, set()).add(st_name)
                 else:
                     any_success = True
+                    ok_by_type[st_name] = list(targets)
                     logger.info(
                         f"[FutuLV3] ✅ 已订阅 {len(targets)} 只美股 {st_name}: "
                         f"{[self._strip_prefix(s) for s in targets]}"
@@ -974,7 +1008,12 @@ class FutuLV3Provider:
                 # 仅当至少一个类型成功才标记已订阅; 全失败 → 不标记, 下轮完整重试
                 if any_success:
                     self._subscribed_symbols.update(new_symbols)
-                for _s in list(new_symbols) + list(retry_symbols):
+                # 2026-11-06: 逐 symbol 记录**成功**的类型, 供下一次按差集补订
+                for _st, _syms in ok_by_type.items():
+                    for _s in _syms:
+                        self._sub_types_by_symbol.setdefault(_s, set()).add(_st)
+                for _s in dict.fromkeys(
+                        list(new_symbols) + list(retry_symbols) + list(missing_types)):
                     _fails = failed_this_round.get(_s, set())
                     if _fails:
                         self._failed_sub_types[_s] = set(_fails)
@@ -998,6 +1037,7 @@ class FutuLV3Provider:
                     # 丢失 ORDER_BOOK/TICKER/K_5M/K_60M/K_DAY → 重连后盘口/逐笔推送静默丢失)
                     retry_map = _futu_sub_type_map()
                     retry_failed: Dict[str, set] = {}
+                    retry_ok_types: Dict[str, set] = {}
                     retry_any_ok = False
                     for st_name in (sub_types or _configured_stock_sub_types()):
                         _sub = retry_map.get(st_name)
@@ -1010,9 +1050,13 @@ class FutuLV3Provider:
                                 retry_failed.setdefault(_s, set()).add(st_name)
                         else:
                             retry_any_ok = True
+                            for _s in futu_symbols_retry:
+                                retry_ok_types.setdefault(_s, set()).add(st_name)
                     with self._sub_lock:
                         if retry_any_ok:
                             self._subscribed_symbols.update(futu_symbols_retry)
+                        for _s, _ts in retry_ok_types.items():
+                            self._sub_types_by_symbol.setdefault(_s, set()).update(_ts)
                         for _s in futu_symbols_retry:
                             if retry_failed.get(_s):
                                 self._failed_sub_types[_s] = set(retry_failed[_s])
@@ -1943,6 +1987,7 @@ class FutuLV3Provider:
             with self._sub_lock:
                 self._subscribed_symbols.clear()
                 self._failed_sub_types.clear()
+                self._sub_types_by_symbol.clear()
             logger.info("[FutuLV3] 已断开 OpenD 连接")
 
     # ═════════════════════════════════════════════════════════════
@@ -2144,6 +2189,7 @@ class FutuLV3Provider:
             with self._sub_lock:
                 self._subscribed_symbols.clear()
                 self._failed_sub_types.clear()
+                self._sub_types_by_symbol.clear()
             self._last_push_time = None
             with self._push_cache_lock:
                 self._push_quote_cache.clear()
@@ -2559,6 +2605,7 @@ class FutuLV3Provider:
                     with self._sub_lock:
                         self._subscribed_symbols.clear()
                         self._failed_sub_types.clear()
+                        self._sub_types_by_symbol.clear()
                     with self._push_cache_lock:
                         self._push_quote_cache.clear()
                         self._push_kline_cache.clear()
@@ -2643,6 +2690,7 @@ class FutuLV3Provider:
             with self._sub_lock:
                 self._subscribed_symbols.clear()
                 self._failed_sub_types.clear()
+                self._sub_types_by_symbol.clear()
             with self._push_cache_lock:
                 self._push_quote_cache.clear()
                 self._push_kline_cache.clear()

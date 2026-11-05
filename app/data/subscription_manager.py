@@ -278,27 +278,35 @@ class SubscriptionManager:
 
         futu_codes = [c if c.startswith("US.") else f"US.{c}" for c in codes]
         new_codes = [c for c in futu_codes if c not in self._subscribed_codes]
-        existing = [c for c in futu_codes if c in self._subscribed_codes]
 
         result = {
             "success": True,
             "new_subs": 0,
-            "already_subscribed": len(existing),
+            "already_subscribed": len(futu_codes) - len(new_codes),
         }
 
-        if not new_codes:
-            return result
-
-        ok = self._gateway.subscribe(new_codes, sub_types)
+        # 2026-11-06 (RFC-158 附录): **不再按符号级去重短路** —— 类型权威只保留
+        #   provider 一处 (_sub_types_by_symbol), 由它按「请求类型 − 该 symbol 已订类型」
+        #   补订差集。原实现 `if not new_codes: return` 让"44 池先订 QUOTE+K_1M、
+        #   活跃集后要 ORDER_BOOK"的类型升级被静默吞掉 ⇒ 盘口缺失 ⇒ entry_confirm 的
+        #   mid 尺子整日回落 legacy 混尺 (11-05 4/4 arm 全 legacy)。
+        #   provider 侧类型全齐时是零 SDK 调用的空操作, 并把失败类型留痕供下轮重试。
+        ok = self._gateway.subscribe(futu_codes, sub_types)
         if ok:
             result["new_subs"] = len(new_codes)
             self._subscribed_codes.update(new_codes)
             self._subscribed_types.update(set(sub_types))
             self._last_action_time = time.time()
-            logger.info(
-                f"[US订阅] ✅ +{result['new_subs']} | "
-                f"类型={sub_types} | 累计={len(self._subscribed_codes)}"
-            )
+            if new_codes:
+                logger.info(
+                    f"[US订阅] ✅ +{result['new_subs']} | "
+                    f"类型={sub_types} | 累计={len(self._subscribed_codes)}"
+                )
+            else:
+                # 无新标的时 provider 自己会打"补订/已订阅"日志, 这里不刷屏
+                logger.debug(
+                    f"[US订阅] 请求 {len(futu_codes)} 只 (全部已订) | 类型={sub_types}"
+                )
         else:
             result["success"] = False
 
