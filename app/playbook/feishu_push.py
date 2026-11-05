@@ -470,9 +470,15 @@ class PlaybookPusher:
             lines.append("   → 入场时机差(追高/做反), 观察: 低conf或VWAP逆侧是否应更严")
             lines.append("")
 
+        # 2026-11-05: 幻影段仅在 >0 时出现 — 零值不占位 ("执行 2/2 (SKIP 1)" 而非
+        #   "执行 2/2 (已有持仓跳过 0, SKIP 1)"), 与 11-03 前的旧格式保持兼容。
+        _summary_parts = []
+        if _phantom_count:
+            _summary_parts.append(f"已有持仓跳过 {_phantom_count}")
+        _summary_parts.append(f"SKIP {skip_count}")
         lines.append(
             f"今日总结: 执行 {executed_count}/{_exec_denominator} "
-            f"(已有持仓跳过 {_phantom_count}, SKIP {skip_count})"
+            f"({', '.join(_summary_parts)})"
         )
         pnl_parts = []
         if any(instruction.get("outcome") in ("win", "loss") for instruction in instructions):

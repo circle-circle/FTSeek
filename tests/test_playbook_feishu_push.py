@@ -7,6 +7,23 @@ from app.playbook.db import PlaybookDB
 from app.playbook.feishu_push import PlaybookPusher
 
 
+@pytest.fixture(autouse=True)
+def _admission_pass(monkeypatch):
+    """本文件测推送格式, 不测 admission 门 ⇒ 落库门放行。
+
+    2026-11-05 (J4 清账): fixture 名义额 100×50 = $5,000 低于现役地板 $5,500,
+    `admission.apply` 把 BUY 行改写成 SKIP ⇒ 盘前/盘后卡片里该标的整段消失,
+    7 例长期红 (先例 tests/test_playbook_db.py:765)。真门由 tests/test_admission_gate.py
+    等覆盖。
+    """
+    monkeypatch.setattr(
+        "app.playbook.admission.apply",
+        lambda inst: (inst, {"verdict": "PASS", "reasons": [], "enforce": False}))
+    monkeypatch.setattr(
+        "app.playbook.admission.evaluate",
+        lambda inst: {"verdict": "PASS", "reasons": [], "metrics": {}})
+
+
 @pytest.fixture
 def db():
     conn = sqlite3.connect(":memory:")
