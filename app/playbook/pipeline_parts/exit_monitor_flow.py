@@ -802,6 +802,29 @@ def monitor_playbook_exits(
                 if not exit_reason:
                     continue
 
+                # ── [2026-11-04 · LMT 案] 退出侧时段窗影子 (record-only) ──
+                #   地面真值: 11-04 LMT OVERNIGHT_GAP_STOP 在 09:30:20 (开盘后 20s) 成交
+                #   603.33, 而 09:35 = 616.85 / 09:37 = 619.32 (用户观察成立)。但 35 笔
+                #   同类历史回放: 延后到 09:35 Σ −$510.65 (11 正 24 负), 六档全负, 其中
+                #   OVERNIGHT_GAP_STOP 族 −$324 (2 正 8 负) ⇒ 先留痕攒样, 不改行为。
+                #   记完本函数照常往下走真实平仓 (下方 _row_target/限价逻辑不受影响)。
+                #   报表: scripts/exit_session_window_shadow_report.py
+                try:
+                    from app.playbook.exit_session_window_shadow import (
+                        record_exit_session_window_shadow as _rec_sess_win)
+                    _rec_sess_win(
+                        now_et=now_et,
+                        symbol=symbol,
+                        direction=direction,
+                        qty=r["quantity"],
+                        exit_reason=exit_reason,
+                        price=current_price,
+                        entry_time=r["entry_time"],
+                        source_type=r["source_type"],
+                    )
+                except Exception as _sw_e:
+                    logger.debug(f"[ExitSessionWindowShadow] 记录异常 (已隔离): {_sw_e}")
+
                 # 真实平仓 (broker) — target_env 按 source_type (PLAYBOOK_LIVE→real, 否则 sim)
                 _row_target = "real" if r["source_type"] == "PLAYBOOK_LIVE" else "sim"
                 # 净保本限价平仓 (2026-08-17, 用户裁"保本单真正净保本, 包含费用, 避免白跑"):

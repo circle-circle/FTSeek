@@ -4328,6 +4328,32 @@ REGISTRY: list[ShadowItem] = [
               "现役; §4 原判据面失效留档不再使用; 本影子重新定位=「移交失败」监测面 "
               "(新行=该移交而未移交的残余风险, 出现即 P1)。",
     ),
+    # ── 2026-11-04 用户观察 (LMT 开盘 20 秒即平) 相位 ──
+    ShadowItem(
+        id="exit_session_window",
+        name="退出侧交易时段窗影子 (隔夜仓盘前/开盘首 5 分钟平仓, record-only)",
+        status=ShadowStatus.OBSERVING,
+        description="地面真值 2026-11-04 US.LMT OVERNIGHT_GAP_STOP 09:30:20 成交 603.33, "
+                    "而 09:31 分钟低 602.25/收 613.81, 09:35 616.85, 09:37 619.32 (用户观察成立: "
+                    "开盘插针处被平)。历史 35 笔同类回放六档全负 (09:35 Σ −$510.65, 11 正 24 负; "
+                    "OVERNIGHT_GAP_STOP 族 n=10 延后 5min Σ −$324, 2 正 8 负) ⇒ 不改行为, 先留痕。"
+                    "写方 app/playbook/exit_session_window_shadow.py (写前判窗, 记完照常平仓), "
+                    "接线 pipeline_parts/exit_monitor_flow.py:840 (exit_reason 判定后/真实平仓前, "
+                    "try/except 隔离)。报表 scripts/exit_session_window_shadow_report.py。",
+        data_path="data/shadow/exit_session_window_shadow.jsonl",
+        config_key="playbook.exit_session_window_shadow_enabled",
+        min_n=20,
+        count_mode="distinct:(date_et,symbol,exit_reason)",
+        graduation_criteria="≥10 个交易日 且 ≥20 条记录; 09:35 档 ΣΔ>0 且**日聚类 t≥2** 且正日占比≥60% "
+                            "⇒ 提请上线 (行为变更须用户二次裁决); 任一档为负且 t≤−2 且正日占比<40% ⇒ 留档否掉。"
+                            "禁边跑边改判据 (禁止阈值购物)。",
+        eval_script="scripts/exit_session_window_shadow_report.py",
+        eval_on_demand=True,
+        stale_expected=True,
+        created="2026-11-04",
+        notes="config_key 真门控写方 (module _enabled() 走 ConfigContainer.get_dotted, 默认 true); "
+              "关它 = 停采。预注册判据在模块 docstring 与本字段各存一份, 改判据须两处同改并留痕。",
+    ),
     ShadowItem(
         id="post_ca4487",
         name="post_ca4487 清洁观测窗 (KR1 换版后, DEB-20261009 §28.11)",

@@ -1125,6 +1125,11 @@ playbook:
   #   只拦同向; 反手由 same_day_reversal_block (再入场通道) 管. fail-open (质量门).
   #   回滚: 置 false + systemctl restart ftseek-us.
   same_day_hard_stop_cooldown: true
+  # 2026-11-04 (用户观察: LMT 开盘 20 秒即被 OVERNIGHT_GAP_STOP 平在插针低点):
+  #   退出侧交易时段窗影子 —— record-only, 只留痕不改行为。关它 = 停采 (产物冻结, 历次
+  #   行情不变)。判读: scripts/exit_session_window_shadow_report.py; 预注册判据见
+  #   app/playbook/shadow_registry.py::exit_session_window。
+  exit_session_window_shadow_enabled: true
   direction_mode: llm_vote
   condition_expectancy_prompt_enabled: true
   # 2026-09-01 信息供应链审计建议②: 负向论据警示前置注入开关 (窄口径: 只负向/只语义论据/
