@@ -8,6 +8,25 @@ from app.playbook.db import PlaybookDB
 from app.playbook.playbook_service import PlaybookService
 
 
+@pytest.fixture(autouse=True)
+def _admission_pass(monkeypatch):
+    """本文件只测**服务编排**, 不测 admission 门 ⇒ 落库门与执行时复核门统一放行。
+
+    2026-11-05 (J4 清账): 两处门在 fixture 名义额下都会拦
+    (100×50 = $5,000 < 现役地板 $5,500): `apply` 把 direction 改写成 SKIP (落库即失联),
+    `evaluate` 在执行时返回 `admission_blocked`。此前本文件 10 例长期红, 且**是否红还取决于
+    别的测试文件是否已把配置初始化** (真门只在配置就绪时才拦) ⇒ 顺序依赖本身是缺陷。
+    真门仍由 tests/test_admission_gate.py / test_admission_replay.py /
+    test_execution_admission.py 覆盖 (三处合计 60 例)。
+    """
+    monkeypatch.setattr(
+        "app.playbook.admission.apply",
+        lambda inst: (inst, {"verdict": "PASS", "reasons": [], "enforce": False}))
+    monkeypatch.setattr(
+        "app.playbook.admission.evaluate",
+        lambda inst: {"verdict": "PASS", "reasons": [], "metrics": {}})
+
+
 @pytest.fixture
 def db():
     conn = sqlite3.connect(":memory:")
@@ -24,6 +43,13 @@ def svc(db):
 
 
 def _save_inst(db, **kwargs):
+    """插入一条指令并返回 id。
+
+    2026-11-05 (J4 清账): 本文件测的是**服务编排** (skip/modify/配额/仓位覆写), 不是
+    admission 门 —— fixture 名义额 100×50 = $5,000 低于现役地板 $5,500, 门会把 direction
+    改写成 SKIP, 后续 `_find_instruction_by_id` 查不到 (get_recent_instructions 默认排除
+    SKIP)。门已在文件级 autouse fixture `_admission_pass` 里打桩, 此处不再重复。
+    """
     defaults = {
         "date": "2026-06-18",
         "symbol": "US.NTES",
