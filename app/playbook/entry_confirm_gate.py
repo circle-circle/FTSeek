@@ -88,6 +88,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -142,6 +143,9 @@ _PATH_SHADOW_MAX_TIMING_ERROR_SEC = 20
 # 产物 (锚定模块路径 — 相对路径影子污染教训, 2026-09-21)
 _ROOT = Path(__file__).resolve().parents[2]
 _FORWARD_PATH = _ROOT / "data" / "shadow" / "entry_confirm_forward.jsonl"
+# 写盘互斥锁 (2026-11-05): arm 在 auto_execute 线程, 判定在 10s 快循环线程,
+#   两者都会写同一 jsonl ⇒ 无锁时可能交错出半行 (整份文件后续解析失败)。
+_FORWARD_LOCK = threading.Lock()
 SCHEMA_V2 = "entry_confirm_forward_v2"   # v2 起: +ruler_used/mid_arm/mid_move_pct/grace/双边报价
                                          # (v1 旧行识别常量在结算器侧, 门只写 v2)
 
@@ -386,11 +390,19 @@ def _write_state(db, inst_id: int, patch: Dict[str, Any]) -> bool:
 # ══════════════════════════════════════════════════════════════════
 def _write_forward_row(row: Dict[str, Any]) -> None:
     """追加一行前瞻样本。字段与影子 _agg_block 契约对齐 (status/still_triggers/
-    opp_cost_pct/notional/date), 另加 arm/live 专有字段。写盘失败只 warn。"""
+    opp_cost_pct/notional/date), 另加 arm/live 专有字段。写盘失败只 warn。
+
+    2026-11-05: 加模块级锁 — 快循环 sweep 与 arm 分属不同线程, 无锁的
+    `open(...,'a') + write` 在多线程下可能交错出**半行 JSON** (行长约 1KB,
+    超过单次写原子性的实际保证), 一旦发生整份 jsonl 的后续消费都会解析失败。
+    锁只串行化写盘 (~微秒级), 不影响判定与交易。
+    """
     try:
         _FORWARD_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(_FORWARD_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
+        _line = json.dumps(row, ensure_ascii=False, default=str) + "\n"
+        with _FORWARD_LOCK:
+            with open(_FORWARD_PATH, "a", encoding="utf-8") as f:
+                f.write(_line)
     except Exception as _e:
         logger.warning(f"[EntryConfirm] 前瞻行写盘失败 (不阻断交易): {_e}",
                        exc_info=True)
@@ -851,6 +863,28 @@ def _judge_one(scheduler, db, inst_id: int, arm: Dict[str, Any],
                                    "armed_at": arm["armed_at"].isoformat(),
                                    "reason": "ttl"})
         out["expired"] += 1
+        # 2026-11-05: 超期也落一行前瞻 (status="expired") —— 此前只在日志里出现,
+        #   结算器按 status=="ok" 过滤 ⇒ 这些笔在"assigned / resolved / unresolved"
+        #   三栏里凭空消失, 覆盖率看起来比实际好。record-only, 不改判定。
+        _write_forward_row({
+            "type": "entry_confirm", "schema": SCHEMA_V2,
+            "ts": now_et.isoformat(), "date": now_et.strftime("%Y-%m-%d"),
+            "inst_id": inst_id, "decision_id": arm.get("decision_id"),
+            "symbol": symbol, "direction": arm.get("direction"),
+            "arm": "treatment", "status": "expired", "outcome": ST_EXPIRED,
+            "still_triggers": None, "opp_cost_pct": None,
+            "anchor": float(arm.get("anchor") or 0.0),
+            "planned_entry": arm.get("planned_entry"),
+            "plan_gap_pct": arm.get("plan_gap_pct"),
+            "entry_archetype": arm.get("entry_archetype"),
+            "notional": arm.get("notional") or 0.0,
+            "session_min": arm.get("session_min"),
+            "armed_at": arm["armed_at"].isoformat(),
+            "expired_at": now_et.isoformat(),
+            "expire_reason": "ttl",
+            "delay_sec": arm.get("delay_sec"),
+            "delay_actual_sec": int((now_et - arm["armed_at"]).total_seconds()),
+        })
         logger.warning(f"[EntryConfirm] {symbol} pending 超期 → EXPIRED (不计样本)")
         return
 

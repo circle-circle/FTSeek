@@ -202,8 +202,45 @@
 
 ```bash
 cd /opt/ftseek/FTSeek-US
-# 分层 + 日聚类 bootstrap + 尾部 + 滑点, 全部基于 data/shadow/entry_delay_confirm.jsonl
-python3 - <<'PY'  # 见本次会话脚本; 关键口径: delay=2/status=ok, 值模型同 _eval_delay
-...
-PY
+# 全部分层读数 (总体/方向/时段/来源/名义额/追价/波幅/尾部/滑点/conf IC) 一条命令:
+PYTHONPATH=. venv/bin/python scripts/supply_conf_and_confirm_scenario_report.py --delay 2
+```
+
+---
+
+## 5. 2026-11-05 可观测性加固 (record-only, 采纳"先不关, 观察")
+
+用户裁: entry_confirm **保持开启**观察, 因此本批不动任何判定参数 (delay/ruler/grace/holdout 全部不变),
+只补三处"看得见"的缺口 —— 它们的共同点是: **不影响交易, 但影响事后能不能判得清**。
+
+| # | 缺口 (实测) | 处置 | 变异验证 |
+|---|---|---|---|
+| 5.1 | **TTL 超期不留行**: `EXPIRED` 只写 DB 旗标 + 日志, 前瞻 jsonl 无行; 结算器按 `status=="ok"` 过滤 ⇒ 这些笔在 assigned/resolved/unresolved 三栏凭空消失, **覆盖率虚高** | `_judge_one` 超期分支补写 `status="expired"` 行 (含 armed_at/expired_at/delay_actual_sec/expire_reason), 仍不计入样本 | 去掉该写入 ⇒ `test_expired_writes_forward_row` 转红 |
+| 5.2 | **前瞻 jsonl 并发写**: arm 在 auto_execute 线程、判定在 10s 快循环线程, 同一文件 `open(...,'a')+write` 无锁 ⇒ 可能交错出半行, 一旦发生整份 cohort 解析失败 | 模块级 `_FORWARD_LOCK` 串行化写盘 (微秒级) | 8 线程 × 25 行并发写, 200 行全部可解析且无重复 |
+| 5.3 | **门的真实代价从未在 live 量过**: 门只记 `px_at_confirm`, 而真实成交价是确认后下一轮 reprice 的结果; 两者的差 (回放估 18.5bps 均值) 是这门的核心成本 | 新增 `scripts/entry_confirm_cost_report.py`: 按 `decision_id` 对齐 `trade_records`, 输出 `confirm→fill cost_bps` (方向归一) + **"确认通过但未成交"的原因分解** (chase/admission/预算等) | 合成 3 行自检: LONG +20bps / SHORT +10bps 数值正确; 无成交行归因到 `chase_cap_enforced` |
+
+### 5.4 仍未解决的盲区 (明说, 不假装闭合)
+
+1. **确认后是否真的成交, 门自己不知道**: CONFIRMED 之后还要过 chase_cap / admission / 预算 / 防重复,
+   任一拦下都会留下"确认了但没下单"的行。5.3 的脚本能把它们**列出来**(原因分解), 但门本身不回头补写
+   终态 —— 要补就得改 auto_execute_flow (他人正在改的批次), 本批不动。
+2. **holdout 臂没有 2min 反事实**: 对照臂直接成交, 所以只能比较两臂**已实现净额**, 不能做"同一笔的
+   反事实配对"。这是 RFC-158 的设计取舍, 不是缺陷。
+3. **判据仍是"单点/mid 双尺 + 120s"**: 60s 腿、条件延迟 (只在逆向时等) 都**没有**预注册过;
+   在现有数据里也测不出优于现役的证据 (见 §2.4)。要试只能走影子, 不能直接改现役。
+
+### 5.5 为什么不顺手"优化判据"
+
+改 `delay_sec` / `eval_confirm` / `grace_*` = 改判据 = 重新裁决 (RFC-141 明文), 且会作废今天刚开的 cohort。
+用户已裁"先不关观察" ⇒ 本批只做记录面加固; 判据变更需新 RFC + 预注册 + S1/S2/S3。
+
+### 5.6 日常读数入口
+
+```bash
+# 成本 + 未成交原因 (每 1-2 天看一次, 门放行 ≥5 笔才有意义)
+PYTHONPATH=. venv/bin/python scripts/entry_confirm_cost_report.py --days 20
+# cohort 裁决读数 (RFC-158 判据)
+PYTHONPATH=. venv/bin/python scripts/settle_entry_confirm_forward.py
+# 场景分层反事实 (Q2 设计依据)
+PYTHONPATH=. venv/bin/python scripts/supply_conf_and_confirm_scenario_report.py --delay 2
 ```
