@@ -39,6 +39,7 @@ def test_refresh_postmarket_failure_is_visible(monkeypatch, capsys):
 
 def test_render_includes_research_exposure(monkeypatch):
     empty = {"price_gate": 0, "pretrade_gate": 0, "attempts": 0, "filled": 0,
+             "price_gate_unique": 0, "pretrade_gate_unique": 0,
              "errors": [], "pretrade_reasons": {}}
     monkeypatch.setattr(report, "funnel", lambda day: {
         "premarket": dict(empty), "afterhours": dict(empty),
@@ -55,6 +56,50 @@ def test_render_includes_research_exposure(monkeypatch):
     assert "研究臂暴露" in body
     assert "Semiconductors" in body
     assert "$10,000" in body
+
+
+def test_funnel_reports_ticket_rounds_and_unique_symbols(monkeypatch):
+    def rows(path):
+        if path == report.PRICE_GATE:
+            return [
+                {"ts": "2026-11-04T08:00:00-05:00", "session": "premarket", "n": 2,
+                 "rejects": [{"symbol": "US.A"}, {"symbol": "US.B"}]},
+                {"ts": "2026-11-04T08:05:00-05:00", "session": "premarket", "n": 2,
+                 "rejects": [{"symbol": "US.B"}, {"symbol": "US.C"}]},
+            ]
+        if path == report.PRETRADE_GATE:
+            return [
+                {"ts": "2026-11-04T08:00:00-05:00", "session": "premarket", "n": 1,
+                 "rejects": [{"symbol": "US.A", "reason": "spread"}]},
+                {"ts": "2026-11-04T08:05:00-05:00", "session": "premarket", "n": 1,
+                 "rejects": [{"symbol": "US.A", "reason": "spread"}]},
+            ]
+        return []
+
+    monkeypatch.setattr(report, "_read_jsonl", rows)
+    result = report.funnel("2026-11-04")["premarket"]
+    assert result["price_gate"] == 4
+    assert result["price_gate_unique"] == 3
+    assert result["pretrade_gate"] == 2
+    assert result["pretrade_gate_unique"] == 1
+
+
+def test_render_marks_current_snapshots_not_historical(monkeypatch):
+    empty = {"price_gate": 0, "pretrade_gate": 0, "attempts": 0, "filled": 0,
+             "price_gate_unique": 0, "pretrade_gate_unique": 0,
+             "errors": [], "pretrade_reasons": {}}
+    monkeypatch.setattr(report, "funnel", lambda day: {
+        "premarket": dict(empty), "afterhours": dict(empty),
+    })
+    monkeypatch.setattr(report, "rows_from_db", lambda db, start, end: [])
+    monkeypatch.setattr(report, "holding_ext", lambda: [])
+    monkeypatch.setattr(report, "recent_rounds", lambda: "recent")
+    monkeypatch.setattr(report, "research_exposure", lambda day: {})
+
+    body = report.render("2026-11-03")
+    assert "当前在场快照 (与查询日/--date 无关)" in body
+    assert "当前日志快照, 与查询日/--date 无关" in body
+    assert "票次/独立票" in body
 
 
 def test_main_refreshes_only_when_extended_sample_exists(monkeypatch):

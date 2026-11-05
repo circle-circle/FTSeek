@@ -1929,7 +1929,7 @@ REGISTRY: list[ShadowItem] = [
     #    缘起: 落地时三处登记全缺 = DEB-20260901 §十一 严令禁止的游离观察) ──
     ShadowItem(
         id="penetration_shadow",
-        name="保本线穿透判别器 (快跌 vs V回)",
+        name="退出线穿透判别器 (保本/锁利 + early-tight独立cohort)",
         status=ShadowStatus.OBSERVING,
         description="DEB-20260903 §十: 净保本类出场 (SL_BREAKEVEN/SL_TRAIL_LOCK/"
                     "PATIENT_EXIT_FILL) 触发瞬间采集判别特征 (穿透深度bps/自峰回吐/"
@@ -1983,7 +1983,11 @@ REGISTRY: list[ShadowItem] = [
               "(键=(symbol,inst_id,exit_reason) 保留首行=真实触发瞬间; 风暴备份 821 行按本键去重=40 "
               "与生产文件逐一对应实证键正确)。pipeline.py 埋点零改动 (该文件在他 agent 未提交批中, "
               "避纠缠)。契约钉 tests/test_penetration_shadow.py §7 三例 (26 passed)。"
-              "生效=下次服务重启 (G-02 部署断层守卫周六安全窗自愈); 重启前若再风暴按本键去重可复原。",
+              "生效=下次服务重启 (G-02 部署断层守卫周六安全窗自愈); 重启前若再风暴按本键去重可复原。"
+              " 2026-11-05 新增 path=early_tight_initial 只读事件：SL_INITIAL 触线时记录原始/紧SL、"
+              "盘口与tick/bar MFE，回填2m close acceptance/原始终SL命中。该path与既有B17保本/锁利"
+              "人群完全分切，penetration_llm_analysis 不消费；预注册与经济门见 "
+              "DEB-20261105-sl-initial-early-tight-acceptance，n<30不得提出SIM A/B。",
         count_mode="where:type=penetration",
     ),
 
@@ -2354,7 +2358,7 @@ REGISTRY: list[ShadowItem] = [
 
     ShadowItem(
         id="entry_confirm_forward",
-        name="RFC-141 入场延迟确认门 SIM 实弹前瞻 (D2' forward, 2026-10-10 用户裁)",
+        name="RFC-158 入场延迟确认门 SIM 实弹前瞻 (120s+20% holdout)",
         # 2026-11-05 重开 (用户裁「重开 entry_confirm v2 形态」): KILLED → OBSERVING。
         #   复活血路「带 20% 对照臂」已落实 (config entry_confirm_holdout_pct: 0 → 20)。
         #   判据走 RFC-158 新预注册 (RFC-141 §4 的判据已被 10-31 INSUFFICIENT 裁决消耗, 不沿用)。
@@ -2368,31 +2372,24 @@ REGISTRY: list[ShadowItem] = [
                     "重启孤儿自愈放行。",
         # 2026-10-22 n 轴对齐 (全链路复查 R3): 原 data_path=jsonl + count_mode=
         # where:arm=treatment 计「机制台帐行」(≈裁决轴 5 倍虚高: 105 vs 20) ⇒ 假 READY。
-        # 裁决轴 = 「v2 起 SIM 真实成交笔数」, 由夜结 settle 写入 latest.json 的
-        # adjudication_source.all.n (cron 37 6 * * 2-6 每日刷新, 挂载核对面=该产物)。
+        # 裁决轴 = 「当前 cohort SIM 真实成交笔数」, 由夜结 settle 写入 latest.json 的
+        # current_cohort.sim.n (cron 37 6 * * 2-6 每日刷新, 挂载核对面=该产物)。
+        # RFC-158 重开后归档行不得再推动 READY; 空活跃文件必须显式写 0。
         # jsonl 仍是机制留痕 (判据④佐证), 但不再是计数锚。
         data_path="data/shadow/entry_confirm_forward_latest.json",
         config_key="playbook.execution_parameters.entry_confirm_enabled",
         # 2026-10-10 用户裁改口径「直接走 sim 交易链路, 不用影子攒样看 sim 交易结果」:
-        #   min_n 从 20 (影子样本) 改 60 (开门后 SIM 真实成交笔数), 与 RFC-141 §4 样本门一致,
-        #   否则周检会用错的 n 驱动「到期未达标=治理缺口」告警。
+        #   现行计数为 treatment resolved assignments（弃单+已联接平仓），不是全周期 SIM 成交数。
         min_n=60,
-        graduation_criteria="RFC-141 §4 逐字 v2 (2026-10-10 22:37 读数前预注册; 窗口按用户裁 "
-                            "「从8月份开始统计, 早期的策略和逻辑不够成熟」改 8/1–10/9, 零读数下改窗 "
-                            "= 修口径非挪门柱): "
-                            "裁决源=开门后 SIM 真实盈亏 (trade_records, source_type=PLAYBOOK_SIM) "
-                            "vs 门前基线, **不是**影子产物配对。样本门 n≥60 ∨ ≥10 交易日。"
-                            "①病灶族收敛: SL_INITIAL 族净均 ≥−$40/笔 (v2 基线 −$162.3363; −$40 刻意"
-                            "不随 v2 重算, 因 25% 收敛线 −$40.58 比 −$40 松 ⇒ 取严) "
-                            "或该族 n≤1 ②开盘窗改善: 09:35–09:45 净均 >−$2.2632 ∧ 日聚类 t >−0.3218 "
-                            "(t 门槛钉 v1 严值, 因 v2 基线 t=−0.3849 更负, 跟基线走会放松=挪门柱) "
-                            "③机制量: 避免率≥30% ∧ CONFIRMED opp_cost<0.3% ④不伤赢家: 非 SL_INITIAL "
-                            "族净均 ≥+$7.79 (v2 基线 +$9.7353 的 80%, 比 v1 地板 +$2.79 抬高 2.8×); "
-                            "两端同尺 ⇒ 裁决用剔费口径 ≥+$8.79 (v2 基线 +$10.9854 的 80%, 剔 "
-                            "fee_bps>100 的 2 笔), 全量口径只并陈。分层 R1(SHORT×开盘窗)/LONG×开盘窗"
-                            "只印不判。jsonl 降级为机制留痕 (只证明门真在拦+拦的是反转单), 不独立裁决; "
-                            "历史回放 580 行不混入。裁决三态 PASS/OBSERVE/FAIL 见 RFC §4; "
-                            "PASS 后 REAL 转正另须 RFC 修订+用户签字, 不自动。",
+        graduation_criteria="RFC-158 §10（2026-11-05 当前 cohort n=0 时用户澄清目标）：首要目标是"
+                            "降低大亏损，不以保交易量、胜率或小赢家数量为目标。同期 treatment/holdout "
+                            "按 resolved assignment 比较：treatment 弃单实际净额=0；确认/holdout 按 "
+                            "decision_id 联接已平 PLAYBOOK_SIM；未成熟行不得当 0。样本门=treatment "
+                            "resolved n≥60 ∧ holdout resolved n≥20 ∧ 同期配对≥10 ET 日 ∧ 两臂结局"
+                            "覆盖率≥95%。PASS=每分配指令 SL_INITIAL 亏损负担下降且日聚类80%CI下界>0，"
+                            "同时总净额/分配指令不恶化；FAIL=大亏负担或总净额恶化且日聚类80%CI排除0，"
+                            "只提请复核不自动关门；其余 OBSERVE。胜率、M1避免率、M2机会成本、M3方向"
+                            "放弃差、M4短窗经济价值和E2小赢家地板仅披露，不再自动触发关门。",
         eval_script="scripts/settle_entry_confirm_forward.py",
         created="2026-10-10",
         last_evaluated="2026-10-31",
@@ -2422,13 +2419,9 @@ REGISTRY: list[ShadowItem] = [
                                          "已知副作用必须持续披露: 通过率约 51% (门砍一半触发) / 空头通过率 42.1% "
                                          "vs 多头 56% (空头被砍更狠, 而空头是 10 月唯一赚钱侧) / 上一段"
                                          "『误杀 0』系事后族标签口径的幸存者偏差 (live 前瞻里被掐的 22 个空头方向偏正)。"}],
-        notes="形态=SIM 实弹全量 (holdout_pct=0, 2026-10-10 用户裁: 留对照臂会稀释 SIM 结果)。"
-              "强制披露: ①confirm_gate 反向先验 +0.50%/笔 t=5.67 (域不同, 盘前注入 vs 开盘窗微结构) "
-              "②ALL 人群历史回放平 (t=−0.16/误杀58%), 达标证据全在 SL_INITIAL 事后族 "
-              "(基线 29 笔 −$4,579.30 = 全样本净亏 1.8482×, 胜率 0/29, t=−10.4217), live 门无法事前"
-              "只对该族开 ⇒ 前瞻 ALL 可能同样平 = 实验真实风险 ③无同期对照臂 ⇒ 开门后 vs 开门前"
-              "受市况变化混淆, 缓解=判据1/3 是门自身机制量不随市况漂 (RFC §5.4) ④E3 PULLBACK_LIMIT "
-              "TTL 互斥当前不存在 (entry_archetype_routing_enabled=false), 启用限价路由前须先裁。"
+        notes="现役形态=SIM 实弹 80% treatment / 20% holdout；用户 2026-11-05 澄清接受指令量、"
+              "成交量和小盈利胜率下降，目标是降低大亏损且总净额不恶化。原 RFC-141/RFC-158 的"
+              "赢家地板与机会成本门保留作诊断，不再决定现役 PASS/FAIL。"
               "⑤键名与既有 entry_confirm_max_wait_s (下单后确认成交 30s 窗, playbook_service.py:1851) "
               "无关, grep entry_confirm 同时命中两者, 改动须看清语义。"
               "cron 37 6 * * 2-6 (ET 18:37 盘后结算, 台账 crontab-entry-confirm-forward)。"
@@ -2438,7 +2431,7 @@ REGISTRY: list[ShadowItem] = [
               "+0.36% 超判据③轨迹); schema 升 v2, 裁决窗自 v2 首行 date 重计 (两源不混算), "
               "判据阈值不变; 与 §5.9「多探测无 edge」的张力已并陈 (回放测旧混尺, 交互未覆盖)。"
               "回滚 v1=ruler:legacy+grace_sweeps:0+restart。",
-        count_mode="json_key:adjudication_source.all.n",
+        count_mode="json_key:current_cohort.tail_objective.arms.treatment.resolved_n",
         cross_ref=("entry_delay_confirm",),
     ),
     ShadowItem(
@@ -4351,8 +4344,8 @@ REGISTRY: list[ShadowItem] = [
         eval_on_demand=True,
         stale_expected=True,
         created="2026-11-04",
-        notes="config_key 真门控写方 (module _enabled() 走 ConfigContainer.get_dotted, 默认 true); "
-              "关它 = 停采。预注册判据在模块 docstring 与本字段各存一份, 改判据须两处同改并留痕。",
+        notes="config_key 真门控写方 (module _enabled() 读该键, 默认 true); 关它 = 停采。"
+              "预注册判据在模块 docstring 与本字段各存一份, 改判据须两处同改并留痕。",
     ),
     ShadowItem(
         id="post_ca4487",

@@ -311,18 +311,15 @@ def test_settler_consumes_gate_artifact_without_change(env, monkeypatch):
 # D. 配置 / 孤儿自愈 / holdout 分流
 # ══════════════════════════════════════════════════════════════════
 def test_production_config_end_to_end():
-    """生产 YAML 真值 (不经替身) — 2026-10-10 用户裁 holdout 归零;
-    2026-10-15 用户裁 v2 判尺 (RFC-141 §5.10);
-    2026-10-31 用户裁**关门** ⇒ enabled 真值 = False (判据1 FAIL, RFC §5 案例3)。
+    """生产 YAML 真值 (不经替身) — RFC-158 用户批准重开 v2 主门。
 
-    本例断言的是**当前治理真值**, 所以关门后必须跟着变 —— 这正是它的用途:
-    任何人重开开关都会让本例变红, 强迫其留下 DECISION 记录。
+    20% 同期对照臂用于归因; 未预注册的 FADE_SHORT 追价帽保持关闭。
     """
     from app.playbook.config import PlaybookConfig
     cfg = ecg.confirm_gate_config(PlaybookConfig())
-    assert cfg == {"enabled": False, "delay_sec": 120, "holdout_pct": 0, "ttl_sec": 600,
+    assert cfg == {"enabled": True, "delay_sec": 120, "holdout_pct": 20, "ttl_sec": 600,
                    "ruler": "mid", "grace_sweeps": 3, "grace_votes": 2,
-                   "fade_short_chase_cap_enabled": True,
+                   "fade_short_chase_cap_enabled": False,
                    "fade_short_max_opp_pct": 1.0, "fade_short_window_min": 15}, cfg
 
 
@@ -441,6 +438,8 @@ def test_v2_abandoned_post_observation_rows_land(env):
             (tmp / "entry_confirm_forward.jsonl").read_text(encoding="utf-8").splitlines()]
     posts = [x for x in rows if x.get("type") == "entry_confirm_post"]
     assert [p["horizon"] for p in posts] == ["+5m", "+10m"]
+    assert all("last_from_confirm_pct" in p and "mid_from_confirm_pct" in p for p in posts)
+    assert all("px_at_confirm" in p and "mid_at_confirm" in p for p in posts)
     assert all(p["symbol"] == "US.POST" and p["direction"] == "LONG" for p in posts)
     # 逆向幅度方向归一: LONG 100→99.3 = −0.7%
     assert posts[0]["last_move_pct"] == pytest.approx(-0.7, abs=1e-3)

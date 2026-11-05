@@ -104,7 +104,16 @@ function renderInstructionCard(inst) {
     if (inst.outcome === 'win') statusBadge += ' <span class="pb-executed-badge" style="background:#16a34a55">Win +$' + fmt(inst.pnl) + '</span>';
     if (inst.outcome === 'loss') statusBadge += ' <span class="pb-executed-badge" style="background:#ef444455">Loss -$' + fmt(Math.abs(inst.pnl)) + '</span>';
 
-    const rr = inst.risk_reward ? inst.risk_reward.toFixed(1) + ':1' : '-';
+    const ledger = inst.price_ledger || {};
+    const planned = ledger.planned || {};
+    const effective = ledger.effective || {};
+    const fill = ledger.fill || {};
+    const effectiveRR = effective.risk_reward ?? inst.risk_reward;
+    const rr = effectiveRR != null ? Number(effectiveRR).toFixed(2) + ':1' : '-';
+    const plannedRR = planned.risk_reward != null ? Number(planned.risk_reward).toFixed(2) : '-';
+    const fillRR = fill.risk_reward != null ? Number(fill.risk_reward).toFixed(2) : '-';
+    const fillPrice = fill.entry_price != null ? ` · 成交 $${fmt(fill.entry_price)}` : '';
+    const actualRisk = ledger.risk_amount_at_fill;
 
     return `
     <div class="pb-card" id="card-${inst.id}">
@@ -123,12 +132,12 @@ function renderInstructionCard(inst) {
         </div>
 
         <div class="pb-params">
-            <div class="pb-param"><div class="pb-param-label">入场价</div><div class="pb-param-value">$${fmt(inst.entry_price)}</div></div>
+            <div class="pb-param"><div class="pb-param-label">有效入场</div><div class="pb-param-value">$${fmt(inst.entry_price)}</div><div style="font-size:10px;color:#8b949e">计划 $${fmt(planned.entry_price ?? inst.entry_price)}${fillPrice}</div></div>
             <div class="pb-param"><div class="pb-param-label">止损</div><div class="pb-param-value" style="color:#f87171">$${fmt(inst.stop_loss)}</div></div>
-            <div class="pb-param"><div class="pb-param-label">止盈</div><div class="pb-param-value" style="color:#4ade80">$${fmt(inst.take_profit)}</div></div>
+            <div class="pb-param"><div class="pb-param-label">目标 TP</div><div class="pb-param-value" style="color:#4ade80">$${fmt(inst.take_profit)}</div><div style="font-size:10px;color:#8b949e">非保证出场价</div></div>
             <div class="pb-param"><div class="pb-param-label">股数</div><div class="pb-param-value">${inst.position_size || '-'}</div></div>
-            <div class="pb-param"><div class="pb-param-label">风险</div><div class="pb-param-value">$${fmt(inst.risk_amount)}</div></div>
-            <div class="pb-param"><div class="pb-param-label">R:R</div><div class="pb-param-value">${rr}</div></div>
+            <div class="pb-param"><div class="pb-param-label">${actualRisk != null ? '成交风险' : '重定价风险'}</div><div class="pb-param-value">$${fmt(actualRisk ?? inst.risk_amount)}</div>${actualRisk != null ? `<div style="font-size:10px;color:#8b949e">重定价 $${fmt(inst.risk_amount)} · 成交 ${fmt(fill.quantity)} 股</div>` : ''}</div>
+            <div class="pb-param"><div class="pb-param-label">有效 R:R</div><div class="pb-param-value">${rr}</div><div style="font-size:10px;color:#8b949e">计划 ${plannedRR}${fill.risk_reward != null ? ` · 成交 ${fillRR}` : ''}</div></div>
         </div>
 
         ${conditions.length ? `<div class="pb-conditions">${conditions.map(c => `<span class="pb-tag">${c}</span>`).join('')}</div>` : ''}
@@ -182,12 +191,16 @@ function showConfirmModal(instructionId) {
     const slPct = inst.entry_price ? (((inst.entry_price - inst.stop_loss) / inst.entry_price) * 100).toFixed(1) : '?';
     const tpPct = inst.entry_price ? (((inst.take_profit - inst.entry_price) / inst.entry_price) * 100).toFixed(1) : '?';
     const totalValue = (inst.entry_price || 0) * (inst.position_size || 0);
+    const ledger = inst.price_ledger || {};
+    const effectiveRR = ledger.effective?.risk_reward ?? inst.risk_reward;
+    const plannedRR = ledger.planned?.risk_reward;
 
     document.getElementById('confirmTitle').textContent = `确认执行 ${inst.symbol} ${inst.direction}`;
     document.getElementById('confirmDetails').innerHTML = `
-        <div class="pb-confirm-detail">入场 $${fmt(inst.entry_price)} | 止损 $${fmt(inst.stop_loss)} (-${slPct}%) | 止盈 $${fmt(inst.take_profit)} (+${tpPct}%)</div>
+        <div class="pb-confirm-detail">入场 $${fmt(inst.entry_price)} | 止损 $${fmt(inst.stop_loss)} (-${slPct}%) | 目标 TP $${fmt(inst.take_profit)} (+${tpPct}%，非保证出场价)</div>
         <div class="pb-confirm-detail">${inst.position_size} 股 = $${fmt(totalValue)}</div>
-        <div class="pb-confirm-detail">风险 $${fmt(inst.risk_amount)} | R:R ${inst.risk_reward ? inst.risk_reward.toFixed(1) : '-'}:1</div>
+        <div class="pb-confirm-detail">重定价风险 $${fmt(inst.risk_amount)} | 有效 R:R ${effectiveRR != null ? Number(effectiveRR).toFixed(2) : '-'}:1</div>
+        <div class="pb-confirm-detail">计划 R:R ${plannedRR != null ? Number(plannedRR).toFixed(2) : '-'}:1；成交后按实际价格与数量另记</div>
         ${inst.thesis ? `<div class="pb-confirm-detail" style="color:#8b949e">${inst.thesis}</div>` : ''}
         <div class="pb-confirm-detail" style="color:#f0883e;margin-top:8px">默认以模拟模式执行 (simulate)</div>
     `;

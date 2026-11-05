@@ -50,6 +50,31 @@ class TestQueryMethods:
         result = svc.get_today_instructions("2020-01-01")
         assert result == []
 
+    def test_price_ledger_uses_trade_record_for_backfilled_quantity(self, svc, db):
+        instruction_id = _save_inst(
+            db, entry_price=200.0, stop_loss=190.0, take_profit=220.0,
+            position_size=50,
+        )
+        db.update_instruction_tracking(instruction_id, {
+            "executed": 1,
+            "execution_price": 202.0,
+            "outcome": "holding",
+        })
+        db._conn().execute(
+            "CREATE TABLE trade_records ("
+            "id INTEGER PRIMARY KEY, entry_price REAL, quantity REAL, metadata_json TEXT)"
+        )
+        db._conn().execute(
+            "INSERT INTO trade_records VALUES (1, 202.0, 25, ?)",
+            (json.dumps({"playbook_instruction_id": instruction_id}),),
+        )
+
+        item = svc.get_today_instructions("2026-06-18")[0]
+
+        assert item["price_ledger"]["fill"]["quantity"] == 25
+        assert item["price_ledger"]["fill_risk_reward"] == 1.5
+        assert item["price_ledger"]["risk_amount_at_fill"] == 300.0
+
     def test_get_summary(self, svc, db):
         _save_inst(db)
         summary = svc.get_playbook_summary(days=30)
@@ -309,6 +334,30 @@ class TestDirectionGateC:
         row = db.get_instruction("2026-06-18", "US.AF")
         meta = json.loads(row["metadata_json"]) if row["metadata_json"] else {}
         assert "execution_origin" not in meta
+
+    def test_execution_risk_uses_actual_fill_quantity(self, svc, db):
+        self._patch_gates_ok()
+        _save_inst(db, symbol="US.AR", entry_price=200.0, stop_loss=190.0,
+                   take_profit=220.0, position_size=50)
+        broker_result = {
+            "success": True,
+            "execution_price": 202.0,
+            "execution_quantity": 25,
+            "stop_loss": 190.0,
+            "take_profit": 220.0,
+        }
+        with self._patch_dg(), self._find(db, "US.AR"), \
+             patch("app.playbook.playbook_service.PlaybookService._execute_via_dual_broker",
+                   return_value=broker_result):
+            result = svc.execute_instruction(1)
+
+        assert result["success"] is True
+        row = db.get_instruction("2026-06-18", "US.AR")
+        risk = json.loads(row["metadata_json"])["execution_risk"]
+        assert risk["requested_position_size"] == 50
+        assert risk["fill_quantity"] == 25
+        assert risk["risk_amount_at_fill"] == 300.0
+        assert risk["risk_reward_at_fill"] == 1.5
 
     def test_buy_quota_not_counting_short(self, svc, db):
         """当日 executed SHORT 不占用 BUY 配额."""

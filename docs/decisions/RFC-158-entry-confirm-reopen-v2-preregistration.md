@@ -1,6 +1,7 @@
 # RFC-158: entry_confirm 门重开（v2 形态）· 新预注册判据
 
 > **状态**: 已批准 · 实施中（用户 2026-11-05 裁「重开 entry_confirm v2 形态」）
+> **现行验收**: 以 §10「减少大亏损」目标为唯一 PASS/FAIL 主轴；§3 的 M/E 指标仅保留诊断。
 > **日期**: 2026-11-05
 > **作者**: Qoder (Bot)
 > **审批人**: 用户（2026-11-05）
@@ -146,3 +147,77 @@
 | 日期 | 变更 | 原因 |
 |---|---|---|
 | 2026-11-05 | 初版 | 用户裁重开；配套新预注册判据（含 M3 分方向公平性、M4 净经济价值三栏、E1 相对收敛线、安全停对照臂熔断） |
+
+---
+
+## 9. 2026-11-05 观测口径修订（当前 cohort 仍为 n=0）
+
+> 仅修计量与增加 record-only 观测；不改本章任何阈值、现役交易判定或 holdout 分配。
+
+- **机制状态澄清**：现役组合仍是 UNPROVEN；历史 v2 归档 112 个 treatment 决策中，
+  `ruler_used=mid` 61、`legacy` 51，不能整体称为纯 mid/grace 已验证。
+- **grace 语义澄清**：实际为「120s 首逆启动 grace（不计票）→ 后续两逆放弃 / 任一回正确认」，
+  不是 60/90/120 秒严格 2-of-3。归档 52 条 grace 均在最多两次后续观察内结束，无第三票或
+  `unpersisted` 决策样本。
+- **M4 尺子修复**：旧结算把 arm→post 的变动混入弃单价值，且对已经方向归一的 SHORT
+  `mid_move_pct` 再按原始方向取号。新行改用 `mid/last_from_confirm_pct`（弃单→+5m/+10m、
+  方向归一百分比），LONG/SHORT 统一 `max(0,-move_pct*100)`；缺新字段的旧行不得进入新 M4。
+- **R1 路径影子**：同笔最终 forward 行新增 60/90/120 秒路径与 `r1_would_confirm`，规则为
+  三个有效 mid 观察中至少 2 个同侧；非 mid、缺点或时点误差 >20s 只标 unevaluable，
+  不消耗票数、不改变现役判定。至少 30 个可评估样本且覆盖 10 日后才做经济比较。
+- **holdout 不改分配**：SHA1 分流保持不变；报告新增 direction/session/archetype 分层，
+  防止总体 20% 掩盖关键子群失衡。
+
+详档：`docs/debates/DEB-20261105-entry-confirm-v2-mechanism-hardening.md`。
+
+---
+
+## 10. 2026-11-05 首样本前目标澄清：减大亏优先，接受量少和小胜率下降
+
+### 10.1 用户裁决与修订合法性
+
+- 用户明确：120 秒确认门是其原始设想；此前取消的一项原因是指令量、真实成交量下降。本周 DA 每日指令量已提高，
+  重开的目的是**真正降低大亏损**，可以接受更少的小盈利和更低的盈利胜率。
+- 本修订写入时活跃 `entry_confirm_forward.jsonl` 为 **0 行**，RFC-158 新 cohort 的 SIM / treatment / holdout
+  均为 **n=0**；不存在看过新样本后按结果挪阈值。空文件 SHA1 为
+  `da39a3ee5e6b4b0d3255bfef95601890afd80709`。
+- 现役交易参数不变：`enabled=true / delay=120s / holdout=20% / ruler=mid / grace=3+2`，
+  FADE_SHORT 追价帽仍为 `false`。本节只替换验收目标，不改变任何入场、仓位或退出行为。
+
+### 10.2 同期分配口径
+
+每个 arm 以 **resolved assignment** 为单位，而不是只比较成交后的幸存者：
+
+1. treatment `ABANDONED`：实际未开仓，实际净额记 0；它同时减少费用和左尾暴露。
+2. treatment `CONFIRMED` 与 holdout：必须按 `decision_id` 联接已平仓的 `PLAYBOOK_SIM` 交易，使用扣费净额。
+3. 未平仓、缺交易联接或结局未知的行列为 `unresolved`，**不得补 0**，也不进入 resolved 分母。
+4. 两臂各自结局覆盖率必须 ≥95%；未达时只能 `INSUFFICIENT`，防止把数据缺失伪装成减亏。
+
+指标：
+
+- `SL负担 = Σ max(0, -net_i) × 1[exit_reason=SL_INITIAL] / N_resolved`。
+- `总净额/分配 = Σ net_i / N_resolved`。
+- 同时披露 `SL_INITIAL事件/100分配`、最差 10% 分配的平均净额、最差单笔净额和两臂覆盖率。
+- 日聚类使用同一 ET 日两臂 resolved assignment 的均值差；只有两臂当日均有结局才进入 paired-day 统计。
+
+### 10.3 样本门与三态
+
+样本门必须全部满足：
+
+- treatment resolved **n≥60**；holdout resolved **n≥20**；
+- 同期配对覆盖 **≥10 个 ET 日**；两臂结局覆盖率均 **≥95%**。
+
+| 裁决 | 条件 | 动作 |
+|---|---|---|
+| **PASS** | `SL负担_holdout − SL负担_treatment > 0`，其日聚类 80%CI 下界 >0，且 `总净额/分配_treatment − 总净额/分配_holdout ≥ 0` | 证明减大亏且未牺牲总净额；REAL 仍须另行签字 |
+| **OBSERVE** | 样本足够但方向、显著性或总净额护栏尚未同时满足，且未达到 FAIL | 保持 SIM 实验，不调参、不追求交易数 |
+| **FAIL** | SL 负担或总净额恶化，且对应日聚类 80%CI 整体低于 0 | 只提请用户复核，不自动关门 |
+| **INSUFFICIENT** | 样本、配对日或覆盖率未达门 | 不作 PASS/FAIL |
+
+### 10.4 旧指标的新角色
+
+- M1 避免率、M2 机会成本、M3 分方向放弃差、M4 短窗经济价值、E1/E2 及盈利胜率继续输出，
+  但均为**诊断项，不再单独触发 FAIL 或自动关门**。
+- 特别是“非 SL_INITIAL 小赢家减少”“成交数下降”“胜率下降”本身不再是失败；只有总净额护栏恶化才构成经济反证。
+- §3.5 的“对照臂第一次 SL_INITIAL 净均更好就立即停门”由本节取代：小样本单侧波动不能自动关门。
+- `TOO_EARLY / INSUFFICIENT / OBSERVE` 均表示尚未证明优势，不表示已经减亏；现役开门是用户批准的 SIM 实验。

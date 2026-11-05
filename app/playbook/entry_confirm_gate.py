@@ -12,9 +12,13 @@ scripts/entry_delay_confirm_shadow.py) 实测「触发后延迟 2min 复核, 价
 假设 ⇒ 必须前瞻攒样 (DEB-20261009 §31.4)。
 
 本模块 = 那个前瞻采样器, 且是 **SIM 实弹形态**: 直接改 SIM 交易行为, 结果看
-富途 app 上的真实 SIM 盈亏。2026-10-10 用户裁「直接走 sim 交易链路, 不用影子
-攒样看 sim 交易结果」⇒ `holdout_pct=0` 全量走门, 不留对照臂 (留了会稀释 SIM
-结果); 对照臂机制 inert 保留 (改配置值即恢复), 代价=无同期对照、受市况混淆。
+富途 app 上的真实 SIM 盈亏。2026-10-10 曾全量走门；2026-11-05 用户裁重开后
+现役 = `120s + holdout_pct=20 + mid/grace`，新 cohort 自当日起重计。
+**现役机制仍是 UNPROVEN，不得把归档机制读数写成已确认盈利优势。**
+
+现役 grace 的精确语义也不是 60/90/120s 严格 2-of-3：120s 首见逆向只启动
+grace 且不消耗票，后续两次逆向才 ABANDON；任一后续回正立即 CONFIRM。
+mid 任一端不可用时回落 legacy 并留痕，因此 cohort 必须按 ruler_used 分解。
 
 ════════════════════════════════════════════════════════════════════════
 设计约束 (每条都有实测依据)
@@ -131,6 +135,9 @@ _POST_WATCH: Dict[int, Dict[str, Any]] = {}
 _POST_WATCH_MAX = 200
 _POST_MARKS = (("m5", 300, "+5m"), ("m10", 600, "+10m"))
 _POST_GIVEUP_SEC = 900           # 补记放弃线 (防泄漏; 超线价不可得即弃记)
+_PATH_SHADOW_DELAY_SEC = 120
+_PATH_SHADOW_OFFSETS_SEC = (60, 90, 120)
+_PATH_SHADOW_MAX_TIMING_ERROR_SEC = 20
 
 # 产物 (锚定模块路径 — 相对路径影子污染教训, 2026-09-21)
 _ROOT = Path(__file__).resolve().parents[2]
@@ -555,6 +562,7 @@ def _gate_inner(inst, db, reprice_params, now_et, cfg, scheduler):
             "fade_short_max_opp_pct": float(cfg.get("fade_short_max_opp_pct") or 0.0),
             "fade_short_window_min": int(cfg.get("fade_short_window_min") or 0),
             "mid_arm": (_q_arm or {}).get("mid"),
+            "_path_shadow_samples": [],
         }
         if len(_PENDING) >= _PENDING_MAX:
             _evict_expired(now_et)
@@ -654,6 +662,8 @@ def _restore_arm(inst: Dict[str, Any], state: Dict[str, Any], now_et: datetime,
                 if state.get("fade_short_window_min") is not None
                 else (cfg.get("fade_short_window_min") or 0)),
             "mid_arm": state.get("mid_arm"),
+            "_path_shadow_samples": [],
+            "path_shadow_restored": True,
             "restored": True,
         }
     except Exception as _e:
@@ -720,6 +730,15 @@ def sweep_entry_confirmations(scheduler, db, now_et: datetime) -> Dict[str, int]
     if not _PENDING:
         return out
 
+    for inst_id, arm in list(_PENDING.items()):
+        for offset in _PATH_SHADOW_OFFSETS_SEC[:-1]:
+            try:
+                _record_path_sample(scheduler, arm, offset, now_et)
+            except Exception as _e:
+                logger.warning(
+                    f"[EntryConfirm] {arm.get('symbol')} 60/90s 路径影子异常 "
+                    f"(不影响判定): {_e}", exc_info=True)
+
     due = [(k, v) for k, v in list(_PENDING.items())
            if (now_et - v["armed_at"]).total_seconds() >= v["delay_sec"]]
     for inst_id, arm in due:
@@ -751,6 +770,76 @@ def _evaluate(direction: str, anchor: float, mid_arm, ruler: str, q: Dict[str, A
     return still_legacy, round(opp, 4), None, "legacy"
 
 
+def _record_path_sample(scheduler, arm: Dict[str, Any], target_offset_sec: int,
+                        now_et: datetime, q: Optional[Dict[str, Any]] = None) -> None:
+    """记录 60/90/120s mid 路径；只写内存，绝不参与 live/grace 判定。"""
+    if int(arm.get("delay_sec") or 0) != _PATH_SHADOW_DELAY_SEC:
+        return
+    samples = arm.setdefault("_path_shadow_samples", [])
+    if any(s["target_offset_sec"] == target_offset_sec for s in samples):
+        return
+    elapsed = (now_et - arm["armed_at"]).total_seconds()
+    if elapsed < target_offset_sec:
+        return
+    quote = q or _current_quotes(scheduler, arm.get("symbol"))
+    if quote is None:
+        return
+    still, opp, mid_move, ruler_used = _evaluate(
+        arm["direction"], arm["anchor"], arm.get("mid_arm"),
+        str(arm.get("ruler") or DEFAULT_RULER), quote)
+    samples.append({
+        "target_offset_sec": target_offset_sec,
+        "elapsed_sec": int(elapsed),
+        "timing_error_sec": int(elapsed - target_offset_sec),
+        "still_triggers": bool(still),
+        "opp_cost_pct": opp,
+        "mid_move_pct": mid_move,
+        "ruler_used": ruler_used,
+        "last": quote.get("last"), "bid": quote.get("bid"), "ask": quote.get("ask"),
+        "mid": quote.get("mid"), "quote_ts": quote.get("ts"),
+        "book_status": quote.get("book_status"),
+    })
+
+
+def _path_shadow_summary(arm: Dict[str, Any], live_still: bool) -> Dict[str, Any]:
+    """R1 影子：60/90/120 三个有效 mid 观察，真正 >=2/3 同侧才确认。"""
+    samples = list(arm.get("_path_shadow_samples") or [])
+    by_offset = {s["target_offset_sec"]: s for s in samples}
+    reasons = []
+    for offset in _PATH_SHADOW_OFFSETS_SEC:
+        sample = by_offset.get(offset)
+        if sample is None:
+            reasons.append(f"missing_{offset}s")
+        elif sample.get("ruler_used") != "mid" or sample.get("mid_move_pct") is None:
+            reasons.append(f"non_mid_{offset}s")
+        elif abs(int(sample.get("timing_error_sec") or 0)) > _PATH_SHADOW_MAX_TIMING_ERROR_SEC:
+            reasons.append(f"timing_{offset}s")
+    evaluable = not reasons
+    votes = [1 if by_offset[o]["still_triggers"] else 0
+             for o in _PATH_SHADOW_OFFSETS_SEC if o in by_offset]
+    r1_would_confirm = (sum(votes) >= 2) if evaluable else None
+    return {
+        "schema": "entry_confirm_path_shadow_v1",
+        "rule": "R1 fixed 60/90/120s; >=2 of 3 valid mid same-side votes; no grace; record-only",
+        "units": "elapsed/timing=seconds; mid_move_pct=direction-normalized percent",
+        "samples": samples,
+        "evaluable": evaluable,
+        "unevaluable_reasons": reasons,
+        "r1_votes": votes,
+        "r1_would_confirm": r1_would_confirm,
+        "r1_agrees_with_live": (r1_would_confirm == bool(live_still)) if evaluable else None,
+    }
+
+
+def _path_shadow_summary_safe(arm: Dict[str, Any], live_still: bool) -> Dict[str, Any]:
+    try:
+        return _path_shadow_summary(arm, live_still)
+    except Exception as _e:
+        return {"schema": "entry_confirm_path_shadow_v1", "evaluable": False,
+                "unevaluable_reasons": ["observer_error"], "error": str(_e),
+                "r1_would_confirm": None, "r1_agrees_with_live": None}
+
+
 def _judge_one(scheduler, db, inst_id: int, arm: Dict[str, Any],
                now_et: datetime, out: Dict[str, int]) -> None:
     symbol = arm.get("symbol")
@@ -774,6 +863,11 @@ def _judge_one(scheduler, db, inst_id: int, arm: Dict[str, Any],
     still, opp, mid_move, ruler_used = _evaluate(
         arm["direction"], arm["anchor"], arm.get("mid_arm"),
         str(arm.get("ruler") or DEFAULT_RULER), q)
+    try:
+        _record_path_sample(scheduler, arm, _PATH_SHADOW_OFFSETS_SEC[-1], now_et, q)
+    except Exception as _e:
+        logger.warning(f"[EntryConfirm] {symbol} 120s 路径影子异常 (不影响判定): {_e}",
+                       exc_info=True)
 
     # ── RFC-153: FADE_SHORT 开盘快跌禁追 ──
     #   本意是等反抽再空; 确认窗内价格已顺向走掉 ≥1% 时, "确认"其实是追空。
@@ -903,6 +997,7 @@ def _judge_one(scheduler, db, inst_id: int, arm: Dict[str, Any],
         _POST_WATCH[inst_id] = {
             "symbol": symbol, "direction": arm["direction"],
             "anchor": float(arm["anchor"]), "mid_arm": arm.get("mid_arm"),
+            "px_at_confirm": float(q["last"]), "mid_at_confirm": q.get("mid"),
             "decision_id": arm.get("decision_id"),
             "abandoned_at": now_et, "m5": False, "m10": False}
 
@@ -936,6 +1031,7 @@ def _judge_one(scheduler, db, inst_id: int, arm: Dict[str, Any],
         "chase_shadow_pct": CHASE_SHADOW_PCT,
         "chase_shadow_would_abandon": _chase_shadow,
         **_quote_fields, "grace": _grace_trace,
+        "path_shadow": _path_shadow_summary_safe(arm, still),
     })
 
 
@@ -964,6 +1060,13 @@ def _sweep_post_watch(scheduler, now_et: datetime) -> None:
             if _w.get("mid_arm") and _q.get("mid"):
                 _, _mm = eval_confirm(_w["direction"], float(_w["mid_arm"]), float(_q["mid"]))
                 _mid_move = round(_mm, 4)
+            _, _last_from_confirm = eval_confirm(
+                _w["direction"], float(_w["px_at_confirm"]), float(_q["last"]))
+            _mid_from_confirm = None
+            if _w.get("mid_at_confirm") and _q.get("mid"):
+                _, _mm_confirm = eval_confirm(
+                    _w["direction"], float(_w["mid_at_confirm"]), float(_q["mid"]))
+                _mid_from_confirm = round(_mm_confirm, 4)
             _write_forward_row({
                 "type": "entry_confirm_post", "schema": SCHEMA_V2,
                 "ts": now_et.isoformat(), "date": now_et.strftime("%Y-%m-%d"),
@@ -974,6 +1077,11 @@ def _sweep_post_watch(scheduler, now_et: datetime) -> None:
                 "px_last": round(float(_q["last"]), 4),
                 "bid": _q.get("bid"), "ask": _q.get("ask"), "mid": _q.get("mid"),
                 "last_move_pct": round(_last_move, 4), "mid_move_pct": _mid_move,
+                # 方向归一百分比：正=弃单后顺原交易方向；用于 M4 时取 max(0, -pct)。
+                "last_from_confirm_pct": round(_last_from_confirm, 4),
+                "mid_from_confirm_pct": _mid_from_confirm,
+                "px_at_confirm": float(_w["px_at_confirm"]),
+                "mid_at_confirm": _w.get("mid_at_confirm"),
                 "quote_ts": _q.get("ts"),
             })
             _w[_key] = True
@@ -999,6 +1107,7 @@ def _current_quotes(scheduler, symbol: str) -> Optional[Dict[str, Any]]:
         if _p is None or float(_p) <= 0:
             return None
         bid = ask = mid = None
+        book_status = "missing"
         _book_is_proxy = (
             _ctx.get("book_is_proxy") is True
             or _ctx.get("lv3_book_is_proxy") is True
@@ -1006,12 +1115,20 @@ def _current_quotes(scheduler, symbol: str) -> Optional[Dict[str, Any]]:
         try:
             _b = float(_ctx.get("lv3_bid") or _ctx.get("bid") or 0)
             _a = float(_ctx.get("lv3_ask") or _ctx.get("ask") or 0)
-            if not _book_is_proxy and _b > 0 and _a > 0 and _b <= _a:
+            if _book_is_proxy:
+                book_status = "proxy"
+            elif _b <= 0 or _a <= 0:
+                book_status = "missing"
+            elif _b > _a:
+                book_status = "crossed"
+            else:
                 bid, ask, mid = _b, _a, round((_b + _a) / 2, 6)
+                book_status = "ok"
         except (TypeError, ValueError):
             bid = ask = mid = None
+            book_status = "invalid"
         return {"last": float(_p), "bid": bid, "ask": ask, "mid": mid,
-                "ts": _ctx.get("timestamp")}
+                "ts": _ctx.get("timestamp"), "book_status": book_status}
     except Exception:
         return None
 

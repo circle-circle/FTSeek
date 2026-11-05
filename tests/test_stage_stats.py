@@ -3,7 +3,7 @@
 覆盖:
   1. 阶段归一: 落库 entry_session 优先 → ET 时钟回退 → 空串(未标注, 不臆造)
   2. 阶段聚合: 净额/胜率/MFE=0; 阶段之间不互相污染
-  3. 渲染: 含 阶段×方向×出场原因 三维 + 延长时段单列; 样本 <5 标注"仅方向性"
+  3. 渲染: 含 阶段×方向×出场原因 三维 + 延长时段单列; 样本 <30 标注"仅方向性"
   4. 空区间/无窗口 → 空串 (报告不臆造区间)
   5. 延长时段日报: 无样本不推送 (零噪音) —— 由 has_sample 语义保证
 """
@@ -119,7 +119,14 @@ def test_small_sample_is_flagged_directional_only():
     rows = [_row("A", "premarket", "做多", "tighten", -100.0)]
     txt = render_stage_section(rows)
     assert "样本少" in txt and "仅作方向性参考" in txt
-    assert MIN_N_FOR_READING == 5
+    assert MIN_N_FOR_READING == 30
+
+
+def test_small_sample_boundary_is_thirty():
+    rows29 = [_row(f"A{index}", "premarket", "做多", "test", 1.0) for index in range(29)]
+    rows30 = rows29 + [_row("A29", "premarket", "做多", "test", 1.0)]
+    assert "样本少" in render_stage_section(rows29)
+    assert "样本少" not in render_stage_section(rows30)
 
 
 def test_extended_hours_column_present():

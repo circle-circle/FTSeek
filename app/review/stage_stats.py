@@ -25,7 +25,7 @@ _STAGE_LABEL = {"premarket": "盘前", "regular": "盘中", "afterhours": "盘�
 # 延长时段 = 盘前 + 盘后 (用户口中的"盘前/盘后链")
 EXT_SESSIONS = ("premarket", "afterhours")
 # 样本不足阈值: 少于这个数只给方向性提示, 不给结论 (与既有判据纪律一致)
-MIN_N_FOR_READING = 5
+MIN_N_FOR_READING = 30
 
 
 def normalize_stage(entry_session: Optional[str], entry_time: Optional[str]) -> str:
@@ -150,7 +150,7 @@ def render_stage_section(rows: List[Dict[str, Any]], title: str = "分阶段成�
         return f"### {title}\n（区间内无已平仓样本）"
     _caliber = caliber or ("阶段=落库 entry_session 优先, 为空按 ET 时钟回退")
     lines = [f"### {title}",
-             f"_口径: 净额=费后 pnl_net; {_caliber}; 样本 <5 笔仅作方向性参考_",
+             f"_口径: 净额=费后 pnl_net; {_caliber}; 样本 <{MIN_N_FOR_READING} 笔仅作方向性参考_",
              "",
              "| 阶段 | 笔数 | 净额 | 笔均 | 胜率 | MFE=0 |",
              "| --- | --- | --- | --- | --- | --- |"]

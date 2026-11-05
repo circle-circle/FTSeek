@@ -31,6 +31,11 @@ from app.playbook.live_arm_gate import (
     evaluate_live_arm_gate,
     read_live_arm_halt,
 )
+from app.playbook.price_ledger import (
+    build_price_ledger,
+    calculate_risk_amount,
+    calculate_risk_reward,
+)
 from app.playbook.portfolio_execution_guardrail import evaluate_portfolio_guardrail
 from app.utils.timezone import now_et, now_utc
 
@@ -430,7 +435,44 @@ class PlaybookService:
         for inst in instructions:
             feedbacks = self.db.get_user_feedback(inst["id"])
             inst["user_feedback"] = feedbacks
+        self._attach_price_ledgers(instructions)
         return instructions
+
+    def _attach_price_ledgers(self, instructions: List[Dict]) -> None:
+        """Attach derived price views, using trade records when fill telemetry is absent."""
+        if not instructions:
+            return
+        ids = [int(inst["id"]) for inst in instructions]
+        fills: Dict[int, Dict[str, Any]] = {}
+        try:
+            conn = self.db._conn()
+            table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='trade_records'"
+            ).fetchone()
+            if table:
+                placeholders = ",".join("?" for _ in ids)
+                reference = "CAST(json_extract(metadata_json, '$.playbook_instruction_id') AS INTEGER)"
+                rows = conn.execute(
+                    f"SELECT {reference} AS instruction_id, entry_price, quantity "
+                    f"FROM trade_records WHERE {reference} IN ({placeholders}) "
+                    "ORDER BY id DESC",
+                    ids,
+                ).fetchall()
+                for row in rows:
+                    instruction_id = int(row["instruction_id"])
+                    if instruction_id not in fills:
+                        fills[instruction_id] = {
+                            "price": row["entry_price"],
+                            "quantity": row["quantity"],
+                        }
+        except Exception as error:
+            logger.warning("成交证据补全失败，保留指令自身价格台账: %s", error, exc_info=True)
+        for inst in instructions:
+            fill = fills.get(int(inst["id"]))
+            if fill:
+                inst["trade_fill_price"] = fill["price"]
+                inst["trade_fill_quantity"] = fill["quantity"]
+            inst["price_ledger"] = build_price_ledger(inst)
 
     def get_instruction_detail(self, instruction_id: int) -> Optional[Dict]:
         """获取指令详情 (含反馈)"""
@@ -439,6 +481,7 @@ class PlaybookService:
         for inst in instructions:
             if inst["id"] == instruction_id:
                 inst["user_feedback"] = self.db.get_user_feedback(inst["id"])
+                self._attach_price_ledgers([inst])
                 return inst
         return None
 
@@ -525,6 +568,8 @@ class PlaybookService:
                 trade_date = recent[0].get("date", trade_date)
                 instructions = self.db.get_instructions_by_date(trade_date)
 
+        self._attach_price_ledgers(instructions)
+
         # ② signal_snapshots — 投票结果 (按 symbol 索引)
         vote_map = self._get_vote_map(trade_date)
 
@@ -605,6 +650,8 @@ class PlaybookService:
             if not isinstance(raw, dict):
                 raw = raw or {}
 
+            price_ledger = inst["price_ledger"]
+
             # 该标的触发的因子 IC
             trigger_factors = conditions or (vote.get("factors_json") or [])
             if isinstance(trigger_factors, str):
@@ -648,7 +695,15 @@ class PlaybookService:
                 "stop_loss": inst.get("stop_loss", 0),
                 "take_profit": inst.get("take_profit", 0),
                 "position_size": inst.get("position_size", 0),
-                "risk_reward": inst.get("risk_reward", 0),
+                "risk_amount": inst.get("risk_amount", 0),
+                "risk_reward": (price_ledger["effective_risk_reward"]
+                                if price_ledger["effective_risk_reward"] is not None
+                                else price_ledger["planned_risk_reward"]),
+                "planned_risk_reward": price_ledger["planned_risk_reward"],
+                "effective_risk_reward": price_ledger["effective_risk_reward"],
+                "fill_risk_reward": price_ledger["fill_risk_reward"],
+                "risk_amount_at_fill": price_ledger["risk_amount_at_fill"],
+                "price_ledger": price_ledger,
                 "conditions": conditions,
                 "data_quality": dq,
                 "ok_dimensions": inst.get("ok_dimensions", 0),
@@ -1447,6 +1502,23 @@ class PlaybookService:
                 }}
                 if _override_audit:
                     patch["execution_overrides"] = _override_audit
+                if result.get("execution_price") is not None and result.get("execution_quantity") is not None:
+                    _fill_price = float(result["execution_price"])
+                    _fill_quantity = float(result["execution_quantity"])
+                    _fill_stop = float(result.get("stop_loss") or 0)
+                    _fill_target = float(result.get("take_profit") or 0)
+                    patch["execution_risk"] = {
+                        "schema": "execution_risk_v1",
+                        "fill_price": _fill_price,
+                        "fill_quantity": _fill_quantity,
+                        "requested_position_size": position_size,
+                        "stop_loss": _fill_stop,
+                        "take_profit": _fill_target,
+                        "risk_reward_at_fill": calculate_risk_reward(
+                            direction, _fill_price, _fill_stop, _fill_target),
+                        "risk_amount_at_fill": calculate_risk_amount(
+                            _fill_price, _fill_stop, _fill_quantity),
+                    }
                 try:
                     if not self.db.merge_instruction_metadata(instruction_id, patch):
                         logger.warning(
@@ -2506,6 +2578,9 @@ class PlaybookService:
             "success": True,
             "message": f"{_mode_label} 执行 {symbol} {direction} @ ${_fill} ({_env_desc})",
             "execution_price": float(_fill),
+            "execution_quantity": _effective_qty,
+            "stop_loss": float(stop_loss or 0),
+            "take_profit": float(take_profit or 0),
             "mode": _mode_label,
             "futu_order_id": _futu_id,
             # G-05: 簿记失败但成交为真 — 调用方须按"已部署敞口"计入, 不可当 skip 处理

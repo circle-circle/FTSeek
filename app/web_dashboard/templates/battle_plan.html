@@ -606,17 +606,24 @@
         const conditions = (item.conditions || []).map(c => `<span class="pl-tag">${c}</span>`).join('');
         const dq = item.data_quality || {};
         const dqHtml = Object.entries(dq).map(([k,v]) => `<span class="pl-dq-item ${v==='ok'?'pl-dq-ok':'pl-dq-bad'}">${k}:${v}</span>`).join('');
+        const ledger = item.price_ledger || {};
+        const planned = ledger.planned || {};
+        const fill = ledger.fill || {};
+        const price = value => value != null ? '$' + Number(value).toFixed(2) : '-';
+        const rr = value => value != null ? Number(value).toFixed(2) : '-';
+        const actualRisk = ledger.risk_amount_at_fill;
         const paramsHtml = `
             <div class="pl-section">
                 <div class="pl-section-title">指令参数</div>
                 <div class="pl-params">
-                    <div class="pl-param"><div class="pl-param-label">Entry</div><div class="pl-param-value">${item.entry_price ? '$'+item.entry_price.toFixed(2) : '-'}</div></div>
+                    <div class="pl-param"><div class="pl-param-label">有效 Entry</div><div class="pl-param-value">${price(item.entry_price)}</div><div style="font-size:10px;color:#8b949e">计划 ${price(planned.entry_price ?? item.entry_price)}${fill.entry_price != null ? ` · 成交 ${price(fill.entry_price)}` : ''}</div></div>
                     <div class="pl-param"><div class="pl-param-label">Stop Loss</div><div class="pl-param-value" style="color:#f87171">${item.stop_loss ? '$'+item.stop_loss.toFixed(2) : '-'}</div></div>
-                    <div class="pl-param"><div class="pl-param-label">Take Profit</div><div class="pl-param-value" style="color:#4ade80">${item.take_profit ? '$'+item.take_profit.toFixed(2) : '-'}</div></div>
+                    <div class="pl-param"><div class="pl-param-label">目标 TP</div><div class="pl-param-value" style="color:#4ade80">${item.take_profit ? '$'+item.take_profit.toFixed(2) : '-'}</div><div style="font-size:10px;color:#8b949e">非保证出场价</div></div>
                     <div class="pl-param"><div class="pl-param-label">Size</div><div class="pl-param-value">${item.position_size || '-'}</div></div>
-                    <div class="pl-param"><div class="pl-param-label">R/R</div><div class="pl-param-value">${item.risk_reward?.toFixed(2) ?? '-'}</div></div>
+                    <div class="pl-param"><div class="pl-param-label">有效 R/R</div><div class="pl-param-value">${rr(item.risk_reward)}</div><div style="font-size:10px;color:#8b949e">计划 ${rr(planned.risk_reward)}${fill.risk_reward != null ? ` · 成交 ${rr(fill.risk_reward)}` : ''}</div></div>
                     <div class="pl-param"><div class="pl-param-label">OK Dims</div><div class="pl-param-value">${item.ok_dimensions ?? '-'}/6</div></div>
                 </div>
+                <div style="font-size:11px;color:#8b949e;margin-top:6px">${actualRisk != null ? `成交风险 ${price(actualRisk)}（重定价 ${price(item.risk_amount)}，成交 ${fill.quantity ?? '-'} 股）` : `重定价风险 ${price(item.risk_amount)}`}</div>
                 ${conditions ? `<div class="pl-tags" style="margin-top:8px">${conditions}</div>` : ''}
                 ${dqHtml ? `<div class="pl-dq-row" style="margin-top:6px">${dqHtml}</div>` : ''}
                 ${item.atr_source ? `<div style="font-size:10px;color:#8b949e;margin-top:4px">${item.atr_source}</div>` : ''}

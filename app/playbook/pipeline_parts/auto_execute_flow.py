@@ -5,6 +5,7 @@ import json
 
 # 2026-11-03 冻结长轮次: 主线程进度心跳 (与出场快循环心跳分离, 见 progress_beat)
 from app.observability.progress_beat import progress_ping  # noqa: E402
+from app.playbook.price_ledger import build_price_ledger, calculate_risk_reward
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
@@ -746,6 +747,9 @@ def run_playbook_auto_execute(
                                     f"×conf={_conf_factor:.2f}, 上限{int(_max_pos_pct*100)}%)"
                                 )
 
+                        _planned_ledger = build_price_ledger(inst)
+                        _effective_risk_reward = calculate_risk_reward(
+                            _dir, _new_entry, _new_sl, _new_tp)
                         _reprice_params = {
                             "entry_price": round(_new_entry, 2),
                             "stop_loss": _new_sl,
@@ -758,6 +762,7 @@ def run_playbook_auto_execute(
                             #   (已加 or 0 兜底); 此处补写真实值, 让推送/周报显示每笔风险敞口.
                             #   纯派生, 不影响 sizing 决策.
                             "risk_amount": round(abs(_new_entry - _new_sl) * (_inst_ps or 1), 2),
+                            "risk_reward": _effective_risk_reward,
                             # 2026-06-29: 审计字段 — 记录 re-price 来源
                             "reprice_from": round(float(inst.get("entry_price", 0) or 0), 2),
                             "reprice_to": round(_new_entry, 2),
@@ -793,11 +798,17 @@ def run_playbook_auto_execute(
                                     "reprice_original_sl": _reprice_params["reprice_original_sl"],
                                     "reprice_original_tp": round(
                                         float(inst.get("take_profit", 0) or 0), 4),
+                                    "planned_risk_reward": _planned_ledger["planned_risk_reward"],
+                                    "effective_risk_reward": _effective_risk_reward,
+                                    "reprice_stop_loss": _new_sl,
+                                    "reprice_take_profit": _new_tp,
+                                    "reprice_position_size": _inst_ps or 1,
+                                    "reprice_risk_amount": _reprice_params["risk_amount"],
                                     "reprice_sl_pct": round(float(_sl_pct), 4),
                                     "reprice_tp_mult": round(float(_tp_mult), 4),
                                     "vol_bucket": (_vol_info or {}).get("bucket"),
                                     "atr_pct": round(float(atr_pct), 6),
-                                    "audit_schema": "reprice_audit_v1",
+                                    "audit_schema": "reprice_audit_v2",
                                     "at": _now_utc_rp().isoformat(),
                                 },
                             })

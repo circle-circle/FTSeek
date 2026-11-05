@@ -130,7 +130,8 @@ def record_penetration(*, symbol: str, direction: str, exit_reason: str,
         from app.utils.timezone import now_et, now_utc
         et = now_et()
         minutes_since_open = (et.hour * 60 + et.minute) - (9 * 60 + 30)
-        atr = _atr_pct(str(symbol), trig)
+        atr = (_f(telemetry.get("atr_pct")) if telemetry and "atr_pct" in telemetry
+               else _atr_pct(str(symbol), trig))
         depth_pct = abs(depth_bps) / 100.0
         row = {
             "type": "penetration",
@@ -160,6 +161,11 @@ def record_penetration(*, symbol: str, direction: str, exit_reason: str,
         if telemetry:
             row["limit_px"] = telemetry.get("limit_px")
             row["pad_bps"] = telemetry.get("pad_bps")
+            for key in (
+                    "bid", "ask", "spread_bps", "book_src", "initial_sl", "atr_pct",
+                    "tick_mfe_pct", "bar_mfe_pct", "bar_covered_until", "trade_id"):
+                if key in telemetry:
+                    row[key] = telemetry.get(key)
         # 幂等守卫 (2026-09-11, 重试风暴污染根因修): 平仓失败重试每 ~10s 重新触发本埋点,
         #   一夜灌 786 行重复 (历史日均 8-22), 会让 min_n=20 毕业门假达标。契约"每事件
         #   1 行" (registry notes) ⇒ 同 (symbol, inst_id, exit_reason) 只落首行 (真实触发

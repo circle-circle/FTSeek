@@ -78,6 +78,26 @@ def test_one_error_triggers_immediately(env):
     assert len(env["pushed"]) == 1
 
 
+def test_loguru_error_triggers(env):
+    ts = env["now"] - timedelta(minutes=5)
+    _write(env, "rsshub_us.log", [
+        f"{ts:%Y-%m-%d %H:%M:%S},123 | ERROR | [TwelveData] HTTP 429",
+    ])
+    assert _run(env) == 0
+    assert len(env["pushed"]) == 1
+    assert "rsshub_us.log=1" in env["pushed"][0]["body"]
+    assert "HTTP 429" in env["pushed"][0]["body"]
+
+
+def test_main_info_containing_loguru_error_text_does_not_trigger(env):
+    ts = env["now"] - timedelta(minutes=5)
+    _write(env, "ftseek_us.log", [
+        _line(ts, "app.x", "INFO", "example | ERROR | not a logger level"),
+    ])
+    assert _run(env) == 0
+    assert env["pushed"] == []
+
+
 def test_critical_also_counts(env):
     """CRITICAL 与 ERROR 同级纳入计数 (原 .sh 注释亦如此声明)。"""
     ts = env["now"] - timedelta(minutes=2)

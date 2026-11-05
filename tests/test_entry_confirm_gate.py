@@ -178,16 +178,15 @@ def test_production_yaml_keys_are_readable_end_to_end():
     assert ecg.confirm_gate_config()["enabled"] is _yaml_enabled, \
         "门读到的 != YAML 真值 ⇒ 读取路径断开 (2026-10-10 同型病灶)"
     assert pb.get("entry_confirm_delay_sec") == 120
-    # 2026-10-10 用户裁「直接走 sim 交易链路, 不用影子攒样看 sim 交易结果」
-    # ⇒ holdout 归零 (留对照臂会稀释 SIM 结果), 全量走门
-    assert pb.get("entry_confirm_holdout_pct") == 0
+    # RFC-158 (2026-11-05): 重开必须带 20% 同期对照臂。
+    assert pb.get("entry_confirm_holdout_pct") == 20
     assert pb.get("entry_confirm_ttl_sec") == 600
     # v2 (2026-10-15 用户裁, RFC-141 §5.10): mid-mid 同尺 + grace 2-of-3
     assert pb.get("entry_confirm_ruler") == "mid"
     assert pb.get("entry_confirm_grace_sweeps") == 3
     assert pb.get("entry_confirm_grace_votes") == 2
-    # RFC-153: FADE_SHORT 开盘快跌禁追
-    assert pb.get("entry_confirm_fade_short_chase_cap_enabled") is True
+    # RFC-158 一次一变量: 主门重开时, 未预注册的 FADE_SHORT 追价帽保持关闭。
+    assert pb.get("entry_confirm_fade_short_chase_cap_enabled") is False
     assert pb.get("entry_confirm_fade_short_max_opp_pct") == 1.0
     assert pb.get("entry_confirm_fade_short_window_min") == 15
     # 嵌套路径必须读不到 (钉住「不可用 get_dotted 嵌套路径」这条约束)
@@ -195,16 +194,16 @@ def test_production_yaml_keys_are_readable_end_to_end():
     assert get_config().get_dotted("playbook.entry_confirm.enabled", None) is None
     assert get_config().get_dotted(
         "playbook.execution_parameters.entry_confirm_enabled", None) is _yaml_enabled
-    # 门自身读到的 = YAML 真值 (不是保守默认); 开关值与 2026-10-31 关门裁决一致
+    # 门自身读到的 = YAML 真值 (不是保守默认)。
     assert ecg.confirm_gate_config() == {
-        "enabled": _yaml_enabled, "delay_sec": 120, "holdout_pct": 0, "ttl_sec": 600,
+        "enabled": _yaml_enabled, "delay_sec": 120, "holdout_pct": 20, "ttl_sec": 600,
         "ruler": "mid", "grace_sweeps": 3, "grace_votes": 2,
-        "fade_short_chase_cap_enabled": True,
+        "fade_short_chase_cap_enabled": False,
         "fade_short_max_opp_pct": 1.0, "fade_short_window_min": 15}
 
 
-def test_production_holdout_zero_means_gate_covers_every_order():
-    """⛔ holdout_pct=0 的语义必须是「全量走门」, 绝不能反过来变成「门整体失效」。
+def test_production_holdout_split_and_zero_boundary_semantics():
+    """生产按 RFC-158 留 20% 对照臂, 同时钉住 0%=全量走门的边界语义。
 
     边界陷阱: 若 _holdout_bucket 写成 `hash % 100 <= pct` 或漏掉 pct<=0 短路,
     0% 会命中全部指令 ⇒ 全部照常执行不设防 ⇒ 门看着开着 (enabled=true) 却零作用,
@@ -212,14 +211,14 @@ def test_production_holdout_zero_means_gate_covers_every_order():
     """
     from app.playbook.config import PlaybookConfig
     prod_pct = PlaybookConfig().get("entry_confirm_holdout_pct")
-    assert prod_pct == 0, f"生产 holdout 应为 0, 实得 {prod_pct}"
-    hits = [i for i in range(1, 501) if ecg._holdout_bucket(i, prod_pct)]
-    assert hits == [], f"holdout_pct=0 却有 {len(hits)} 笔绕过门: {hits[:5]}"
+    assert prod_pct == 20, f"生产 holdout 应为 RFC-158 的 20, 实得 {prod_pct}"
+    zero_hits = [i for i in range(1, 501) if ecg._holdout_bucket(i, 0)]
+    assert zero_hits == [], f"holdout_pct=0 却有 {len(zero_hits)} 笔绕过门: {zero_hits[:5]}"
     # 反向钉: 100% 必须全命中 (证明分流函数本身在工作, 不是恒 False 的僵尸)
     assert all(ecg._holdout_bucket(i, 100) for i in range(1, 21)), \
         "pct=100 未全命中 ⇒ _holdout_bucket 是恒 False 僵尸, 上面的 0% 断言无意义"
     # 20% 应约 20% (确定性哈希, 防分流函数退化成全 0 或全 1)
-    h20 = sum(1 for i in range(1, 501) if ecg._holdout_bucket(i, 20))
+    h20 = sum(1 for i in range(1, 501) if ecg._holdout_bucket(i, prod_pct))
     assert 60 < h20 < 140, f"20% 分流严重偏离: {h20}/500"
 
 
@@ -263,7 +262,7 @@ def test_config_zero_values_are_not_swallowed_by_falsy_default():
     # 生产真实值复核 (端到端, 不经替身)
     from app.playbook.config import PlaybookConfig
     prod = ecg.confirm_gate_config(PlaybookConfig())
-    assert prod["holdout_pct"] == 0, f"生产门实际 holdout={prod['holdout_pct']} ≠ YAML 的 0"
+    assert prod["holdout_pct"] == 20, f"生产门实际 holdout={prod['holdout_pct']} ≠ RFC-158 的 20"
     # 生产真实值复核 (端到端, 不经替身) —— 只钉「非 0 值没被吞」, 不钉开关状态
     # (2026-10-31 用户裁关门 ⇒ enabled 现为 False; 钉 True 会逼每次裁决改测试)
     assert isinstance(prod["enabled"], bool)
@@ -747,12 +746,10 @@ def test_registered_in_shadow_registry_with_real_gate_key():
     assert item.min_n == _st.MIN_SIM_N, (
         f"注册表 min_n={item.min_n} 与结算器样本门 MIN_SIM_N={_st.MIN_SIM_N} 漂移 "
         f"⇒ 周检告警会用错阈值")
-    assert item.min_n == 60, f"样本门应为 60 (SIM 真实成交笔数), 实得 {item.min_n}"
+    assert item.min_n == 60, f"样本门应为 60 (treatment resolved assignments), 实得 {item.min_n}"
     assert item.eval_script == "scripts/settle_entry_confirm_forward.py"
-    # 2026-10-22 (全链路复查 R3 修复): 计数锚从「机制台帐行」改为「裁决轴 = v2 起 SIM 真实
-    # 成交笔数」(结算器 latest.json 的 adjudication_source.all.n) — 原 where:arm=treatment
-    # 把台帐行 105 计成 n, 是裁决轴 (20) 的 5 倍 ⇒ 假 READY。钉子同步换钉新轴。
-    assert item.count_mode == "json_key:adjudication_source.all.n"
+    # 计数锚必须显式限定 RFC-158 当前 cohort; 旧归档的 SIM n 不得让新实验提前 READY。
+    assert item.count_mode == "json_key:current_cohort.tail_objective.arms.treatment.resolved_n"
     assert item.data_path == "data/shadow/entry_confirm_forward_latest.json"
     assert "entry_delay_confirm" in (item.cross_ref or ())
     # 口径变更后注册表不得残留旧的「配对净差/holdout 对照」裁决语义
@@ -763,7 +760,8 @@ def test_registered_in_shadow_registry_with_real_gate_key():
     # ⚠️ needle 必须是 **v2 现行判据**的数字。v1 值 (−$4.1115/+$2.79/−$157.9069) 已从
     #   注册表移除, 故此处不会假绿; 但 RFC 里 v1 值以「留档」形式仍在 ⇒ RFC 侧 needle
     #   另有防假绿断言 (见 test_rfc141_preregistration_exists_and_pins_criteria)。
-    for needle in ("−$40", "−$2.2632", "+$7.79", "+$8.79", "n≥60"):
+    for needle in ("降低大亏损", "resolved n≥60", "holdout resolved n≥20",
+                   "覆盖率≥95%", "日聚类80%CI下界>0", "不再自动触发关门"):
         assert needle in item.graduation_criteria, f"注册表判据缺 {needle}"
     # v1 判据数字若出现, 必须**就近标注 v1** (否则=现行判据仍在用旧基线尺子)
     # 注: 不能简单断言 "v1 值 not in text" —— 留档对比 ("比 v1 地板 +$2.79 抬高 2.8×")
@@ -916,6 +914,9 @@ def test_settler_criteria_constants_match_rfc():
     from scripts import settle_entry_confirm_forward as st
     # 样本门
     assert (st.MIN_SIM_N, st.MIN_SIM_DAYS) == (60, 10)
+    assert (st.RFC158_TAIL_MIN_TREATMENT_N, st.RFC158_TAIL_MIN_HOLDOUT_N) == (60, 20)
+    assert st.RFC158_TAIL_MIN_PAIRED_DAYS == 10
+    assert st.RFC158_TAIL_MIN_COVERAGE == 0.95
     # 判据1 病灶族收敛
     assert st.SL_INIT_MAX_LOSS_PER_TRADE == -40.0
     assert st.SL_INIT_MAX_N == 1
@@ -1282,6 +1283,88 @@ def test_post_abandon_watch_writes_m5_m10_rows():
     assert len(ecg._POST_WATCH) == 0 and ecg.pending_count() == 0
 
 
+def test_path_shadow_true_2of3_does_not_change_live_grace():
+    """R1 三点两票只留痕；live 仍是首逆进 grace、后续两逆才弃。"""
+    db = _FakeDB()
+    t0 = _now()
+    ecg.gate_at_execute(_inst(), db, {"entry_price": 100.0}, t0, dict(CFG_ON),
+                        scheduler=_FakeSched((100.0, 99.99, 100.01)))
+    ecg.sweep_entry_confirmations(_FakeSched((100.2, 100.19, 100.21)), db,
+                                  t0 + timedelta(seconds=60))
+    ecg.sweep_entry_confirmations(_FakeSched((100.1, 100.09, 100.11)), db,
+                                  t0 + timedelta(seconds=90))
+    first = ecg.sweep_entry_confirmations(_FakeSched((99.9, 99.89, 99.91)), db,
+                                          t0 + timedelta(seconds=120))
+    assert first["pending"] == 1 and first["confirmed"] == 0
+    ecg.sweep_entry_confirmations(_FakeSched((99.8, 99.79, 99.81)), db,
+                                  t0 + timedelta(seconds=130))
+    final = ecg.sweep_entry_confirmations(_FakeSched((99.7, 99.69, 99.71)), db,
+                                          t0 + timedelta(seconds=140))
+    assert final["abandoned"] == 1
+    row = json.loads(ecg._FORWARD_PATH.read_text().splitlines()[0])
+    path = row["path_shadow"]
+    assert row["grace"] == {"sweeps_used": 2, "adverse_votes": 2, "outcome": "persisted"}
+    assert path["evaluable"] is True and path["r1_votes"] == [1, 1, 0]
+    assert path["r1_would_confirm"] is True and path["r1_agrees_with_live"] is False
+    assert [s["target_offset_sec"] for s in path["samples"]] == [60, 90, 120]
+    assert all(s["book_status"] == "ok" for s in path["samples"])
+    assert path["units"].startswith("elapsed/timing=seconds")
+    from scripts.settle_entry_confirm_forward import path_shadow_progress
+    progress = path_shadow_progress([row])
+    assert progress["evaluable_n"] == 1 and progress["r1_disagree_live_n"] == 1
+    assert progress["sample_gate"]["ok"] is False
+
+
+def test_path_observer_failure_never_changes_live_decision():
+    db = _FakeDB()
+    t0 = _now()
+    ecg.gate_at_execute(_inst(), db, {"entry_price": 100.0}, t0, dict(CFG_ON))
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("observer down")
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(ecg, "_record_path_sample", _boom)
+    try:
+        result = ecg.sweep_entry_confirmations(_FakeSched(101.0), db,
+                                               t0 + timedelta(seconds=125))
+    finally:
+        monkeypatch.undo()
+    assert result["confirmed"] == 1 and result["abandoned"] == 0
+    row = json.loads(ecg._FORWARD_PATH.read_text().splitlines()[0])
+    assert row["path_shadow"]["evaluable"] is False
+    assert row["path_shadow"]["r1_would_confirm"] is None
+
+
+def test_post_watch_confirm_relative_fields_and_m4_direction_semantics():
+    """M4 用弃单→后验同尺收益；LONG/SHORT 都是负值才形成避免额。"""
+    from scripts.settle_entry_confirm_forward import avoided_bps_from_post
+
+    db = _FakeDB()
+    t0 = _now()
+    ecg.gate_at_execute(_inst(), db, {"entry_price": 100.0}, t0,
+                        {**CFG_ON, "grace_sweeps": 0})
+    ecg.sweep_entry_confirmations(_FakeSched(99.0), db, t0 + timedelta(seconds=125))
+    ecg.sweep_entry_confirmations(_FakeSched(99.2), db, t0 + timedelta(seconds=426))
+    post = [json.loads(x) for x in ecg._FORWARD_PATH.read_text().splitlines()
+            if json.loads(x).get("type") == "entry_confirm_post"][0]
+    assert post["last_move_pct"] == pytest.approx(-0.8, abs=1e-3)  # arm 100→99.2
+    assert post["last_from_confirm_pct"] == pytest.approx(0.2020, abs=1e-3)  # 弃单99→99.2
+    assert avoided_bps_from_post({"direction": "LONG"}, [post]) == (0.0, "confirm_last_to_post_last")
+    assert avoided_bps_from_post(
+        {"direction": "SHORT"}, [{"horizon": "+10m", "mid_from_confirm_pct": 0.5}]
+    ) == (0.0, "confirm_mid_to_post_mid")
+    assert avoided_bps_from_post(
+        {"direction": "SHORT"}, [{"horizon": "+10m", "mid_from_confirm_pct": -0.5}]
+    ) == (50.0, "confirm_mid_to_post_mid")
+    assert avoided_bps_from_post(
+        {"direction": "LONG"}, [{"horizon": "+10m", "mid_from_confirm_pct": -0.5}]
+    ) == (50.0, "confirm_mid_to_post_mid")
+    assert avoided_bps_from_post(
+        {"direction": "LONG"}, [{"horizon": "+10m", "mid_move_pct": -2.0}]
+    ) == (None, "legacy_arm_anchor_excluded")
+
+
 def test_settler_load_rows_accepts_both_gens_and_skips_post(tmp_path, monkeypatch):
     """结算器双代通吃: v1/v2 判据行都收并打 _gen 标签; post 观测行计数但不进人群。"""
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -1304,6 +1387,134 @@ def test_settler_load_rows_accepts_both_gens_and_skips_post(tmp_path, monkeypatc
     # 双窗推导: 有 v2 ⇒ 裁决窗 = v2 首行 date; 无 v2 ⇒ 退回 v1 开门日
     assert st.verdict_window(rows) == ("2026-10-12", "2026-10-15", "v2")
     assert st.verdict_window(rows[:1]) == ("2026-10-12", "2026-10-12", "v1")
+
+
+def _tail_objective_fixture():
+    rows = []
+    joined = {}
+    for day in range(10):
+        date = f"2026-11-{day + 5:02d}"
+        for index in range(6):
+            did = f"t-{day}-{index}"
+            confirmed = index == 0
+            rows.append({"arm": "treatment", "status": "ok", "date": date,
+                         "decision_id": did, "still_triggers": confirmed})
+            if confirmed:
+                joined[did] = {"net": 10.0, "exit_reason": "TP"}
+        for index in range(2):
+            did = f"h-{day}-{index}"
+            rows.append({"arm": "holdout", "status": "ok", "date": date,
+                         "decision_id": did, "still_triggers": True})
+            joined[did] = ({"net": 1.0, "exit_reason": "TP"} if index == 0
+                           else {"net": -100.0, "exit_reason": "SL_INITIAL"})
+    return rows, joined
+
+
+def test_tail_objective_accepts_lower_win_rate_when_tail_and_total_net_improve():
+    from scripts import settle_entry_confirm_forward as st
+
+    rows, joined = _tail_objective_fixture()
+    report = st.tail_objective(rows, joined)
+
+    assert report["verdict"] == "PASS"
+    assert report["arms"]["treatment"]["resolved_n"] == 60
+    assert report["arms"]["holdout"]["resolved_n"] == 20
+    assert report["arms"]["treatment"]["closed_trade_n"] == 10
+    assert report["arms"]["treatment"]["abandoned_n"] == 50
+    assert report["comparison"]["sl_initial_loss_burden_reduction"] == 50.0
+    assert report["comparison"]["total_net_per_assignment_delta"] > 0
+    assert report["daily_paired"]["sl_initial_loss_burden_reduction"]["ci80"] == [50.0, 50.0]
+
+
+def test_rfc158_tail_objective_is_preregistered_before_current_samples():
+    rfc = (Path(__file__).resolve().parents[1] / "docs" / "decisions"
+           / "RFC-158-entry-confirm-reopen-v2-preregistration.md")
+    text = rfc.read_text(encoding="utf-8")
+    for needle in ("减少大亏损", "接受量少和小胜率下降", "0 行",
+                   "treatment resolved **n≥60**", "holdout resolved **n≥20**",
+                   "不得补 0", "不再单独触发 FAIL 或自动关门"):
+        assert needle in text
+
+
+def test_tail_objective_never_turns_unresolved_trades_into_zero():
+    from scripts import settle_entry_confirm_forward as st
+
+    rows, joined = _tail_objective_fixture()
+    joined.pop("h-0-0")
+    joined.pop("h-1-0")
+    report = st.tail_objective(rows, joined)
+
+    assert report["arms"]["holdout"]["unresolved_n"] == 2
+    assert report["arms"]["holdout"]["resolved_n"] == 18
+    assert report["arms"]["holdout"]["resolution_coverage"] == 0.9
+    assert report["arms"]["holdout"]["net_sum"] == -992.0
+    assert report["sample_gate"]["coverage_ok"] is False
+    assert report["verdict"] == "INSUFFICIENT"
+
+
+def test_main_uses_tail_objective_instead_of_legacy_winner_and_opp_gates(tmp_path, monkeypatch):
+    from scripts import settle_entry_confirm_forward as st
+
+    rows, joined = _tail_objective_fixture()
+    for row in rows:
+        row.update({"schema": st.SCHEMA_V2, "type": "entry_confirm", "symbol": "US.TAIL",
+                    "direction": "LONG", "opp_cost_pct": 99.0})
+        if row["arm"] == "holdout":
+            row["still_triggers"] = True
+    fwd = tmp_path / "forward.jsonl"
+    fwd.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+    out = tmp_path / "latest.json"
+    monkeypatch.setattr(st, "FWD", fwd)
+    monkeypatch.setattr(st, "OUT", out)
+    monkeypatch.setattr(st, "load_sim_pnl", lambda _: [])
+    monkeypatch.setattr(st, "load_fills", lambda _: {})
+    monkeypatch.setattr(st, "load_trade_by_decision",
+                        lambda ids: {did: joined[did] for did in ids if did in joined})
+
+    assert st.main() == 0
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert report["current_cohort"]["mechanism"]["opp_cost_mean_pct"] == 99.0
+    assert report["criteria"]["rfc158"]["M2_opp_cost_mean_pct"]["ok"] is False
+    assert report["criteria"]["rfc158"]["E2_winners_not_hurt"]["ok"] is False
+    assert report["verdict"] == "PASS"
+    assert report["current_cohort"]["tail_objective"]["verdict"] == "PASS"
+
+
+def test_settler_empty_active_cohort_cannot_reuse_archived_count(tmp_path, monkeypatch):
+    """活跃文件为空时, 旧 latest 的 n=99 不得让 RFC-158 新 cohort 假 READY。"""
+    import copy
+    from app.playbook import shadow_registry as sr
+    from scripts import settle_entry_confirm_forward as st
+
+    shadow_dir = tmp_path / "data" / "shadow"
+    shadow_dir.mkdir(parents=True)
+    out = shadow_dir / "entry_confirm_forward_latest.json"
+    out.write_text(json.dumps({
+        "adjudication_source": {"all": {"n": 99}},
+        "current_cohort": {"sim": {"n": 99}},
+    }), encoding="utf-8")
+    fwd = tmp_path / "entry_confirm_forward.jsonl"
+    fwd.write_text("", encoding="utf-8")
+    monkeypatch.setattr(st, "FWD", fwd)
+    monkeypatch.setattr(st, "OUT", out)
+    monkeypatch.setattr(st, "load_sim_pnl", lambda _: pytest.fail("空 cohort 不得查询历史 SIM"))
+    monkeypatch.setattr(st, "load_fills", lambda _: pytest.fail("空 cohort 不得查询历史 fills"))
+
+    assert st.main() == 0
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert report["verdict"] == "TOO_EARLY"
+    assert report["current_cohort"]["cohort_since"] == st.RFC158_COOLDOWN_AFTER_REOPEN
+    assert report["current_cohort"]["sim"]["n"] == 0
+    assert report["current_cohort"]["mechanism"]["n"] == 0
+    assert report["current_cohort"]["holdout"]["n"] == 0
+    assert report["current_cohort"]["tail_objective"]["arms"]["treatment"]["resolved_n"] == 0
+    assert report["adjudication_source"]["all"]["n"] == 0
+
+    item = copy.deepcopy(next(s for s in sr.REGISTRY if s.id == "entry_confirm_forward"))
+    item.status = sr.ShadowStatus.OBSERVING
+    item.current_n = sr._count_samples(item, tmp_path)
+    assert item.current_n == 0
+    assert not (item.current_n >= item.min_n)
 
 
 # ══════════════════════════════════════════════════════════════

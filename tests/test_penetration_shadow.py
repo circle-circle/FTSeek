@@ -101,6 +101,27 @@ def test_atr_failopen_none(tmp_path, monkeypatch):
     assert row["atr_pct"] is None and row["depth_atr_ratio"] is None
 
 
+def test_early_tight_telemetry_uses_local_atr_and_preserves_stop_context(tmp_path, monkeypatch):
+    monkeypatch.setattr(ps, "_PEN_PATH", tmp_path / "pen.jsonl")
+    monkeypatch.setattr(ps, "_atr_pct", lambda *_: (_ for _ in ()).throw(
+        AssertionError("early-tight影子不得为取ATR阻塞退出")))
+    ok = ps.record_penetration(
+        symbol="DELL", direction="LONG", exit_reason="SL_INITIAL", side="active",
+        path="early_tight_initial", trigger_price=97.8, floor_px=98.0,
+        entry_price=100.0, peak_price=100.5, trough_price=97.8,
+        held_minutes=6.4, quote_src="batch", inst_id="i-early",
+        telemetry={"atr_pct": 2.5, "initial_sl": 95.0, "trade_id": 42,
+                   "bid": 97.79, "ask": 97.81, "spread_bps": 2.04,
+                   "book_src": "l1_push", "tick_mfe_pct": 0.1,
+                   "bar_mfe_pct": 0.5, "bar_covered_until": "2026-11-05 10:00:00"})
+    assert ok is True
+    row = json.loads((tmp_path / "pen.jsonl").read_text().splitlines()[-1])
+    assert row["path"] == "early_tight_initial"
+    assert row["initial_sl"] == 95.0 and row["trade_id"] == 42
+    assert row["tick_mfe_pct"] == 0.1 and row["bar_mfe_pct"] == 0.5
+    assert row["book_src"] == "l1_push" and row["atr_pct"] == 2.5
+
+
 # ── 4. 回填标签正确性 ──────────────────────────────────────
 def _mk_bars(start_hm="14:58", n=12, pattern="v_at_3"):
     """手工构造 bar: [time,o,h,l,c]。pattern: v_at_3=第3根high回摆过地板; down=一路阴跌;
@@ -198,6 +219,45 @@ def test_backfill_idempotent(tmp_path, monkeypatch):
     pob.main()  # 第二轮幂等
     rows = [json.loads(l) for l in shadow.read_text().splitlines()]
     assert sum(1 for r in rows if r.get("type") == "outcome") == 1
+
+
+def test_early_tight_backfill_has_two_minute_acceptance_and_hard_stop():
+    pob = _load_script("penetration_outcome_backfill")
+    ev = {"direction": "LONG", "floor_px": 98.0, "trigger_price": 97.8,
+          "entry": 100.0, "initial_sl": 95.0, "et_hm": "10:00",
+          "path": "early_tight_initial"}
+    bars = [
+        ["2026-11-05 10:01:00", 98, 99, 97, 97.8],
+        ["2026-11-05 10:02:00", 97.8, 99, 97.5, 97.7],
+        ["2026-11-05 10:03:00", 97.7, 98, 97.6, 97.6],
+        ["2026-11-05 10:04:00", 97.6, 99, 96, 98.2],
+        ["2026-11-05 10:05:00", 97, 98, 94, 95],
+    ] + [["2026-11-05 10:%02d:00" % minute, 95, 96, 94, 95]
+         for minute in range(6, 13)]
+    lab = pob.label_one(ev, bars)
+    assert lab["status"] == "labeled"
+    assert lab["close_recovered_2m"] is False
+    assert lab["close_recovered_3m"] is True
+    assert lab["hard_sl_during_2m"] is False
+    assert lab["continued_bps_2m"] is not None
+    assert lab["close_move_bps_2m"] is not None
+
+
+def test_early_tight_path_does_not_pollute_legacy_penetration_analysis(tmp_path, monkeypatch):
+    pla = _load_script("penetration_llm_analysis")
+    shadow = tmp_path / "pen.jsonl"
+    monkeypatch.setattr(pla, "SHADOW", shadow)
+    rows = [
+        {"type": "penetration", "event_id": "BE", "path": "marketable_limit",
+         "symbol": "DELL", "exit_reason": "SL_BREAKEVEN"},
+        {"type": "outcome", "event_id": "BE", "status": "labeled", "recovered_5m": True},
+        {"type": "penetration", "event_id": "ET", "path": "early_tight_initial",
+         "symbol": "DELL", "exit_reason": "SL_INITIAL"},
+        {"type": "outcome", "event_id": "ET", "status": "labeled", "recovered_5m": True},
+    ]
+    shadow.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+    samples = pla.load_samples()
+    assert len(samples) == 1 and samples[0]["exit_reason"] == "SL_BREAKEVEN"
 
 
 # ── 5. 判分器 (LLM出题代码判卷) ────────────────────────────
@@ -314,10 +374,20 @@ def test_board_distinguishes_dropped_from_no_pattern(tmp_path, monkeypatch):
 def test_pipeline_hook_present():
     src = (REPO / "app" / "playbook" / "pipeline_parts"
            / "exit_monitor_flow.py").read_text(encoding="utf-8")
-    idx = src.find("record_penetration")
+    idx = src.rfind("record_penetration")
     assert idx > 0, "pipeline 净保本限价块必须埋 record_penetration"
     block = src[max(0, idx - 800):idx]
     assert '_be_close_telemetry' in block, "埋点必须位于保本遥测块上下文 (在场景变量齐全)"
+
+
+def test_pipeline_early_tight_hook_preserves_hard_stop_context():
+    src = (REPO / "app" / "playbook" / "pipeline_parts"
+           / "exit_monitor_flow.py").read_text(encoding="utf-8")
+    assert 'exit_reason == "SL_INITIAL" and meta.get("_tight_sl_killed")' in src
+    assert 'path="early_tight_initial"' in src
+    assert '"initial_sl": stop_loss' in src
+    assert '"tick_mfe_pct": round(_tick_mfe, 4)' in src
+    assert '"bar_covered_until": meta.get("bar_covered_until")' in src
 
 
 def test_penetration_keys_not_in_exit_config_snapshot():

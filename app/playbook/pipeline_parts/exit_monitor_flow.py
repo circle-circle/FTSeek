@@ -582,6 +582,41 @@ def monitor_playbook_exits(
                         minutes_from_open, r["entry_time"],
                         earnings_guard=getattr(scheduler, "earnings_risk_guard", None),
                     )
+                    if exit_reason == "SL_INITIAL" and meta.get("_tight_sl_killed"):
+                        try:
+                            from app.playbook.penetration_shadow import record_penetration as _rec_pen
+                            _tick_mfe = ((peak_price - entry_price) if direction == "LONG"
+                                         else (entry_price - peak_price)) / entry_price * 100.0
+                            _bar_peak = float(meta.get("peak_price_bar") or 0.0)
+                            _bar_mfe = (((_bar_peak - entry_price) if direction == "LONG"
+                                         else (entry_price - _bar_peak)) / entry_price * 100.0
+                                        if _bar_peak > 0 else None)
+                            _rec_pen(
+                                symbol=symbol, direction=direction, exit_reason=exit_reason,
+                                side="active", path="early_tight_initial",
+                                trigger_price=current_price,
+                                floor_px=float(meta.get("_effective_sl_at_exit")
+                                               or meta.get("_early_tight_sl_px") or 0.0),
+                                entry_price=entry_price, peak_price=peak_price,
+                                trough_price=float(meta.get("trough_price") or current_price),
+                                held_minutes=held_minutes, quote_src=_quote_src,
+                                inst_id=(inst_id if inst_id is not None else f"trade:{r['id']}"),
+                                telemetry={
+                                    "trade_id": r["id"], "initial_sl": stop_loss,
+                                    "bid": _be_q_bid, "ask": _be_q_ask,
+                                    "spread_bps": (round((_be_q_ask - _be_q_bid) / current_price * 1e4, 2)
+                                                   if (_be_q_bid and _be_q_ask and current_price > 0
+                                                       and _be_q_ask >= _be_q_bid) else None),
+                                    "book_src": _be_book_src,
+                                    "atr_pct": (float(meta.get("atr")) / entry_price * 100.0
+                                                if float(meta.get("atr") or 0.0) > 0 else None),
+                                    "tick_mfe_pct": round(_tick_mfe, 4),
+                                    "bar_mfe_pct": round(_bar_mfe, 4) if _bar_mfe is not None else None,
+                                    "bar_covered_until": meta.get("bar_covered_until"),
+                                })
+                        except Exception as _pen_e:
+                            logger.warning(
+                                f"[playbook sim] {symbol} early-tight穿透影子落盘异常(已忽略): {_pen_e}")
                     # P1 DEB-20261025: read-only drift observation; throttled by
                     # stop id inside the module.  Never calls modify_order.
                     if not exit_reason and _src == "PLAYBOOK_LIVE":

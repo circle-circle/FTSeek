@@ -3,6 +3,7 @@ import fcntl
 import json
 from datetime import datetime, timezone
 
+import pandas as pd
 import pytest
 
 import scripts.extended_hours_entry_executor as executor
@@ -57,6 +58,70 @@ class FakeKlineContext:
     def request_history_kline(self, symbol, **kwargs):
         self.calls.append((symbol, kwargs))
         return 0, FakeKlineFrame(self.rows), None
+
+
+def _snapshot_frame(symbols):
+    return pd.DataFrame([{
+        "code": symbol,
+        "name": symbol,
+        "prev_close_price": 100.0,
+        "pre_price": 102.0,
+        "last_price": 101.0,
+        "pre_volume": 20000,
+    } for symbol in symbols])
+
+
+def test_snapshot_candidates_isolates_otc_symbol(capsys):
+    class QuoteContext:
+        def __init__(self):
+            self.calls = []
+
+        def get_market_snapshot(self, symbols):
+            self.calls.append(list(symbols))
+            if "US.EBKDY" in symbols:
+                return -1, "暂不提供美股 OTC 市场行情 EBKDY"
+            return 0, _snapshot_frame(symbols)
+
+    qctx = QuoteContext()
+    rows = executor._snapshot_candidates(
+        "premarket", qctx, ["US.AAPL", "US.EBKDY", "US.MSFT"])
+
+    assert {row["symbol"] for row in rows} == {"US.AAPL", "US.MSFT"}
+    assert len(qctx.calls) > 1
+    output = capsys.readouterr().out
+    assert "requested=3 succeeded=2 dropped=1" in output
+    assert "US.EBKDY" in output
+    assert "OTC" in output
+
+
+def test_snapshot_candidates_does_not_bisect_throttle(capsys):
+    class QuoteContext:
+        def __init__(self):
+            self.calls = 0
+
+        def get_market_snapshot(self, symbols):
+            self.calls += 1
+            return -1, "请求频率超过限制"
+
+    qctx = QuoteContext()
+    assert executor._snapshot_candidates("premarket", qctx, ["US.AAPL", "US.MSFT"]) == []
+    assert qctx.calls == 1
+    assert "requested=2 succeeded=0 dropped=2" in capsys.readouterr().out
+
+
+def test_snapshot_candidates_exception_does_not_bisect(capsys):
+    class QuoteContext:
+        def __init__(self):
+            self.calls = 0
+
+        def get_market_snapshot(self, symbols):
+            self.calls += 1
+            raise TimeoutError("snapshot timeout")
+
+    qctx = QuoteContext()
+    assert executor._snapshot_candidates("premarket", qctx, ["US.AAPL", "US.MSFT"]) == []
+    assert qctx.calls == 1
+    assert "TimeoutError" in capsys.readouterr().out
 
 
 @pytest.fixture()
