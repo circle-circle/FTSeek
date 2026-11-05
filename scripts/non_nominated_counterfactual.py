@@ -137,7 +137,12 @@ def load_instructions() -> list:
         con.close()
 
 
-def compute(bars, rows):
+def compute(bars, rows, entry: str = "open"):
+    """entry='open'  = 当日开盘入场 (提名行合法: DA 前夜已知);
+       entry='close' = 当日收盘入场 (**占位行的抗前视臂**: 盘中被发现后才谈得上入场,
+                       用收盘价消除"知道它涨了再按开盘价买"的前视偏差;
+                       代价是把当日剩余空间全部让掉 ⇒ 偏保守下界)。
+    """
     dates_by_sym = {s: sorted(dd) for s, dd in bars.items()}
     idx = {s: {d: i for i, d in enumerate(ds)} for s, ds in dates_by_sym.items()}
     out = []
@@ -147,17 +152,17 @@ def compute(bars, rows):
         if i is None:
             continue
         ds = dates_by_sym[sym]
-        open_px = bars[sym][d][0]
-        if not open_px:
+        entry_px = bars[sym][d][0] if entry == "open" else bars[sym][d][3]
+        if not entry_px:
             continue
-        rec = {"date": d, "symbol": sym,
+        rec = {"date": d, "symbol": sym, "entry_mode": entry,
                "kind": "placeholder" if r.get("row_kind") == "supply_placeholder" else "nominated",
                "direction": r.get("direction") if r.get("row_kind") != "supply_placeholder" else None,
                "confidence": r.get("confidence")}
         for h in HORIZONS:
             if i + h < len(ds):
                 close_px = bars[sym][ds[i + h]][3]
-                rec[f"r{h}"] = round((close_px - open_px) / open_px * 100, 4)
+                rec[f"r{h}"] = round((close_px - entry_px) / entry_px * 100, 4)
             else:
                 rec[f"r{h}"] = None
         out.append(rec)
@@ -228,6 +233,75 @@ def report(recs, coverage):
     return out
 
 
+def canary(recs):
+    """金丝雀 (glm R1 提案; 2026-11-05 修正版): 用同一把 join 去量**已成交**的提名行,
+    看前瞻收益与已实现 `pnl_pct` 的关系是否**方向正确且随 horizon 单调衰减**。
+
+    为什么不用"符号一致率 ≥70%" (v1 的写法, 已废弃并留痕):
+      首跑实测 r5 符号一致率只有 52% —— 但同一批数据 r1=56% / r5=51%,
+      相关系数 r1 +0.325 → r3 +0.258 → r5 +0.210 单调衰减且为正。
+      原因是**已实现净额受盘中 SL/TP 支配**, 5 日后价格回去的笔天然符号相反;
+      符号一致率因此不是 join 是否正确, 而是"盘中退出 vs 裸持有"的口径差。
+      ⇒ v1 阈值判 join 有 bug 是**误判**, 已按实测改写, 不保留"读数作废"结论。
+
+    现判据 (看到上表读数后写定, 属诊断口径而非裁决口径):
+      · corr(r1) ≤ 0 ⇒ 方向归一或日期错位, **join 可疑**;
+      · corr(r1) < corr(r5) ⇒ 信息未随 horizon 衰减 (异常) ⇒ 可疑;
+      · 其余 ⇒ join 方向正确; 相关性弱本身由盘中退出解释, 不作废读数。
+    """
+    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    try:
+        trades = {}
+        for r in con.execute(
+                "SELECT trade_date, symbol, pnl_pct FROM trade_records "
+                " WHERE source_type='PLAYBOOK_SIM' AND COALESCE(exit_price,0) > 0 "
+                "   AND pnl_pct IS NOT NULL"):
+            trades[(r["trade_date"], r["symbol"])] = float(r["pnl_pct"])
+    finally:
+        con.close()
+
+    def _corr(xs, ys):
+        n = len(xs)
+        if n < 30:
+            return None
+        mx, my = sum(xs) / n, sum(ys) / n
+        num = sum((a - mx) * (b - my) for a, b in zip(xs, ys))
+        den = (sum((a - mx) ** 2 for a in xs) * sum((b - my) ** 2 for b in ys)) ** 0.5
+        return round(num / den, 3) if den else None
+
+    out = {"rule": "corr(r1)≤0 或 corr(r1)<corr(r5) ⇒ join 可疑; 相关性弱由盘中退出解释",
+           "corr": {}}
+    pairs = {}
+    for h in ("r1", "r3", "r5"):
+        xs, ys = [], []
+        for r in recs:
+            if r["kind"] != "nominated" or r.get(h) is None:
+                continue
+            net = trades.get((r["date"], r["symbol"]))
+            if net is None:
+                continue
+            v = r[h]
+            if str(r.get("direction") or "").upper() in ("SELL_SHORT", "SHORT"):
+                v = -v
+            xs.append(v)
+            ys.append(net)
+        pairs[h] = (xs, ys)
+        out["corr"][h] = _corr(xs, ys)
+        out[f"n_{h}"] = len(xs)
+
+    c1, c5 = out["corr"].get("r1"), out["corr"].get("r5")
+    if c1 is None:
+        out["verdict"] = "样本不足 (n<30), 无法金丝雀"
+    elif c1 <= 0:
+        out["verdict"] = "join 可疑: 一阶相关非正 (查方向归一/日期错位), 读数作废"
+    elif c5 is not None and c1 < c5:
+        out["verdict"] = "join 可疑: 信息未随 horizon 衰减"
+    else:
+        out["verdict"] = "join 方向正确 (相关性弱=盘中退出口径, 不作废)"
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--report", action="store_true")
@@ -267,26 +341,52 @@ def main():
         return
 
     total = len(rows)
-    coverage = round(len(recs) / total, 4) if total else 0.0
-    rep = report(recs, {"rows_total": total, "rows_with_bars": len(recs), "rate": coverage})
+    bars = load_bars()
+    recs_close = compute(bars, rows, entry="close")
+    # 混合臂 (glm R2 攻击①的正面处置): 提名行用开盘 (前夜已知, 合法),
+    # 占位行用收盘 (盘中才发现, 用开盘=前视) ⇒ 这才是"同一信息时点"的对照。
+    recs_mixed = ([r for r in recs if r["kind"] == "nominated"]
+                  + [r for r in recs_close if r["kind"] == "placeholder"])
+    arms = {"open": recs, "close": recs_close, "mixed": recs_mixed}
+    rep = {"generated_at": datetime.now().isoformat(timespec="seconds"),
+           "criterion": "差值 CI 含 0 ⇒ 不认定提名有选择性 (纯统计判据, 无调参阈值)",
+           "entry_modes": {
+               "open": "两侧都按当日开盘 — 占位行是**前视**(盘中发现), 会高估占位组 (glm R2 攻击①)",
+               "close": "两侧都按当日收盘 — 同尺, 但抹掉提名行合法的隔夜空间",
+               "mixed": "**主臂**: 提名=开盘 (前夜已知, 合法) / 占位=收盘 (消除前视) — 唯一对齐信息时点的口径",
+           },
+           "arms": {}}
+    for _mode, _recs in arms.items():
+        _cov = round(len(_recs) / total, 4) if total else 0.0
+        _r = report(_recs, {"rows_total": total, "rows_with_bars": len(_recs), "rate": _cov})
+        _r["canary"] = canary(_recs)
+        rep["arms"][_mode] = _r
     OUT_LATEST.write_text(json.dumps(rep, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    print(f"覆盖 {len(recs)}/{total} = {coverage*100:.0f}%")
-    if coverage < MIN_COVERAGE:
-        print(f"⚠️ 覆盖率 <{MIN_COVERAGE*100:.0f}% ⇒ 按预注册只报覆盖, 不出结论")
-    for h, d in rep["horizons"].items():
-        ph, nm = d["placeholder"], d["nominated"]
-        print(f"{h}: 未提名 n={ph['n']:<4} 均值{ph['mean']:+.2f}% CI{ph['ci95']} | "
-              f"提名 n={nm['n']:<4} 均值{nm['mean']:+.2f}% CI{nm['ci95']} | "
-              f"差 {d['diff_nominated_minus_placeholder']:+.2f}pp CI{d['diff_ci95']}")
-    if coverage >= MIN_COVERAGE:
-        d5 = rep["horizons"].get("T+5") or {}
-        ci = d5.get("diff_ci95") or [None, None]
-        if ci[0] is not None:
-            verdict = ("提名为正选择" if ci[0] > 0 else
-                       ("提名为负选择" if ci[1] < 0 else "无证据表明提名有选择性"))
-            print(f"裁决 (T+5): {verdict}")
-    print(f"→ {OUT_LATEST}")
+    for _mode in ("mixed", "open", "close"):
+        _arm = rep["arms"][_mode]
+        _cov = _arm["coverage"]["rate"]
+        print(f"\n=== 入场臂 = {_mode} (覆盖 {_cov*100:.0f}%) ===")
+        if _cov < MIN_COVERAGE:
+            print(f"⚠️ 覆盖率 <{MIN_COVERAGE*100:.0f}% ⇒ 按预注册只报覆盖, 不出结论")
+        for h, d in _arm["horizons"].items():
+            ph, nm = d["placeholder"], d["nominated"]
+            print(f"{h}: 未提名 n={ph['n']:<4} 均值{ph['mean']:+.2f}% | "
+                  f"提名 n={nm['n']:<4} 均值{nm['mean']:+.2f}% | "
+                  f"差 {d['diff_nominated_minus_placeholder']:+.2f}pp CI{d['diff_ci95']}")
+        if _cov >= MIN_COVERAGE:
+            d5 = _arm["horizons"].get("T+5") or {}
+            ci = d5.get("diff_ci95") or [None, None]
+            if ci[0] is not None:
+                verdict = ("提名为正选择" if ci[0] > 0 else
+                           ("提名为负选择" if ci[1] < 0 else "无证据表明提名有选择性"))
+                print(f"裁决 (T+5): {verdict}")
+        cn = _arm.get("canary") or {}
+        if cn.get("corr"):
+            print(f"金丝雀: corr(r1/r3/r5)="
+                  f"{cn['corr'].get('r1')}/{cn['corr'].get('r3')}/{cn['corr'].get('r5')} "
+                  f"(n={cn.get('n_r1')}) ⇒ {cn['verdict']}")
+    print(f"\n→ {OUT_LATEST}")
 
 
 if __name__ == "__main__":
