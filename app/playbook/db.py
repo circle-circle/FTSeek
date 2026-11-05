@@ -1903,6 +1903,15 @@ _TRACKING_FIELDS = {
     # 2026-07-13: risk_amount 派生落库 — re-price 时补算 |entry-SL|×position_size,
     #   此前 DA/bridge 路径恒 NULL (盘前推送 {risk:.0f} 曾崩). 让审计/推送/周报可见每笔风险敞口。
     "risk_amount",
+    # 2026-11-05: risk_reward 落库 — 此前 **静默丢弃** (与 reprice_from/to 同型事故):
+    #   auto_execute 的 re-price 已把重算后的 effective RR 放进 _reprice_params 并传本函数,
+    #   但白名单不含该列 ⇒ 列值永远停在 LLM 计划口径 (实测 COIN 列 4.44 / 实际几何 1.50),
+    #   所有直接读列的分析/看板继续偏乐观。
+    #   口径 (与 app/playbook/price_ledger.py 对齐):
+    #     · 列 risk_reward      = **effective** (re-price 后 entry/SL/TP 的几何比值);
+    #     · 计划值               = metadata_json.reprice_audit.planned_risk_reward (v2 起);
+    #     · 旧行 (本次修复前写入) 列值仍是计划口径 — 由 price_ledger 按有无 v2 审计区分。
+    "risk_reward",
     # 2026-07-17: 盘前定桶落库 — DA/UE 直写指令绕过 vol_bucket 分桶, 盘前用日线 ATR 定桶后
     #   落主表, 使桶分类可解释、可事后查询 (此前桶名仅落 shadow jsonl)。
     "vol_bucket", "atr_pct",

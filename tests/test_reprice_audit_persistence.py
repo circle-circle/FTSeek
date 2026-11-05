@@ -199,7 +199,13 @@ class TestNoSchemaNoWhitelistChange:
             assert key not in _TRACKING_FIELDS
 
     def test_tracking_whitelist_cardinality_unchanged(self):
-        assert len(_TRACKING_FIELDS) == 42
+        # 基线 42 → **43** (2026-11-05, 本类语义不变, 只做等价校准):
+        #   新增项是**真实列** `risk_reward` — re-price 已把 effective RR 放进
+        #   _reprice_params 并传 update_instruction_tracking, 但白名单不含 ⇒ 静默丢弃,
+        #   列值永远停在 LLM 计划口径 (实测 US.COIN 列 4.44 / 几何 1.50, 9/16 条不一致)。
+        #   本类守的不变量是「reprice_* 审计键不得进白名单」(见上一条), 不是「白名单永不增列」;
+        #   真加列的批次必须显式改这里并留下证据, 不得默认放行。
+        assert len(_TRACKING_FIELDS) == 43
 
     def test_metadata_json_is_not_a_tracking_field(self):
         """metadata_json 是 insert/UPSERT 时整块写入的 blob, 不是白名单列。"""
@@ -239,7 +245,12 @@ class TestPipelineWiring:
         assert '"reprice_audit"' in region
 
     def test_audit_schema_is_versioned(self, region):
-        assert '"audit_schema": "reprice_audit_v1"' in region
+        assert '"audit_schema": "reprice_audit_v2"' in region
+
+    def test_planned_and_effective_rr_are_recorded(self, region):
+        for key in ("planned_risk_reward", "effective_risk_reward"):
+            assert f'"{key}"' in region
+        assert '"risk_reward": _effective_risk_reward' in region
 
     def test_original_tp_is_now_recorded(self, region):
         """原三键只留 SL 不留 TP。

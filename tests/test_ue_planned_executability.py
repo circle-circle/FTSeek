@@ -933,7 +933,10 @@ class TestInjectSiteWiring:
     def test_exec_block_never_writes_a_db_column(self):
         """零迁移钉: 本批不加列、不进 `_TRACKING_FIELDS` (加列=动生产 schema, 需批准)。"""
         from app.playbook import db
-        assert len(db._TRACKING_FIELDS) == 42
+        # 42 → 43 (2026-11-05 等价校准): 新增的是真实列 risk_reward (re-price 算出
+        #   effective RR 却因白名单缺项被静默丢弃, 实测 COIN 列 4.44/几何 1.50)。
+        #   本批 (planned_exec) 四键仍必须**不在**白名单 — 见下循环, 语义未变。
+        assert len(db._TRACKING_FIELDS) == 43
         for field in ("size_estimate", "cost_coverage", "executability", "planned_preview"):
             assert field not in db._TRACKING_FIELDS
 
