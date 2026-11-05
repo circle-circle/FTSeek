@@ -48,6 +48,15 @@ def test_risk_reward_write_reaches_db():
     assert value == 1.5
 
 
+def test_none_risk_reward_does_not_blank_column():
+    """re-price 算不出 RR 时传 None —— 不得把既有计划值写空 (修复前该键被静默丢弃)。"""
+    conn = _conn()
+    PlaybookDB(conn=conn).update_instruction_tracking(1, {"risk_reward": None})
+    value = conn.execute(
+        "SELECT risk_reward FROM playbook_instructions WHERE id = 1").fetchone()[0]
+    assert value == 4.44
+
+
 def test_non_column_fields_still_ignored():
     """reprice_from 等审计键不是 DB 列 —— 白名单必须继续挡住它们 (不炸也不写)。"""
     conn = _conn()

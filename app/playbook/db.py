@@ -957,6 +957,11 @@ class PlaybookDB:
         set_clauses = []
         values = []
         for key, value in updates.items():
+            # 2026-11-05: risk_reward 入白名单后, None 会真的把列写空 —— re-price 在
+            #   TP/SL 缺失时算不出 RR, 语义是"本次算不出"而不是"清除计划值"
+            #   (修复前该键被静默丢弃, 列本就保持计划值; 不能因为放宽而新引入写空)。
+            if key == "risk_reward" and value is None:
+                continue
             if key in _TRACKING_FIELDS:
                 set_clauses.append(f"{key} = ?")
                 values.append(value)
