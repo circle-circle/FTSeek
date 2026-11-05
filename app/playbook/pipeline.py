@@ -1160,6 +1160,19 @@ def _decision_confidence(vote_result: Dict[str, Any], data,
     return _ib._decision_confidence(vote_result, data, decision, factors)
 
 
+def _supply_conf_blocked(confidence: float, min_conf: int) -> bool:
+    """供应侧 conf 门判据。`min_conf <= 0` = 门关闭 (2026-11-05 用户裁决)。
+
+    为什么做成纯函数: 这条判据原先 inline 在大函数里, 只能靠整条管线端到端才验得到;
+    conf 门退役后最危险的回归是"某次改动把 0 当普通阈值" (0 > conf 恒真 ⇒ 反成全拦).
+    单测钉住三态: 0=不拦 / 正阈值=按值拦 / 负数=不拦。
+    """
+    try:
+        return float(min_conf) > 0 and float(confidence) < float(min_conf)
+    except (TypeError, ValueError):
+        return False
+
+
 def _build_instruction(symbol: str, direction: str, data, factors,
                        vote_result: Dict[str, Any], decision: Dict[str, Any],
                        values: Dict[str, Any], decision_id: str, confidence: int,
@@ -1681,7 +1694,9 @@ def _build_instructions_from_votes(
         except Exception:
             pass  # 非关键路径
 
-        if confidence < _min_conf_for_dir:
+        # 2026-11-05: 阈值 <=0 表示门关闭 (用户裁: conf 无判断力 ⇒ 正常成交).
+        #   判据抽成纯函数 _supply_conf_blocked 以便单测钉住 "0=不拦" 的语义.
+        if _supply_conf_blocked(confidence, _min_conf_for_dir):
             _filter_audit.setdefault("low_confidence_skip", 0)
             _filter_audit["low_confidence_skip"] += 1
             logger.info(

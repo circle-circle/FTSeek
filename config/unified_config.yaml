@@ -1814,8 +1814,15 @@ playbook:
     #   判别力: 已成交n=294 spearman(SL宽,pnl)=-0.018 (BUY +0.013), >6% vs ≤6%
     #   分桶结局无差; 被拦7笔反事实次日做空均值-0.64%(4胜3负), 证明不了拦得对.
     #   用户指令: 不要机械性无识别力阈值阻碍拦截因素. 回滚: 改回6.0+重启.
-  supply_conf_gate_buy: 55
-  supply_conf_gate_short: 55
+  # 2026-11-05 用户裁: 「conf 没有判断力 ⇒ 正常成交, 供应标的量」 ⇒ **供应侧 conf 门退役**
+  #   阈值 0 = 关闭 (pipeline 判据 `_supply_conf_blocked`: <=0 恒不拦), conf 仍随指令落库
+  #   供事后归因, 不再用它决定"发不发指令".
+  #   证据 (A10 口径, PLAYBOOK_SIM n=758): IC(conf, $pnl)=+0.043; conf<40 占 727/758=96%
+  #     (笔均 +$2.23, 胜率 71.3%) ⇒ 没有可用的分层; 门自 2026-08-25 起 0 命中 (全史仅 13 行 SKIP).
+  #   供给侧真瓶颈不在 conf: 占位"非当前通道候选"≈58/日 (bridge 未提名) 才是量级约束.
+  #   回滚: 两键恢复 55 + systemctl restart ftseek-us.
+  supply_conf_gate_buy: 0
+  supply_conf_gate_short: 0
   shadow_portfolio_enabled: true
   # 2026-08-28 取消采集 (过期): shadow_registry 已判 GRADUATED (last_evaluated=2026-08-15,
   #   n=15/15, W_WEEK +$629) — 毕业后再打的是同一个结论, 且与在跑的 loser_overnight_*
