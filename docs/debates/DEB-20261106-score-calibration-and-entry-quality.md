@@ -276,3 +276,28 @@ VIX 取前一交易日、事件窗取 `[前一交易日 16:00 ET, 决策日 08:3
 
 若要重开 P3，前置条件是先有 **08:30 ET 的指数/板块盘前快照**（QQQ、SMH、SPY 的 premarket 相对昨收），
 再按同一套预注册判据重跑。**没有这个数据源，重跑只会得到同一结论**（已用 90 天证明）。
+
+---
+
+## P3 数据前提：盘前指数快照采集器（record-only，2026-11-06 装）
+
+P3 失败的根因是**数据缺口**，不是提示词。已装 `scripts/premarket_index_snapshot.py`：
+
+- 采集 QQQ / SMH / SPY / IWM 的 `pre_price`、`pre_change_rate`、`pre_volume`、`update_time`。
+  实测该券商**快照有 SMH 的盘前**，但**日K 拉不到 SMH/SOXX/XLK**（订阅限制）⇒ 半导体只有 SMH 代理，无板块广度。
+- 产物：`data/shadow/premarket_index/snapshots.jsonl` + 每个有效日的 `<date>.json`。
+  **零消费者**：`grep -rn premarket_index app/ scripts/` 除自身外为空 ⇒ 不改任何交易行为。
+- 调度：`crontab` 两条（EDT 20:32 / EST 21:32 CST = 08:32 ET），反季那条由脚本窗口判定静默跳过。
+  回滚 = 删这两行。
+
+### 踩到的坑（已写成测试）
+
+窗口外快照**仍带着上一交易日盘前的 `pre_change_rate`**（11-06 01:10 ET 实测仍显示 11-05 盘前 QQQ −1.215%、SMH −4.354%）。
+只按"当前时刻在不在 04:00–09:30 ET"判会把它当今日样本 ⇒ 有效判定加了 `update_time` 必须是**今天且 ≥04:00 ET**。
+`tests/test_premarket_index_snapshot.py` 6 例覆盖：新鲜/残值/窗口外/周末/零成交/复合均值。
+
+### 重开 P3 的门槛（写死，避免"攒够了就上"的滑移）
+
+样本只在装上之后累积，**历史不可回补**。重开需要：同一套三条判据 + **≥5 个带有效盘前样本的冲击日**
+（QQQ 当日在 −2% 以下）且 ≥20 个常态日。按 90 天 5 个冲击日的频率推算 **约需 3 个月**。
+在此之前 `market_premise` 停在"事后标签"，**不进 prompt**。
