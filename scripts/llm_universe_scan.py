@@ -1376,12 +1376,20 @@ def _gather_market_corroboration() -> Dict[str, Any]:
             if str(_rot.get("date", "")) == _today():
                 _chg = _rot.get("sector_changes") or {}
                 _gen = str(_rot.get("generated_at", "") or "")
+                # [2026-11-06 缺失外露] 缺失板块曾经以 0.00% 参与 scanner 排序, 把"最弱"写成
+                #   "最强" (实测 XLK -8.00% → "Technology(+0.0%) 最强")。缺失时不出强弱名次,
+                #   并显式声明不完整 (显式缺行优于伪造零值)。
+                _miss = _rot.get("missing_sectors") or []
                 out = {
                     "date": _rot.get("date"),
                     "caliber": (f"DA 日更盘前轮动 {_rot.get('date')} 盘前生成"
                                 + (f" (generated_at {_gen})" if _gen else "")),
-                    "strong_sectors": [f"{s}({_chg.get(s, '?')}%)" for s in (_rot.get("strongest") or [])[:3]],
-                    "weak_sectors": [f"{s}({_chg.get(s, '?')}%)" for s in (_rot.get("weakest") or [])[:3]],
+                    "strong_sectors": ([] if _miss else
+                                       [f"{s}({_chg.get(s, '?')}%)" for s in (_rot.get("strongest") or [])[:3]]),
+                    "weak_sectors": ([] if _miss else
+                                     [f"{s}({_chg.get(s, '?')}%)" for s in (_rot.get("weakest") or [])[:3]]),
+                    "sector_note": (f"板块快照不完整 {len(_chg)}/{len(_chg) + len(_miss)}, "
+                                    f"缺失: {', '.join(_miss)} — 不作强弱判断" if _miss else ""),
                     "movers": [],
                     "mover_symbols": [],
                 }
