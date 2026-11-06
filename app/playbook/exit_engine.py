@@ -511,6 +511,20 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     )
     breakeven_triggered = peak_profit_pct >= float(_exit_cfg.get("breakeven_at_pct", 0.5))
 
+    # ── RFC-187 分段落袋线影子 (2026-11-06, record-only) ──
+    #   只算线 + 落盘, 不参与任何退场判定; 开关 playbook.exit_staging_shadow.enabled (默认 false)。
+    #   预注册判据见模块 docstring。TEST 标记 (单测约定) 不落盘, 防污染生产 jsonl。
+    if _symbol != "TEST":
+        try:
+            from app.playbook.exit_staging_shadow import record as _stg_record
+            _stg_record(
+                direction=direction, symbol=_symbol, entry=entry_price,
+                cur=current_price, peak_pct=peak_profit_pct, initial_sl=initial_sl,
+                live_sl=effective_sl, held_minutes=held_minutes, meta=meta,
+            )
+        except Exception as _stg_err:  # 影子失败绝不阻断退出链
+            logger.warning(f"[RFC-187 shadow] hook 失败: {_stg_err}")
+
     # ── 退出判断 (按优先级, if/elif/elif 链) ──
     # 优先级: SL > TAKE_PROFIT > OVERNIGHT_GAP > PRE_CLOSE > TIME_EXIT > MAX_HOLD
     exit_reason = ""

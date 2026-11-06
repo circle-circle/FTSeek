@@ -1787,6 +1787,21 @@ playbook:
   #   回滚: 置 true (热重载即生效, ConfigContainer 读取); 代码侧 fail-safe:
   #   配置读失败 → 保持开启。
   portfolio_guardrail_enabled: false
+  # ── RFC-187 分段落袋线影子 (2026-11-06, record-only) ──
+  #   动机: 现役 breakeven_at_pct=0.4 把最大人群 (MFE∈[0.4,0.8), A10 占 36.9%) 全剪在保本线上,
+  #   该桶 85.8% 以 SL_BREAKEVEN 出场、均 +0.074% < 往返费用线 ~11.9bps ⇒ 结构性为负。
+  #   本块只驱动**影子落盘** (data/shadow/exit_staging_shadow.jsonl), 不参与任何真实出场判定:
+  #   enabled=false 时连影子都不写。落地 = 另一份 RFC + 预注册判据过门, 不在本块直接生效。
+  #   判据 (n≥120 或 2 周, 该桶反事实净 bps ≥ +8 且 ≥ live +5bps, MAE≥2% 占比升幅 ≤10pp)
+  #   见 app/playbook/exit_staging_shadow.py docstring。
+  #   注: 历史回放不可裁决本轴 (2026-10-14 两代仪器 + 2026-11-06 第三次均撞保真门) ⇒ 只前向攒样。
+  exit_staging_shadow:
+    enabled: true            # 仅影子; 关 = 置 false (部署需重启一次生效, 之后热重载)
+    arm_hi_pct: 0.8          # S2 武装线 (现役 BE=0.4)
+    lock_pct: 0.4            # S2 锁利幅度 (0 = 净保本 = 现役行为)
+    dd_pct: 0.4              # 峰值回撤多少即锁 (现役 drawdown_from_peak=0.8)
+    dd_min_peak_pct: 0.3     # dd 起算门 — 与 BE 解耦 (现役 dd 被 BE 门锁在 ≥0.4)
+    min_interval_s: 300      # 同仓同阶段最小落盘间隔, 防 10s 轮询刷盘
   admission:
     enabled: true
     enforce: true
