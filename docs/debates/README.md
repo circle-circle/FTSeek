@@ -13,6 +13,7 @@ FTSeek-US 用于处理技术/策略分歧的标准决策流程。
 | 状态 | 含义 |
 |---|---|
 | [DEB-20261106-market-risk-switch-review](DEB-20261106-market-risk-switch-review.md) | 系统性风险价格门复核 + 日内 Event Intelligence 离线原型 | **只读复核完成；两条价格门判死，离线原型有效卡率不足；生产零变更** | 2026-11-06 | 盘前普跌轴已由 DEB-20260924 用 71 日/789 条关闭、盘中急跌轴 ≤-1.5% 全窗仅 n=2；事件驱动转离线原型，同输入 12 次 SELL_SHORT 11/SKIP 1 且 score 6↔8 不稳，deepseek-v4.1-flash 在 16k 预算下有效卡仅 4/10（截断）⇒ 不换 DA 主模型；新增离线原型隔离守卫与重复性/换档探针。 |
+| [DEB-20261106-score-calibration-and-entry-quality](DEB-20261106-score-calibration-and-entry-quality.md) | score 校准 / 入场形态路由与 entry_confirm 结算 / market_premise 字段（三项预注册） | **预注册待执行；P1/P2b/P3 离线只读，P2a 待裁** | 2026-11-06 | P1 score→期望校准（分桶 n≥30 + ρ 显著 + 端点差 CI 不含 0，否则 score 永久降级为叙述字段）；P2b 补 entry_confirm 反事实结算（n≥100 才裁决）；P3 market_premise 仅进 prompt 与归因、不作门（冲击日召回≥4/5、常态误伤≤1/20、复跑一致≥80%）。均不改阈值、不重开已关轴。 |
 | 进行中 | 正在收集观点和证据 |
 | 待决策 | 证据已充分，等待裁决 |
 | 已决策 | 已选择方案，进入执行 |
