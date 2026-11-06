@@ -139,3 +139,45 @@ def check_quote_freshness(
             return False, f"quote 过期 (age={age:.0f}s > {max_age_seconds:.0f}s, source={src or 'unknown'})"
 
     return True, "ok"
+
+
+def reprice_quote_age_ms(quote: Optional[Dict[str, Any]]) -> Optional[int]:
+    """取 re-price『定价那一跳』的**交易所更新龄** (ms)。
+
+    与 check_quote_freshness 的口径不同 (那个量的是 `timestamp`=我方取价时刻, 恒 ~0):
+    这里量 `lv3_quote_age_ms` / `quote_age_ms` = 交易所 update_time 到现在的毫秒数,
+    也就是"我们拿这个价算 SL/TP 时, 它已经旧了多久"。
+    取不到 (字段缺失/非法) ⇒ None (调用方 fail-open, 不放拦)。
+    """
+    if not quote:
+        return None
+    raw = quote.get("lv3_quote_age_ms")
+    if raw is None:
+        raw = quote.get("quote_age_ms")
+    if raw is None:
+        return None
+    try:
+        return int(float(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+def check_reprice_quote_age(quote: Optional[Dict[str, Any]],
+                            max_age_ms: float = 30000) -> Tuple[bool, Optional[int], str]:
+    """[RFC-185] 执行前报价陈旧度判定 → (放行?, age_ms, reason)。
+
+    实测依据 (execution_tca.jsonl, |成交价−执行价| 分龄): <2s 0.064% / 2-10s 0.046% /
+    10-30s 0.085% / >30s **0.256% (max 0.49%)** ⇒ 悬崖在 30s, 阈值取 30s。
+    过龄不起价 (下轮重试), 不改变任何入场判定本身。
+    age 不可得 ⇒ 放行 (fail-open, 与全文件"取不到数据不阻断交易"口径一致)。
+    """
+    age = reprice_quote_age_ms(quote)
+    if age is None:
+        return True, None, "age_unknown"
+    try:
+        cap = float(max_age_ms or 0)
+    except (TypeError, ValueError):
+        cap = 0.0
+    if cap > 0 and age > cap:
+        return False, age, f"age={age}ms > {cap:.0f}ms"
+    return True, age, "ok"

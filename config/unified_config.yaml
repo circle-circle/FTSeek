@@ -1731,6 +1731,18 @@ playbook:
   #   追高时窗)。入场侧核销门, 不触退出参数 (exit 哈希不变)。
   #   回滚: 置 false (热重载即生效, 免重启; 违例退回 record-only 遥测)。
   chase_cap_enforce_enabled: true
+  # ── [RFC-185 2026-11-06] 执行前报价陈旧度门 (re-price 用的价太旧就不下单) ──
+  #   病灶: re-price 用触发瞬间 ctx 的 ask/bid 算 entry+SL/TP+size, 而成交发生在之后
+  #   (还要过 120s 确认门)。ctx 报价陈旧时, 止损距离是按旧价定的, 实际风险偏离桶值。
+  #   实测 (execution_tca.jsonl 56 笔有成交的行, |成交价−执行价| 分龄):
+  #     <2s 0.064% / 2-10s 0.046% / 10-30s 0.085% / **>30s 0.256% (n=5, max 0.49%)**
+  #   ⇒ 悬崖在 30s 不是 10s (10-30s 与前两档不可区分), 故阈值取 30000ms。
+  #   n=5 属薄证据 ⇒ 只做"过龄不起价", 不做任何排序/加仓类动作; 拦下的行带名落台账
+  #   供后续按拦截集算代价 (S2)。回滚: 置 false (热重载生效) 或调大 max_ms。
+  #   与提交层 entry_max_quote_age_sec(90s) 是两道门: 那个量的是提交瞬间的新取价,
+  #   本门量的是"定价用的那一跳" —— 90s 门永远看不到这里的陈旧。
+  reprice_quote_age_gate_enabled: true
+  reprice_quote_age_max_ms: 30000
   # [DEB-20260901 选项1② 弹药先行 · ADR-035] 入场 archetype 路由开关 (默认关闭)。
   #   true = PULLBACK_LIMIT/FADE_SHORT 指令以确认位限价单+TTL撤单入场 (不成交=放弃,
   #   零市价追单, 消除"低吸变追高"机制根因); BREAKOUT/无 archetype 指令不受影响。

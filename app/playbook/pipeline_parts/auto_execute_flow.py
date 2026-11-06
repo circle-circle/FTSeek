@@ -452,10 +452,52 @@ def run_playbook_auto_execute(
             atr_pct = None
             try:
                 _hp = pb_cfg.get_horizon_params(inst.get("horizon", "short"))
+                if not _hp:
+                    # [RFC-185] 未知 horizon (如 "medium": playbook_horizon.yaml 只定义
+                    #   short_horizon/long_horizon) 会让 get_horizon_params 返回 {} ⇒
+                    #   re-price 静默回退固定 SL%(2.5/2.0) 且不落 vol_bucket。
+                    #   实测当前生产 horizon 只有 short(151)/long(1) ⇒ 本分支 0 次;
+                    #   加日志是让"日后 selector 产出新 horizon"不再无声降级 (零行为变更)。
+                    logger.warning(
+                        f"[playbook] {inst['symbol']} horizon={inst.get('horizon')!r} "
+                        f"无对应 horizon 配置 (仅 short/long) → re-price 回退固定 SL%/TP 倍率")
                 _atr_required = bool(_hp.get("vol_buckets") or pb_cfg.get("vol_buckets"))
                 _dr = getattr(scheduler, "data_router", None) or getattr(scheduler, "market_data", None)
                 if _dr:
                     _ctx = _dr.get_full_market_context(inst["symbol"])
+                    # ── [RFC-185 2026-11-06] 报价陈旧度门 ──
+                    #   这里取到的 ctx 就是下面算 entry/SL/TP/size 的那一跳; 它过旧
+                    #   ⇒ 止损距离按旧价定, 实际风险偏离桶值 (TCA 实测 >30s 档
+                    #   |成交−执行| 中位 0.256% vs <10s 0.05%, max 0.49%)。
+                    #   过龄不起价、下轮重试; 判据/阈值见 config 同名键注记 (RFC-185)。
+                    #   判定本体 = data_health_guard.check_reprice_quote_age (可单测);
+                    #   age 取不到 / 判定异常 ⇒ 放行 (fail-open, 与全文件口径一致)。
+                    if bool(pb_cfg.get("reprice_quote_age_gate_enabled", True)):
+                        _qage_ok, _qage_why = True, ""
+                        try:
+                            from app.risk.data_health_guard import (
+                                check_reprice_quote_age as _qage_check)
+                            _qage_ok, _qage_ms, _qage_why = _qage_check(
+                                _ctx, pb_cfg.get("reprice_quote_age_max_ms", 30000))
+                        except Exception as _qage_err:
+                            _qage_ok, _qage_why = True, f"check_error: {_qage_err}"
+                        if not _qage_ok:
+                            _qage_reason = f"stale_quote_gate({_qage_why})"
+                            db.update_instruction_tracking(
+                                inst["id"], {"skip_reason": _qage_reason})
+                            _emit_exec_gate_audit(
+                                inst, action="skipped_stale_quote",
+                                entry=float(inst.get("entry_price") or 0),
+                                size=float(inst.get("position_size") or 0),
+                                notional=0.0,
+                                extra={"gate": "reprice_quote_age",
+                                       "why": _qage_why,
+                                       "quote_age_ms": _qage_ms})
+                            logger.info(
+                                f"[playbook] {inst['symbol']} 报价过龄 ({_qage_why}) "
+                                f"→ 本轮不起价 (下轮重试)")
+                            skipped_count += 1
+                            continue
                     if _ctx and _positive_finite_atr(_ctx.get("price")) is not None:
                         _cur = float(_ctx["price"])
                         _bid = float(_ctx.get("lv3_bid") or _ctx.get("bid") or _cur)
@@ -789,10 +831,39 @@ def run_playbook_auto_execute(
                         #   SHORT 判据 tp<entry<sl 下恒"合法") ⇒ 不留原始 TP 就无法事后分辨
                         #   "生成时就没有 TP" 与 "重定价把 TP 算没了"。
                         #   失败不阻断下单: 审计降级优于丢单 (try/except 就地隔离)。
+                        # 2026-11-06 (RFC-185): merge 是**顶层键覆盖**, 原实现每轮
+                        #   整块替换 reprice_audit ⇒ 库里只留最后一跳, 累计漂移
+                        #   (计划价→首次起价→末次起价) 无法从库重建, 只能翻日志。
+                        #   这里把首跳与轮数随身带着走: first 只写一次, rounds 累加。
+                        #   ⚠ 解析必须放在外层 try **之前**: 审计写入要直接位于 try 体内
+                        #   (守卫 test_audit_failure_cannot_block_the_order 用"最近的 try
+                        #   必须比最近的 except 更靠近 merge"判这件事; 中间夹一个解析用
+                        #   try/except 会被它判成"不在 try 体内")。
+                        _prev_rp = {}
+                        try:
+                            _md_rp = inst.get("metadata_json")
+                            if isinstance(_md_rp, str):
+                                _md_rp = json.loads(_md_rp or "{}")
+                            if isinstance(_md_rp, dict):
+                                _prev_rp = _md_rp.get("reprice_audit") or {}
+                        except Exception:
+                            _prev_rp = {}
+
                         try:
                             from app.utils.timezone import now_utc as _now_utc_rp
+                            _rp_first = _prev_rp.get("first") or {
+                                "from": _reprice_params["reprice_from"],
+                                "to": _reprice_params["reprice_to"],
+                                "stop_loss": _new_sl,
+                                "take_profit": _new_tp,
+                                "at": _now_utc_rp().isoformat(),
+                            }
+                            _rp_rounds = int(_prev_rp.get("rounds") or 0) + 1
                             _rp_written = db.merge_instruction_metadata(inst["id"], {
                                 "reprice_audit": {
+                                    # 首跳 / 轮数 (累计漂移可重建)
+                                    "first": _rp_first,
+                                    "rounds": _rp_rounds,
                                     "reprice_from": _reprice_params["reprice_from"],
                                     "reprice_to": _reprice_params["reprice_to"],
                                     "reprice_original_sl": _reprice_params["reprice_original_sl"],
