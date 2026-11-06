@@ -963,6 +963,10 @@ def _judge_one(scheduler, db, inst_id: int, arm: Dict[str, Any],
         # 确认通过: 清 pending 旗标 → 下轮 auto_execute 正常 reprice + 下单
         _write_state(db, inst_id, {
             "status": ST_CONFIRMED, "armed_at": arm["armed_at"].isoformat(),
+            # [DEB-20261106 P2c] 方向必须随终态一起重写: merge_instruction_metadata 是
+            #   **顶层浅合并** ⇒ patch 里的 entry_confirm 会整块替换旧对象, PENDING 时写入的
+            #   direction 会被静默抹掉 (2026-11-06 实测: 80 行弃单里 48 行无方向, 结算器只能吃到 31 行)。
+            "direction": arm.get("direction"), "original_direction": arm.get("direction"),
             "confirmed_at": now_et.isoformat(), "anchor": arm["anchor"],
             "planned_entry": arm.get("planned_entry"),
             "plan_gap_pct": arm.get("plan_gap_pct"),
@@ -1006,6 +1010,8 @@ def _judge_one(scheduler, db, inst_id: int, arm: Dict[str, Any],
                 f"竞态保护) — 旗标仍终态拦截")
         _write_state(db, inst_id, {
             "status": ST_ABANDONED, "armed_at": arm["armed_at"].isoformat(),
+            # [DEB-20261106 P2c] 同 CONFIRMED: 顶层浅合并会整块替换 entry_confirm ⇒ 不重写就丢方向
+            "direction": arm.get("direction"), "original_direction": arm.get("direction"),
             "abandoned_at": now_et.isoformat(), "anchor": arm["anchor"],
             "px_at_confirm": round(float(q["last"]), 4), "opp_cost_pct": opp,
             "delay_actual_sec": _delay_actual, **_quote_fields, "grace": _grace_trace,

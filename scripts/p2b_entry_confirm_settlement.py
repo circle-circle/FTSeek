@@ -51,6 +51,31 @@ def fee_pct(entry: float, notional: float) -> float:
     return 2 * per_leg / notional * 100.0
 
 
+def checkpoint_direction(day: str, sym: str, alt_day: str | None = None) -> str | None:
+    """从 DA checkpoint 回收方向 (历史弃单行的 entry_confirm.direction 已被浅合并抹掉)。
+
+    2026-11-06 实测: 48/80 行缺方向, 但 data/da_checkpoint/<date>/<SYM>.json 的
+    _llm_output.direction 100% 可回收 (48/48)。
+    """
+    for d in (day, alt_day):
+        if not d:
+            continue
+        p = ROOT / "data" / "da_checkpoint" / str(d)[:10] / f"{sym}.json"
+        if not p.exists():
+            continue
+        try:
+            j = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        cand = ((j.get("_llm_output") or {}).get("direction")) or j.get("direction")
+        cu = str(cand or "").upper()
+        if cu in ("BUY", "LONG"):
+            return "BUY"
+        if cu in ("SELL_SHORT", "SHORT"):
+            return "SELL_SHORT"
+    return None
+
+
 def settle(direction: str, entry: float, sl, tp, bar, notional: float) -> dict | None:
     if not bar or entry <= 0:
         return None
@@ -153,6 +178,10 @@ def main(argv=None) -> int:
             if cu in ("SELL_SHORT", "SHORT"):
                 resolved = "SELL_SHORT"
                 break
+        if resolved is None:
+            resolved = checkpoint_direction(day, sym, date)
+            if resolved:
+                skipped["direction_recovered_from_checkpoint"] += 1
         if resolved is None:
             skipped["unknown_direction"] += 1
             continue

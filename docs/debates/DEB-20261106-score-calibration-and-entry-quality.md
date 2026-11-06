@@ -185,3 +185,44 @@ DB `direction` 列被写成 `SKIP`。⇒ **只有 31 行可结算**（另 1 行�
 初版脚本把"方向未知"的行按多头结算，得出 `B 括号 +1.554% / 胜率 66.7% / CI [+0.292,+2.668]`，
 看起来像"门在误杀、应当关掉"。**该结果是假的**：47 行方向缺失被当成长单。修正后（方向缺失即跳过）
 均值降到 +0.086% 且 CI 含 0。记录在此，作为"方向字段缺失会直接制造假结论"的实例。
+
+---
+
+## P2c 实施 + P2b 重算（2026-11-06，同一提交）
+
+### 根因（不是"忘了写"，是浅合并整块替换）
+
+`PlaybookDB.merge_instruction_metadata` 是**顶层浅合并**：patch 里的 `entry_confirm` 会整块替换旧对象。
+`ABANDONED` / `CONFIRMED` 两个终态 patch 都没带 `direction` ⇒ PENDING 时写入的方向被静默抹掉
+（DB 列同时被写成 `SKIP`）⇒ 80 行弃单里 48 行无方向，结算器只能吃到 31 行。
+
+### 修复（最小、不动合并语义）
+
+`app/playbook/entry_confirm_gate.py` 两个终态 patch 各加 `direction` + `original_direction`
+（值取 `arm["direction"]`，arm 在 arm 时已冻结）。**不改** `merge_instruction_metadata`
+——它是其它批次审计注记的唯一通路，改深合并会波及 377 行既有 metadata。
+回归测试 `tests/test_entry_confirm_direction_persistence.py`（2 例）：
+①行为锁：用假 db 复现"patch 不带 direction ⇒ 方向丢失"，再验证新写法留存；
+②结构锁：AST 扫描两个终态 `_write_state` 字面量，缺键即红（防止有人回退写点）。
+现有测试：`test_entry_confirm_gate` 76 passed / `observability` 3 passed / `live_wiring` 16 passed。
+
+### 历史回收（不必等新样本）
+
+48/48 缺方向行可从 `data/da_checkpoint/<date>/<SYM>.json` 的 `_llm_output.direction` **100% 回收**
+（当日 checkpoint 文件名即 `US.<SYM>.json`）。结算脚本已加该 fallback ⇒ 可结算 **31 → 78 行**。
+
+### P2b 重算（v3，n=78）
+
+| 括号 | n | 均值 % | 中位 % | 胜率 | 日聚类 CI95 |
+|---|---:|---:|---:|---:|---|
+| A 收盘 | 78 | **−0.510** | −0.390 | 41.0% | [−1.083, +0.090] |
+| B 穿越 | 78 | **−0.460** | −0.428 | 39.7% | [−0.932, **+0.036**] |
+
+- 出场构成(B)：CLOSE 67 / TP 4 / SL 7；方向 SHORT(n=31) −0.505% / BUY(n=47) −0.430%。
+- **方向反转了**：从"无结论"变成"**被弃的单若做了会亏 0.46–0.51%**" ⇒ 该门在**省钱**，B 括号 CI 上界 +0.036 已贴住 0。
+- 仍 `UNPOWERED`（78 < 100），**按预注册不裁决、不改该门**；按当前置信度距显著约差 20 笔（≈2 个交易周）。
+
+### 更正（作废前版两处）
+
+1. ~~"只有 31 行可结算、需要 58 个交易日才能到 n≥100"~~ → checkpoint 可回收，**78 行可结算，约 2 周可达线**。
+2. ~~"初版 B 括号 +1.554% / CI [+0.292,+2.668] ⇒ 门在误杀"~~ → 该读数由"方向缺失当多头"造成，已作废。
