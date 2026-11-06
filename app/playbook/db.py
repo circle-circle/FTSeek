@@ -1731,18 +1731,26 @@ class PlaybookDB:
             ).fetchall()
         return [_row_to_dict(r) for r in rows]
 
-    def has_weekly_report_marker(self, week_end: str) -> bool:
-        """DEB-20260904 #S7: 周报幂等标记精确查询 (regime='weekly_report' AND date=week_end).
+    def mark_weekly_report(self, week_end: str) -> None:
+        """[RFC-187] 写周报幂等标记 —— **不再占用 playbook_regime_log 的 date**。
 
-        原实现借 get_regime_log(days=7, include_markers=True) — days 实为行数 LIMIT
-        而非日期窗: 标记行掉出最新 7 行 → 误判未出周报 → 重复推送; 反之上周旧标记
-        在窗内 → 误判已出 → 漏报。精确匹配消除两类假阳性/假阴性。
+        原写法把 regime='weekly_report' 的占位行 UPSERT 进环境表同一主键,
+        与当日环境行互斥 (谁后写谁赢), 实测吃掉 16/18 个周五的环境行。
         """
         conn = self._conn()
+        conn.execute(
+            "INSERT INTO playbook_weekly_markers (week_end, created_at) VALUES (?, ?) "
+            "ON CONFLICT(week_end) DO UPDATE SET created_at=excluded.created_at",
+            (str(week_end)[:10], now_utc().isoformat()),
+        )
+        conn.commit()
+
+    def has_weekly_report_marker(self, week_end: str) -> bool:
+        """周报幂等标记精确查询 (RFC-187: 独立表, 与环境行互不干扰)."""
+        conn = self._conn()
         row = conn.execute(
-            "SELECT 1 FROM playbook_regime_log "
-            "WHERE regime = 'weekly_report' AND date = ? LIMIT 1",
-            (week_end,),
+            "SELECT 1 FROM playbook_weekly_markers WHERE week_end = ? LIMIT 1",
+            (str(week_end)[:10],),
         ).fetchone()
         return row is not None
 
@@ -2245,6 +2253,14 @@ CREATE TABLE IF NOT EXISTS playbook_regime_log (
     spy_ma50 REAL,
     score INTEGER,
     notes TEXT,
+    created_at TEXT NOT NULL
+);
+
+-- [RFC-187 2026-11-06] 周报幂等标记**独立成表**: 原先写进 playbook_regime_log 且 date=周报周五,
+--   与当日环境行撞 UNIQUE(date) ⇒ UPSERT 谁后写谁赢, 实测窗口内 18 个周五只有 2 天有环境行
+--   (缺失 36 天里 16 天是周五, 其中 11 天与标记同日) ⇒ 兜底读 regime 的消费方拿到陈旧值。
+CREATE TABLE IF NOT EXISTS playbook_weekly_markers (
+    week_end TEXT PRIMARY KEY,
     created_at TEXT NOT NULL
 );
 

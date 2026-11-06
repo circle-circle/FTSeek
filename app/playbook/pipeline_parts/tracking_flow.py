@@ -297,17 +297,9 @@ def run_playbook_weekly(
         logger.info(f"[playbook] ✅ 周度复盘完成: {report.get('week', week_end)}")
         scheduler._playbook_weekly_done = week_end
         try:
-            from app.utils.timezone import now_utc
-            db.save_regime_log({
-                "date": week_end,
-                "regime": "weekly_report",
-                "vix": 0,
-                "spy_price": 0,
-                "spy_ma20": 0,
-                "spy_ma50": 0,
-                "score": 0,
-                "notes": f"weekly_report generated at {now_utc().isoformat()}",
-            })
+            # [RFC-187] 幂等标记写独立表: 旧写法往 playbook_regime_log 写 date=week_end 的占位行,
+            #   与当日环境行撞 UNIQUE(date) ⇒ 吃掉周五环境行 (实测 16/18 个周五缺失)。
+            db.mark_weekly_report(week_end)
         except Exception as e:
             logger.debug(f"[playbook] DB 幂等标记写入失败: {e}")
         return report
