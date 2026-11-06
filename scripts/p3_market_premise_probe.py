@@ -58,6 +58,10 @@ USER_TMPL = """今天美股开盘前的环境快照（信息截止 08:35 ET，�
 - SPY: 1日 {p1:+.2f}%，收盘相对 20 日均线 {ma20:+.2f}%
 - VIX(上一交易日收盘): {vix:.2f}
 
+盘前指数（今日 08:00 / 09:25 ET，相对上一交易日 15:55 收盘）：
+- QQQ: {qqq0800:+.2f}% / {qqq0925:+.2f}%
+- SPY: {spy0800:+.2f}% / {spy0925:+.2f}%
+
 上一交易日市场广度（本系统跟踪池 {breadth_n} 只）：
 - 下跌 ≤ -1%: {b1:.0f}%  ／ 下跌 ≤ -2%: {b2:.0f}%
 
@@ -225,6 +229,9 @@ def main(argv=None) -> int:
     ap.add_argument("--end", default="2026-11-05")
     ap.add_argument("--model", default="qwen3.7-max")
     ap.add_argument("--focus", default="2026-11-05", help="打印该日完整输入以便人工核 look-ahead")
+    ap.add_argument("--premarket-feats", type=Path, default=None,
+                    help="v3: {date: {qqq_pre_chg_0800,...}}，来自 premarket_index_regime_replay.build_features "
+                         "(富途历史 5m session=ALL 含盘前段)")
     ap.add_argument("--output-dir", type=Path, required=True)
     ap.add_argument("--execute", action="store_true")
     args = ap.parse_args(argv)
@@ -247,6 +254,10 @@ def main(argv=None) -> int:
         print("QQQ 日K获取失败, 终止")
         return 1
     breadth = load_breadth()
+    pre_feats = {}
+    if args.premarket_feats:
+        pre_feats = json.loads(args.premarket_feats.read_text(encoding="utf-8"))
+        print(f"[premkt] loaded {len(pre_feats)} days", file=sys.stderr)
     vix_map = {d: v for d, v in con.execute("select date, vix from playbook_regime_log")}
     cols = {r[1] for r in evdb.execute("PRAGMA table_info(canonical_events)")}
     title_col = next((c for c in ("title", "headline", "summary") if c in cols), None)
@@ -271,7 +282,10 @@ def main(argv=None) -> int:
         ev_n, ev_titles = (ev_rows[0][0], ev_rows[0][1] or "") if ev_rows else (0, "")
         heads = [h.strip() for h in str(ev_titles).split("||") if h.strip()][:6]
 
+        pf = pre_feats.get(d) or {}
         user = USER_TMPL.format(
+            qqq0800=pf.get("qqq_pre_chg_0800", 0.0), qqq0925=pf.get("qqq_pre_chg_0925", 0.0),
+            spy0800=pf.get("spy_pre_chg_0800", 0.0), spy0925=pf.get("spy_pre_chg_0925", 0.0),
             q1=series["US.QQQ"].ret_asof(d, 1), q3=series["US.QQQ"].ret_asof(d, 3),
             i1=series["US.IWM"].ret_asof(d, 1), i3=series["US.IWM"].ret_asof(d, 3),
             p1=series["US.SPY"].ret_asof(d, 1), ma20=series["US.SPY"].ma_gap_asof(d, 20),
