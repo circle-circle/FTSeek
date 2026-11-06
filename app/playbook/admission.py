@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 #
 # 无需独立开关: 探针关闭 (live_manual_arm.enabled=false / probe.authorized=false /
 # HALT / ALLOW_REAL_TRADING=false) 后不再生成镜像行, 本豁免自动失效 (惰性)。
-_PROBE_EXEMPT_REASONS = frozenset({"NOTIONAL_TOO_SMALL"})
+_PROBE_EXEMPT_REASONS = frozenset({"NOTIONAL_TOO_SMALL", "FEE_BPS_TOO_HIGH"})
 
 
 def _is_live_engineering_probe(inst: Dict[str, Any]) -> bool:
@@ -100,6 +100,12 @@ _DEFAULTS: Dict[str, Any] = {
     # ── 费用效率类 (算术确定, 可安全 enforce) ──
     # 名义额下限: fee_bps ≈ 2×1.99/notional; $3k → 13bps, $8k → 5bps
     "min_notional_usd": 0.0,          # 0=不拦 (先观测分布再定档)
+    "max_fee_bps": 0.0,
+    # [2026-11-06] sizing 侧取 max(风险股数, 费用可行最小股数): 费用地板 $1.99/腿是固定成本,
+    #   风险预算小 ⇒ 名义额小 ⇒ 费率必然越线 (11-06 实锤: risk_off ×0.3 下 18/20 全灭)。
+    #   开启后单笔名义额被抬到费用可行下限, 风险随之上升 (受 max_position_pct 与 risk_cap 钳制)。
+    #   关闭 = 旧行为 (只按风险预算算, 越线由本门拒)。回滚: false。
+    "fee_floor_sizing": False,
     # 低价股: commission 撞 0.3%×amt 上限 → 单腿最高 30bps
     "min_entry_price": 0.0,           # 0=不拦; 建议档 20~30
     # 每腿佣金地板 $1.99 在 qty=199 处与 $0.01/股 等价; 超过即线性加价
@@ -167,7 +173,7 @@ def reset_cache() -> None:
 
 def estimate_round_trip_fee(qty: float, entry_price: float,
                             direction: str, trade_date: Optional[str] = None) -> float:
-    """往返费用估算 — 复用 fee_model (唯一真源), 失败时退化为地板近似。
+    """往返费用估算 — 复用 fee_model (唯一真源), 失败时退化为地板近似.
 
     退化值 $3.98 = 2×commission_min_per_order($1.99), 仅在 fee_model 不可用时使用。
     """
@@ -178,6 +184,60 @@ def estimate_round_trip_fee(qty: float, entry_price: float,
         )["total"])
     except Exception:
         return 3.98
+
+
+def fee_bps_at(qty: float, entry_price: float, direction: str,
+               trade_date: Optional[str] = None) -> Optional[float]:
+    """该股数下的往返费用率 (bps of notional)。qty/price 非法返回 None。"""
+    if qty <= 0 or entry_price <= 0:
+        return None
+    notional = qty * entry_price
+    if notional <= 0:
+        return None
+    fee = estimate_round_trip_fee(qty, entry_price, direction, trade_date)
+    return 10000.0 * fee / notional
+
+
+def fee_viable_qty(entry_price: float, direction: str, max_notional: float,
+                   max_fee_bps: float, min_notional_usd: float = 0.0,
+                   trade_date: Optional[str] = None) -> Optional[Tuple[int, float, float]]:
+    """求「满足费用线的最小整股数」—— 费用地板 $1.99/腿 是固定成本, 名义额越小费率越高。
+
+    [2026-11-06 RFC-186b] 背景: RISK_OFF ×0.3 让 risk 预算落到 $148.69, 5% 止损 ⇒ 名义
+      只有 $2.6–3.3k ⇒ 往返费率 12.8–17.9bps, 全部越过 max_fee_bps=11.54 而遭拒 (当日 18/20
+      被拒), 而 6% 仓位帽 ($5,948) 内明明存在费用可行的更大名义额。两条闸因此互锁成「零成交」。
+      本函数给出「把名义额抬到费用可行下限所需的最小股数」, 由 sizing 侧取 max(风险股数, 本值)。
+      ⚠️ 它只解费用线, 不主张无限放大: 上界由调用方传 max_notional (仓位帽) 与风险帽钳制。
+
+    Returns:
+        (qty, fee_bps, notional) 或 None (在 max_notional 内无解 ⇒ 价格/费率结构性不可行)。
+    """
+    if entry_price <= 0 or max_notional <= 0 or max_fee_bps <= 0:
+        return None
+    q_max = int(max_notional / entry_price)
+    if q_max < 1:
+        return None
+    q_min = 1
+    if min_notional_usd and min_notional_usd > 0:
+        q_min = max(1, int(-(-min_notional_usd // entry_price)))  # ceil
+    q_min = min(q_min, q_max)
+    for q in range(q_min, q_max + 1):
+        bps = fee_bps_at(q, entry_price, direction, trade_date)
+        if bps is not None and bps <= max_fee_bps:
+            return q, bps, q * entry_price
+    return None
+
+
+def price_floor_usd(max_fee_bps: float, direction: str = "BUY",
+                    trade_date: Optional[str] = None) -> float:
+    """价格地板: 低价股按 $0.01/股计佣时费率 = 200/price bps, 与股数无关。
+
+    ⇒ price < 200/max_fee_bps 的标的**在任何规模下**都过不了费用线 (费用物理不可行)。
+    返回 0 表示不适用 (max_fee_bps<=0)。
+    """
+    if max_fee_bps <= 0:
+        return 0.0
+    return round(200.0 / max_fee_bps, 2)
 
 
 def evaluate(inst: Dict[str, Any]) -> Dict[str, Any]:
@@ -217,10 +277,12 @@ def evaluate(inst: Dict[str, Any]) -> Dict[str, Any]:
     metrics["shares"] = qty
     metrics["entry_price"] = entry_price
 
+    fee_bps = None
     if qty > 0 and entry_price > 0:
         fee = estimate_round_trip_fee(qty, entry_price, direction, inst.get("date"))
         metrics["rt_fee"] = round(fee, 2)
-        metrics["fee_bps"] = round(10000.0 * fee / notional, 1) if notional > 0 else None
+        fee_bps = 10000.0 * fee / notional if notional > 0 else None
+        metrics["fee_bps"] = round(fee_bps, 1) if fee_bps is not None else None
         # TP 处毛利 (方向自适应; 无 TP 时不判 ratio)
         if take_profit > 0:
             gross_at_tp = abs(take_profit - entry_price) * qty
@@ -235,6 +297,17 @@ def evaluate(inst: Dict[str, Any]) -> Dict[str, Any]:
     _min_nt = _f(cfg.get("min_notional_usd"))
     if _min_nt > 0 and 0 < notional < _min_nt:
         reasons.append(f"NOTIONAL_TOO_SMALL({notional:.0f}<{_min_nt:g})")
+    _max_fee_bps = _f(cfg.get("max_fee_bps"))
+    if _max_fee_bps > 0 and fee_bps is not None:
+        if fee_bps > _max_fee_bps:
+            reasons.append(f"FEE_BPS_TOO_HIGH({fee_bps:.1f}>{_max_fee_bps:g})")
+    # 价格地板 (2026-11-06): 低价股的每股佣金 ($0.01/股) 与股数无关 ⇒ 费率恒为 200/price bps,
+    #   任何规模都过不了费用线。这类不是"这单太小", 是**费用物理不可行**, 必须与尺寸类拒因分开,
+    #   否则永远看不到"这只票在现费制下不能碰"这一结论 (11-06: INTT/RIVN/LYFT)。
+    if _max_fee_bps > 0 and entry_price > 0:
+        _pf = price_floor_usd(_max_fee_bps)
+        if _pf > 0 and entry_price < _pf:
+            reasons.append(f"PRICE_BELOW_FEE_FLOOR({entry_price:.2f}<{_pf:g})")
 
     # 止损宽度卫生 (2026-08-07 用户哲学"留空间"): 止损距入场过宽 = 单笔最大亏损失控。
     #   替代静态 R:R 门 — 止盈端 (R:R 分子) 常被保本/锁盈/EOD 退出替代, 不可靠;

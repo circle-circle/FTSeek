@@ -742,9 +742,20 @@ def run_playbook_auto_execute(
                                 )
                             # F1: sizing SSOT 公共函数 (含 water_mult×regime_mult×conf_factor + 截断)
                             from app.playbook.instruction_generator import compute_position_size as _cps_f1
+                            try:
+                                from app.playbook.admission import get_admission_config as _get_adm_cfg_f1
+                                _adm_cfg_fee = _get_adm_cfg_f1()
+                            except Exception:
+                                _adm_cfg_fee = {}
                             _inst_ps = _cps_f1(
                                 _risk_base, _risk_pct, _new_entry, _new_sl, _max_pos_pct,
                                 regime_mult=_regime_mult, water_mult=_water_mult, conf_factor=_conf_factor,
+                                # [2026-11-06 RFC-186b] 费用可行下限: 与主路径同一开关,
+                                #   否则兜底路径仍产出费用越线股数 (两路双标准)。
+                                fee_floor=bool(_adm_cfg_fee.get("fee_floor_sizing", False)),
+                                max_fee_bps=float(_adm_cfg_fee.get("max_fee_bps", 0) or 0),
+                                min_notional_usd=float(_adm_cfg_fee.get("min_notional_usd", 0) or 0),
+                                direction=_dir, trade_date=inst.get("date"),
                             )
                             # B1 shadow (DEB-feedback-loop, 2026-07-31): sizing-delta 对照 —
                             #   指令自带 regime 文本 (生成侧视角) vs MarketRegimeGate (sizing 实采)

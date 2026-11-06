@@ -262,7 +262,12 @@ class PlaybookPusher:
             lines.append(f"#{idx} {sym} {dir_text} {conf_tag} [{horizon_emoji} {horizon}]")
             if entry:
                 lines.append(f"   入场 ${entry:.2f} → 止损 ${sl:.2f} → 止盈 ${tp:.2f}")
-                lines.append(f"   {pos}股 | R:R {rr:.1f}:1 | 风险 ${risk:.0f}")
+                # [2026-11-06 显示修正] position_size/risk_amount 为 None 表示"尺寸待执行时定"，
+                #   原渲染成 "0股 | 风险 $0" 会被读成"这条不做" (11-06 实证: 两条存活指令
+                #   全显示 0 股/风险$0, 与"待触发"语义相反)。缺值必须显式写成待算。
+                _pos_txt = f"{pos}股" if pos else "股数待算"
+                _risk_txt = f"风险 ${risk:.0f}" if risk else "风险待算"
+                lines.append(f"   {_pos_txt} | R:R {rr:.1f}:1 | {_risk_txt}")
             if conditions:
                 lines.append(f"   条件: {' + '.join(conditions[:4])}")
             lines.append("")

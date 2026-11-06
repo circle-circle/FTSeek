@@ -45,6 +45,11 @@ def compute_position_size(
     water_mult: float = 1.0,
     conf_factor: float = 1.0,
     risk_cap_usd: float = 0.0,
+    fee_floor: bool = False,
+    max_fee_bps: float = 0.0,
+    min_notional_usd: float = 0.0,
+    direction: str = "",
+    trade_date: Optional[str] = None,
 ) -> int:
     """确定性仓位计算 SSOT (F1, 2026-07-19, DEB-20260719-round2 Ω.3-4).
 
@@ -92,6 +97,34 @@ def compute_position_size(
                 f"[sizing] 风险帽截断至 {size}股 (每笔风险≤${risk_cap_usd:,.0f}, "
                 f"每股风险${per_share_risk:,.2f})"
             )
+
+    # ── 费用可行下限 (2026-11-06 RFC-186b) ──
+    #   费用地板 ($1.99/腿) 是固定成本 ⇒ risk 预算小(risk_off ×0.3)时名义额必然小, 费率必然越线。
+    #   实测 11-06: 20 条里 18 条死于 FEE_BPS_TOO_HIGH, 而 6% 仓位帽内每只都存在费用可行的更大名义额。
+    #   这里把股数抬到「费用可行最小股数」, 上界仍受 max_position_pct 与 risk_cap_usd 钳制;
+    #   抬不上去 (低价股或帽先绑) ⇒ 保持原股数, 由 admission 用 PRICE_BELOW_FEE_FLOOR /
+    #   FEE_BPS_TOO_HIGH 明确拒, 不在这里静默放行。
+    if fee_floor and max_fee_bps > 0 and size > 0 and max_position_pct and max_position_pct > 0:
+        try:
+            from app.playbook.admission import fee_viable_qty, fee_bps_at
+            _cap_notional = risk_base * max_position_pct
+            _cur_bps = fee_bps_at(size, entry_price, direction or "BUY", trade_date)
+            _fv = fee_viable_qty(entry_price, direction or "BUY", _cap_notional,
+                                 max_fee_bps, min_notional_usd, trade_date)
+            if _fv and _cur_bps is not None and _cur_bps > max_fee_bps:
+                _q_fee = _fv[0]
+                if risk_cap_usd and risk_cap_usd > 0:
+                    _q_cap = max(1, int(risk_cap_usd / per_share_risk))
+                    _q_fee = min(_q_fee, _q_cap)
+                if _q_fee > size:
+                    logger.info(
+                        f"[sizing] 费用可行下限: {size}→{_q_fee}股 "
+                        f"(fee {_cur_bps:.1f}→{fee_bps_at(_q_fee, entry_price, direction or 'BUY', trade_date):.1f}bps, "
+                        f"名义${size * entry_price:,.0f}→${_q_fee * entry_price:,.0f})"
+                    )
+                    size = _q_fee
+        except Exception as _ff_err:  # 求解失败不得阻断 sizing (原股数照常, 由 admission 判)
+            logger.warning(f"[sizing] 费用可行下限求解失败 (用原股数): {_ff_err}")
     return size
 
 
@@ -532,10 +565,22 @@ def compute_instruction_values(
     risk_amount = _risk_base * (risk_pct / 100) * regime_multiplier * _water_mult
     _max_position_pct = float(pb_cfg.get("max_position_pct", 0.08))
     _risk_cap_usd = float(pb_cfg.get("risk_cap_usd_per_trade", 0.0) or 0.0)
+    # [2026-11-06 RFC-186b] 费用可行下限所需的 admission 阈值 (同源, 不复制常量)
+    try:
+        from app.playbook.admission import get_admission_config as _get_adm_cfg
+        _adm_cfg_fs = _get_adm_cfg()
+    except Exception:
+        _adm_cfg_fs = {}
     position_size = compute_position_size(
         _risk_base, risk_pct, entry_price, result["stop_loss"], _max_position_pct,
         regime_mult=regime_multiplier, water_mult=_water_mult, conf_factor=1.0,
         risk_cap_usd=_risk_cap_usd,
+        # [2026-11-06 RFC-186b] 费用可行下限: 费用地板是固定成本, risk 预算小 ⇒ 名义额小 ⇒ 费率
+        #   必然越线 (11-06: risk_off ×0.3 下 18/20 全灭)。开关与阈值同源 admission 配置。
+        fee_floor=bool((_adm_cfg_fs or {}).get("fee_floor_sizing", False)),
+        max_fee_bps=float((_adm_cfg_fs or {}).get("max_fee_bps", 0) or 0),
+        min_notional_usd=float((_adm_cfg_fs or {}).get("min_notional_usd", 0) or 0),
+        direction=str(decision.get("direction") or ""), trade_date=trade_date,
     )
     # 风险帽可观测性 (DEB-20261031-risk-cap): 与上限边界同形 —— 只在帽真正绑住时打一行,
     # 并显式告警"1 股就超帽"的残差情形 (高价股无法再缩, 否则会静默放行超标风险)。
