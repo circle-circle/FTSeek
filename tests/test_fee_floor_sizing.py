@@ -12,6 +12,9 @@
 """
 from __future__ import annotations
 
+import pytest
+
+import app.playbook.admission as _adm
 from app.playbook.admission import evaluate, fee_bps_at, price_floor_usd
 from app.playbook.instruction_generator import compute_position_size
 
@@ -60,7 +63,24 @@ def test_cap_binds_before_fee_line_is_left_alone():
     assert q * entry <= EQ * MAX_POS_PCT + 1e-6
 
 
-def test_price_below_floor_reason_distinct_from_size():
+@pytest.fixture
+def fee_gate_on():
+    """测试必须钉住费用门的开关状态, 不得依赖线上 YAML。
+
+    2026-11-06 用户裁「关闭费用门拦截」后, 线上 `fee_gate_enforce: false` ⇒ 若测试直接读
+    真配置, "应当被拒"的断言会随线上裁量而红/绿翻转 (测试变成环境的函数)。
+    这里把缓存配置临时改回 true, 用例结束还原。
+    """
+    cfg = _adm.get_admission_config(refresh=True)
+    old = cfg.get("fee_gate_enforce")
+    cfg["fee_gate_enforce"] = True
+    try:
+        yield
+    finally:
+        cfg["fee_gate_enforce"] = old
+
+
+def test_price_below_floor_reason_distinct_from_size(fee_gate_on):
     """低价股 (INTT 11-06 实参 $12.30): 任何规模都过不了 → 独立拒因, 与 NOTIONAL 类分开。"""
     floor = price_floor_usd(MAX_FEE_BPS)
     assert abs(floor - 200.0 / MAX_FEE_BPS) <= 0.01  # 展示值保留 2 位小数
@@ -74,7 +94,26 @@ def test_price_below_floor_reason_distinct_from_size():
     assert not any(r.startswith("NOTIONAL_TOO_SMALL") for r in res["reasons"])
 
 
-def test_price_above_floor_no_price_reason():
+def test_gate_off_records_but_never_rejects():
+    """2026-11-06 用户裁: 关闸后判据仍算 (would_reject 留痕), 但不得把指令打成 REJECT。"""
+    cfg = _adm.get_admission_config(refresh=True)
+    old = cfg.get("fee_gate_enforce")
+    cfg["fee_gate_enforce"] = False
+    try:
+        res = evaluate({
+            "symbol": "US.AMZN", "direction": "BUY", "entry_price": 261.06,
+            "stop_loss": 248.01, "take_profit": 280.64, "position_size": 11,
+            "confidence": 50, "date": DATE,
+        })
+    finally:
+        cfg["fee_gate_enforce"] = old
+    assert res["verdict"] == "PASS", res["reasons"]
+    fg = res["metrics"].get("fee_gate") or {}
+    assert fg.get("enforced") is False
+    assert any(r.startswith("FEE_BPS_TOO_HIGH") for r in fg.get("would_reject") or []), fg
+
+
+def test_price_above_floor_no_price_reason(fee_gate_on):
     """价格高于地板时不得误报价格地板 (避免把正常单打成结构性不可行)。"""
     res = evaluate({
         "symbol": "US.AMZN", "direction": "BUY", "entry_price": 255.0,

@@ -1,5 +1,20 @@
 """2026-10-23: DA admission must be re-evaluated at execution size."""
+import pytest
+
+import app.playbook.admission as _adm
 from app.playbook.pipeline_parts import auto_execute_flow as aef
+
+
+@pytest.fixture
+def fee_gate_on():
+    """钉住费用门开关: 2026-11-06 线上裁「关闭费用门拦截」后, 本文件的拒绝断言不得随线上裁量翻转。"""
+    cfg = _adm.get_admission_config(refresh=True)
+    old = cfg.get("fee_gate_enforce")
+    cfg["fee_gate_enforce"] = True
+    try:
+        yield
+    finally:
+        cfg["fee_gate_enforce"] = old
 
 
 def _inst(decision_id="DA-20261023-US.ACI-1", size=1, entry=100.0):
@@ -8,7 +23,7 @@ def _inst(decision_id="DA-20261023-US.ACI-1", size=1, entry=100.0):
             "position_size": size, "confidence": 50, "date": "2026-10-23"}
 
 
-def test_da_small_notional_is_rejected_at_execution_size():
+def test_da_small_notional_is_rejected_at_execution_size(fee_gate_on):
     res = aef.execution_admission_evaluate(_inst(size=1, entry=100.0))
     assert res["verdict"] == "REJECT"
     assert any(r.startswith("NOTIONAL_TOO_SMALL") for r in res["reasons"])
