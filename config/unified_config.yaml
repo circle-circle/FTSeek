@@ -1807,6 +1807,10 @@ playbook:
     #   $149→$165-219, 约 +11%~+47%), 换来的是指令可成交而不是每条都死在费用线上。
     #   回滚 = false + restart (立即恢复"只按风险预算算, 越线由费用门拒")。
     fee_gate_enforce: false   # 2026-11-06 用户裁「关闭费用门拦截, 追回被拒指令, 确保今晚能按交易」。
+    price_floor_enforce: true # 2026-11-06 用户裁·二次「费用门拦截关闭, 低价股拦截需要保持」。
+    #   与 fee_gate_enforce 解耦: price < 200/max_fee_bps = $17.33 的标的, $0.01/股佣金 ⇒ 费率
+    #   与股数无关, 任何规模都过不了线 (实测 <$10 档 13 笔 毛 +0.77% / 费 1.21% ⇒ 恒亏)。
+    #   回滚 = false (或删本行, 默认 true)。
     #   false = NOTIONAL/FEE_BPS/PRICE_FLOOR 三条判据只判不拦 (写 metrics.fee_gate.would_reject
     #   供事后统计), 不再把指令翻成 SKIP。max_fee_bps 仍作为 sizing 的**目标**保留 ⇒ 关闸后
     #   成交的单费率仍是当时能做到的最低 (11-06 实算 9.4-11.5bps, 低价股 16-21bps)。

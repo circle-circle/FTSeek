@@ -122,3 +122,60 @@ def test_price_above_floor_no_price_reason(fee_gate_on):
     })
     assert not any(r.startswith("PRICE_BELOW_FEE_FLOOR") for r in res["reasons"]), res["reasons"]
     assert res["verdict"] == "PASS", res["reasons"]
+
+def test_gate_off_still_blocks_low_price_floor():
+    """2026-11-06 用户裁·二次: 费用门拦截关闭后, 低价股地板必须继续硬拦。
+
+    机制不同不能用同一开关: INTT $12.30 < 200/11.54=$17.33 ⇒ $0.01/股佣金使费率与股数无关,
+    任何规模都过不了线 (实测 <$10 档 13 笔 毛 +0.77% / 费 1.21% ⇒ 恒亏)。
+    """
+    cfg = _adm.get_admission_config(refresh=True)
+    old_fee, old_pf = cfg.get("fee_gate_enforce"), cfg.get("price_floor_enforce")
+    cfg["fee_gate_enforce"], cfg["price_floor_enforce"] = False, True
+    try:
+        res = evaluate({
+            "symbol": "US.INTT", "direction": "BUY", "entry_price": 12.30,
+            "stop_loss": 11.70, "take_profit": 13.80, "position_size": 300,
+            "confidence": 50, "date": DATE,
+        })
+    finally:
+        cfg["fee_gate_enforce"], cfg["price_floor_enforce"] = old_fee, old_pf
+    assert res["verdict"] == "REJECT", res
+    assert any(r.startswith("PRICE_BELOW_FEE_FLOOR") for r in res["reasons"]), res["reasons"]
+    # 尺寸类仍只留痕
+    assert not any(r.startswith(("FEE_BPS_TOO_HIGH", "NOTIONAL_TOO_SMALL")) for r in res["reasons"]), res["reasons"]
+
+
+def test_gate_off_mid_price_still_passes():
+    """回归: 关闸后正常价位的单不得被任何费用判据翻 SKIP。"""
+    cfg = _adm.get_admission_config(refresh=True)
+    old_fee, old_pf = cfg.get("fee_gate_enforce"), cfg.get("price_floor_enforce")
+    cfg["fee_gate_enforce"], cfg["price_floor_enforce"] = False, True
+    try:
+        res = evaluate({
+            "symbol": "US.AMZN", "direction": "BUY", "entry_price": 261.06,
+            "stop_loss": 248.01, "take_profit": 280.64, "position_size": 11,
+            "confidence": 50, "date": DATE,
+        })
+    finally:
+        cfg["fee_gate_enforce"], cfg["price_floor_enforce"] = old_fee, old_pf
+    assert res["verdict"] == "PASS", res["reasons"]
+    assert not any(r.startswith(("PRICE_BELOW_FEE_FLOOR", "FEE_BPS_TOO_HIGH")) for r in res["reasons"])
+
+
+def test_price_floor_off_records_only():
+    """两键全关 ⇒ 只留痕, 不拦 (可回滚态)。"""
+    cfg = _adm.get_admission_config(refresh=True)
+    old_pf = cfg.get("price_floor_enforce")
+    cfg["fee_gate_enforce"], cfg["price_floor_enforce"] = False, False
+    try:
+        res = evaluate({
+            "symbol": "US.INTT", "direction": "BUY", "entry_price": 12.30,
+            "stop_loss": 11.70, "take_profit": 13.80, "position_size": 300,
+            "confidence": 50, "date": DATE,
+        })
+    finally:
+        cfg["price_floor_enforce"] = old_pf
+    fg = res["metrics"].get("fee_gate") or {}
+    assert any(r.startswith("PRICE_BELOW_FEE_FLOOR") for r in fg.get("would_reject") or []), fg
+    assert res["verdict"] == "PASS", res["reasons"]

@@ -110,6 +110,10 @@ _DEFAULTS: Dict[str, Any] = {
     #   metrics.fee_gate.would_reject 供统计), 不再翻 SKIP。与 fee_floor_sizing 独立 —
     #   关的是"拒单", sizing 仍把股数抬到费用可行下限 (省钱不省样本)。回滚: true。
     "fee_gate_enforce": True,
+    # [2026-11-06 用户裁·二次] 低价股地板保持硬拦 (与 fee_gate_enforce 解耦):
+    #   price < 200/max_fee_bps ($17.33) 时 $0.01/股佣金 ⇒ 费率与股数无关, 任何规模都过不了线。
+    #   实测 <$10 档 13 笔: 毛 +0.77% / 费 1.21% ⇒ 恒亏。回滚: false。
+    "price_floor_enforce": True,
     # 低价股: commission 撞 0.3%×amt 上限 → 单腿最高 30bps
     "min_entry_price": 0.0,           # 0=不拦; 建议档 20~30
     # 每腿佣金地板 $1.99 在 qty=199 处与 $0.01/股 等价; 超过即线性加价
@@ -314,23 +318,39 @@ def evaluate(inst: Dict[str, Any]) -> Dict[str, Any]:
     # 价格地板 (2026-11-06): 低价股的每股佣金 ($0.01/股) 与股数无关 ⇒ 费率恒为 200/price bps,
     #   任何规模都过不了费用线。这类不是"这单太小", 是**费用物理不可行**, 必须与尺寸类拒因分开,
     #   否则永远看不到"这只票在现费制下不能碰"这一结论 (11-06: INTT/RIVN/LYFT)。
+    _price_reasons: List[str] = []
     if _max_fee_bps > 0 and entry_price > 0:
         _pf = price_floor_usd(_max_fee_bps)
         if _pf > 0 and entry_price < _pf:
-            _fee_reasons.append(f"PRICE_BELOW_FEE_FLOOR({entry_price:.2f}<{_pf:g})")
+            _price_reasons.append(f"PRICE_BELOW_FEE_FLOOR({entry_price:.2f}<{_pf:g})")
 
-    if _fee_reasons:
-        _fee_enforce = cfg.get("fee_gate_enforce", True)
-        if _fee_enforce is False:
+    # 2026-11-06 用户裁 (二次): 「费用门拦截关闭, 低价股拦截需要保持」。
+    #   两类拒因的**机制不同**, 不能用同一个开关:
+    #   · NOTIONAL_TOO_SMALL / FEE_BPS_TOO_HIGH = 这单**太小** ⇒ 抬股数就能救 (fee_floor_sizing 已做),
+    #     拦截等于拿规模指标当质量指标 (实测: 名义 Q1 净% -0.26, Q3 +0.04; fee_bps 高≈单子小)。
+    #   · PRICE_BELOW_FEE_FLOOR = 这只票**费用物理不可行** ($0.01/股 ⇒ 200/price bps, 与规模无关),
+    #     任何股数都过不了线 (实测 <$10 档 13 笔: 毛 +0.77% vs 费 1.21% ⇒ 恒亏) ⇒ 必须继续硬拦。
+    _enforce_fee = cfg.get("fee_gate_enforce", True) is not False
+    _enforce_price = cfg.get("price_floor_enforce", True) is not False
+    if _enforce_fee:
+        reasons.extend(_fee_reasons)
+    if _enforce_price:
+        reasons.extend(_price_reasons)
+
+    if _fee_reasons or _price_reasons:
+        _unenforced = ([] if _enforce_fee else list(_fee_reasons)) + \
+                      ([] if _enforce_price else list(_price_reasons))
+        if _unenforced:
             metrics["fee_gate"] = {
-                "enforced": False,
-                "would_reject": list(_fee_reasons),
+                "enforced": _enforce_fee,
+                "price_floor_enforced": _enforce_price,
+                "would_reject": list(_fee_reasons) + list(_price_reasons),
+                "unenforced": _unenforced,
                 "max_fee_bps": _max_fee_bps,
                 "min_notional_usd": _min_nt,
-                "note": "2026-11-06 用户裁: 关闭费用门拦截, 保留判据供统计; 回滚 fee_gate_enforce: true",
+                "note": "2026-11-06 用户裁: 费用门拦截关闭(fee_gate_enforce=false), "
+                        "低价股地板保持(price_floor_enforce=true); 回滚两键置 true",
             }
-        else:
-            reasons.extend(_fee_reasons)
 
     # 止损宽度卫生 (2026-08-07 用户哲学"留空间"): 止损距入场过宽 = 单笔最大亏损失控。
     #   替代静态 R:R 门 — 止盈端 (R:R 分子) 常被保本/锁盈/EOD 退出替代, 不可靠;
