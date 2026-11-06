@@ -43,7 +43,11 @@ re-price 用**触发瞬间** `data_router` ctx 的 `ask`(BUY)/`bid`(SHORT) 定 e
   - 回写具名 `skip_reason = stale_quote_gate(age=NNNms > 30000ms)`
   - `_emit_exec_gate_audit(action="skipped_stale_quote", extra={gate,why,quote_age_ms})`
   - `skipped_count += 1; continue`（本轮不起价，下轮重试）
-- 配置: `playbook.execution_parameters.reprice_quote_age_gate_enabled / reprice_quote_age_max_ms`。
+- 配置位置：**必须在 `playbook.execution_parameters` 节内**（4 空格缩进）。
+  `PlaybookConfig._load` 只把 `risk_parameters` + `execution_parameters` 拍平进 `pb.get()`；
+  写到 `playbook:` 顶层（2 空格）只能靠 `get_dotted("playbook.xxx")` 读，而本门用 `pb_cfg.get`
+  ⇒ 会变成装饰性配置。**本批首版就写错到了顶层，靠"新进程读一次 `pb.get`"当场抓到**（返回 None）；
+  教训：凡 `pb_cfg.get` 消费的键，落库后必用新进程回读实值，别信"grep 得到就是生效"。
 
 ## 5. 预注册停止条件（任一条触发 ⇒ 当天回滚，不放宽阈值、不延窗口）
 
