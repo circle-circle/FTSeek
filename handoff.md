@@ -1,5 +1,222 @@
 # FTSeek-US · HANDOFF
 
+## 2026-11-06 09:43 · Event Intelligence 离线原型 R0/R1＋抽样 R2b/R3 已实施
+
+- **链路落地**：新增只读 as-of 快照、事件哈希/精确去重、采集时延、日内游标、共享双 LLM MarketEventBrief、标的方向/数值指令卡、增量修订/失效、在途保护与独立仲裁。代码在 `app/event_stream/intelligence.py`、`market_brief.py`、`instructions.py`；复现脚本与隔离产物见 DEB §17，未写生产 DB/pool、未接 cron/notifier/Playbook、未重启。
+- **信息/时延实测**：11-05 盘前能看到 blue-wave/data-centres 与 AI split，盘前看不到两条迟到新闻，15:05 UTC 能吸收 `AI stocks fall, oil bounces back...` 修订标题。R0 三时点 10.66 秒；初始全局双模型 27.05 秒、delta 32.17 秒，validation errors=0。盘前全类型 1,709 条采集 P50 18.3 分、P90 487.5 分，源健康历史还原仍 degraded。
+- **方向/指令实测**：AMD 初始实验 SHORT，delta 候选为 VALID+PRIMARY+SKIP；未执行旧卡 `INVALIDATE/SKIP`，已执行状态 `NO_CHANGE/EXECUTION_STATE_PROTECTED`。最终每股主+挑战者新增 prompt **970 tokens**（≤1200）；HCA 旧宽过滤 BUY 为反例，不称改善。
+- **重要反证**：AMD 三次控制 prompt SHA 完全相同、温度 0，方向仍 SHORT/SHORT/BUY；所有单次 A/B 方向变化只记供给差异，不归因事件、不称 edge。R3 未减少任何实验臂 actionable 供给，ABSTAIN 不硬挡，fatal/有证据 OPPOSE_SKIP/真反向才 SKIP。
+- **未达标/下一步**：36 股 R2a 和经济反事实未跑；delta 双调用 84,154 prompt tokens 偏高、51 个 delta 簇未选，不能称全量审阅。先固定/重复控制量化方向方差，再压缩全局 prompt、复核漏选覆盖，最后才做 DA-only 费后反事实；live 仍需单独批准与 Playbook 消费者/双头检/回滚。
+- **落档/验证**：已新增 DEB §17、更新 README 索引；派生总表 `data/shadow/event_intelligence/acceptance_20261105_v1/summary.json`。聚焦与 EventStore 回归 **111 passed**，目标文件语法检查通过，`verify_deb20261106.py` **22/22、BAD=0**。
+
+最后更新：2026-11-06（本条）
+
+## 2026-11-06 08:13 · Event Intelligence 明确为日内事件驱动交易闭环
+
+- **用户目标**：当前主要做日内，要求 LLM 基于当天信息做到更全面、更快，并直接形成合理方向与指令，而非只写宏观摘要。既有选举审计结论不变：信息捕捉/主因果采用只部分成立，破位门避险不能记成双 LLM 功劳。
+- **运行模型**：盘前全量生成共享 MarketEventBrief 和首批指令；盘中只按 `(first_seen_at,event_id)` 游标处理新增/修订事件与相关证伪，生成不可变简报新版本，只重算受影响标的。无新重大事件=0 LLM/0 新指令；禁止每 5 分钟全市场双模型重跑。
+- **指令契约**：`BUY/SELL_SHORT/SKIP` + 实际 `event_ids/event_role` + 数值 entry/stop/target + invalidation + `price_in` + 当日 `valid_until`。新证据由 reconciler 判 `NO_CHANGE/ISSUE/REVISE/INVALIDATE`，EOD 只作废未执行指令，已成交仓仍走原 Playbook 出场。
+- **关键安全边界**：当前 fresh-event 批剔除当日已有标的是为避免 `date+symbol` UPSERT 覆盖执行状态，不能直接复用作盘中改单；`valid_until` 也尚不能视为 Playbook 已消费。live 前须有版本化审计、在途单保护及 auto_execute/intraday_trigger 双头检契约测试。
+- **双模型与验收**：主模型构建跨事件传导，挑战者专查遗漏反证/替代解释/price-in/入场错误；`ABSTAIN` 与 `OPPOSE` 分离，有证据 fatal flaw 才进 repair/SKIP。按全、快、准、可执行、费后经济分别验收，11-05 仅作冻结回归日，不据此宣称 edge。
+- **交叉复核/时延**：保留 Hermes 追加核查为 §16，确认两项撤回，校正 DA as-of=08:35 ET 与 `_llm_output._model_reported` 内层位置。冻结截至 11-06 00:00 UTC 的 11-05 NEWS_WIRE 快照 n=68，发布到入库中位 89.8 分钟、47/68 超 60 分钟；R0 必须输出 `published_to_seen_ms` P50/P90/超窗占比，区分无事件与晚到。
+- **实施/落档**：R0a 盘前 as-of → R0b 日内游标回放 → R1 初始+delta 简报 → R2a 盘前 36 股 A/B → R2b 盘中指令 A/B → R3 独立仲裁。已更新 `docs/debates/DEB-20261106-market-risk-switch-review.md` §15–§16、审计指针和索引；本批只改文档，未改生产、未重启。下一步最小实现是 R0a+R0b，不直接改生产 prompt。
+- **验证**：`venv/bin/python scripts/verify_deb20261106.py` 22/22 通过、结构异常 0；E16 改为固定 as-of 查询，避免迟到新闻令动态库复跑失真。文档 diff check 通过。
+
+最后更新：2026-11-06（本条）
+
+## 2026-11-06 08:00 · 市场风险 DEB 第二复核 + Event Intelligence 实现方案更新
+
+- **保留与撤回**：保留“普跌/盘中急跌不加硬门、不接 RISK_OFF”；撤回 `Chip selloff` 盘前已入库（实际 `first_seen_at=11-05 18:49 UTC`）及“DA 实际不是 qwen”的推断（`agent_bridge` 与 DA 直连不同链且不同时点）。DA 36/36 API 回显为 qwen3.7-max + deepseek-v4.1-flash。
+- **口径修正**：BUY 11 是费用门后的原始方向，BUY 9 是 GOOG/LMT 后续 entry_confirm 弃单后的当前 DB 状态；raw original direction 与 mutable direction 不混用。11-04 指数上涨且 AI 硬件分化、11-05 SPY 盘中显著下跌也分开陈述，若用户指 11-05 大跌则成立。
+- **目标架构**：复用 EventStore，以 `first_seen_at<=as_of` 防未来数据；每批生成一次共享 `market_event_brief_v1`，全局缓存后注入 DA，UE 只供料；每股输出 `event_role/event_ids/direction/price_in/opposition/fatal_flaw`，再经现有 Playbook，不新建交易管线或宏观硬门。
+- **实施路径**：R0 确定性事件选择 → R1 全局简报离线 A/B → R2 36 股方向/指令隔离重放（`db_write=False,pool_write=False`）→ R3 独立仲裁影子。工程预算：有事件全局调用≤2、P95 新增≤120s、每股新增≤1200 tokens，均待实测。
+- **落档**：已更新 `docs/debates/DEB-20261106-market-risk-switch-review.md` §14、`docs/debates/DEB-20261106-da-election-reasoning-audit.md` §9 和索引；本批只改文档，未改生产、未重启。建议下一步直接做 R0→R2 离线原型，先做 as-of 选择器，11-05 smoke 不得使用盘前尚未入库新闻。
+
+最后更新：2026-11-06（本条）
+
+## 2026-11-06 07:40 · DA 选后板块分化双 LLM 审计（生产零变更）
+
+- **结论**：捕捉和推理均只部分成立。11-05 盘前 36 只深分析中，22 只原始材料含选举相关文本，7 只双模型核心产物仍提及，只有 AMD/HCA/SNDK/TSLA 4 只进入主因果链；18 只 bridge 中仅 TSLA 由选举主因驱动。
+- **归因纠偏**：当日材料不是“美股普跌”，而是道指/标普/纳指上涨、AI 硬件与存储等子板块重挫。AMD/NVDA/SNDK 等主模型仍偏低吸，最终回避主要靠 `破位硬买拦截`；HCA 识别“选举利好已定价”并 SKIP 是较完整正例。
+- **双 LLM 边界**：NVDA/SNDK 挑战者 `DISAGREE+SKIP` 未直接改主方向，TSLA 多项实质质疑仍以 score=8/WARN 发布；AMZN/GOOG/META 等 LONG 结果方向虽相符，发布 thesis 不能证明是选后相对受益推理。
+- **动作**：只新增 `docs/debates/DEB-20261106-da-election-reasoning-audit.md` 并登记索引；未改代码/config/checkpoint，未跑交易测试、未重启。后续若做，先单独离线 A/B“共享 macro_event_brief”，不顺带改合并规则或新增 live 硬门。
+- **下一步**：等用户裁决是否做冻结 checkpoint 离线重放；任何收益结论仍按 DA-only 费后净 bps、日聚类、样本量/MDE 预注册，不用本批 DA 平仓 n=2 宣称有效。
+
+最后更新：2026-11-06（本条）
+
+## 2026-11-05 23:06 · 今晚旧批 DA 指令已恢复落库，自然交易链验收完成
+
+- **用户新授权**：明确今晚恢复既有落库指令、无需新推送，取代此前“不回写旧批”的边界。专用 `scripts/restore_da_admission_instructions.py` dry-run 后单事务 apply，只碰未触发/未成交/PENDING/attempt=0/无券商单/无 entry_confirm 的 DA 行；保留原方向、claims、supply cohort 与 admission_history，不改触发/成交字段，不调用 notifier、不强下单。
+- **恢复结果**：09:58:54 EST 共 18 条安全更新，恢复 **14 条（11 BUY/3 SELL_SHORT）**，ADMA/RIVN/RUN/TIC 四条高费用 SKIP。行前完整备份与结果审计在 `data/audits/da_admission_restore_2026-11-05_2026-11-05T095854.664964-0500_*`；脚本+admission 回归 **26 passed**。14 条执行前 admission 全 PASS，entry_confirm 均干净未 arm。
+- **自然链实证**：无需重启，10:02 起自然 auto_execute 已消费恢复指令；截至 10:06 共 7 条触发，chase/VWAP 门正常复评。GOOG 10:01:57 arm → 10:04:23 反转持续 `ABANDONED`，forward 带完整 supply cohort、未下单；CRM 随后自然 arm。动态状态 10 BUY/3 SHORT/5 SKIP、triggered=7、executed=0，GOOG 正常弃单不伪报恢复失败。
+- **安全回执**：服务 active、无新增 ERROR/CRITICAL/Traceback，MCD 持仓不变、exit_intents 300/300 BOOKED。完整记录 `docs/debates/DEB-20261105-da-main-pool-supply-expansion.md` §12。
+
+最后更新：2026-11-05（本条）
+
+## 2026-11-05 22:49 · 用户裁恢复供给启用（已部署，后续新指令生效）
+
+- **生产变更**：`playbook.admission.min_notional_usd 5500→2500`，新增 `max_fee_bps=11.54`，由 `fee_model` 逐笔计算事前往返费用率；命中记 `FEE_BPS_TOO_HIGH`。组合在险 4%、止损 8%、仓位公式、CAUTIOUS、entry_confirm/出场不变。今日旧 18 条只读重算为 14 PASS/4 BLOCK（ADMA/RIVN/RUN/TIC 高费用），**不回写旧 SKIP、不伪称今日已恢复 14 条或成交**；现有 TIC 若执行复核也受新费用门约束。
+- **知情破例与分账**：用户在此前 35/60 日费用门回放净额均较差后明确裁「恢复供给启用」，属于供给优先知情破例，不宣称改善净期望。11-05 起新 cohort；原 P3 J3 不沿用。`budget_p3_eval` 补新拒绝原因+cohort 警示，费用影子同步现行门；Hermes 一次性任务 `2a80c016ffd6` 已加新旧 cohort 前置口径，排程未变。
+- **配套安全**：LIVE 1 股工程探针只豁免名义/费用经济性门，其余安全门保留；测试 helper 同步按名义+费用派生股数，防止夹具落库即 SKIP。统一回归 **579 passed**、registry provenance **4 passed**；日志卫生另有 1 红，仅在并行 exit 文件的 W4/W6 基线，非本批文件，未替他人修。
+- **部署回执**：重启前 MCD 一仓、`exit_intents` 300/300 BOOKED，最新提交早于运行进程；`systemctl restart ftseek-us` 后 PID 2006777、active，启动冒烟 **7/7**，启动段无 ERROR/CRITICAL/Traceback。实读 `2500/11.54/4.0/8.0`；MCD 持仓不变、非 BOOKED=0，今日 DA 数据库仍 1 actionable/17 SKIP、triggered/executed=0。
+- **回滚**：`min_notional_usd=5500`、`max_fee_bps=0` 后重启；其他预算键不动。详档 `docs/debates/DEB-20261105-da-main-pool-supply-expansion.md` §11、`docs/decisions/DEB-20261031-budget-design.md` §11。
+
+最后更新：2026-11-05（本条）
+
+## 2026-11-05 22:29 · 用户复核 1/18：结构性异常确认，费用门替换回放否决（未改生产）
+
+- **纠偏**：今日确为 18 条 DA 中仅 TIC 一条可交易指令，当时 triggered/executed=0，不是已成交一只。公式虽可解释，但相对提升实际交易供给的目标属于结构性异常；若不扩池，base 全被拦、今日会是 0 条，扩池不是病因。
+- **根因与边界**：约 $248 风险预算 ÷ 4.5–5.5% 止损 ⇒ 名义中位约 $4,945，17 条全撞 $5,500 地板。不得抬股数凑地板（会同步加风险），也不能把名义门当真实费用门：TIC 过门但估算 24.7bps，EPAM 被拦却仅 8.7bps。
+- **预注册后回放**：候选 `min_notional=0 + fee_bps<=11.54` 的阈值在读历史结局前固定自 P3 J2；仅 DA/PLAYBOOK_SIM 已平仓 35/60 日。候选平均费用降至 7.55/7.56bps，但保留净额 35 日 −$719.93 vs 现行 −$98.18、60 日 −$685.58 vs 现行 +$252.86，两窗均更差 ⇒ **不采用、不改配置、不重启**。今日 14 条仅为反事实，绝非已上线或成交。
+- **保留已验收优化**：主池深分析 7→10、base/expansion 全链血缘、entry_confirm 分账及 claims 合并不变。后续若供给异常持续，按 P3 连续 10 日 R1；当前累计 4 日 34 笔、日均 8.5、`rollback=none`，不得伪称已触发。详档 `docs/debates/DEB-20261105-da-main-pool-supply-expansion.md` §9–10。
+- **双 LLM 分类复核**：11-05 共 36/36 富对象、168 claims、11 类 claim_type 全覆盖且 168/168 llm_labeled；真实分类字段为 `claim_type/source_type`，可按 decision_id 回连 checkpoint/bridge/gate/Playbook，后续按日聚类+MDE 做规律分析。
+
+最后更新：2026-11-05（本条）
+
+## 2026-11-05 21:03 · top8 首批已启动，pre-LLM 纠偏重派（完整批已验收）
+
+- **生产实读**：08:00:26 EST 首事件 `main_pool_top_n=8/main_pool_budget=10` 正确。首只 LLM 前发现 gate 新增字段误用后续循环变量 `a`，会让整行 gate 台账跳过；已改为当前作用域 `analysis`，bridge/DB 两处仍用 `a`。
+- **处置边界**：08:02 仍 Stage 1、checkpoint=0、LLM=0，通过 Hermes cancel+direct 重派；08:03:44 新批仍 top8/budget10，无重复 LLM 成本，未再动主服务或持仓。测试已能捕获该笔误，相关 **177 passed**。
+- **完整批已验收**：08:35:26 EST 完成，36/36 分析、18 条 bridge/DB、missing/unexpected/gate_unknown=0，早于 08:57；36 条 snapshot 全为富对象。EPAM/TIC 两只可发布 expansion 均以同 decision_id 写入 bridge/DB，WPM=SKIP 未强行供单；三者 gate 均带正确 cohort，无 Gate/IC 错误。后续只攒 entry_confirm 与净盈亏样本，详档 `docs/debates/DEB-20261105-da-main-pool-supply-expansion.md` §7。
+- **推送 1/18 属既有 sizing 结果**：61 个非当前通道均为熟股占位（非 DA）；17 个 DA 全因 <$5,500 名义门。约 $248 风险预算 ÷ 约 5% 止损天然落在约 $5,000，TIC $5,521 独过，非 entry_confirm/扩容异常。单日不降地板；TIC 估算费 24.7bps 高于 EPAM 8.7bps，不得宣称名义门等同费用最优。详档同 DEB §8。
+
+最后更新：2026-11-05（本条）
+
+## 2026-11-05 20:54 · DA 双 LLM 理由分类断链修复（已重启验收）
+
+- **确认有记录**：正常双 LLM 样本的 bull/bear 理由、11 类 claim_type、证据、挑战者质疑/反证、evidence_gaps、模型与 prompt hash 均在；decision_id 可连接 snapshot、checkpoint、bridge、gate 和 playbook 指令，SKIP/BLOCK 也有分类与结局，不只留成交候选。354/354 回连完整 debate/validation；分类复核分歧 755/1656=45.6% 仅作审计旗标，不当作 LLM 错误率或自动改标签。
+- **实测断点**：10-20～11-04 共 354 条 DA snapshot，221 条保留结构化 claims（990 个 claim，类型非空 100%），133 条 bridge 候选被 Playbook 同 decision_id upsert 覆盖成简单 factor list；133/133 仍可回连 checkpoint 原始双 LLM 产物，不是原文灭失。
+- **根因修复**：`signal_ic_tracker` 对 DA 重复写入改为保留 claims/debate/DA conditions，后来的因子原样记入 `playbook_factors` 并去重并入 `conditions`，既有 factor IC 不少算；其他 strategy 不变。历史 133 行不在本批改写，避免窗内静默重算。
+- **验证**：新增 DA/非 DA upsert 契约测试，聚焦与相邻回归 **221 passed**；COIN/ALB 两仓、非 BOOKED=0，重启冒烟 **7/7**。不改门槛、方向、仓位或出场。
+- **生产闭环已验收**：09:06:50 Playbook 完成 80/80；36/36 snapshot 均为富对象且 claims 非空，17 条实际合并全部保留 claims，EPAM/TIC 同时保留 claims、conditions、playbook_factors。后续类别复盘按 decision_id+claim_type 去重、按日聚类报 MDE；alpha_t5 当前无覆盖，T5 不称 SPY 超额。详档 `docs/debates/DEB-20261105-da-claim-traceability.md`。
+
+最后更新：2026-11-05（本条）
+
+## 2026-11-05 20:07 · entry_confirm 补扩容血缘 + 冬令时时间轴澄清（已重启验收）
+
+- **值得补而非值得调阈值**：现役首窗仍 n=0，不继续改 120s/mid/grace/holdout。`entry_confirm_gate` 新增 `supply_selection` 纯记录字段，贯通 holdout、CONFIRMED、ABANDONED、EXPIRED、弃单后路径与重启恢复；旧指令/坏 JSON 回退 `{}`，不改变任何交易判定。
+- **与扩容闭环**：DA 主池第 8–10 顺位的 `main_pool_expansion_r8_10` 现在可直接在 entry_confirm 两臂内分账，后续比较分配、确认、弃单、未成交覆盖和净盈亏，不新增影子或平行执行链。
+- **冬令时不是 DA 09:00 启动**：当前生产契约是 DA 深分析 **08:00 EST/21:00 CST** → finalize 08:57 → **Playbook 09:00 EST/22:00 CST** 生成 → 常规入场最早 09:35 后才 arm。11-02/03/04 生产均为 08:00 EST；09:00 是 Playbook 首批。DA 若推迟 09:00，近期 27–45min 耗时会让 bridge 落在 09:27–09:45，错过生成锚并挤压开盘 cohort，故不改排班。
+- **验证与生效**：entry_confirm 三套 **95 passed**；重启前 COIN/ALB 两仓、非 BOOKED=0，app 仅本批 gate 改动。`systemctl restart ftseek-us` 后 PID 1984878、active，启动冒烟 **7/7**；实读 `120s/20%/mid/grace=3+2`、FADE cap=false，两仓不变、非 BOOKED 仍为 0。
+- **下一步**：首个 top8 DA 批仍按 08:00 EST 运行；核 `supply_selection` 从 DA gate/bridge/DB 到首条 entry_confirm forward 的连续性。R1/mid 降级/holdout 子群先攒样，不提前换阈值。详见 `docs/debates/DEB-20261105-da-main-pool-supply-expansion.md` §6。
+
+最后更新：2026-11-05（本条）
+
+## 2026-11-05 19:48 · entry_confirm 配套 DA 主池扩容 7→10（已部署，首批待验收）
+
+- **用户目标**：在另一 Agent 已重开 `entry_confirm` 的基础上补充合理优化并增加交易标的供给。本批只扩同一 DA 主链的高顺位合格候选，不放开全部 `supply_placeholder`：未提名 Lift 的 T+5 差为 −0.6034pp、CI 跨 0，不能支持无差别扩池。
+- **已生效**：`ops/hermes/da_main_carrier.py` 的 `--top 5→8`，按既有公式主池深分析预算 **7→10**，每日增量 **0–3 只**；线上 `/root/.hermes/scripts/da_main_carrier.py` 已单文件同步且 SHA256 一致。standalone 下一 cron 进程生效，**未重启主服务**。
+- **风控不变**：`entry_confirm=120s/20% holdout/mid/grace=3+2`、FADE cap=false，以及资格、方向、chase/admission、仓位、组合预算、SL/出场全部未改；新增候选仍走完整管线，不把供给增加等同成交增加。
+- **增量可分账**：DA skill 新增 `supply_selection`，主池 1–7=base、8–10=expansion，批次/顺位/预算透传 `da_gate_decisions`、bridge 和 `raw_instruction_json`，checkpoint 也重挂本轮归因；后续可直接连接 entry_confirm 两臂与成交净盈亏，不新增影子或平行交易链。
+- **证据**：10-30 主池预算外合格 13、11-04 为 7，11-03 为 0 ⇒ 扩的是实际截断但不保证每天有增量。11-04 全批 33 只/1964.2s，+3 只估算 +178s，既有 08:57 ET 截止与 finalize 不动。聚焦回归 **99 passed**，编译/diff 检查通过。
+- **下一步**：首个 08:00 ET top8 批次核事件预算、主池 selected、gate/bridge/DB cohort 完整性和截止时间；若出现新增截止/配额/血缘故障先回 top5，不抬 timeout。经济读数按 base/expansion 分账，增量成交 n<30 不继续加池。详档 `docs/debates/DEB-20261105-da-main-pool-supply-expansion.md`。
+
+最后更新：2026-11-05（本条）
+
+## 2026-11-05 16:58 · DA 台账与 EXT 报表修复已重启验收
+
+- **重启前核**：当前 COIN SHORT 39 @149.085、ALB SHORT 26 @95.48；`exit_intents` 非 BOOKED=0。对照 15:32 运行进程，之后仅已完成的 EXT 报表修复与本批 DA 改动，联合回归 **104 passed**。
+- **主服务**：`systemctl restart ftseek-us` 后 PID **1960314**，active，启动冒烟 **7/7**（ConfigValidator/漂移/热重载/SSOT/双臂安全/退出快循环/零 Traceback-CRITICAL）。
+- **看板**：`ftseek-dashboard` PID **1960459**，active；`/login` 与新 `playbook.js` 均 HTTP 200，启动段无 Traceback/CRITICAL/ERROR。业务 API 保持既有认证，未绕过密码哈希。
+- **DA 验收**：同源只读调用返回 COIN 计划 RR 4.44、有效 1.5006、成交 1.5268，成交风险 $316.09；重启后两笔持仓不变、非 BOOKED 出场仍为 0。
+- **下一步**：首笔新 reprice 核 `reprice_audit_v2`，首笔新成交核 `execution_risk_v1` 与页面三口径；当前仅完成历史行和重启验收，不伪称已有新成交样本。详见 `docs/debates/DEB-20261105-da-reprice-price-ledger-audit.md`。
+
+最后更新：2026-11-05（本条）
+
+## 2026-11-05 16:49 · DA reprice/RR/价格台账修复已实施（待安全重启）
+
+- **结果**：DA 10-06→11-05 A9 clean n=141，费后 **-$1,019.42/-12.96bps**；11 月 n=30 +$90.61/+5.40bps，但日等权 +0.097bps、CI 含 0、n<120，不称转正。6 笔隔夜跳空 -$2,011.48、11 笔初始止损 -$1,421.14，其余 124 笔 +$2,413.20；不新增方向/RR/追价门。
+- **账实**：142/142 BOOKED 回连成交，141 笔已平仓 + 当前 COIN 未平仓闭合，执行价/平仓价/费后 PnL 一致。计划→成交不利漂移主要发生在 reprice 前，不能全叫券商滑点；最新 reprice→成交均值 -4.12bps（略改善）。
+- **已修**：`app/playbook/price_ledger.py` 新增计划/有效/成交三时点价格、RR 与风险额；reprice audit 升 v2 保存 planned/effective RR，新主字段同步有效 RR；成交新增 `execution_risk_v1` 按实际价量记风险，历史由 `trade_records` 只读回连，142/142 覆盖。看板并列三口径并标明 TP 非保证出场价。
+- **实证**：214/271 reprice 行存储 RR 与有效 RR 差>0.02（11 月 42/42）；BOOKED 均值 2.17 vs 有效 1.59。9 笔最终减仓风险额虚高，如 MU 7→3 股、$289.52→实际 $121.65。COIN 5225 为计划 4.44→有效 1.5006→成交 1.5268。
+- **不变/未做**：未改任何交易阈值、仓位、invalidation record-only、SIM 四锁；未回写历史 DB、未推送、未重启。记忆窗高危是审计器读旧表，现役已为 30 天净额窗，未误修生产 prompt。
+- **验证**：聚焦 **44 passed**；扩展 124 项中 117 passed，另 7 项为 feishu 旧夹具/文案断言，未改无关测试。Python/JS 语法检查通过。完整证据见 `docs/debates/DEB-20261105-da-reprice-price-ledger-audit.md`。
+- **下一步**：WIP 清理后仅部署本批并跑启动冒烟；首笔新 reprice 核 v2、首笔成交核 `execution_risk_v1` 与看板三口径。append-only reprice 全史、审计器记忆旧表误报分别留作独立技术债。
+
+最后更新：2026-11-05（本条）
+
+## 2026-11-05 15:58 · 盘前/盘后审计 P1/P2 已实施（首窗观察待办）
+
+- **P1 已修**：`extended_hours_entry_executor._snapshot_candidates` 改为坏票二分隔离，连接/限流/异常不放大重试；每批输出 requested/succeeded/dropped、失败标的与精简错误。生产同源只读探针由修复前 0 恢复为 **80 requested / 79 succeeded / 1 dropped（US.EBKDY）**。未改任何闸值、仓位、出场规则或 11-13 死线。
+- **P2 已修**：EXT 日报并列票次/独立票（11-04 盘前 2074/117、盘后 1799/128）；历史 `--date` 的在场与最近轮次明确标为当前快照；`stage_stats` 小样本门 5→30；控制台账恢复 RFC-177 `hold_no_stop` 正确描述。绩效仍读成交/持仓级 SSOT，既有 exit reconciliation 复用，未造平行链路。
+- **验证**：新增 OTC/限流/异常与报表边界契约；EXT、出入场、日报、周报相关 **328 passed**，目标文件 `py_compile` 通过，实际 11-03/11-04 报告复核符合新口径。
+- **生效/部署**：standalone entry/daily-report cron 下一新进程自动生效。因 `app/`、`scripts/` 仍有其他 agent WIP，**未重启 ftseek-us**，避免顺带部署；驻留复盘若已加载旧 `stage_stats`，文案在下一次安全重启后完全对齐，交易行为不受影响。
+- **下一步**：首个盘前 cron 核对 `快照指标` 与研究源恢复（不要求研究池/成交必非零）；11-13 按 RFC-149 全样本/剔最佳/分 source 结算，不追样本、不延死线。完整执行记录见 `docs/debates/DEB-20261105-extended-hours-chain-audit.md` §8。
+
+最后更新：2026-11-05（本条）
+
+## 2026-11-05 15:40 · 盘前/盘后链路与结果只读审计（待决策）
+
+- **结论**：需要修工程可用性和报表口径，不需要放宽策略阈值，也不支持 EXT 放大/转正。审计落档 `docs/debates/DEB-20261105-extended-hours-chain-audit.md`；未改交易代码/配置/cron/DB，未重启。
+- **P1 真故障**：`extended_hours_entry_executor._snapshot_candidates` 遇批量 `ret!=RET_OK` 整批静默丢弃。生产同源只读探针：研究源 80 只含 US.EBKDY，富途报“暂不提供美股 OTC 市场行情 EBKDY”，helper 返回 0；剔除后其余 79/79 成功。研究源开关仍 active、死线 11-13，但 funnel 自 10-21 后零产出。修复会恢复研究臂 SIM 入场供给，须用户明确批准，不能与放宽闸/延长死线同批。
+- **结果口径**：EXT 10-06 起 A9 clean n=24、净 +$583.78/+53.06bps，日聚类 80%CI [19.71,101.97]、MDE80 82.49bps；最大两笔占 58.8%。严格臂 n=14 净 +$546.65；研究臂 n=11 净 +$56.57，剔最佳后 -$50.07，watchlist 剔最佳后 -$66.27。11 月 DA n=30 加权 +5.40bps 但日等权 +0.097bps、CI 含 0，n<120 不称转正。
+- **账实正常**：当前 EXT ALB SHORT 26 @95.48、DA COIN SHORT 39 @149.085；`playbook_exits.db` 295 个 intent 全 BOOKED。TMUS/MSFT/AMD 原始 `awaiting_confirmation` 后续均落账，结果报表应以 durable ledger/DB 为准。
+- **下一步**：P1 待批准修坏票隔离+指标+OTC 回归；P2 修漏斗独立标的、历史报告当前快照语义、n<30 警告、行级膨胀和陈旧止损文档；11-13 按 RFC-149 全样本/剔最佳/分 source 裁决，不追样本、不改死线。
+
+最后更新：2026-11-05（本条）
+
+## 2026-11-05 09:10 · entry_confirm 首样本前目标澄清：减大亏优先（门保持开启）
+
+- **用户设计背景**：120 秒确认门是用户原始设想；此前取消的一项原因是指令量与真实成交量下降。当前 DA 每日指令量已提高，重开目标是降低大亏损，可接受更少的小盈利和更低胜率。因此交易数量、M2 机会成本、M3 方向放弃差和 E2 小赢家地板不再自动触发 FAIL。
+- **现役行为不变**：`entry_confirm_enabled=true`、`120s`、`20% holdout`、`mid/grace=3+2`、FADE_SHORT cap=false；未改入场、仓位、原始 SL 或 early-tight。
+- **新验收已落地**：RFC-158 §10 在活跃 JSONL=0 行、两臂 n=0 时预注册。`settle_entry_confirm_forward.py` 新增 `current_cohort.tail_objective`，按同期 treatment/holdout resolved assignment 比较；弃单实际净额=0，确认/holdout 按 decision_id 联接已平 PLAYBOOK_SIM，未成熟行不得补 0。PASS=每分配指令 SL_INITIAL 亏损负担下降且日聚类 80%CI 下界>0，同时总净额/分配不恶化。
+- **样本门**：treatment resolved≥60、holdout resolved≥20、同期配对≥10 ET 日、两臂结局覆盖率≥95%；INSUFFICIENT/OBSERVE 不冒充减亏，FAIL 只提请复核不自动关门。注册表计数锚改为 `current_cohort.tail_objective.arms.treatment.resolved_n`，旧 M1~M4/E1~E2 仅诊断。
+- **验证**：entry gate/live wiring/registry/board 共 **104 passed**；主入口契约证明旧 M2/E2=False 时，尾部目标达标仍判 PASS。控制台账另复现已知未登记 Hermes `2a80c016ffd6`、`99009068d9eb` 与 cron `wweek_peak_axis_shadow.py`，本批未代修。
+- **部署**：重启前仅 US.COIN/US.ALB 未平仓，`playbook_exits.db` non-BOOKED=0；09:10 重启后冒烟 **7/7**、active、启动段零 Traceback/CRITICAL/ERROR，持仓与配置不变。当前 cohort 仍为 **TOO_EARLY / n=0**。
+- **下一步**：新 cohort 只按减大亏目标攒样，不因量少或胜率下降关门；不用归档凑样，不改 60/90/180 秒继续阈值购物。early-tight 120s acceptance 仍是独立 NO_DEPLOY 议题，不与本门混样。
+
+最后更新：2026-11-05（本条）
+
+## 2026-11-05 08:46 · SL_INITIAL 根因复核 + early-tight 120s acceptance 影子（NO_DEPLOY）
+
+- **根因口径**：10 月起 12 笔 `SL_INITIAL` 中 11 笔 `_tight_sl_killed=true`，多数不是原始 `stop_loss` 直接造成；09/18 起显式 tight-kill 仅 16 笔、净 -$2,092.43，不能拿“原始止损太宽”当统一解释。early-tight 在按市场开盘计算的冷却结束后即可接管，09:45 附近存在宽SL→紧SL突变，但是否应放宽必须由全因净损益裁决。
+- **固定探索**：预注册 `docs/debates/DEB-20261105-sl-initial-early-tight-acceptance.md` 后运行 `scripts/early_tight_acceptance_replay.py`。16 笔中 9 笔两根完整bar内 close 回线，但候选净 -$2,273.00 vs 实际 -$2,092.43，**delta -$180.57/-332.97bps**；日等权 -$31.55、MDE80=$37.11、CI80 [-68.65,+5.56]，前半 -$488.03/后半 +$307.46，剔最佳日 -$441.93 ⇒ **不上线，不把恢复率当减亏**。
+- **已落地（零交易行为变化）**：真实 early-tight 触线复用 `penetration_shadow` 写独立 `path=early_tight_initial`，记录原始/紧SL、bid/ask/spread/book source、tick/bar MFE和bar覆盖时刻；夜间回填2m wick/close recovery、2m最劣延续/收盘位移及原始终SL命中。既有B17分析显式排除本path，不混cohort、不新增cron/推送/影子项。
+- **前瞻状态**：`data/reports/early_tight_acceptance_replay_20261105.json` 新增 `forward_shadow`，只计部署后真实采集 trade_id；当前 events=0/labeled=0/TOO_EARLY，历史16笔不凑样。至少30事件+10日且全因扣费净delta、日聚类CI、半窗和尾部全过，才另立RFC提出20%立即退出holdout的SIM A/B；否则不改early-tight。
+- **验证**：最终聚焦及注册表 **47 passed**；退出/穿透/entry_confirm 邻近回归 **249 passed**。控制台账另有2项其他会话未登记cron失败（P3/盘前job、wweek_peak_axis），与本批无关，未代修。
+- **部署**：08:45 重启前核 US.COIN/US.ALB 未平仓且无在途出场，08:22后app仅本批与已部署entry加固；重启后冒烟 **7/7**，active、启动段零Traceback/CRITICAL/ERROR，持仓与120s/20%/mid/grace=3+2/FADE cap=false不变。
+- **下一步**：现役 entry_confirm 继续独立攒RFC-158样本；early-tight只攒新穿透事件。不得改120/90/60/180秒继续阈值购物，不把SL_INITIAL数量下降当盈利，不重开RFC-116全局bar-peak切换。
+
+最后更新：2026-11-05（本条）
+
+## 2026-11-05 08:23 · 120s+20% holdout+mid/grace 机制加固（现役仍 UNPROVEN）
+
+- **纠偏**：当前 RFC-158 cohort 仍 n=0，不能称现役组合已确认盈利。旧 v2 112 个 treatment 中真正 mid=61、legacy=51；52 条 grace=46 后续两逆放弃/6 恢复，通过语义是「120s 首逆启动（不计票）→后续两逆弃/任一回正放」，不是 60/90/120 严格 2-of-3。详档 `docs/debates/DEB-20261105-entry-confirm-v2-mechanism-hardening.md`。
+- **M4 根因修复**：旧结算同时使用 arm→post 锚（混入弃单前变动）和 SHORT 二次方向判断（字段本已方向归一）。归档可配对 30 笔：旧实际 1251.72bps；仅修方向 arm 锚 2046.27bps；修方向+弃单锚 **1017.11bps**，两错误会抵消，旧经济结论不得沿用。新 post 字段 `mid/last_from_confirm_pct`，LONG/SHORT 统一 `max(0,-pct*100)`，旧行缺新锚不进新 M4，覆盖不全不得 PASS。
+- **R1 只读路径**：treatment 最终行新增 60/90/120s mid/last/bid/ask/book_status/实际秒数；三点皆有效 mid 且误差≤20s 才计算真正 ≥2/3 `r1_would_confirm` 和与 live 分歧。缺点/legacy/超时只标原因，观测异常不改交易；120s 首逆样本不被 130/140s grace 报价覆盖。
+- **holdout/mid**：SHA1 分配不变；归档重放总体 33/166=19.9%，新增 direction/session/archetype 分层监控子群失衡。报价未见 >15s 正 stale，不加 stale 硬门；mid 降级是否改等待另等影子证据。
+- **边界**：未改 120s、20%、mid/grace 判定、追价帽、仓位或出场；YAML 只有注释澄清。相关四套件 **114 passed**，entry/live wiring **86 passed**；空 cohort 结算 TOO_EARLY、R1 evaluable=0。
+- **部署**：08:22 重启前 US.COIN/US.ALB 两笔未平仓，`app/` 仅本批 gate + 已部署 P0 registry；重启后冒烟 **7/7**、active、启动段零 Traceback/CRITICAL/ERROR，持仓不变，配置实读 120/20/mid/3+2、FADE cap=false。
+- **下一步**：R1 至少 30 个 evaluable 且 ≥10 日后，双向比较 live/R1 分歧的净经济价值、误杀、opp、日聚类 MDE；不得只看通过率，不自动改 grace。当前只攒新 cohort，不用归档凑样。
+
+最后更新：2026-11-05（本条）
+
+## 2026-11-05 08:02 · entry_confirm 现有数据终审：无新增优势机制落地 SIM
+
+- **用户边界**：只把现有数据能确认有净优势的机制落入 SIM。新增 `scripts/entry_confirm_chase_cap_evidence.py` 只读审计与 7 个契约测试；不改 `app/`、YAML、仓位、止损、下单路由，无需重启。详档 `docs/debates/DEB-20261105-entry-confirm-sim-evidence-gate.md`。
+- **精确 arm 锚**：归档 85 个 CONFIRMED 中 78 个可联接 SIM。全局 0.5% cap 命中 16 笔/9 日，毛 -$151.47/净 -$233.60，反事实避免 +$233.60，但含 12 赢家/4 输家，日聚类 CI [-2.284,11.812]、p=0.700、MDE80=11.07 vs 均值 3.07；后段仅 3 笔 ⇒ **NO_DEPLOY**。
+- **FADE_SHORT 1% cap**：仅 LITE/NBIS 同日 2 笔净 -$297.44，阈值即由该对样本提出；后段确认命中 0，实际 abandon 也只有 MNRO/QCOM 2 笔短窗观察 ⇒ 机制合理但统计未证，保持 `entry_confirm_fade_short_chase_cap_enabled=false`。
+- **次数/VWAP**：681 个真 2min 配对样本，窗口均价 +$7.18≈0、全票 -$68.42、会话均价代理 -$453.55、斜率 -$118.65，CI 全含 0 且后半窗均不优；5min forward ALL -$864 ⇒ 均不上线。当前 RFC-158 活跃 cohort 仍 n=0，不用归档凑样。
+- **配置**：主门 `true`、120s、20% holdout、mid/既有 grace 原样；这只是延续已批准实验，不宣称统计优势。下一次 cap 裁决须 ≥30 命中/≥10 日 + CI>0 + 日聚类符号置换 p<0.05 + 半窗/尾部稳健。
+- **验证**：`venv/bin/python -m pytest ...` 相关四套件 **111 passed**。
+- **下一步**：只攒当前 RFC-158 与 record-only chase 路径样本；不再阈值购物，不把 SIM 当作免除样本/归因纪律的理由。
+
+最后更新：2026-11-05（本条）
+
+## 2026-11-05 03:01 · 自动交易 P0 全链路观测与口径修复（用户裁「按照建议执行」）
+
+- **边界**：只修观测、报表、审计和 cohort 计数；未改入场/出场参数、仓位、实盘锁或 RFC-158 判据，未新增交易门。详档 `docs/debates/DEB-20261105-auto-trading-p0-observability.md`。
+- **观测修复**：`scripts/mfe_caliber_report.py` 补 `mfe_t15_pct` SELECT 漏列，报表不再 `IndexError`；`scripts/error_alert.py` 增加锚定的 Loguru ERROR/CRITICAL 解析，既补 `rsshub_us.log` 漏报，也避免主日志 INFO 正文里的 `| ERROR |` 误报。
+- **DA/EXT 净期望尺子**：新增 `scripts/da_expectancy_report.py`（只读、无调度、无推送），输出 A9 双口径、毛/费/净 bps、盈亏平衡胜率、利润因子、日聚类 Student-t 80%CI 与 MDE80。DA 10-06→11-04 n=141：毛 -3.6036bps、费 9.3586bps、净 **-12.9622bps/-$1,019.42**；11 月 n=30 净 +5.3952bps/+$90.61，但仅 3 日、日等权 +0.0972bps、80%CI [-16.0987,16.2931]，**不得称转正**。EXT n=24 +53.0636bps，MDE80=82.4893bps，不放大。
+- **R06 不接线**：新增 `scripts/playbook_fee_gate_audit.py`；当前 `app/playbook/` 无 `playbook.fee_gate` 消费方，DA 141 笔止损覆盖 141/141、反事实拦截 **0** ⇒ 遗留 `enabled=true` 不等于现役路径生效，本批明确不接拒单链。
+- **entry_confirm 新 cohort 污染修复**：活跃 JSONL=0 行而 latest 残留归档 n=99，会把 RFC-158 错推 READY。settler 新增 `current_cohort.sim/mechanism/holdout`，只计 2026-11-05 起行且空档写零；注册表改读 `json_key:current_cohort.sim.n`，旧计数键空档也归零。实跑后 verdict=`TOO_EARLY`、SIM/机制/holdout=0、注册表 `OBSERVING 0/60`；旧 latest 已备份 `/tmp`，活跃/归档 JSONL 哈希不变。
+- **影子盘点**：52 active = 28 OBSERVING + 24 READY，44 项有样本；登记 `budget_p3_sizing`/`confidence_tier_gate` eval 未挂载及 `broker_capacity_shadow`/`broker_stop_drift_shadow`/`exit_intent_reaper_shadow` 产物缺失，**不批量退役**。
+- **验证**：entry_confirm 83 passed；MFE/error/DA/R06 58 passed；registry provenance+board 14 passed；undefined-names、`py_compile`、diff-check 过。邻近套件另有 1 个既有 A11 字典可见性失败，与本批 diff 无关，未扩大范围。
+- **部署**：03:00:46 重启前仅 US.COIN SHORT 1 笔未平仓、无在途 exit_reason，`app/ scripts/` 仅本批改动；`systemctl restart ftseek-us` 后冒烟 **7/7**，服务 active，COIN 仍唯一未平仓，启动段无 Traceback/CRITICAL/ERROR。
+- **下一步**：① RFC-158 与 MFE 新列只攒新 cohort，不用归档凑 n ② 每周同一口径读 DA 净期望，KR6 未达不放大 ③ 5 个挂载异常另案核消费方/补挂，不直接删除 ④ 任何策略参数、费用门或仓位变更仍须独立 DEB/RFC + 影子 + 用户裁决。
+
+最后更新：2026-11-05（本条）
+
 ## 2026-11-05 02:30 · entry_confirm 门重开（v2 形态）+ RFC-158 新预注册（用户裁「重开，这周损失过大」）
 
 - **触发**：用户主动提出「重开 entry_confirm v2 形态，这周损失有点过大，需要启用直接查看结果」，并问「是否有其他补充和合理方案」。

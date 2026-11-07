@@ -3,7 +3,7 @@
 钉住三条边界, 任何一条被放宽都必须显式改本文件:
   ① 豁免只对带 dual_arm/target_env=real/mode=engineering_probe 标记的镜像行生效;
   ② SIM 行 (无该标记) 的 admission 判定**逐值不变** — 不得放宽任何生产门;
-  ③ 豁免面精确 = 只剥 NOTIONAL_TOO_SMALL; 安全性/质量门 (SL_STOP_TOO_WIDE /
+  ③ 豁免面精确 = 只剥 NOTIONAL_TOO_SMALL/FEE_BPS_TOO_HIGH; 安全性/质量门 (SL_STOP_TOO_WIDE /
      PRICE_TOO_LOW / SHARES_ABOVE_FEE_KNEE / FEE_INEFFICIENT / LOW_CONFIDENCE)
      即使与 NOTIONAL 同时命中, 仍必须保留并让探针 REJECT。
 
@@ -57,7 +57,7 @@ def test_exemption_only_applies_to_live_probe_marker():
     sim = evaluate(_inst(qty=1, probe=False))
     assert prb["verdict"] == "PASS"
     assert prb["exempted_reasons"] and all(
-        r.startswith("NOTIONAL_TOO_SMALL") for r in prb["exempted_reasons"])
+        r.startswith(("NOTIONAL_TOO_SMALL", "FEE_BPS_TOO_HIGH")) for r in prb["exempted_reasons"])
     assert sim["verdict"] == "REJECT"
     assert any(r.startswith("NOTIONAL_TOO_SMALL") for r in sim["reasons"])
     assert sim["exempted_reasons"] == []
@@ -87,11 +87,11 @@ def test_sim_arm_verdict_is_unchanged_by_exemption():
         assert "probe_exemption" not in r["metrics"]
 
 
-def test_exemption_surface_is_exactly_notional_gate():
-    """③ 豁免面精确 = 只剥 NOTIONAL_TOO_SMALL, 其余判据全保留。"""
+def test_exemption_surface_is_exactly_economic_gates():
+    """③ 豁免面精确 = 只剥两项经济性判据, 其余判据全保留。"""
     safety = {"SL_STOP_TOO_WIDE", "PRICE_TOO_LOW", "SHARES_ABOVE_FEE_KNEE",
               "FEE_INEFFICIENT", "LOW_CONFIDENCE"}
-    assert set(A._PROBE_EXEMPT_REASONS) == {"NOTIONAL_TOO_SMALL"}
+    assert set(A._PROBE_EXEMPT_REASONS) == {"NOTIONAL_TOO_SMALL", "FEE_BPS_TOO_HIGH"}
     assert not (set(A._PROBE_EXEMPT_REASONS) & safety), "豁免面不得含安全性/质量门"
 
 

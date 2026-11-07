@@ -138,6 +138,18 @@ def test_profit_fee_ratio_gate():
     assert out["direction"] == "SKIP"
 
 
+def test_max_fee_bps_gate():
+    A._cfg_cache.update({"enforce": True, "min_notional_usd": 0, "max_fee_bps": 20.0})
+    out, res = A.apply(_inst(entry_price=100.0, position_size=15))
+    assert any(r.startswith("FEE_BPS_TOO_HIGH") for r in res["reasons"])
+    assert out["direction"] == "SKIP"
+
+    A._cfg_cache.update({"max_fee_bps": 30.0})
+    out, res = A.apply(_inst(entry_price=100.0, position_size=15))
+    assert all(not r.startswith("FEE_BPS_TOO_HIGH") for r in res["reasons"])
+    assert out["direction"] == "BUY"
+
+
 def test_low_price_and_share_knee_gates():
     A._cfg_cache.update({"enforce": False, "min_entry_price": 30.0})
     _, res = A.apply(_inst(entry_price=8.5, position_size=400))
@@ -196,8 +208,8 @@ def test_production_yaml_admission_contract():
 
     assert admission["enabled"] is True
     assert admission["enforce"] is True
-    # 2026-11-03: 2500 → 5500 (2026-10-31 P3, DEB-20261031-budget-design §8, 用户裁「P3上」)
-    assert admission["min_notional_usd"] == 5500
+    assert admission["min_notional_usd"] == 2500
+    assert admission["max_fee_bps"] == 11.54
     assert admission["min_entry_price"] == 5.0
     assert admission["min_confidence_buy"] == 0
     assert admission["min_confidence_short"] == 0

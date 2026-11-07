@@ -20,6 +20,7 @@ def _row(trade_id, price, quantity, pnl_net=-10.0):
         "quantity": quantity,
         "notional": notional,
         "fees_est": 5.0,
+        "fee_bps": 5.0 / notional * 10000.0,
         "pnl_net": pnl_net,
         "entry_time": "2026-09-21T10:00:00-04:00",
     }
@@ -67,7 +68,26 @@ def test_current_gate_is_loaded_from_production_config_shape(tmp_path):
         "enforce": True,
         "min_entry_price": 5.0,
         "min_notional_usd": 2500.0,
+        "max_fee_bps": 0.0,
     }
+
+
+def test_current_gate_includes_fee_bps_cap(tmp_path):
+    config = _config(tmp_path)
+    raw = yaml.safe_load(config.read_text(encoding="utf-8"))
+    raw["playbook"]["admission"]["max_fee_bps"] = 11.54
+    config.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    rows = [_row(1, 100.0, 40)]
+    jsonl, latest = _artifacts(tmp_path, rows)
+    report = build_report(
+        jsonl_path=jsonl,
+        latest_path=latest,
+        config_path=config,
+        now=report_mod.datetime.fromisoformat("2026-09-21T02:47:00+00:00"),
+    )
+    assert report["classification"]["current_blocked"]["n"] == 1
+    assert report["status"] == "CURRENT_GATE_BYPASS"
+    assert "fee_bps≤11.54" in render_report(report)
 
 
 def test_report_separates_safe_increment_from_candidate_loosening(tmp_path):

@@ -81,6 +81,10 @@ BASELINE_DAYS = 7          # 近 7 日同时段中位数
 MIN_THRESHOLD = 1          # ERROR/CRITICAL 是 P0, 1 条即触发
 THRESHOLD_MULT = 0         # 基线只做诊断, 不抬高 P0 触发线
 LEVEL_MARKERS = ("] ERROR:", "] CRITICAL:")
+_LOGURU_LEVEL_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:,\d+)?\s+"
+    r"\|\s+(ERROR|CRITICAL)\s+\|\s*"
+)
 TB_HEADER = "Traceback (most recent call last):"
 _TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}")
 _TAIL_BYTES = 2_000_000    # 当前档只读尾部 2MB (15min 窗实测 ~12KB; 轮转档全读)
@@ -205,6 +209,9 @@ def _parse_line(line: str):
         idx = line.find(marker)
         if idx >= 0:
             return line[:16], marker[2:-1], line[idx + len(marker):].strip()
+    loguru = _LOGURU_LEVEL_RE.match(line)
+    if loguru:
+        return line[:16], loguru.group(1), line[loguru.end():].strip()
     return None
 
 

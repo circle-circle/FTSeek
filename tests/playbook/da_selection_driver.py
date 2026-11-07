@@ -177,7 +177,17 @@ def _main_pool():
     PL._reset_screening_cache()
     sel = PL._select_deep_candidates(scan_of(bullish, bearish), [], [], top_n=5,
                                      output_dir=WORKDIR, batch_id="DA:driver-main")
+    sel_expanded = PL._select_deep_candidates(
+        scan_of(bullish, bearish), [], [], top_n=8,
+        output_dir=WORKDIR, batch_id="DA:driver-main-expanded")
+    remounted = {"symbol": "US.CACHED"}
+    PL._mount_supply_attribution(remounted, sel_expanded["deep_candidates"][7])
     return {"selected": sel["selected_symbols"],
+            "supply": [c.get("_supply_selection") for c in sel["deep_candidates"]],
+            "expanded_selected": sel_expanded["selected_symbols"],
+            "expanded_supply": [c.get("_supply_selection")
+                                for c in sel_expanded["deep_candidates"]],
+            "remounted_supply": remounted.get("_supply_selection"),
             "filter_selected": sel["filter"]["selected_symbols"],
             "filter": {k: v for k, v in sel["filter"].items() if k != "screening"},
             "screening": sel["filter"]["screening"],

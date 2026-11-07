@@ -47,6 +47,7 @@ def _env_int(name: str, default: int) -> int:
 DEADLINE_ET_HHMM = _env_int("DA_CARRIER_DEADLINE_ET", 857)
 HEARTBEAT_SEC = _env_int("DA_CARRIER_HEARTBEAT_SEC", 60)
 PIPELINE_MAX_SEC = 3900
+MAIN_POOL_TOP_N = 8
 TZ = ZoneInfo("America/New_York")
 
 
@@ -381,7 +382,9 @@ def main() -> int:
     date = stamp.strftime("%Y-%m-%d")
     minute = stamp.hour * 100 + stamp.minute
     base_event = {"type": "da_main_schedule", "date": date,
-                  "started_at": stamp.isoformat()}
+                  "started_at": stamp.isoformat(),
+                  "main_pool_top_n": MAIN_POOL_TOP_N,
+                  "main_pool_budget": MAIN_POOL_TOP_N + 2}
     if not is_trading_day(stamp.date()):
         append_event({**base_event, "status": "skipped_non_trading_day"})
         return 0
@@ -449,7 +452,7 @@ def main() -> int:
                 completed = subprocess.run(
                     _timeout_command(
                         [str(PYTHON), str(SKILL_SCRIPTS / "pipeline.py"),
-                         "--mode", "full", "--top", "5",
+                         "--mode", "full", "--top", str(MAIN_POOL_TOP_N),
                          "--symbols", symbol_arg, "--format", "json"],
                         pipeline_timeout),
                     cwd=SKILL_SCRIPTS, text=True, stdout=subprocess.PIPE,

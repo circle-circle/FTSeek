@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from difflib import SequenceMatcher
 import re
-from typing import Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 from app.event_stream.models import CanonicalEvent
@@ -127,6 +127,50 @@ def deduplicate_events(
         else:
             clusters.append((event, [], "primary"))
 
+    return [
+        EventCluster(primary=primary, duplicates=duplicates, matched_on=matched_on)
+        for primary, duplicates, matched_on in clusters
+    ]
+
+
+def deduplicate_events_exact(events: Iterable[CanonicalEvent]) -> List[EventCluster]:
+    tier_order = {"T0": 0, "T1": 1, "T2": 2}
+    clusters: List[Tuple[CanonicalEvent, List[CanonicalEvent], str]] = []
+    url_index: Dict[str, List[int]] = {}
+    title_index: Dict[str, List[int]] = {}
+    for event in sorted(
+        events,
+        key=lambda item: (
+            tier_order.get(item.source_tier, 9),
+            item.source_id,
+            item.event_id,
+        ),
+    ):
+        url_key = _normalize_url(event.source_url) if event.source_url else ""
+        title_key = _normalize_title(event.headline)
+        candidate_ids = set(url_index.get(url_key, []) if url_key else [])
+        candidate_ids.update(title_index.get(title_key, []) if title_key else [])
+        for cluster_index in sorted(candidate_ids):
+            primary, duplicates, matched_on = clusters[cluster_index]
+            duplicate_reason = None
+            if _same_url(primary, event):
+                duplicate_reason = "url"
+            elif title_key and _titles_similar(primary.headline, event.headline) and _close_in_time(
+                primary, event, 24
+            ):
+                duplicate_reason = "title"
+            if duplicate_reason:
+                duplicates.append(event)
+                if matched_on == "primary":
+                    clusters[cluster_index] = (primary, duplicates, duplicate_reason)
+                break
+        else:
+            cluster_index = len(clusters)
+            clusters.append((event, [], "primary"))
+            if url_key:
+                url_index.setdefault(url_key, []).append(cluster_index)
+            if title_key:
+                title_index.setdefault(title_key, []).append(cluster_index)
     return [
         EventCluster(primary=primary, duplicates=duplicates, matched_on=matched_on)
         for primary, duplicates, matched_on in clusters

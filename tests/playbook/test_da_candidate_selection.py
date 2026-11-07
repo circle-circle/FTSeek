@@ -140,6 +140,13 @@ class TestRfc117SharedMomentum:
         for field in ("ue_origin", "ue_direction", "ue_confidence", "ue_scanned_at"):
             assert f'analysis.get("_{field}"' in source
 
+    def test_supply_cohort_survives_gate_bridge_and_db(self):
+        source = SKILL_PIPELINE.read_text(encoding="utf-8")
+        assert source.count('"supply_selection": a.get("_supply_selection") or {}') == 2
+        assert source.count(
+            '"supply_selection": analysis.get("_supply_selection") or {}'
+        ) == 1
+
 
 # ══ 1. 阈值单一真源 + 2.9→3.0 显式变更 ══════════════════════════════════
 class TestThresholds:
@@ -258,6 +265,19 @@ class TestMainPool:
         assert len(main["selected"]) == 7                   # top_n=5 → 5+2
         assert main["filter"]["output"] == 7
         assert main["screening"]["selection"] == {"selected": 7, "budget_cut": 3}
+
+    def test_top_eight_adds_three_separately_auditable_candidates(self, driver_result):
+        main = case(driver_result, "main_pool")
+        assert len(main["expanded_selected"]) == 10
+        assert main["expanded_selected"][:7] == main["selected"]
+        assert [row["selection_rank"] for row in main["expanded_supply"]] == list(range(1, 11))
+        assert {row["cohort"] for row in main["expanded_supply"][:7]} == {"main_pool_base_r1_7"}
+        assert {row["cohort"] for row in main["expanded_supply"][7:]} == {
+            "main_pool_expansion_r8_10"}
+        assert all(row["main_pool_budget"] == 10 for row in main["expanded_supply"])
+        assert all(row["screen_batch_id"] == "DA:driver-main-expanded"
+                   for row in main["expanded_supply"])
+        assert main["remounted_supply"] == main["expanded_supply"][7]
 
     def test_selected_symbols_recorded_after_filtering(self, driver_result):
         """审计口径: filter.selected_symbols 必须与实际提交深分析的列表逐字相同。"""

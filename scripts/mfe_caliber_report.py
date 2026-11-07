@@ -72,7 +72,8 @@ def report(conn, date_from: str, date_to: str, source: str) -> dict:
     ]
     params = [source, date_from, date_to]
     rows = conn.execute(
-        "SELECT trade_date, symbol, owner_strategy, mfe_pct, mfe_tick_pct, mfe_gate_pct, "
+        "SELECT trade_date, symbol, owner_strategy, mfe_pct, mfe_tick_pct, "
+        "mfe_t15_pct, mfe_gate_pct, "
         "exit_reason FROM trade_records WHERE " + " AND ".join(where) + " ORDER BY id",
         params,
     ).fetchall()

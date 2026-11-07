@@ -95,14 +95,20 @@ def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
 
 
 def funnel(day: str) -> Dict[str, Dict[str, Any]]:
-    """每阶段漏斗: 价格闸拦 / 盘前门槛拦 / 下单尝试 / 成交 / 失败原因。"""
+    """每阶段漏斗: 票次与独立标的并列, 下单尝试 / 成交 / 失败原因。"""
     f: Dict[str, Dict[str, Any]] = {s: {"price_gate": 0, "pretrade_gate": 0, "attempts": 0,
-                                        "filled": 0, "errors": [], "pretrade_reasons": {}}
+                                        "filled": 0, "price_gate_unique": 0,
+                                        "pretrade_gate_unique": 0, "errors": [],
+                                        "pretrade_reasons": {}}
                                     for s in EXT_SESSIONS}
+    unique = {s: {"price_gate": set(), "pretrade_gate": set()} for s in EXT_SESSIONS}
     for row in _read_jsonl(PRICE_GATE):
         s = str(row.get("session") or "")
         if s in f and _et_date_of(row.get("ts")) == day:
             f[s]["price_gate"] += int(row.get("n") or 0)
+            unique[s]["price_gate"].update(
+                str(item.get("symbol") or "") for item in row.get("rejects") or []
+                if item.get("symbol"))
     for row in _read_jsonl(PRETRADE_GATE):
         s = str(row.get("session") or "")
         if s in f and _et_date_of(row.get("ts")) == day:
@@ -110,6 +116,8 @@ def funnel(day: str) -> Dict[str, Dict[str, Any]]:
             for rj in row.get("rejects") or []:
                 k = str(rj.get("reason") or "?")
                 f[s]["pretrade_reasons"][k] = f[s]["pretrade_reasons"].get(k, 0) + 1
+                if rj.get("symbol"):
+                    unique[s]["pretrade_gate"].add(str(rj["symbol"]))
     for row in _read_jsonl(EXEC_LOG):
         s = str(row.get("session") or "")
         if s not in f or _et_date_of(row.get("ts")) != day:
@@ -121,6 +129,9 @@ def funnel(day: str) -> Dict[str, Dict[str, Any]]:
             f[s]["errors"].append(str(row.get("error"))[:60])
         else:
             f[s]["errors"].append(str(row.get("fill", {}).get("status") or "not_filled")[:60])
+    for s in EXT_SESSIONS:
+        f[s]["price_gate_unique"] = len(unique[s]["price_gate"])
+        f[s]["pretrade_gate_unique"] = len(unique[s]["pretrade_gate"])
     return f
 
 
@@ -239,11 +250,14 @@ def render(day: str, push_date_note: str = "") -> str:
     ext_trades = [t for t in trades if (t.get("stage") or "") in EXT_SESSIONS]
     lines = [f"### 延长时段阶段日报 · {day} (ET){push_date_note}", ""]
     lines += ["**① 漏斗 (每阶段)**", "",
-              "| 阶段 | 价格闸拦 | 预交易闸拦 | 下单尝试 | 成交 |", "| --- | --- | --- | --- | --- |"]
+              "| 阶段 | 价格闸拦 (票次/独立票) | 预交易闸拦 (票次/独立票) | 下单尝试 | 成交 |",
+              "| --- | --- | --- | --- | --- |"]
     for s in EXT_SESSIONS:
         d = fun[s]
-        lines.append(f"| {phase_cn(s)} | {d['price_gate']} | {d['pretrade_gate']} | "
+        lines.append(f"| {phase_cn(s)} | {d['price_gate']} / {d.get('price_gate_unique', 0)} | "
+                     f"{d['pretrade_gate']} / {d.get('pretrade_gate_unique', 0)} | "
                      f"{d['attempts']} | {d['filled']} |")
+    lines += ["", "_票次=各轮累计; 独立票=该 ET 日按 symbol 去重。候选转化率不得以票次作分母。_"]
     reasons: List[str] = []
     for s in EXT_SESSIONS:
         d = fun[s]
@@ -259,7 +273,7 @@ def render(day: str, push_date_note: str = "") -> str:
     else:
         lines.append("（该日无已平仓的延长时段单）")
     holds = holding_ext()
-    lines += ["", "**③ 在场 (仍持有的延长时段仓)**"]
+    lines += ["", "**③ 当前在场快照 (与查询日/--date 无关)**"]
     if holds:
         for h in holds:
             lines.append(f"- {h['symbol']} {h['size']}股 @ ${h['avg_entry_price']:.2f} · "
@@ -292,7 +306,7 @@ def render(day: str, push_date_note: str = "") -> str:
             )
     digest = recent_rounds()
     if digest:
-        lines += ["", "**⑤ 最近轮次 闸计数摘要 (本卡新增, 让「在跑但 0 单」可见)**", "", digest]
+        lines += ["", "**⑤ 最近轮次闸计数摘要 (当前日志快照, 与查询日/--date 无关)**", "", digest]
     return "\n".join(lines)
 
 

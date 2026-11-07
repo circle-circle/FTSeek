@@ -4,7 +4,7 @@
 
 口径: 对 data/shadow/penetration_shadow.jsonl 中 type=penetration 事件,
 用当日 1 分 bar (data/replay_bars/US_<SYM>_<et_date>.json, 端标) 回填【离场后】结局:
-  - recovered_1m/3m/5m/10m: 离场后 N 分钟内价格是否回摆到净保本地板
+  - recovered_1m/2m/3m/5m/10m: 离场后 N 分钟内价格是否回摆到净保本地板
     (LONG: bar high >= floor; SHORT: bar low <= floor) — True = V型反转
     (若当时挂地板限价单而非 marketable limit, 该分钟内可成交于地板价)
   - continued_bps_10m: 离场后 10 分钟内最劣延续幅度 (负=续跌, 正=回摆方向)
@@ -90,20 +90,41 @@ def label_one(ev, bars):
     if not after:
         return {"status": "no_bars_after"}
     rec = {}
-    for n in (1, 3, 5, 10):
+    for n in (1, 2, 3, 5, 10):
         window = after[:n]
         if len(window) < n:
             rec[f"recovered_{n}m"] = None  # 可见窗不足, null 而非 False (防假零, 同DEB-20260902口径)
+            rec[f"close_recovered_{n}m"] = None
         elif is_long:
             rec[f"recovered_{n}m"] = any(b[2] >= floor for b in window)
+            rec[f"close_recovered_{n}m"] = any(b[4] >= floor for b in window)
         else:
             rec[f"recovered_{n}m"] = any(b[3] <= floor for b in window)
+            rec[f"close_recovered_{n}m"] = any(b[4] <= floor for b in window)
     if is_long:
         worst = min(b[3] for b in after)
         continued_bps = (worst - trig) / trig * 10000.0
     else:
         worst = max(b[2] for b in after)
         continued_bps = (trig - worst) / trig * 10000.0
+    continued_bps_2m = None
+    close_move_bps_2m = None
+    hard_sl_during_2m = None
+    if len(after) >= 2:
+        two = after[:2]
+        if is_long:
+            worst_2m = min(b[3] for b in two)
+            continued_bps_2m = (worst_2m - trig) / trig * 10000.0
+            close_move_bps_2m = (two[-1][4] - trig) / trig * 10000.0
+        else:
+            worst_2m = max(b[2] for b in two)
+            continued_bps_2m = (trig - worst_2m) / trig * 10000.0
+            close_move_bps_2m = (trig - two[-1][4]) / trig * 10000.0
+        initial_sl = ev.get("initial_sl")
+        if initial_sl:
+            initial_sl = float(initial_sl)
+            hard_sl_during_2m = any(
+                (b[3] <= initial_sl) if is_long else (b[2] >= initial_sl) for b in two)
     cf_saved = None
     limit_px = ev.get("limit_px")
     if rec.get("recovered_10m") and limit_px:
@@ -114,6 +135,9 @@ def label_one(ev, bars):
         "partial": len(after) < SCAN_N,
         "n_bars_scanned": len(after),
         **rec,
+        "continued_bps_2m": round(continued_bps_2m, 1) if continued_bps_2m is not None else None,
+        "close_move_bps_2m": round(close_move_bps_2m, 1) if close_move_bps_2m is not None else None,
+        "hard_sl_during_2m": hard_sl_during_2m,
         "continued_bps_10m": round(continued_bps, 1),
         "cf_floor_fill_saved_bps": (round(cf_saved, 1) if cf_saved is not None else None),
     }
@@ -161,6 +185,7 @@ def main():
                 # 事件在当日最后一根 bar 之后 (收盘尾段) — 落 outcome 封账, 避免永久重试
                 out_rows.append({"type": "outcome", "event_id": ev.get("event_id"),
                                  "et_date": date, "symbol": ev.get("symbol"),
+                                 "path": ev.get("path"),
                                  "status": "no_bars_after", "backfilled_at": datetime.now().isoformat(timespec="seconds")})
             continue
         stats["labeled"] += 1
@@ -168,6 +193,7 @@ def main():
                          "et_date": date, "symbol": ev.get("symbol"),
                          "direction": ev.get("direction"), "side": ev.get("side"),
                          "exit_reason": ev.get("exit_reason"),
+                         "path": ev.get("path"),
                          "depth_bps": ev.get("depth_bps"),
                          **lab,
                          "backfilled_at": datetime.now().isoformat(timespec="seconds")})
@@ -186,7 +212,9 @@ def main():
     for r in out_rows:
         if r.get("status") == "labeled":
             print(f"{r['symbol']} {r.get('side')}/{r.get('exit_reason')} depth={r.get('depth_bps')}bps "
-                  f"→ rec1/3/5/10={r.get('recovered_1m')}/{r.get('recovered_3m')}/{r.get('recovered_5m')}/{r.get('recovered_10m')} "
+                  f"→ rec1/2/3/5/10={r.get('recovered_1m')}/{r.get('recovered_2m')}/"
+                  f"{r.get('recovered_3m')}/{r.get('recovered_5m')}/{r.get('recovered_10m')} "
+                  f"close2={r.get('close_recovered_2m')} hard2={r.get('hard_sl_during_2m')} "
                   f"续跌={r.get('continued_bps_10m')}bps cf_saved={r.get('cf_floor_fill_saved_bps')}")
 
 

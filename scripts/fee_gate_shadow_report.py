@@ -56,6 +56,7 @@ def load_current_gate(config_path: Path = CONFIG_PATH) -> dict[str, Any]:
         "enforce": bool(admission.get("enforce", False)),
         "min_entry_price": float(admission.get("min_entry_price", 0.0) or 0.0),
         "min_notional_usd": float(admission.get("min_notional_usd", 0.0) or 0.0),
+        "max_fee_bps": float(admission.get("max_fee_bps", 0.0) or 0.0),
     }
 
 
@@ -119,6 +120,7 @@ def _classify_rows(rows: list[dict[str, Any]], gate: dict[str, Any]) -> dict[str
     active = bool(gate["enabled"] and gate["enforce"])
     min_price = gate["min_entry_price"]
     min_notional = gate["min_notional_usd"]
+    max_fee_bps = gate["max_fee_bps"]
 
     current_blocked = []
     current_kept = []
@@ -134,14 +136,17 @@ def _classify_rows(rows: list[dict[str, Any]], gate: dict[str, Any]) -> dict[str
     for row in rows:
         price = float(row["entry_price"])
         notional = float(row["notional"])
-        current_block = active and (price < min_price or notional < min_notional)
+        fee_bps = float(row.get("fee_bps") or (
+            float(row["fees_est"]) / notional * 10000.0 if notional > 0 else 0.0))
+        fee_block = max_fee_bps > 0 and fee_bps > max_fee_bps
+        current_block = active and (price < min_price or notional < min_notional or fee_block)
         if current_block:
             current_blocked.append(row)
         else:
             current_kept.append(row)
         for floor in CANDIDATE_NOTIONALS:
             candidate_block = price < CANDIDATE_PRICE or notional < floor
-            safe_block = active and (price < min_price or notional < floor)
+            safe_block = active and (price < min_price or notional < floor or fee_block)
             if safe_block:
                 safe_by_floor[str(int(floor))]["blocked"].append(row)
             else:
@@ -224,8 +229,8 @@ def _diagnosis(report: dict[str, Any]) -> dict[str, str]:
                 "chain": "trade_records → fee_gate_shadow → admission/enforcement check",
             }
         return {
-            "label": "CURRENT_NOTIONAL_GATE_BYPASS",
-            "direction": "修复现行名义额门绕过，先不新增任何门",
+            "label": "CURRENT_ECONOMIC_GATE_BYPASS",
+            "direction": "修复现行名义额/费用率门绕过，先不新增任何门",
             "chain": "trade_records → fee_gate_shadow → admission/enforcement check",
         }
     if report["n"] < MIN_N:
@@ -298,6 +303,7 @@ def render_report(report: dict[str, Any]) -> str:
         ),
         (
             f"现行门 price≥${gate['min_entry_price']:g} & notional≥${gate['min_notional_usd']:g} "
+            f"& fee_bps≤{gate['max_fee_bps']:g} "
             f"({'active' if classification['current_active'] else 'inactive'})"
         ),
         "安全增量: 保持现行价格门，只测试名义额门",

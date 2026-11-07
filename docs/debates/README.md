@@ -12,8 +12,6 @@ FTSeek-US 用于处理技术/策略分歧的标准决策流程。
 
 | 状态 | 含义 |
 |---|---|
-| [DEB-20261106-market-risk-switch-review](DEB-20261106-market-risk-switch-review.md) | 系统性风险价格门复核 + 日内 Event Intelligence 离线原型 | **只读复核完成；两条价格门判死，离线原型有效卡率不足；生产零变更** | 2026-11-06 | 盘前普跌轴已由 DEB-20260924 用 71 日/789 条关闭、盘中急跌轴 ≤-1.5% 全窗仅 n=2；事件驱动转离线原型，同输入 12 次 SELL_SHORT 11/SKIP 1 且 score 6↔8 不稳，deepseek-v4.1-flash 在 16k 预算下有效卡仅 4/10（截断）⇒ 不换 DA 主模型；新增离线原型隔离守卫与重复性/换档探针。 |
-| [DEB-20261106-score-calibration-and-entry-quality](DEB-20261106-score-calibration-and-entry-quality.md) | score 校准 / 入场形态路由与 entry_confirm 结算 / market_premise 字段（三项预注册） | **预注册待执行；P1/P2b/P3 离线只读，P2a 待裁** | 2026-11-06 | P1 score→期望校准（分桶 n≥30 + ρ 显著 + 端点差 CI 不含 0，否则 score 永久降级为叙述字段）；P2b 补 entry_confirm 反事实结算（n≥100 才裁决）；P3 market_premise 仅进 prompt 与归因、不作门（冲击日召回≥4/5、常态误伤≤1/20、复跑一致≥80%）。均不改阈值、不重开已关轴。 |
 | 进行中 | 正在收集观点和证据 |
 | 待决策 | 证据已充分，等待裁决 |
 | 已决策 | 已选择方案，进入执行 |
@@ -24,6 +22,10 @@ FTSeek-US 用于处理技术/策略分歧的标准决策流程。
 
 | 编号 | 议题 | 状态 | 创建时间 | 决策 |
 |---|---|---|---|---|
+| [DEB-20261106-market-risk-switch-review](DEB-20261106-market-risk-switch-review.md) | 系统性风险价格门复核与日内 Event Intelligence 事件智能实现方案 | **R0/R1+抽样R2b/R3离线原型已实施；生产零变更，方向价值未证** | 2026-11-06 | §17 实测 as-of/迟到修订、共享双LLM简报、日内指令与失效保护；AMD双模型新增970 tokens达标，delta全局prompt与51个未选簇仍待优化。同prompt控制SHORT/SHORT/BUY，单次方向变化不归因；不接RISK_OFF、不恢复UE直接入场、不接Playbook。 |
+| [DEB-20261106-da-election-reasoning-audit](DEB-20261106-da-election-reasoning-audit.md) | DA 双 LLM 对选后指数反弹、AI 硬件重挫与板块轮动的捕捉及指令审计 | **只读复核完成；生产零变更** | 2026-11-06 | 36 只中 22 只原始材料含选举文本、7 只核心产物提及、4 只进入主因果链；18 只 bridge 仅 TSLA 由选举主因驱动。AMD/NVDA/SNDK 等回避主要靠破位门，HCA 合理识别利好已定价；不改 prompt/gate，共享宏观简报仅留作用户批准后的离线 A/B。 |
+| [DEB-20261105-da-claim-traceability](DEB-20261105-da-claim-traceability.md) | DA 双 LLM 理由分类、挑战记录与跨表溯源 | **DA→Playbook 生产验收完成** | 2026-11-05 | 修复已发布候选 claims 被 upsert 覆盖；11-05 共 36/36 富对象，17 条实际合并全保留 claims，EPAM/TIC 双 cohort 完整。221 tests + 冒烟 7/7，不改历史数据或交易阈值。 |
+| [DEB-20261105-da-main-pool-supply-expansion](DEB-20261105-da-main-pool-supply-expansion.md) | entry_confirm 现役约束下的 DA 主池供给扩容与增量分账 | **今晚旧批已恢复；自然交易链验收完成** | 2026-11-05 | 主池 7→10；2500 + fee_bps≤11.54；旧批原子恢复 14 条并保留审计，GOOG entry_confirm 正常弃单、CRM arm，无强制成交。 |
 | [DEB-20261105-da-reprice-price-ledger-audit](DEB-20261105-da-reprice-price-ledger-audit.md) | DA 结果、reprice 后 RR、计划/有效/成交价格与风险台账 | **已部署并重启验收；首笔新样本待观察** | 2026-11-05 | DA n=141 净 -12.96bps，11 月 n=30 不称转正；214/271 reprice 行 RR 陈旧、9 笔减仓风险额虚高。落地三时点 price ledger、execution_risk、历史成交只读回连与 TP 语义披露；主服务冒烟 7/7，不改门槛、仓位、出场或实盘锁。 |
 | [DEB-20260626-horizon_model](DEB-20260626-horizon_model.md) | HorizonReturnModel 是否保留做实时决策 | 已关闭 | 2026-06-26 | 方案 B 子集：降级为观测工具，修 BUY 入场质量 |
 | [DEB-20260804-factor-system-audit](DEB-20260804-factor-system-audit.md) | 因子体系三层断层：伪因子/错尺子/断反馈 + 五处价值遗漏 | 已执行 | 2026-08-04 | 用户裁"先实施执行方案": F1/F2/F3 落地, F4 bootstrap 否决撤销, F5 定性; 任务#3 VWAP 尺子完成; 余任务#5 (待 F2 样本) |

@@ -89,6 +89,8 @@ def load_samples():
             outcomes[eid] = r
     out = []
     for eid, ev in events.items():
+        if ev.get("path") == "early_tight_initial":
+            continue
         oc = outcomes.get(eid)
         if not oc:
             continue

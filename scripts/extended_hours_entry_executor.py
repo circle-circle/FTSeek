@@ -1764,18 +1764,13 @@ def _snapshot_candidates(session, qctx, symbols):
     """把任意代码列表 → 候选结构 {symbol,px,chg,vol,prev_close} (盘前取 pre_* 字段).
 
     与 `_scan_movers` 的口径一致: px = 盘前/盘后价, chg = vs 昨收 %, vol = 盘前/盘后量。
+    单票导致的批量失败通过二分隔离；连接/限流失败不放大请求。
     """
     from futu import RET_OK
     out, syms = [], [s for s in dict.fromkeys(symbols) if s.startswith("US.")]
-    for i in range(0, len(syms), SNAPSHOT_BATCH):
-        batch = syms[i:i + SNAPSHOT_BATCH]
-        try:
-            ret, snap = qctx.get_market_snapshot(batch)
-        except Exception:
-            _log.warning("get_market_snapshot batch failed", exc_info=True)
-            continue
-        if ret != RET_OK or snap is None or not hasattr(snap, "columns"):
-            continue
+
+    def _parse_snapshot(snap):
+        parsed = []
         for _, r in snap.iterrows():
             sec = str(r.get("code", ""))
             if not sec.startswith("US."):
@@ -1789,11 +1784,54 @@ def _snapshot_candidates(session, qctx, symbols):
                     px = float(r.get("after_price", 0) or 0) or float(r.get("last_price", 0) or 0)
                     vol = float(r.get("after_volume", 0) or 0)
                 chg = ((px / prev - 1) * 100) if (px > 0 and prev > 0) else 0.0
-                out.append({"symbol": sec, "name": str(r.get("name", "")), "px": px,
-                            "chg": chg, "vol": vol, "prev_close": prev})
+                parsed.append({"symbol": sec, "name": str(r.get("name", "")), "px": px,
+                               "chg": chg, "vol": vol, "prev_close": prev})
             except Exception:
                 _log.warning("snapshot row parse failed for %s", sec, exc_info=True)
-                continue
+        return parsed
+
+    def _batch_error(snap):
+        return str(snap).replace("\n", " ")[:240]
+
+    def _batch_abort(message):
+        lowered = message.lower()
+        markers = ("频率", "最多", "网络", "连接", "断开", "too frequent", "throttl",
+                   "timeout", "timed out", "connect")
+        return any(marker in lowered for marker in markers)
+
+    def _fetch(batch):
+        try:
+            ret, snap = qctx.get_market_snapshot(batch)
+        except Exception as exc:
+            _log.warning("get_market_snapshot batch failed", exc_info=True)
+            return [], list(batch), [f"{type(exc).__name__}: {exc}"]
+        if ret == RET_OK and snap is not None and hasattr(snap, "columns"):
+            parsed = _parse_snapshot(snap)
+            got = {item["symbol"] for item in parsed}
+            dropped = [symbol for symbol in batch if symbol not in got]
+            return parsed, dropped, (["missing_or_invalid_rows"] if dropped else [])
+        message = _batch_error(snap)
+        if ret == RET_OK or len(batch) == 1 or _batch_abort(message):
+            _log.warning("get_market_snapshot dropped symbols=%s error=%s", batch, message)
+            return [], list(batch), [message]
+        mid = len(batch) // 2
+        left = _fetch(batch[:mid])
+        right = _fetch(batch[mid:])
+        return (left[0] + right[0], left[1] + right[1], left[2] + right[2])
+
+    for i in range(0, len(syms), SNAPSHOT_BATCH):
+        batch = syms[i:i + SNAPSHOT_BATCH]
+        parsed, dropped, errors = _fetch(batch)
+        out.extend(parsed)
+        requested = len(batch)
+        succeeded = requested - len(dropped)
+        detail = ""
+        if dropped:
+            shown = ",".join(dropped[:12])
+            ellipsis = "..." if len(dropped) > 12 else ""
+            detail = f" dropped_symbols={shown}{ellipsis} errors={str(errors[:3])[:300]}"
+        print(f"[ext_entry] 快照指标[{session}] requested={requested} "
+              f"succeeded={succeeded} dropped={len(dropped)}{detail}")
     return out
 
 

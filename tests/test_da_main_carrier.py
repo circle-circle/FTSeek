@@ -92,12 +92,15 @@ def test_window_run_passes_watchlist_symbols_to_pipeline(monkeypatch, tmp_path, 
     assert CARRIER.main() == 0
     pipeline_args = next(args for args in calls if "--mode" in args)
     assert pipeline_args[pipeline_args.index("--symbols") + 1] == "US.AAA,US.BBB"
+    assert pipeline_args[pipeline_args.index("--top") + 1] == "8"
     assert "[DA-main]" in capsys.readouterr().out
     events = _events(CARRIER.EVENT_PATH)
     assert events[0]["status"] == "running"
     event = events[-1]
     assert event["status"] == "complete"
     assert event["candidates_total"] == 2
+    assert event["main_pool_top_n"] == 8
+    assert event["main_pool_budget"] == 10
     assert event["artifacts"]["bridge_current"] is True
 
 

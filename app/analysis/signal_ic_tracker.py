@@ -95,6 +95,28 @@ def _conn() -> sqlite3.Connection:
     return conn
 
 
+def _merge_da_factor_payload(existing_raw: str, incoming_raw: str) -> str:
+    try:
+        existing = json.loads(existing_raw)
+        incoming = json.loads(incoming_raw)
+    except (TypeError, json.JSONDecodeError):
+        return incoming_raw
+    if not isinstance(existing, dict) or not isinstance(existing.get("claims"), list):
+        return incoming_raw
+    if isinstance(incoming, dict) and isinstance(incoming.get("claims"), list):
+        return incoming_raw
+    merged = dict(existing)
+    if isinstance(incoming, list) and incoming:
+        merged["playbook_factors"] = incoming
+        conditions = existing.get("conditions") or []
+        if isinstance(conditions, list):
+            merged["conditions"] = list(dict.fromkeys(
+                value for value in conditions + incoming
+                if isinstance(value, str)
+            ))
+    return json.dumps(merged, ensure_ascii=False)
+
+
 # 2026-06-30: Strategy Registry 替换硬编码 mapping
 # 从 app.core.strategy_registry 读取 disabled 策略列表，不再手动维护 cfg_to_sid 映射
 
@@ -267,6 +289,15 @@ def record_signal_snapshot(
         conn = _conn()
         try:
             _factors_json = json.dumps(factors) if factors else None
+            if _factors_json and strategy_id == "deep_analysis":
+                existing = conn.execute(
+                    "SELECT factors_json FROM signal_snapshots WHERE decision_id = ?",
+                    (decision_id,),
+                ).fetchone()
+                if existing and existing["factors_json"]:
+                    _factors_json = _merge_da_factor_payload(
+                        existing["factors_json"], _factors_json
+                    )
             # P1 (2026-07-11): 持久化决策时特征向量 (default=str 兜底不可序列化对象)
             _mc_json = json.dumps(market_context, default=str) if market_context else None
             # UPSERT: 若 decision_recorder 先写入(无factors), 后续 pipeline 带 factors 时更新

@@ -285,6 +285,18 @@ def _entry_archetype(inst: Dict[str, Any]) -> str:
     return ""
 
 
+def _supply_selection(inst: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        raw = inst.get("raw_instruction_json")
+        if isinstance(raw, str):
+            raw = json.loads(raw or "{}")
+        if isinstance(raw, dict) and isinstance(raw.get("supply_selection"), dict):
+            return dict(raw["supply_selection"])
+    except Exception:
+        return {}
+    return {}
+
+
 def _planned_entry(inst: Dict[str, Any]) -> Optional[float]:
     """DA 计划锚: raw.planned_entry 优先, 回退 confirmation.price_level.
 
@@ -532,6 +544,7 @@ def _gate_inner(inst, db, reprice_params, now_et, cfg, scheduler):
                 "plan_gap_shadow": _plan_gap_shadow(_holdout_arch, _holdout_gap, cfg),
                 "plan_gap_threshold_pct": float(cfg.get("plan_gap_shadow_pct", 1.0) or 1.0),
                 "entry_archetype": _holdout_arch,
+                "supply_selection": _supply_selection(inst),
                 "px_at_confirm": None, "notional": _notional(inst, reprice_params),
                 "session_min": _session_min(now_et),
                 # v2 字段 (holdout 无判定 ⇒ 判定类字段 None, 锚侧报价照常留痕)
@@ -564,6 +577,7 @@ def _gate_inner(inst, db, reprice_params, now_et, cfg, scheduler):
             "grace_votes": int(cfg.get("grace_votes") or DEFAULT_GRACE_VOTES),
             # RFC-153: archetype/阈值同样 arm 时冻结 (在途单不因配置热改而换语义)
             "entry_archetype": _entry_archetype(inst),
+            "supply_selection": _supply_selection(inst),
             "planned_entry": _planned_entry(inst),
             "plan_gap_pct": _plan_gap_pct(anchor, _planned_entry(inst)),
             # record-only 计划锚影子参数: arm 时冻结 (在途单不因热改换语义)
@@ -585,6 +599,7 @@ def _gate_inner(inst, db, reprice_params, now_et, cfg, scheduler):
             "delay_sec": _arm["delay_sec"], "ttl_sec": int(cfg.get("ttl_sec") or DEFAULT_TTL_SEC),
             "ruler": _arm["ruler"], "mid_arm": _arm["mid_arm"],
             "entry_archetype": _arm["entry_archetype"],
+            "supply_selection": _arm["supply_selection"],
             "planned_entry": _arm["planned_entry"],
             "plan_gap_pct": _arm["plan_gap_pct"],
             "plan_gap_shadow_enabled": _arm["plan_gap_shadow_enabled"],
@@ -641,6 +656,9 @@ def _restore_arm(inst: Dict[str, Any], state: Dict[str, Any], now_et: datetime,
         _gap_shadow_pct = state.get("plan_gap_shadow_pct")
         if _gap_shadow_pct is None:
             _gap_shadow_pct = float(cfg.get("plan_gap_shadow_pct", 1.0) or 1.0)
+        _supply = state.get("supply_selection")
+        if not isinstance(_supply, dict):
+            _supply = _supply_selection(inst)
         return {
             "inst_id": inst_id,
             "symbol": inst.get("symbol"),
@@ -657,6 +675,7 @@ def _restore_arm(inst: Dict[str, Any], state: Dict[str, Any], now_et: datetime,
             "grace_votes": int(cfg.get("grace_votes") or DEFAULT_GRACE_VOTES),
             # RFC-153: 旧旗标缺这些键时回落当前 cfg (不把在途单静默降级, 也不伪造历史值)
             "entry_archetype": str(state.get("entry_archetype") or ""),
+            "supply_selection": dict(_supply),
             "planned_entry": _planned,
             "plan_gap_pct": _gap,
             "plan_gap_shadow_enabled": bool(_gap_shadow_enabled),
@@ -877,6 +896,7 @@ def _judge_one(scheduler, db, inst_id: int, arm: Dict[str, Any],
             "planned_entry": arm.get("planned_entry"),
             "plan_gap_pct": arm.get("plan_gap_pct"),
             "entry_archetype": arm.get("entry_archetype"),
+            "supply_selection": arm.get("supply_selection") or {},
             "notional": arm.get("notional") or 0.0,
             "session_min": arm.get("session_min"),
             "armed_at": arm["armed_at"].isoformat(),
@@ -1039,6 +1059,7 @@ def _judge_one(scheduler, db, inst_id: int, arm: Dict[str, Any],
             "anchor": float(arm["anchor"]), "mid_arm": arm.get("mid_arm"),
             "px_at_confirm": float(q["last"]), "mid_at_confirm": q.get("mid"),
             "decision_id": arm.get("decision_id"),
+            "supply_selection": arm.get("supply_selection") or {},
             "abandoned_at": now_et, "m5": False, "m10": False}
 
     # 前瞻样本行 (两臂都落, 供结算器聚合); schema v2 = v1 全字段 + 判尺/grace/双边报价
@@ -1057,6 +1078,7 @@ def _judge_one(scheduler, db, inst_id: int, arm: Dict[str, Any],
         "session_min": arm.get("session_min"),
         "outcome": ST_CONFIRMED if still else ST_ABANDONED,
         "entry_archetype": _arch,
+        "supply_selection": arm.get("supply_selection") or {},
         "planned_entry": arm.get("planned_entry"),
         "plan_gap_pct": arm.get("plan_gap_pct"),
         "plan_gap_shadow": _plan_gap_shadow(_arch, arm.get("plan_gap_pct"), {
@@ -1112,6 +1134,7 @@ def _sweep_post_watch(scheduler, now_et: datetime) -> None:
                 "ts": now_et.isoformat(), "date": now_et.strftime("%Y-%m-%d"),
                 "inst_id": _iid, "decision_id": _w.get("decision_id"),
                 "symbol": _w["symbol"], "direction": _w["direction"],
+                "supply_selection": _w.get("supply_selection") or {},
                 "horizon": _label, "anchor": float(_w["anchor"]),
                 "mid_arm": _w.get("mid_arm"),
                 "px_last": round(float(_q["last"]), 4),

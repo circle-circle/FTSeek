@@ -32,11 +32,12 @@
 from __future__ import annotations
 import datetime
 import json
+import math
 import os
 import sqlite3
 import statistics
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Optional
 
@@ -111,6 +112,11 @@ RFC158_E1_RELAX_RATIO = 0.5    # E1: 族净均 ≥ 基线 × 50% (= −$81.17), 
 RFC158_E1_MIN_N = 10
 RFC158_COOLDOWN_AFTER_REOPEN = "2026-11-05"  # 新 cohort 起点 (宪章第2律: 开门日重起 cohort)
 RFC158_HOLDOUT_MIN_N = 20      # 对照臂样本门 (20% holdout 必须够, 否则读数不可归因)
+RFC158_TAIL_MIN_TREATMENT_N = 60
+RFC158_TAIL_MIN_HOLDOUT_N = 20
+RFC158_TAIL_MIN_PAIRED_DAYS = 10
+RFC158_TAIL_MIN_COVERAGE = 0.95
+Z80 = 1.2815515655446004
 # WINNER_MEAN_FLOOR / _CLEAN 由 winner_floor() 从 BASELINE 派生 (见下方), 单一真源
 # 判据4 两端同尺 (RFC-141 §5.6 / DEB §33.3): v2 基线 (8/1–10/9) rest +$9.7353 含 2 笔
 # fee_bps>100 的费用异常单 (CTNT 915.1 / GIPR 203.6, 均 9/17), 剔后 +$10.9854 ⇒ 剔费地板
@@ -367,12 +373,177 @@ def load_trade_by_decision(decision_ids):
             for r in con.execute(
                     "SELECT decision_id, COALESCE(pnl_net, realized_pnl) AS net, exit_reason "
                     f"FROM trade_records WHERE decision_id IN ({q}) "
-                    "AND COALESCE(exit_price,0)>0", chunk):
+                    "AND source_type='PLAYBOOK_SIM' AND COALESCE(exit_price,0)>0 "
+                    "AND COALESCE(pnl_net, realized_pnl) IS NOT NULL", chunk):
                 out[str(r["decision_id"])] = {"net": float(r["net"] or 0),
                                               "exit_reason": r["exit_reason"]}
     finally:
         con.close()
     return out
+
+
+def _tail_arm_stats(assigned, resolved, unresolved_n):
+    nets = [float(r["net"]) for r in resolved]
+    sl = [r for r in resolved if (r.get("exit_reason") or "") == "SL_INITIAL"]
+    sl_loss = sum(max(0.0, -float(r["net"])) for r in sl)
+    n = len(resolved)
+    tail_n = max(1, math.ceil(n * 0.1)) if n else 0
+    worst = sorted(nets)[:tail_n]
+    return {
+        "assigned_n": len(assigned),
+        "resolved_n": n,
+        "unresolved_n": unresolved_n,
+        "resolution_coverage": round(n / len(assigned), 4) if assigned else None,
+        "closed_trade_n": sum(r.get("resolved_from") == "closed_trade" for r in resolved),
+        "abandoned_n": sum(r.get("resolved_from") == "abandoned" for r in resolved),
+        "net_sum": round(sum(nets), 4),
+        "net_per_resolved_assignment": round(statistics.mean(nets), 4) if nets else None,
+        "sl_initial_n": len(sl),
+        "sl_initial_loss_sum": round(sl_loss, 4),
+        "sl_initial_loss_per_resolved_assignment": round(sl_loss / n, 4) if n else None,
+        "sl_initial_events_per_100_resolved_assignments": (
+            round(len(sl) / n * 100.0, 4) if n else None),
+        "bottom_decile_mean_net": round(statistics.mean(worst), 4) if worst else None,
+        "worst_net": round(min(nets), 4) if nets else None,
+    }
+
+
+def _paired_day_ci(values):
+    n = len(values)
+    if not n:
+        return {"n_days": 0, "mean": None, "mde80": None, "ci80": None}
+    mean = statistics.mean(values)
+    mde = Z80 * statistics.stdev(values) / math.sqrt(n) if n >= 2 else None
+    return {
+        "n_days": n,
+        "mean": round(mean, 4),
+        "mde80": round(mde, 4) if mde is not None else None,
+        "ci80": [round(mean - mde, 4), round(mean + mde, 4)] if mde is not None else None,
+    }
+
+
+def tail_objective(rows, joined):
+    """Compare resolved assignments; abandoned treatment decisions have zero realized PnL."""
+    arms = {}
+    resolved_by_arm_day = {"treatment": defaultdict(list), "holdout": defaultdict(list)}
+    for arm in ("treatment", "holdout"):
+        assigned = [r for r in rows if r.get("arm") == arm and r.get("status") == "ok"]
+        resolved = []
+        unresolved_n = 0
+        for row in assigned:
+            did = str(row.get("decision_id") or "")
+            if arm == "treatment" and not row.get("still_triggers"):
+                item = {"date": str(row.get("date") or ""), "net": 0.0,
+                        "exit_reason": None, "resolved_from": "abandoned"}
+            elif did and did in joined:
+                trade = joined[did]
+                item = {"date": str(row.get("date") or ""), "net": float(trade["net"]),
+                        "exit_reason": trade.get("exit_reason"),
+                        "resolved_from": "closed_trade"}
+            else:
+                unresolved_n += 1
+                continue
+            resolved.append(item)
+            resolved_by_arm_day[arm][item["date"]].append(item)
+        arms[arm] = _tail_arm_stats(assigned, resolved, unresolved_n)
+
+    treatment = arms["treatment"]
+    holdout = arms["holdout"]
+    paired_dates = sorted(set(resolved_by_arm_day["treatment"])
+                          & set(resolved_by_arm_day["holdout"]))
+    daily_sl_reduction = []
+    daily_net_delta = []
+    for date in paired_dates:
+        t_rows = resolved_by_arm_day["treatment"][date]
+        h_rows = resolved_by_arm_day["holdout"][date]
+        t_sl = sum(max(0.0, -float(r["net"])) for r in t_rows
+                   if (r.get("exit_reason") or "") == "SL_INITIAL") / len(t_rows)
+        h_sl = sum(max(0.0, -float(r["net"])) for r in h_rows
+                   if (r.get("exit_reason") or "") == "SL_INITIAL") / len(h_rows)
+        daily_sl_reduction.append(h_sl - t_sl)
+        daily_net_delta.append(
+            statistics.mean(float(r["net"]) for r in t_rows)
+            - statistics.mean(float(r["net"]) for r in h_rows))
+
+    def _delta(key, reverse=False):
+        t_value, h_value = treatment.get(key), holdout.get(key)
+        if t_value is None or h_value is None:
+            return None
+        return round((h_value - t_value) if reverse else (t_value - h_value), 4)
+
+    comparison = {
+        "sl_initial_loss_burden_reduction": _delta(
+            "sl_initial_loss_per_resolved_assignment", reverse=True),
+        "sl_initial_event_rate_reduction_per_100": _delta(
+            "sl_initial_events_per_100_resolved_assignments", reverse=True),
+        "bottom_decile_mean_improvement": _delta("bottom_decile_mean_net"),
+        "total_net_per_assignment_delta": _delta("net_per_resolved_assignment"),
+    }
+    daily = {
+        "sl_initial_loss_burden_reduction": _paired_day_ci(daily_sl_reduction),
+        "total_net_per_assignment_delta": _paired_day_ci(daily_net_delta),
+    }
+    coverage_ok = all(
+        arms[arm]["resolution_coverage"] is not None
+        and arms[arm]["resolution_coverage"] >= RFC158_TAIL_MIN_COVERAGE
+        for arm in ("treatment", "holdout"))
+    sample_gate = {
+        "treatment_resolved_n": treatment["resolved_n"],
+        "treatment_min_n": RFC158_TAIL_MIN_TREATMENT_N,
+        "holdout_resolved_n": holdout["resolved_n"],
+        "holdout_min_n": RFC158_TAIL_MIN_HOLDOUT_N,
+        "paired_days": len(paired_dates),
+        "min_paired_days": RFC158_TAIL_MIN_PAIRED_DAYS,
+        "min_coverage": RFC158_TAIL_MIN_COVERAGE,
+        "coverage_ok": coverage_ok,
+    }
+    sample_gate["ok"] = (
+        treatment["resolved_n"] >= RFC158_TAIL_MIN_TREATMENT_N
+        and holdout["resolved_n"] >= RFC158_TAIL_MIN_HOLDOUT_N
+        and len(paired_dates) >= RFC158_TAIL_MIN_PAIRED_DAYS
+        and coverage_ok)
+    sl_reduction = comparison["sl_initial_loss_burden_reduction"]
+    net_delta = comparison["total_net_per_assignment_delta"]
+    sl_daily = daily["sl_initial_loss_burden_reduction"]
+    net_daily = daily["total_net_per_assignment_delta"]
+    if not rows:
+        verdict = "TOO_EARLY"
+        why = "当前 cohort 尚无分配样本"
+    elif not sample_gate["ok"]:
+        verdict = "INSUFFICIENT"
+        why = "分配样本、同期配对日或结局覆盖率未达门；不作 PASS/FAIL"
+    else:
+        sl_lower = (sl_daily.get("ci80") or [None, None])[0]
+        sl_upper = (sl_daily.get("ci80") or [None, None])[1]
+        net_upper = (net_daily.get("ci80") or [None, None])[1]
+        if (sl_reduction is not None and sl_reduction > 0
+                and net_delta is not None and net_delta >= 0
+                and sl_lower is not None and sl_lower > 0):
+            verdict = "PASS"
+            why = "SL_INITIAL每分配指令亏损负担下降且日聚类80%CI>0，总净额未恶化"
+        elif ((sl_reduction is not None and sl_reduction < 0
+               and sl_upper is not None and sl_upper < 0)
+              or (net_delta is not None and net_delta < 0
+                  and net_upper is not None and net_upper < 0)):
+            verdict = "FAIL"
+            why = "大亏损负担或总净额恶化且日聚类80%CI排除零；只提请复核，不自动关门"
+        else:
+            verdict = "OBSERVE"
+            why = "方向或显著性尚未同时满足；胜率、机会成本和M1~M4不作自动关门理由"
+    return {
+        "objective": "reduce_large_losses_without_worse_total_net_per_resolved_assignment",
+        "arms": arms,
+        "comparison": comparison,
+        "daily_paired": daily,
+        "sample_gate": sample_gate,
+        "verdict": verdict,
+        "verdict_why": why,
+        "resolution_contract": (
+            "treatment abandoned=0 realized PnL; confirmed/holdout require closed PLAYBOOK_SIM "
+            "trade by decision_id; unresolved rows never converted to zero"),
+        "diagnostics_only": ["win_rate", "M1_avoidance", "M2_opp_cost", "M3_direction_gap",
+                             "M4_short_window_value", "E2_small_winner_floor"],
+    }
 
 
 def rfc153_progress(rows, joined=None):
@@ -417,17 +588,108 @@ def rfc153_progress(rows, joined=None):
     }
 
 
+def avoided_bps_from_post(decision_row, posts):
+    """Return (avoided adverse bps, anchor basis) from confirm/abandon to post-watch.
+
+    New post fields are direction-normalized percentages for both LONG and SHORT.
+    Legacy arm-anchored mid_move_pct is intentionally not a fallback: it includes
+    pre-abandon movement and cannot measure the value of the abandon decision.
+    """
+    if not posts:
+        return None, "missing_post_watch"
+    pick = next((p for p in posts if p.get("horizon") == "+10m"), posts[0])
+    for field, basis in (
+        ("mid_from_confirm_pct", "confirm_mid_to_post_mid"),
+        ("last_from_confirm_pct", "confirm_last_to_post_last"),
+    ):
+        raw = pick.get(field)
+        if raw is None:
+            continue
+        try:
+            move = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(move):
+            continue
+        return max(0.0, -move * 100.0), basis
+    return None, "legacy_arm_anchor_excluded"
+
+
+def path_shadow_progress(rows):
+    paths = [r.get("path_shadow") for r in rows if isinstance(r.get("path_shadow"), dict)]
+    evaluable = [p for p in paths if p.get("evaluable") is True]
+    reasons = Counter(reason for p in paths for reason in p.get("unevaluable_reasons") or [])
+    days = {r.get("date") for r in rows
+            if isinstance(r.get("path_shadow"), dict) and r["path_shadow"].get("evaluable") is True}
+    return {
+        "n": len(paths),
+        "evaluable_n": len(evaluable),
+        "evaluable_days": len(days),
+        "r1_would_confirm_n": sum(p.get("r1_would_confirm") is True for p in evaluable),
+        "r1_would_abandon_n": sum(p.get("r1_would_confirm") is False for p in evaluable),
+        "r1_agree_live_n": sum(p.get("r1_agrees_with_live") is True for p in evaluable),
+        "r1_disagree_live_n": sum(p.get("r1_agrees_with_live") is False for p in evaluable),
+        "unevaluable_reason_counts": dict(reasons),
+        "sample_gate": {"min_evaluable_n": 30, "min_evaluable_days": 10,
+                        "ok": len(evaluable) >= 30 and len(days) >= 10},
+        "note": "R1=60/90/120s valid-mid true 2-of-3；record-only，不进入RFC-158现役PASS/FAIL",
+    }
+
+
+def holdout_strata(rows, fills):
+    groups = {
+        "LONG": [r for r in rows if r.get("direction") == "LONG"],
+        "SHORT": [r for r in rows if r.get("direction") == "SHORT"],
+        "open_lt_15m": [r for r in rows if isinstance(r.get("session_min"), int)
+                        and 0 <= r["session_min"] < 15],
+        "later_ge_15m": [r for r in rows if isinstance(r.get("session_min"), int)
+                         and r["session_min"] >= 15],
+    }
+    for archetype in sorted({str(r.get("entry_archetype") or "UNKNOWN") for r in rows}):
+        groups[f"archetype:{archetype}"] = [
+            r for r in rows if str(r.get("entry_archetype") or "UNKNOWN") == archetype]
+    out = {}
+    for name, subset in groups.items():
+        agg = _agg(subset, fills)
+        out[name] = {"n": agg["n"], "confirmed_fill_net_mean": agg["confirmed_fill_net_mean"],
+                     "n_confirmed_joined": agg["n_confirmed_joined"]}
+    return out
+
+
 def main():
-    rows = load_rows()
+    all_rows = load_rows()
+    rows = [r for r in all_rows
+            if str(r.get("date") or "") >= RFC158_COOLDOWN_AFTER_REOPEN]
+    historical_rows = len(all_rows) - len(rows)
+    post_rows_list = [r for r in (getattr(load_rows, "post_rows_list", []) or [])
+                      if str(r.get("date") or "") >= RFC158_COOLDOWN_AFTER_REOPEN]
+    load_rows.post_rows_list = post_rows_list
+    load_rows.post_rows = len(post_rows_list)
 
     # 开门日 = forward 产物首行 date (门真 arm 过那天); 无产物 ⇒ 门尚未上线
     gate_live_date = min((str(r.get("date")) for r in rows if r.get("date")), default=None)
     if not gate_live_date:
         print("RFC-141: 无 forward 产物 ⇒ 门尚未上线 (TOO_EARLY)。"
               " 首次 arm 后本结算器才有裁决窗口。")
+        empty_sim = _pnl_block([])
+        empty_tail = tail_objective([], {})
         out = {"generated_at": datetime.datetime.now().astimezone().isoformat(),
                "rfc": "RFC-141", "verdict": "TOO_EARLY", "gate_live_date": None,
                "reason": "无 forward 产物 (门未 arm 过任何指令)",
+               "current_cohort": {
+                   "cohort_since": RFC158_COOLDOWN_AFTER_REOPEN,
+                   "sim": empty_sim,
+                   "mechanism": _agg([], {}),
+                   "holdout": _agg([], {}),
+                   "path_shadow": path_shadow_progress([]),
+                   "holdout_strata": {},
+                   "tail_objective": empty_tail,
+               },
+               "adjudication_source": {"all": empty_sim},
+               "historical_cohort": {
+                   "excluded_rows": historical_rows,
+                   "note": "RFC-158 开始前及已归档行仅作历史证据, 不进入当前 cohort 计数。",
+               },
                "caliber": "裁决源=开门后 SIM 真实盈亏 vs 预注册基线 (RFC-141 §4)"}
         tmp = OUT.with_suffix(".tmp")
         tmp.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -521,29 +783,6 @@ def main():
     for _r in getattr(load_rows, "post_rows_list", []) or []:
         _post_by_did[_r.get("decision_id")].append(_r)
 
-    def _avoided_bps(r) -> Optional[float]:
-        """被弃笔在 +5m/+10m 窗口里朝不利方向的变动 (bps)。取更晚的 horizon。"""
-        posts = _post_by_did.get(r.get("decision_id")) or []
-        if not posts:
-            return None
-        pick = None
-        for p in posts:
-            if p.get("horizon") == "+10m":
-                pick = p
-                break
-        if pick is None:
-            pick = posts[0]
-        mv = pick.get("mid_move_pct")
-        if mv is None:
-            return None
-        mv = float(mv)
-        d = str(r.get("direction") or "").upper()
-        if d == "LONG" and mv < 0:
-            return -mv * 100.0
-        if d in ("SHORT", "SELL_SHORT", "SELL") and mv > 0:
-            return mv * 100.0
-        return 0.0
-
     _short_rows = [r for r in treat_cur if str(r.get("direction") or "").upper()
                    in ("SHORT", "SELL_SHORT", "SELL")]
     _long_rows = [r for r in treat_cur if str(r.get("direction") or "").upper() == "LONG"]
@@ -557,7 +796,12 @@ def main():
 
     _ab_rows = [r for r in treat_cur
                 if r.get("status") == "ok" and not r.get("still_triggers")]
-    _avoid_list = [v for v in (_avoided_bps(r) for r in _ab_rows) if v is not None]
+    _avoid_results = [avoided_bps_from_post(r, _post_by_did.get(r.get("decision_id")) or [])
+                      for r in _ab_rows]
+    _avoid_list = [value for value, _basis in _avoid_results if value is not None]
+    _avoid_basis_counts = Counter(basis for value, basis in _avoid_results if value is not None)
+    _avoid_missing_n = sum(value is None for value, _basis in _avoid_results)
+    _avoid_coverage_ok = len(_avoid_list) == len(_ab_rows)
     _avoid_sum = sum(_avoid_list)
     _fee_bps_med = None
     try:
@@ -574,18 +818,19 @@ def main():
     _saved_fee_bps = (len(_ab_rows) * _fee_bps_med) if _fee_bps_med is not None else 0.0
     m4_ratio = (round((_avoid_sum + _saved_fee_bps) / _opp_bps_sum, 4)
                 if _opp_bps_sum > 0 else None)
-    m4 = m4_ratio is not None and m4_ratio >= RFC158_M4_MIN_RATIO
+    m4 = (m4_ratio is not None and m4_ratio >= RFC158_M4_MIN_RATIO
+          and _avoid_coverage_ok)
 
     sample_ok = (p_all["n"] >= MIN_SIM_N) or (p_all["days"] >= MIN_SIM_DAYS)
     # RFC-158: 对照臂样本门 (20% holdout 必须够, 否则读数不可归因)
     a_hold = _agg(hold, fills)
     holdout_ok = a_hold["n"] >= RFC158_HOLDOUT_MIN_N
+    hold_cur = [r for r in hold if r.get("_gen") == verdict_gen]
+    tail_rows = treat_cur + hold_cur
+    tail_joined = load_trade_by_decision(
+        [r.get("decision_id") for r in tail_rows if r.get("still_triggers")])
+    tail = tail_objective(tail_rows, tail_joined)
 
-    # ── RFC-158 (2026-11-05 重开) 新判据裁决 ──────────────────────────────────
-    # 样本门: 走门臂 (n≥60 ∨ ≥10 交易日) ∧ 对照臂 n≥20 ⇒ 否则 INSUFFICIENT
-    #   (INSUFFICIENT **不是 FAIL**, 也不许当 PASS — RFC-141 §5.5 教训: 上一段就是
-    #    因为族样本不足被误当 FAIL 而关门, 预注册明文要求「裁决须等族样本到位」。)
-    # PASS = M1∧M2∧M3∧M4 ∧ E1∧E2;  OBSERVE = M 全过但 E 有不过;  FAIL = M 有不过
     _m1 = a_t.get("avoidance_rate") is not None and a_t["avoidance_rate"] >= MIN_AVOID
     _m2 = (a_t.get("opp_cost_mean_pct") is not None
            and a_t["opp_cost_mean_pct"] <= RFC158_M2_MAX_OPP_MEAN)
@@ -594,43 +839,16 @@ def main():
            and p_sl["n"] >= RFC158_E1_MIN_N)
     _e2 = c4  # 非 SL_INITIAL 族净均 ≥ 剔费地板 +$8.79 (沿用 RFC-141 判据④, 机制未改)
 
-    if not sample_ok:
-        verdict = "INSUFFICIENT"
-        verdict_why = (f"样本未达门: n={p_all['n']}<{MIN_SIM_N} 且 "
-                       f"交易日={p_all['days']}<{MIN_SIM_DAYS} — 不作 PASS 也不作 FAIL")
-    elif not holdout_ok:
-        verdict = "INSUFFICIENT"
-        verdict_why = (f"对照臂样本未达门: n={a_hold['n']}<{RFC158_HOLDOUT_MIN_N} "
-                       f"⇒ 无同期对照臂 ⇒ 读数不可归因 (RFC-158 §3.1)")
-    elif _m1 and _m2 and m3 and m4 and _e1 and _e2:
-        verdict = "PASS"
-        verdict_why = ("RFC-158 判据 M1∧M2∧M3∧M4 ∧ E1∧E2 全过 → 呈用户裁 "
-                       "(REAL 另须签字, 不自动)")
-    elif _m1 and _m2 and m3 and m4:
-        verdict = "OBSERVE"
-        verdict_why = (f"机制量 M1~M4 全过但经济量未收敛 (E1={_e1} E2={_e2}; "
-                       f"族净均={sl_mean} vs 地板 {_e1_floor} 且族 n={p_sl['n']}) → "
-                       f"轴维持 OBSERVING, 不行动")
-    else:
-        verdict = "FAIL"
-        _fail_parts = []
-        if not _m1:
-            _fail_parts.append(f"M1 避免率={a_t.get('avoidance_rate')} (需≥{MIN_AVOID})")
-        if not _m2:
-            _fail_parts.append(f"M2 opp_cost均值={a_t.get('opp_cost_mean_pct')}% "
-                               f"(需≤{RFC158_M2_MAX_OPP_MEAN}%)")
-        if not m3:
-            _fail_parts.append(f"M3 分方向放弃率差={_m3_gap} (需≤{RFC158_M3_MAX_GAP})")
-        if not m4:
-            _fail_parts.append(f"M4 净经济价值={m4_ratio} (需≥{RFC158_M4_MIN_RATIO})")
-        verdict_why = ("机制量有不过 ⇒ 轴 FAIL, 提请裁关门: " + "; ".join(_fail_parts)
-                       + " ⇒ **只出报告, 不自动改配置** (上一段就是自动关门翻车)")
+    verdict = tail["verdict"]
+    verdict_why = tail["verdict_why"]
 
     # R1 分层只印不判 (现行代行, 与判据③ 同人群)
     r1 = [r for r in treat_cur if r.get("direction") == "SHORT"
           and r.get("session_min") is not None and 0 <= r["session_min"] < 15]
     r1_long = [r for r in treat_cur if r.get("direction") == "LONG"
                and r.get("session_min") is not None and 0 <= r["session_min"] < 15]
+    path_progress = path_shadow_progress(treat_cur)
+    holdout_groups = holdout_strata(hold, fills)
 
     out = {
         "generated_at": datetime.datetime.now().astimezone().isoformat(),
@@ -641,6 +859,15 @@ def main():
         "verdict_generation": verdict_gen,
         "verdict": verdict,
         "verdict_why": verdict_why,
+        "current_cohort": {
+            "cohort_since": RFC158_COOLDOWN_AFTER_REOPEN,
+            "sim": p_all,
+            "mechanism": a_t,
+            "holdout": a_hold,
+            "path_shadow": path_progress,
+            "holdout_strata": holdout_groups,
+            "tail_objective": tail,
+        },
         "adjudication_source": {
             "kind": "SIM 真实成交盈亏 (富途 app 可见链路)",
             "table": "trade_records",
@@ -679,6 +906,7 @@ def main():
             "rfc158": {
                 "rfc": "RFC-158",
                 "cohort_since": RFC158_COOLDOWN_AFTER_REOPEN,
+                "role": "diagnostics_only_not_automatic_close_gates",
                 "M1_avoidance_rate": {"ok": _m1, "value": a_t.get("avoidance_rate"),
                                       "floor": MIN_AVOID},
                 "M2_opp_cost_mean_pct": {"ok": _m2, "value": a_t.get("opp_cost_mean_pct"),
@@ -694,8 +922,13 @@ def main():
                                          "saved_fee_bps_sum": round(_saved_fee_bps, 2),
                                          "opp_cost_bps_sum": round(_opp_bps_sum, 2),
                                          "n_abandoned": len(_ab_rows),
+                                         "avoided_coverage_n": len(_avoid_list),
+                                         "avoided_missing_n": _avoid_missing_n,
+                                         "avoided_anchor_basis_counts": dict(_avoid_basis_counts),
+                                         "avoided_direction_rule": "LONG/SHORT unified: max(0, -direction_normalized_move_pct*100)",
+                                         "legacy_arm_anchor_rows_excluded": _avoid_missing_n,
                                          "fee_bps_median": _fee_bps_med,
-                                         "note": "避免额用 +5m/+10m 补记行做**短窗估计**, 非全程结局 (保守方向)"},
+                                         "note": "避免额=弃单mid/last→+5m/+10m同尺变动，非arm锚；短窗估计非全程结局，缺新锚字段的旧行不进M4"},
                 "E1_family_convergence": {"ok": _e1, "sl_net_mean": sl_mean,
                                           "floor_relative": _e1_floor,
                                           "base_mean": BASELINE["sl_initial"]["net_mean"],
@@ -706,6 +939,7 @@ def main():
                                         "floor_clean": WINNER_MEAN_FLOOR_CLEAN},
                 "holdout_sample_gate": {"ok": holdout_ok, "n": a_hold["n"],
                                         "min_n": RFC158_HOLDOUT_MIN_N},
+                "tail_objective": tail,
                 "verdict": verdict, "verdict_why": verdict_why,
             },
         },
@@ -715,12 +949,19 @@ def main():
             "treatment_v2": _agg(treat_v2, fills),
             "post_observation_rows": getattr(load_rows, "post_rows", 0),
             "holdout": _agg(hold, fills),
+            "holdout_assignment": "sha1(entry_confirm_holdout:{inst_id}) v1; allocation unchanged",
+            "holdout_strata": holdout_groups,
+            "path_shadow": path_progress,
             "note": ("jsonl 降级为机制留痕 (2026-10-10 用户裁): 只证明门真在拦 + 拦的是"
                      "反转单 + 机会成本; 不独立裁决。v2 (§5.10): treatment=现行代 "
                      f"({verdict_gen}), 判据③只用它; 分代块并列, 两源不混算; "
                      "post_observation_rows=弃单后 +5m/+10m 补记行数 (纯观测不进聚合)"),
         },
         "legacy_v1_window": legacy_v1_window,
+        "historical_cohort": {
+            "excluded_rows": historical_rows,
+            "note": "RFC-158 开始前及已归档行仅作历史证据, 不进入当前 cohort 计数。",
+        },
         "strata_print_only": {
             "R1_short_open_window": _agg(r1, fills),
             "long_open_window": _agg(r1_long, fills),
@@ -736,7 +977,7 @@ def main():
     tmp.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
     os.replace(tmp, OUT)
 
-    print(f"RFC-141 结算: 现行代={verdict_gen} 裁决窗自={verdict_since} "
+    print(f"RFC-158 结算: 现行代={verdict_gen} 裁决窗自={verdict_since} "
           f"(v1 开门={gate_live_date}) rows={len(rows)} verdict={verdict}")
     print(f"  {verdict_why}")
     print(f"  SIM 真实盈亏 (裁决源):")
@@ -751,6 +992,9 @@ def main():
           f"(基线 {BASELINE['open_win']['net_mean']} / t={BASELINE['open_win']['t']})")
     print(f"  机制留痕: 避免率={a_t['avoidance_rate']} opp={a_t['opp_cost_mean_pct']}% "
           f"(n={a_t['n']})")
+    print(f"  尾部目标: SL负担减少={tail['comparison']['sl_initial_loss_burden_reduction']} "
+          f"总净差={tail['comparison']['total_net_per_assignment_delta']} "
+          f"样本门={tail['sample_gate']['ok']}")
     print(f"  判据: 1={c1} 2={c2} 3={c3} 4={c4}(剔费裁决) 4_full={c4_full}(并陈) 样本门={sample_ok}")
     print(f"  RFC-153 FADE_SHORT 开盘禁追: 样本 n={rfc153['n_samples']}"
           f"/{RFC153_NEED_N} days={rfc153['n_days']}/{RFC153_NEED_DAYS}"

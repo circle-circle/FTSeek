@@ -637,7 +637,8 @@ class TestExecutability:
     #   混在同一份 PINNED 里, 裁决后 PINNED 未同步 ⇒ 漂移探测器持续报红 (守卫失效)。
     #   现拆开: PINNED 只作场景; PRODUCTION_PINNED 记录**当前裁决值** ——
     #   以后再改阈值, 必须同步 PRODUCTION_PINNED 并落档 (探测器保持武装)。
-    PRODUCTION_PINNED = {"enabled": True, "enforce": True, "min_notional_usd": 5500.0,
+    PRODUCTION_PINNED = {"enabled": True, "enforce": True, "min_notional_usd": 2500.0,
+                         "max_fee_bps": 11.54,
                          "min_entry_price": 5.0, "max_shares_per_order": 0,
                          "min_profit_fee_ratio": 0.0, "max_sl_pct": 8.0}
 

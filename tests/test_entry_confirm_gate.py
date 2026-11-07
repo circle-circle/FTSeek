@@ -94,10 +94,11 @@ class _FakeSched:
         self.data_router = _FakeRouter(quote)
 
 
-def _inst(i=1, sym="US.TEST", direction="BUY", meta=None):
+def _inst(i=1, sym="US.TEST", direction="BUY", meta=None, raw=None):
     return {"id": i, "symbol": sym, "direction": direction,
             "entry_price": 100.0, "position_size": 10,
-            "decision_id": f"DA-{i}", "metadata_json": meta or {}}
+            "decision_id": f"DA-{i}", "metadata_json": meta or {},
+            "raw_instruction_json": raw or {}}
 
 
 @pytest.fixture(autouse=True)
@@ -721,6 +722,67 @@ def test_forward_row_schema_is_stable_and_agg_compatible():
     import entry_delay_confirm_shadow as shadow
     blk = shadow._agg_block([{**row, "pnl_net": -231.73}])
     assert blk["n"] == 1 and blk["n_delayed"] == 1
+
+
+def test_supply_selection_survives_holdout_treatment_and_restore():
+    supply = {"schema": "da_supply_selection_v1", "selection_rank": 8,
+              "cohort": "main_pool_expansion_r8_10"}
+    db = _FakeDB()
+    t0 = _now()
+    ecg.gate_at_execute(_inst(i=11, raw={"supply_selection": supply}), db,
+                        {"entry_price": 100.0}, t0, CFG_ON)
+    assert ecg._PENDING[11]["supply_selection"] == supply
+    pending_state = db.merged[-1][1]["entry_confirm"]
+    restored = ecg._restore_arm(
+        _inst(i=11, raw={"supply_selection": supply}), pending_state,
+        t0 + timedelta(seconds=10), CFG_ON, {"entry_price": 100.0})
+    assert restored["supply_selection"] == supply
+
+    ecg.sweep_entry_confirmations(
+        _FakeSched(101.0), db, t0 + timedelta(seconds=125))
+    confirmed = json.loads(ecg._FORWARD_PATH.read_text().splitlines()[-1])
+    assert confirmed["outcome"] == "CONFIRMED"
+    assert confirmed["supply_selection"] == supply
+
+    original_bucket = ecg._holdout_bucket
+    ecg._holdout_bucket = lambda *args: True
+    try:
+        action = ecg.gate_at_execute(
+            _inst(i=12, raw={"supply_selection": supply}), db,
+            {"entry_price": 100.0}, t0, CFG_ON)
+    finally:
+        ecg._holdout_bucket = original_bucket
+    assert action == "execute"
+    holdout = json.loads(ecg._FORWARD_PATH.read_text().splitlines()[-1])
+    assert holdout["arm"] == "holdout"
+    assert holdout["supply_selection"] == supply
+
+
+def test_supply_selection_survives_expiry_abandon_and_post_watch():
+    supply = {"selection_rank": 9, "cohort": "main_pool_expansion_r8_10"}
+    db = _FakeDB()
+    t0 = _now()
+    inst = _inst(i=21, raw={"supply_selection": supply})
+    ecg.gate_at_execute(inst, db, {"entry_price": 100.0}, t0, CFG_ON)
+    ecg.sweep_entry_confirmations(
+        _FakeSched(101.0), db, t0 + timedelta(seconds=601))
+    expired = json.loads(ecg._FORWARD_PATH.read_text().splitlines()[-1])
+    assert expired["status"] == "expired"
+    assert expired["supply_selection"] == supply
+
+    ecg.gate_at_execute(_inst(i=22, raw={"supply_selection": supply}), db,
+                        {"entry_price": 100.0}, t0, CFG_ON)
+    scheduler = _FakeSched(99.0)
+    ecg.sweep_entry_confirmations(scheduler, db, t0 + timedelta(seconds=125))
+    ecg.sweep_entry_confirmations(scheduler, db, t0 + timedelta(seconds=135))
+    ecg.sweep_entry_confirmations(scheduler, db, t0 + timedelta(seconds=145))
+    abandoned = json.loads(ecg._FORWARD_PATH.read_text().splitlines()[-1])
+    assert abandoned["outcome"] == "ABANDONED"
+    assert abandoned["supply_selection"] == supply
+    ecg.sweep_entry_confirmations(scheduler, db, t0 + timedelta(seconds=445))
+    post = json.loads(ecg._FORWARD_PATH.read_text().splitlines()[-1])
+    assert post["type"] == "entry_confirm_post"
+    assert post["supply_selection"] == supply
 
 
 def test_session_min_marks_open_window_for_r1_stratum():

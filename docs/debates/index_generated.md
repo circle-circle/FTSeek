@@ -1,13 +1,13 @@
 # 辩论库机器索引 (index_generated.md)
 
-> **本文件由 `scripts/build_debate_index.py` 生成** (2026-11-03), 请勿手改。
+> **本文件由 `scripts/build_debate_index.py` 生成** (2026-11-05), 请勿手改。
 > 决策摘要以 [README.md](README.md) 手工索引为准; 本页只做全量清单与漏登对账。
 
-共 **212** 个 DEB 文件。
+共 **222** 个 DEB 文件。
 
 ## 漏登对账
 
-⚠️ 以下 **7** 个近 14 天新文件未在 README 索引收录 (需补登):
+⚠️ 以下 **8** 个近 14 天新文件未在 README 索引收录 (需补登):
 
 - `DEB-20261023-da-chain-hardening.md`
 - `DEB-20261023-earnings-429-and-futu-primary-surprise.md`
@@ -16,6 +16,7 @@
 - `DEB-20261025-futu-live-safety-shadow.md`
 - `DEB-20261027-da-scope-and-confidence-coupling.md`
 - `DEB-20261028-ratchet-three-reds-cleanup.md`
+- `DEB-20261105-nomination-lift-counterfactual.md`
 
 📦 历史归档 **170** 个未登文件 (执行记录类, 不强制登记, 本页全量清单可查):
 
@@ -404,5 +405,15 @@
 | [DEB-20261028-bucket-layering-and-tiered-exit](DEB-20261028-bucket-layering-and-tiered-exit.md) | 2026-10-28 | 进行中 / 第一批（P0+E1+A0）已实施；A1/A1b 完成（REVIEW_ONLY）；C 预注册 + C0 保真门 FIDELITY_FAIL（0.678<0.80，未读 C1/C2）；§18 事后审计修补批完成（3 处计数/披露口径修复 + 索引生成物重跑，逐字段复跑证读数不变）；A2/B/E3 待裁 | 3 | 2118 |
 | [DEB-20261028-observability-and-ssot-batch](DEB-20261028-observability-and-ssot-batch.md) | 2026-10-28 | (未标注) | - | 220 |
 | [DEB-20261028-ratchet-three-reds-cleanup](DEB-20261028-ratchet-three-reds-cleanup.md) | 2026-10-28 | (未标注) | - | 136 |
-| [DEB-20261103-full-chain-perf-risk-audit](DEB-20261103-full-chain-perf-risk-audit.md) | 2026-11-03 | 已决策（审计完成；P0 三项待用户授权实施；文中所有数字标注了实测/推测） | 1 | 532 |
+| [DEB-20261103-full-chain-perf-risk-audit](DEB-20261103-full-chain-perf-risk-audit.md) | 2026-11-03 | 已决策（审计完成；P0 三项待用户授权实施；文中所有数字标注了实测/推测） | 1 | 658 |
 | [DEB-20261103-open-freeze-and-perf-hotfix-review](DEB-20261103-open-freeze-and-perf-hotfix-review.md) | 2026-11-03 | 已决策（复核结论：技术实现成立；3 处缺陷已修正并通过测试；治理缺口以本文件 + handoff 条目补齐） | - | 278 |
+| [DEB-20261104-mfe-caliber-and-wweek-exemption](DEB-20261104-mfe-caliber-and-wweek-exemption.md) | 2026-11-04 | (未标注) | 2 | 349 |
+| [DEB-20261105-auto-trading-p0-observability](DEB-20261105-auto-trading-p0-observability.md) | 2026-11-05 | (未标注) | - | 98 |
+| [DEB-20261105-da-claim-traceability](DEB-20261105-da-claim-traceability.md) | 2026-11-05 | 已部署并完成 DA→Playbook 生产验收；后续分类规律攒样 | - | 111 |
+| [DEB-20261105-da-main-pool-supply-expansion](DEB-20261105-da-main-pool-supply-expansion.md) | 2026-11-05 | (未标注) | - | 264 |
+| [DEB-20261105-da-reprice-price-ledger-audit](DEB-20261105-da-reprice-price-ledger-audit.md) | 2026-11-05 | (未标注) | - | 172 |
+| [DEB-20261105-entry-confirm-sim-evidence-gate](DEB-20261105-entry-confirm-sim-evidence-gate.md) | 2026-11-05 | (未标注) | - | 72 |
+| [DEB-20261105-entry-confirm-v2-mechanism-hardening](DEB-20261105-entry-confirm-v2-mechanism-hardening.md) | 2026-11-05 | (未标注) | - | 90 |
+| [DEB-20261105-extended-hours-chain-audit](DEB-20261105-extended-hours-chain-audit.md) | 2026-11-05 | (未标注) | - | 133 |
+| [DEB-20261105-nomination-lift-counterfactual](DEB-20261105-nomination-lift-counterfactual.md) | 2026-11-05 | (未标注) | - | 153 |
+| [DEB-20261105-sl-initial-early-tight-acceptance](DEB-20261105-sl-initial-early-tight-acceptance.md) | 2026-11-05 | (未标注) | - | 92 |
