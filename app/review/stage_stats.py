@@ -17,6 +17,7 @@ from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional
 
 from app.core.trade_identity import phase_cn, phase_from_time
+from app.review.metric_caliber import caliber_note, dead_rate_caliber, is_be_exit as _is_be_exit
 from app.utils.timezone import to_et
 
 # 展示顺序: 盘前 → 盘中 → 盘后 → 未标注 (未标注恒在末尾, 不许混进任何阶段)
@@ -110,16 +111,18 @@ def stage_breakdown(rows: Iterable[Dict[str, Any]]) -> "OrderedDict[str, Dict[st
     """按阶段聚合: n / 净额 / 胜率 / MFE=0 笔数 / 方向拆分 / 出场原因拆分。"""
     out: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
     for st in _STAGE_ORDER:
-        out[st] = {"n": 0, "net": 0.0, "wins": 0, "mfe0": 0, "dirs": {}, "reasons": {}}
+        out[st] = {"n": 0, "net": 0.0, "wins": 0, "mfe0": 0, "be": 0, "dirs": {}, "reasons": {}}
     for r in rows:
         st = r.get("stage") or ""
-        b = out.setdefault(st, {"n": 0, "net": 0.0, "wins": 0, "mfe0": 0, "dirs": {}, "reasons": {}})
+        b = out.setdefault(st, {"n": 0, "net": 0.0, "wins": 0, "mfe0": 0, "be": 0, "dirs": {}, "reasons": {}})
         b["n"] += 1
         b["net"] += r["net"]
         if r["net"] > 0:
             b["wins"] += 1
         if r.get("mfe_pct") is not None and float(r["mfe_pct"] or 0) <= 0:
             b["mfe0"] += 1
+        if _is_be_exit(r.get("exit_reason")):
+            b["be"] += 1
         d = b["dirs"].setdefault(r["dir_cn"], {"n": 0, "net": 0.0})
         d["n"] += 1
         d["net"] += r["net"]
@@ -149,21 +152,26 @@ def render_stage_section(rows: List[Dict[str, Any]], title: str = "分阶段成�
     if not bd:
         return f"### {title}\n（区间内无已平仓样本）"
     _caliber = caliber or ("阶段=落库 entry_session 优先, 为空按 ET 时钟回退")
+    _cal = dead_rate_caliber(rows)
     lines = [f"### {title}",
              f"_口径: 净额=费后 pnl_net; {_caliber}; 样本 <{MIN_N_FOR_READING} 笔仅作方向性参考_",
+             f"_{caliber_note(_cal['nonbe_dead'], _cal['nonbe_n'])}_",
              "",
-             "| 阶段 | 笔数 | 净额 | 笔均 | 胜率 | MFE=0 |",
-             "| --- | --- | --- | --- | --- | --- |"]
+             "| 阶段 | 笔数 | 净额 | 笔均 | 胜率 | MFE=0 | BE出场 |",
+             "| --- | --- | --- | --- | --- | --- | --- |"]
     tot_n, tot_net = 0, 0.0
     for st, b in bd.items():
         tot_n += b["n"]
         tot_net += b["net"]
         wrt = f"{b['wins'] / b['n'] * 100:.0f}%" if b["n"] else "—"
         flag = " ⚠️样本少" if b["n"] < MIN_N_FOR_READING else ""
+        _be_pct = f"{b['be'] / b['n'] * 100:.0f}%" if b["n"] else "—"
         lines.append(f"| {_STAGE_LABEL.get(st, st)}{flag} | {b['n']} | {_fmt(b['net'])} | "
-                     f"{_fmt(b['net'] / b['n'])} | {wrt} | {b['mfe0']} |")
+                     f"{_fmt(b['net'] / b['n'])} | {wrt} | {b['mfe0']} | {_be_pct} |")
+    _tot_be = sum(b["be"] for b in bd.values())
     lines.append(f"| **合计** | {tot_n} | {_fmt(tot_net)} | "
-                 f"{_fmt(tot_net / tot_n) if tot_n else '—'} | — | — |")
+                 f"{_fmt(tot_net / tot_n) if tot_n else '—'} | — | — | "
+                 f"{(f'{_tot_be / tot_n * 100:.0f}%') if tot_n else '—'} |")
     # 阶段 × 方向 × 出场原因
     detail = []
     for st, b in bd.items():
