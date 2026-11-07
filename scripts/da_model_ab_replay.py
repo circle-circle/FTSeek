@@ -54,6 +54,10 @@ PRICE = {
 }
 # 需要显式开启思考的模型 (dashscope 对 glm-5.3 缺参数会 400)
 THINKING = {"glm-5.3", "glm-5.2"}
+# 输出预算: GLM 系思考 token 计入 completion 预算, 3000 会被思考吃光 (实测 finish=length,
+# content 仅 "{\n") ⇒ 按其官方上限给 16000 (与 config 里 UE 对 glm-5.3 的 16000 一致)。
+# 这是**平台计费模型的约束**, 不是能力差异; 若真要用 GLM 当 DA, 必须同步抬 max_tokens。
+MAXTOK = {"glm-5.3": 16000, "glm-5.2": 16000, "glm-5.3-prime": 16000}
 
 
 def load_system_prompt() -> str:
@@ -107,7 +111,7 @@ def call_model(model: str, system: str, user: str, timeout: int = 240,
         "messages": [{"role": "system", "content": system},
                      {"role": "user", "content": user}],
         "temperature": 0.0,
-        "max_tokens": 3000,
+        "max_tokens": MAXTOK.get(model, 3000),
         "response_format": {"type": "json_object"},
         # 生产基准 (2026-10 DA checkpoint) 实测 _thinking_enabled=True、约 6k reasoning token,
         # 故默认对齐"开思考"; --no-thinking 可切回。
@@ -218,6 +222,7 @@ def main() -> int:
     stamp = time.strftime("%Y%m%d_%H%M")
     path = Path(a.out or OUT_DIR / f"da_model_ab_{stamp}.jsonl")
     recs = []
+    fh = path.open("w")
     for m in models:
         for s in samples:
             r = call_model(m, system, s["prompt"], thinking=not a.no_thinking)
@@ -236,25 +241,27 @@ def main() -> int:
                    "latency": r.get("latency"), "tokens_in": r.get("tokens_in"),
                    "tokens_out": r.get("tokens_out"), "cost_usd": cost,
                    "model_reported": r.get("model_reported"), "finish": r.get("finish"),
+                   "raw_head": (r.get("content") or "")[:600],
                    **sc, "card_confidence": (card or {}).get("confidence"),
                    "card_rating": (card or {}).get("rating")}
             recs.append(rec)
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            fh.flush()
             print("  %-20s %s %-6s valid=%s dir=%-10s reach=%-5s hit=%-5s fwd=%s %ss" % (
                 m, s["day"], s["symbol"].replace("US.", ""), rec["valid_card"],
                 rec["direction"], rec["reachable"], rec["hit"], rec["fwd"], rec["latency"]))
 
-    with path.open("w") as fh:
-        for r in recs:
-            fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    fh.close()
 
     print("\n== 汇总 (n=%d/模型) ==" % len(samples))
-    print("%-20s %7s %8s %8s %8s %8s %9s %8s %9s" % (
-        "模型", "有效%", "方向%", "可达%", "命中%", "中位fwd", "中位RR", "延迟s", "成本$"))
+    print("%-20s %6s %7s %7s %7s %7s %9s %8s %8s %9s" % (
+        "模型", "API%", "有效卡%", "方向%", "可达%", "命中%", "中位fwd", "中位RR", "延迟s", "成本$"))
     for m in models:
         v = [r for r in recs if r["model"] == m]
         if not v:
             continue
         ok = sum(1 for r in v if r["ok"]) / len(v) * 100
+        vc = sum(1 for r in v if r["valid_card"]) / len(v) * 100
         dr = sum(1 for r in v if r["dir_rate"]) / len(v) * 100
         rc = [r for r in v if r["reachable"]]
         hit = (sum(1 for r in rc if r["hit"]) / len(rc) * 100) if rc else 0
@@ -262,8 +269,8 @@ def main() -> int:
         rr = [r["rr"] for r in v if r["rr"]]
         lat = [r["latency"] for r in v if r["latency"]]
         cost = sum(r["cost_usd"] or 0 for r in v)
-        print("%-20s %6.0f%% %7.0f%% %7.0f%% %7.0f%% %8s %8s %8.1f %9.3f" % (
-            m, ok, dr, (len(rc) / len(v) * 100) if v else 0, hit,
+        print("%-20s %5.0f%% %7.0f%% %7.0f%% %7.0f%% %7.0f%% %8s %8s %8.1f %9.3f" % (
+            m, ok, vc, dr, (len(rc) / len(v) * 100) if v else 0, hit,
             ("%.2f%%" % statistics.median(fwd)) if fwd else "n/a",
             ("%.2f" % statistics.median(rr)) if rr else "n/a",
             statistics.mean(lat) if lat else 0, cost))
