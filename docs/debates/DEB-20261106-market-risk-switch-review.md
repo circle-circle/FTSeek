@@ -2040,3 +2040,52 @@ penetration 1 次），**36 次逐股分析一次都没进 llm_audit**。
 
 **结论**：价格带效应是真实的，但它描述的是"**高波动 × 高死亡率**"的组合，
 不是一个可以通过换标的白拿的 alpha。要变现必须同时改善 thesis 存活率 ⇒ 唯一通道仍是 I1（输入侧）。
+
+## 三十六、换模型 A/B：可行性成立（输入可逐字节复现）（2026-11-07）
+
+用户问：「能否基于历史数据、用百炼不同高级模型对比，看能否换模型提升指令/标的质量」。
+**答案：可以，而且比想象的干净**——因为历史 prompt 原文被存下来了。
+
+### 36.1 为什么能做：历史 prompt 是逐字节可复现的
+
+`data/da_checkpoint/<date>/<SYM>.raw.json` 存了当年**真实发给模型**的 `user_prompt`
+（16–19k 字符），共 **595 份、23 个交易日**；SYSTEM_PROMPT 是静态串
+（`/root/.hermes/skills/deep-stock-analysis/scripts/llm_synth.py`，3,425 字符）。
+⇒ 回放时**输入完全一致，只有 model 变**，这是唯一无混淆的换模型对比方式。
+
+### 36.2 生产真实调用参数（回放必须对齐，否则比的是别的东西）
+
+| 项 | 值（`llm_synth._call_llm` 实测） |
+|---|---|
+| endpoint | dashscope compatible-mode `/chat/completions` |
+| temperature | **0.0**（config 默认，非 repo 死代码里的 0.4） |
+| max_tokens | 3000（answer 部分；thinking token 另计） |
+| response_format | `json_object` |
+| thinking | 默认 False，调用方可覆盖；10 月生产实测 `_thinking_enabled=True`（qwen 侧约 6k reasoning token） |
+| 单次用量 | prompt ≈12.5k tok，completion ≈8k tok（含 reasoning） |
+| 两段结构 | 分析（qwen3.7-max）→ 挑战者（deepseek-v4.1-flash）辩论；**本节只测分析段** |
+
+### 36.3 可选挑战者（`/models` 实测 182 个可用，取高端档）
+
+| 模型 | 定位 |
+|---|---|
+| **qwen3.8-max** | 同族新一代，最直接的升级候选 |
+| glm-5.3 / glm-5.3-prime | 强制思考，UE 现役主模型同族 |
+| kimi-k3.1-pro / kimi-k3 | 异族强 reasoning |
+| deepseek-v4-pro | 现役 fallback，已知可用 |
+| qwen3.7-max | **基线**（现役 DA 分析师） |
+
+### 36.4 预注册判据（先写死，避免看完结果再挪门）
+
+挑战者必须**同时**满足：
+1. **有效卡率 ≥ 基线 − 5pp**（基线 92%；此项排除"输出不成卡"的模型，F5 的 flash 40% 即死在这条）；
+2. **方向命中率 ≥ 基线 + 5pp**（可达样本，n ≥ 30/臂；方向 = 模型给 BUY/SELL_SHORT 且当日触及入场价，命中 = 到收盘方向为正）；
+3. 中位 RR ≥ 1.0；
+4. 单次成本 ≤ 基线 3×（qwen3.7-max ≈ $0.23/次）。
+任一条不过 ⇒ 不换。全部通过后仍需 shadow 双跑 ≥10 交易日再裁。
+
+### 36.5 成本与风险
+
+- 单次 $0.05–0.25；**n=30/臂 × 5 模型 ≈ $30**；样本用同一 seed 抽样，各臂完全相同。
+- 零交易风险：只读 checkpoint + 只发 API，不写 `playbook_instructions`、不改 config、不新增 cron。
+- 工具：`scripts/da_model_ab_replay.py`（已落，输出 `data/shadow/da_model_ab_*.jsonl`）。
