@@ -57,7 +57,11 @@ THINKING = {"glm-5.3", "glm-5.2"}
 # 输出预算: GLM 系思考 token 计入 completion 预算, 3000 会被思考吃光 (实测 finish=length,
 # content 仅 "{\n") ⇒ 按其官方上限给 16000 (与 config 里 UE 对 glm-5.3 的 16000 一致)。
 # 这是**平台计费模型的约束**, 不是能力差异; 若真要用 GLM 当 DA, 必须同步抬 max_tokens。
-MAXTOK = {"glm-5.3": 16000, "glm-5.2": 16000, "glm-5.3-prime": 16000}
+# 实测补充 (2026-11-07 n=12): deepseek-v4-pro 同样把 reasoning 算进 completion 预算
+#   (3000 全烧, finish=length, 内容空) ⇒ 与 GLM 同处置; qwen3.8-max 单次 >240s 超时 ⇒ 抬超时.
+MAXTOK = {"glm-5.3": 16000, "glm-5.2": 16000, "glm-5.3-prime": 16000,
+          "deepseek-v4-pro": 16000, "qwen3.8-max": 16000, "kimi-k3.1-pro": 16000,
+          "kimi-k3": 16000, "deepseek-v4.1-flash": 32768}
 
 
 def load_system_prompt() -> str:
@@ -101,7 +105,7 @@ def collect_samples(n: int, seed: int = 20261107) -> List[dict]:
     return picked
 
 
-def call_model(model: str, system: str, user: str, timeout: int = 240,
+def call_model(model: str, system: str, user: str, timeout: int = 900,
                thinking: bool = True) -> dict:
     key = os.environ.get("DASHSCOPE_API_KEY")
     if not key:
@@ -222,10 +226,18 @@ def main() -> int:
     stamp = time.strftime("%Y%m%d_%H%M")
     path = Path(a.out or OUT_DIR / f"da_model_ab_{stamp}.jsonl")
     recs = []
+    from concurrent.futures import ThreadPoolExecutor
     fh = path.open("w")
-    for m in models:
-        for s in samples:
-            r = call_model(m, system, s["prompt"], thinking=not a.no_thinking)
+    jobs = [(m, s) for m in models for s in samples]
+
+    def _run(job):
+        m, s = job
+        return m, s, call_model(m, system, s["prompt"], thinking=not a.no_thinking)
+
+    def _handle(res):
+        nonlocal recs
+        m, s, r = res
+        if True:
             bars = day_bars(s["symbol"], s["day"])
             if r.get("ok"):
                 card = parse_card(r["content"])
@@ -251,6 +263,9 @@ def main() -> int:
                 m, s["day"], s["symbol"].replace("US.", ""), rec["valid_card"],
                 rec["direction"], rec["reachable"], rec["hit"], rec["fwd"], rec["latency"]))
 
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        for res in ex.map(_run, jobs):
+            _handle(res)
     fh.close()
 
     print("\n== 汇总 (n=%d/模型) ==" % len(samples))
