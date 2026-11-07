@@ -35,9 +35,16 @@ def check_vix():
             return "🟡 VIX缓存为空(下次会重新获取)"
         age_s = time.time() - cache.get("timestamp", 0)
         vix = cache.get("vix", "?")
+        # 2026-11-07 (RFC-190): 标注口径 —— 同一周里"VIX"有两个值(代理 18.04 / 现货 28.18),
+        #   不标口径就会把两个数当同一个指标比较。source=fred → T-1 现货收盘;
+        #   vixy* → VIXY 代理(×0.85, 盘前实为上一交易日收盘)。只标注, 不改数值/不改门。
+        _src = str(cache.get("source") or "")
+        _caliber = ("现货(T-1 FRED)" if _src.startswith("fred")
+                    else "代理(VIXY×0.85)" if _src.startswith("vixy")
+                    else (_src or "口径未知"))
         if age_s > 3600:
-            return f"🔴 VIX缓存过期 {age_s/3600:.1f}h (值={vix}, 需刷新)"
-        return f"✅ VIX={vix} (age={age_s/60:.0f}min)"
+            return f"🔴 VIX缓存过期 {age_s/3600:.1f}h (值={vix} {_caliber}, 需刷新)"
+        return f"✅ VIX={vix} {_caliber} (age={age_s/60:.0f}min)"
     except Exception as e:
         return f"🔴 VIX检查异常: {e}"
 

@@ -151,9 +151,16 @@ def fetch_vixy_via_opend(host: Optional[str] = None,
     用途: 供已按"直连 OpenD"模式实现的调用方 (MarketStateChecker) 复用同一
     链路, 而不必新建 MarketDataRouter (避免重复连接冲突, 见其 _fetch_spy_data 注释)。
 
-    时点语义 (实测 2026-09-14):
+    时点语义 (实测 2026-09-14; **2026-11-07 更正盘前一条**):
       - 盘中: VIXY 实时报价 → 当日有效值 (与 regime 侧同源);
-      - 盘前: 盘前报价有效 (VIXY 是 ETF, 有盘前成交);
+      - 盘前: ~~盘前报价有效 (VIX 是 ETF, 有盘前成交)~~ → **读到的是上一交易日收盘**。
+        实测 `data/da_checkpoint/*/US.*.raw.json` 按日聚合 (当日全部 raw 文件): 2026-10-07..11-06
+        共 23 个交易日, 盘前 `vixy_price` 的取值集合**全部等于前一交易日 VIXY 收盘** —— 本函数用的是
+        `last_price`, 而富途快照的 `last_price` 在盘前停留在上一时段收盘 (盘前真实价在
+        `pre_price`)。⇒ 盘前这条腿**不提供当日新鲜度**, 与 FRED T-1 同源同时点,
+        只差一个 0.85 换算系数; 复跑 `scripts/vix_caliber_audit.py`。
+        要真拿盘前价须改读 `pre_price` —— 那会改变 VIX 读数进而改变硬门判据, 属行为变更,
+        须先走 RFC-190 裁决, 不得就地改;
       - 盘后/周末: 快照返回上一交易日收盘 (与 FRED 日频同日), 无害。
     """
     _host = host or os.getenv("FUTU_OPEND_HOST", "127.0.0.1")
