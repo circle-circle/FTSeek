@@ -9,6 +9,7 @@
 5. signal_snapshots forward_return NULL率
 6. capital_state一致性
 7. 事件采集时延 (发布→入库 P50/P90/超窗 + 市场级风险的 as-of 可见性, RFC-189)
+8. 环境真值 (官方 VIX/期限结构/rv20 + 代理差, RFC-190)
 
 输出: 飞书推送
 """
@@ -174,6 +175,19 @@ def check_event_ingest_latency():
         return f"🟡 事件时延检查异常: {e}"
 
 
+def check_market_env():
+    """官方真值 (VIX/期限结构/rv20) 一行摘要 + 代理差 (RFC-190, 只读)。
+
+    账本由 scripts/market_env_ledger.py 产出; 过期(>30h)时本函数触发一次重建。
+    只展示, 不设阈值、不参与任何交易判定。
+    """
+    try:
+        from market_env_ledger import summary_line
+        return summary_line()
+    except Exception as e:
+        return f"🟡 环境账本不可用: {e}"
+
+
 def check_capital_state():
     """capital_state一致性"""
     try:
@@ -203,6 +217,7 @@ def main():
         ("Degradation", check_degradation),
         ("Signal Snapshots", check_signal_snapshots),
         ("Event Ingest", check_event_ingest_latency),
+        ("Market Env", check_market_env),
         ("Capital State", check_capital_state),
     ]
     
