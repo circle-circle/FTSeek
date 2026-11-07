@@ -1787,7 +1787,7 @@ playbook:
   #   回滚: 置 true (热重载即生效, ConfigContainer 读取); 代码侧 fail-safe:
   #   配置读失败 → 保持开启。
   portfolio_guardrail_enabled: false
-  # ── RFC-187 分段落袋线影子 (2026-11-06, record-only) ──
+  # ── RFC-188 分段落袋线影子 (2026-11-06, record-only) ──
   #   动机: 现役 breakeven_at_pct=0.4 把最大人群 (MFE∈[0.4,0.8), A10 占 36.9%) 全剪在保本线上,
   #   该桶 85.8% 以 SL_BREAKEVEN 出场、均 +0.074% < 往返费用线 ~11.9bps ⇒ 结构性为负。
   #   本块只驱动**影子落盘** (data/shadow/exit_staging_shadow.jsonl), 不参与任何真实出场判定:

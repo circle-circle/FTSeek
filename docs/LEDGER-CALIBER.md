@@ -49,7 +49,7 @@ WHERE source_type='PLAYBOOK_SIM'
 | 字段 | 口径 | 陷阱 |
 |------|------|------|
 | `outcome` | `win`/`loss`/`void`(幽灵仓)/`holding`(未平)/`already_held`(已持仓跳过)/`closed`(旧schema) | **SUM(pnl) 前必须过滤** `outcome IN ('win','loss','void')`; 否则 holding 快照污染 |
-| `pnl` | 结算快照, **净**口径 (2026-08-20 净语义切换) | holding 行是**未实现**陈旧值; already_held 行恒 0 占位 |
+| `pnl` | 结算快照, **净**口径 (2026-08-20 净语义切换) | holding 行是**未实现**陈旧值; already_held 行恒 0 占位。**⚠️ 已净 ⇒ 求和后禁止再减 fees** (2026-11-06 实例: 真实净 +$53.55 被二次扣费报成 +$3.63) |
 | `max_favorable_excursion` / `max_adverse_excursion` | **美元 ($)** | ⚠️ 不是百分比! 权威 % 用 `trade_records.mfe_pct` |
 | `pnl_pct` | ratio (小数, 非百分数) | 0.02 = 2%, 不是 0.02% |
 | `confidence` | LLM/因子置信度 | **无方向预测力** (IC≈0), 见 §7; 不可当绩效分层依据 |

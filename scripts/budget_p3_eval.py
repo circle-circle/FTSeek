@@ -2,10 +2,11 @@
 """P3 (DEB-20261031-budget-design §8) 出口结算器: 三道预算帽生效后的接线与经济读数。
 
 预注册判据 (读数前写死, 见 DEB §8):
-  生效门  E1 日均成交笔数 ≥3;  E2 在险峰值 ≤2.5% 权益;  E3 热帽拒绝占比 ≤60%
+  生效门  E1 日均成交笔数 ≥3;  E2 在险峰值 ≤ max_open_risk_pct(线上实读, 2026-11 为 4.0%);  E3 热帽拒绝占比 ≤60%
   经济门  J1 笔均净额 > 基线 −$1.84;  J2 费用率 ≤ 基线 11.54bps;  J3 名义中位 ≥ $5,500
   回滚    R1 连续 10 个交易日 日均笔数 <3;  R2 笔均 < −$1.84;  R3 热帽拒绝占比 >60%
-          R4 在险峰值 >2.5% (帽失效 — 代码/接线问题, 立刻回滚)
+          R4 在险峰值 > max_open_risk_pct (帽失效 — 代码/接线问题, 立刻回滚)
+  ⚠️ DEB-20261031 §8 原文写 2.5%, 线上配置自 2026-10-31 起为 4.0%; 阈值一律读线上值, 本注释不参与判定。
 
 只读: 不写库、不改生产。
 """
@@ -26,6 +27,15 @@ if str(REPO) not in sys.path:          # 直接 `python scripts/xxx.py` 时 cwd 
 P3_FROM = "2026-10-31"
 BASE_FROM, BASE_TO = "2026-07-01", "2026-10-31"
 BASE_PER_TRADE, BASE_FEE_BPS = -1.84, 11.54
+# J1 的 −$1.84 是 DEB-20261031 §8 登记值, 原文未留 SQL; 下面这段是"同一口径重算"的可复现语句,
+# 两者都在报告里打印 (register vs recompute)。重算值不替换登记阈值 —— 换阈值=移动球门。
+BASE_RECOMPUTE_SQL = """
+SELECT trade_date, entry_price, quantity, pnl_net, metadata_json
+FROM trade_records
+WHERE COALESCE(exit_price,0)>0 AND trade_date>='2026-07-01' AND trade_date<='2026-10-31'
+  AND COALESCE(json_extract(metadata_json,'$.gate_mode'),'')!='research_momentum';
+-- 笔均 = avg(pnl_net); 费用 bps = sum(fee_breakdown.total)/sum(entry_price*quantity)*10000
+""".strip()
 # ⚠️ 这三个值必须从线上配置读, 不许写死 —— 2026-10-31 自查: 脚本曾写死 2.5%, 而线上已改 4.0%,
 #    报告会打印「帽 2.5%」并拿错阈值算 R4 回滚判据 (自相矛盾的报表层, 与 11/01 清账同一类病灶)。
 def _live_thresholds():
@@ -34,12 +44,13 @@ def _live_thresholds():
         c = get_admission_config(refresh=True)
         return (float(c.get("max_open_risk_pct") or 0.0),
                 float(c.get("min_notional_usd") or 0.0),
-                float(c.get("max_sl_pct") or 0.0))
+                float(c.get("max_sl_pct") or 0.0),
+                float(c.get("max_fee_bps") or 0.0))
     except Exception:
-        return (0.0, 0.0, 0.0)
+        return (0.0, 0.0, 0.0, 0.0)
 
 
-HEAT_CAP_PCT, MIN_NOTIONAL, SL_MAX_PCT = _live_thresholds()
+HEAT_CAP_PCT, MIN_NOTIONAL, SL_MAX_PCT, MAX_FEE_BPS = _live_thresholds()
 MIN_TRADES_PER_DAY, MAX_HEAT_REJECT_PCT = 3.0, 60.0
 
 
@@ -80,7 +91,7 @@ def _gate_hits(conn, start):
     agg = Counter()
     for r in rows:
         why = str(r["skip_reason"] or "")
-        for key in ("PORTFOLIO_HEAT", "NOTIONAL_TOO_SMALL", "SL_STOP_TOO_WIDE",
+        for key in ("PORTFOLIO_HEAT", "NOTIONAL_TOO_SMALL", "FEE_BPS_TOO_HIGH", "SL_STOP_TOO_WIDE",
                     "FEE_INEFFICIENT", "PRICE_TOO_LOW", "SHARES_ABOVE_FEE_KNEE"):
             if key in why:
                 agg[key] += r["c"]
@@ -138,11 +149,20 @@ def main() -> int:
         gates["state"] = "READY_TO_ADJUDICATE" if (live["n"] >= 60 or live["days"] >= 10) else "KEEP_SAMPLING"
 
     out = {"baseline": base, "live": live, "gate_hits": dict(hits), "gates": gates,
+           "j1_provenance": {
+               "registered": BASE_PER_TRADE,
+               "recomputed": round(base.get("avg") or 0.0, 2),
+               "recompute_sql": BASE_RECOMPUTE_SQL,
+               "note": "登记值来自 DEB-20261031 §8 (未留 SQL); recomputed 用本脚本 _trades/_stats 同口径重算。",
+               "verdict_agrees": bool(live.get("avg") is None or
+                                      ((live["avg"] > BASE_PER_TRADE) == (live["avg"] > (base.get("avg") or 0.0))))},
+           "cohort_warning": "2026-11-05 用户裁恢复供给：live 横跨新旧 admission cohort，只作描述，不作原 P3 终裁。",
            "open_risk_now": {"usd": cur_risk, "positions": cur_n, "equity": equity,
                              "pct": (cur_risk / equity * 100) if equity else None},
            "p3_from": P3_FROM,
            "thresholds": {"min_trades_per_day": MIN_TRADES_PER_DAY,
                           "heat_cap_pct": HEAT_CAP_PCT, "min_notional": MIN_NOTIONAL,
+                          "max_fee_bps": MAX_FEE_BPS,
                           "sl_max_pct": SL_MAX_PCT,
                           "base_per_trade": BASE_PER_TRADE, "base_fee_bps": BASE_FEE_BPS}}
     try:
@@ -157,13 +177,16 @@ def main() -> int:
         return 0
     print("== P3 预算帽结算器 (DEB-20261031-budget-design) ==")
     print(f"基线 {BASE_FROM}~{BASE_TO}: n={base.get('n')} 笔均 {base.get('avg', 0):+.2f} "
+          f"(J1 判据用登记值 {BASE_PER_TRADE:+.2f}; 重算值仅供复核, 见 out['j1_provenance']) "
           f"费用 {base.get('fee_bps') or 0:.2f}bps 名义中位 ${base.get('notional_median') or 0:,.0f}")
     if live.get("n"):
         print(f"P3 {P3_FROM}~今: n={live['n']} 笔均 {live['avg']:+.2f} 日均 {live['per_day']:.1f} 笔 "
               f"费用 {live['fee_bps'] or 0:.2f}bps 名义中位 ${live['notional_median'] or 0:,.0f}")
     else:
         print(f"P3 {P3_FROM}~今: 无已平仓样本")
-    print(f"阈值(线上实读): 热帽 {HEAT_CAP_PCT}% / 名义下限 ${MIN_NOTIONAL:,.0f} / 止损上限 {SL_MAX_PCT}%")
+    print(f"阈值(线上实读): 热帽 {HEAT_CAP_PCT}% / 名义下限 ${MIN_NOTIONAL:,.0f} / "
+          f"费用上限 {MAX_FEE_BPS:g}bps / 止损上限 {SL_MAX_PCT}%")
+    print("Cohort:", out["cohort_warning"])
     print(f"当前在险 ${cur_risk:,.0f} ({cur_n} 笔)"
           + (f" = {cur_risk / equity * 100:.2f}% 权益 (帽 {HEAT_CAP_PCT}%)" if equity else ""))
     print("门禁拒绝分布:", dict(hits) or "无")

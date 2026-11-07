@@ -1,4 +1,4 @@
-"""RFC-187 分段落袋线 (staged lock) — record-only 影子, 零交易行为变更.
+"""RFC-188 分段落袋线 (staged lock) — record-only 影子, 零交易行为变更.
 
 ## 为什么要它
 现役 `breakeven_at_pct=0.4` 把最大的人群 (MFE∈[0.4,0.8), A10 实测 288/780 = 36.9%) 全部
@@ -155,5 +155,5 @@ def record(direction: str, symbol: str, entry: float, cur: float, peak_pct: floa
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
         return row
     except Exception as e:  # 影子失败不得影响退出链
-        logger.warning("[RFC-187 shadow] 落盘失败: %s", e)
+        logger.warning("[RFC-188 shadow] 落盘失败: %s", e)
         return None
