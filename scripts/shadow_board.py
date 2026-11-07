@@ -732,7 +732,8 @@ def _guard_lines(entries):
                 extra += " ·已停采"
             if s.no_adjudication_reason:
                 extra += f" ·挂账={s.no_adjudication_reason.split(':')[0]}"
-            out.append(f"  注册[{reg_id}] {st} n={s.current_n}/{s.min_n}{extra}")
+            _cn = "—" if s.current_n is None else s.current_n
+            out.append(f"  注册[{reg_id}] {st} n={_cn}/{s.min_n}{extra}")
         p = ROOT / artifact
         if not p.exists():
             out.append(f"  ⚠️ 生产者缺产物: {artifact} 不存在 ⇒ 本段无证据 (≠正常无触发)")

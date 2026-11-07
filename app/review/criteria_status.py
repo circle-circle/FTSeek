@@ -131,7 +131,8 @@ def pending_adjudications() -> List[Dict[str, Any]]:
                 "status": status,
                 "n": current_n,
                 "min_n": item.min_n,
-                "progress": f"{current_n or 0}/{item.min_n}",
+                "progress": (f"{current_n}/{item.min_n}" if current_n is not None
+                             else f"—/{item.min_n}"),
                 "ready": ready,
                 "adjudicated_at": adj["read_at"],
                 "recheck_after": adj["recheck_after"],

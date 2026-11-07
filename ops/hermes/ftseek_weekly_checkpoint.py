@@ -12,7 +12,7 @@
 回滚: 删本脚本 + 对应 cron job。
 """
 import json
-import re  # B4 (2026-10-06): READY 横幅压缩需按行抽 id/n/判据
+import os
 import sqlite3
 import subprocess
 import sys
@@ -145,19 +145,34 @@ def check_fee_gate_shadow():
     The weekly checkpoint is the decision-side consumer: it reports the current
     production gate, the safe incremental notional proposal, and whether the
     raw candidate would loosen the existing price floor. It is read-only.
+
+    2026-11-07 修复 (周六周检复查): 原先是**进程内** `from scripts.fee_gate_shadow_report
+    import ...`。周检脚本由 Hermes cron 用运行时 python (3.14) 执行, 而该解释器没有
+    PyYAML (该报表模块 import yaml) ⇒ 自 10-17 起连续 4 周只输出
+    "No module named 'yaml'", 费用门读数在周检面完全断供 (采集/报表 cron 本身正常,
+    所以同一条消息里出现「T3 死」+「fee_gate_shadow READY 261/30」的自相矛盾)。
+    修法 = 与 check_gate/check_graduation_gate 同模式: 用 REPO venv 子进程跑,
+    不给自己进程装第三方依赖 (也不改生产依赖)。
     """
+    code = (
+        "import json;"
+        "from scripts.fee_gate_shadow_report import build_report, render_report;"
+        "r = build_report();"
+        "print(json.dumps({'status': r['status'], 'n': r['n'], 'min_n': r['min_n'],"
+        " 'excluded_rows': r['excluded_rows'],"
+        " 'lines': render_report(r).splitlines()}, ensure_ascii=False))"
+    )
     try:
-        from scripts.fee_gate_shadow_report import build_report, render_report
-        report = build_report()
-        return {
-            "status": report["status"],
-            "n": report["n"],
-            "min_n": report["min_n"],
-            "excluded_rows": report["excluded_rows"],
-            "lines": render_report(report).splitlines(),
-        }
+        r = subprocess.run([str(REPO / "venv/bin/python"), "-c", code],
+                           capture_output=True, text=True, timeout=120,
+                           cwd=str(REPO),
+                           env={**os.environ, "PYTHONPATH": str(REPO)})
+        if r.returncode != 0:
+            raise RuntimeError((r.stderr or "").strip().splitlines()[-1][:120]
+                               if (r.stderr or "").strip() else f"rc={r.returncode}")
+        return json.loads(r.stdout.strip().splitlines()[-1])
     except Exception as exc:
-        return {"error": str(exc)[:120]}
+        return {"error": f"{type(exc).__name__}: {exc}"[:120]}
 
 
 def check_graduation():
@@ -188,9 +203,15 @@ def check_freeze():
         " COUNT(*) n FROM trade_records WHERE source_type='PLAYBOOK_SIM' "
         "AND exit_time IS NOT NULL AND trade_date>=? GROUP BY v",
         (FREEZE_START,)).fetchall()
+    # 2026-11-07 (周六周检复查): 埋点修复后的「零缺失笔数」原先写死 "82", 到 11-07 实际
+    # 已 270 笔 ⇒ 每周印一个三个月前的静态数字。改为现算 (口径: 同窗口, 修复起点 9/18)。
+    n_fixed = cc.execute(
+        "SELECT COUNT(*) FROM trade_records WHERE source_type='PLAYBOOK_SIM' "
+        "AND exit_time IS NOT NULL AND trade_date>='2026-09-18' "
+        "AND json_extract(metadata_json,'$.config_version') IS NOT NULL").fetchone()[0]
     cc.close()
     total = sum(n for _, n in rows)
-    return rows, total
+    return rows, total, n_fixed
 
 
 def check_gate():
@@ -237,12 +258,46 @@ def check_e2_gate():
         return {"error": r.stderr[-150:] or "报告读取失败"}
 
 
+def _cut_section(text, name):
+    """从 summary() 文本里删掉一个 [NAME] 段 (标题行到下一个 '[' 标题行之前)."""
+    out, skip = [], False
+    for line in text.splitlines():
+        if line.startswith(f"[{name}]"):
+            skip = True
+            continue
+        if skip and line.startswith("["):
+            skip = False
+        if not skip:
+            out.append(line)
+    return "\n".join(out)
+
+
+def _section_count(text, name):
+    """取 summary() 里 '[NAME] (N)' 的 N; 找不到返回 None。"""
+    for line in text.splitlines():
+        if line.startswith(f"[{name}] ("):
+            try:
+                return int(line.split("(", 1)[1].split(")", 1)[0])
+            except Exception:
+                return None
+    return None
+
+
 def check_shadow_registry():
-    """影子注册表汇总 (2026-08-23 接入, 原模块零引用): 各影子攒样进度 + 状态变迁."""
+    """影子注册表汇总 (2026-08-23 接入, 原模块零引用): 各影子攒样进度 + 状态变迁.
+
+    2026-11-07 (周六周检复查): 额外返回 ready 明细 + 每项 adjudication_state。
+    病灶: get_ready_to_evaluate() 是「样本量曾经达标」的**只进不退**集合, 26 项里
+    23 项判据早读过 (read_at 10-31 等)、needs_user=false ⇒ 周检却统一印成
+    「样本量达标 … 判据需实测」, 让 88% 的条目看着像待办, 把真正没读过的 3 项埋掉。
+    """
     code = ("from app.playbook.shadow_registry import refresh_counts, summary, check_mounting, "
-            "check_intent_uniqueness, check_artifact_consumers; "
+            "check_intent_uniqueness, check_artifact_consumers, get_ready_to_evaluate, adjudication_state; "
             "import json; notifs = refresh_counts(); "
-            "print(json.dumps({'notifs': notifs, 'summary': summary(), "
+            "ready = [{'id': s.id, 'n': s.current_n, 'min_n': s.min_n, "
+            "'criteria': s.graduation_criteria, 'state': adjudication_state(s)} "
+            "for s in get_ready_to_evaluate()]; "
+            "print(json.dumps({'notifs': notifs, 'ready': ready, 'summary': summary(), "
             "'mounts': check_mounting(), "
             "'consumers': check_artifact_consumers(), "
             "'intents': check_intent_uniqueness()}, ensure_ascii=False))")
@@ -281,7 +336,7 @@ def main():
     out.append(f"{mark} 四锁: {locks['AUTO_TRADE_ACCOUNT']}/"
                f"{locks['ALLOW_REAL_TRADING']}/{locks['execute_mode']} | "
                f"毕业门禁 graduated={grad.get('graduated')} "
-               f"({'维持拦截' if not grad.get('graduated') else '⚠️ 已打标! 需用户签字确认'})")
+               f"({'deprecated 兼容值, 非拦截依据 (实际拦截=四锁)' if not grad.get('graduated') else '⚠️ 已打标! 需用户签字确认'})")
     if not ok:
         if suppressed:
             out.append(f"  🔕 破例生效 (RFC-135): {waiver.get('waiver_id')} "
@@ -295,7 +350,7 @@ def main():
                        f"| 到期={waiver.get('expires')} — 立即呈裁, 不得继续跑任何结算")
 
     # 2. 参数冻结
-    rows, total = check_freeze()
+    rows, total, n_fixed = check_freeze()
     if total == 0:
         out.append(f"参数冻结: 窗口({FREEZE_START}起)尚无平仓样本")
     elif len(rows) == 1:
@@ -335,7 +390,7 @@ def main():
             n = sum(c for _, c in missing)
             out.append(f"ℹ️ 退出哈希缺字段: {n} 笔 metadata_json 无 config_version "
                        f"(写方埋点缺口, 非参数分裂) — 实测 9/16–9/17 一次性, 写方已修 "
-                       f"(9/18 起 82 笔零缺失); 不计入 KR2 版本分裂判分")
+                       f"(9/18 起 {n_fixed} 笔零缺失); 不计入 KR2 版本分裂判分")
         if _exempt_err:
             out.append(f"⚠️ 豁免清单读取失败 (按未豁免告警口径处理): {_exempt_err}")
 
@@ -351,11 +406,27 @@ def main():
                     f"费率 {b['fee_bps']:.2f}bps | 净 {b['net_bps']:+.2f}bps")
         out.append(_fmt(f"经济边际(本月{ef['this_ym']})", ef.get("this_month")))
         out.append("  " + _fmt("滚动3月", ef.get("roll3")))
+        # 2026-11-07 (周六周检复查): 结论行改造三处 —
+        #   ① n<30 不下边际结论 (10-03 曾以 n=11 印出「余量 +64.81bps」);
+        #   ② 结论同屏带滚动3月 (本月是 5 个交易日的部分月, 单看它会在三月窗为负时给假安心);
+        #   ③ 删掉写死的「9月修复后 +3.64bps」陈旧锚点; 补「月内读数随迟结算漂移」披露
+        #      (实测 10 月: 10-31 印 +3.61bps/n=154 → 月末真值 −4.69bps/n=156, 差的两笔
+        #       trade_date=10-30 但 11-03/11-04 才平仓的 MRK/LMT 共 −$694)。
         _tm = ef.get("this_month")
-        if _tm and _tm["net_bps"] < 0:
-            out.append(f"  ⚠️ 告警: 本月净edge {_tm['net_bps']:+.2f}bps < 0 — 毛edge 未覆盖费用线")
+        _r3 = ef.get("roll3")
+        _r3_txt = ""
+        if _r3:
+            _r3_txt = f" | 滚动3月 {_r3['net_bps']:+.2f}bps"
+            if _r3["net_bps"] < 0:
+                _r3_txt += " ⚠️ 三月窗仍为负"
+        if _tm and _tm["n"] < 30:
+            out.append(f"  ⚖️ 本月样本不足 (n={_tm['n']}<30) — 不作边际结论, 以滚动3月为准{_r3_txt}")
+        elif _tm and _tm["net_bps"] < 0:
+            out.append(f"  ⚠️ 告警: 本月净edge {_tm['net_bps']:+.2f}bps < 0 — 毛edge 未覆盖费用线"
+                       f"{_r3_txt}")
         elif _tm:
-            out.append(f"  余量 {_tm['net_bps']:+.2f}bps (净edge<0 即系统亏损; 9月修复后 +3.64bps)")
+            out.append(f"  余量 {_tm['net_bps']:+.2f}bps (本月, n={_tm['n']}; 净edge<0 即系统亏损)"
+                       f"{_r3_txt} — 月内读数随迟结算漂移, 月末后再引用")
 
     # 2c. T3 费用门影子 (2026-09-20 三周计划): 净利诊断与现行生产门对照
     fee_gate = check_fee_gate_shadow()
@@ -400,20 +471,19 @@ def main():
             f"符号共门p={sg.get('one_sided_p')}")
         out.append(f"  判定: {lg.get('verdict')} (停止规则: 只降级不重置)")
 
-    # 4b. E2 入场动量确认毕业门 (DEB-20260807 §5.1)
+    # 4b. E2 入场动量确认门 (DEB-20260807 §5.1) — 2026-09-13 用户裁「无效就停止，退役」
+    # 2026-11-07 (周六周检复查): 原实现每周仍印 3 行冻结统计 (拦截/放行净额 + 日聚类 t/MDE),
+    #   而该门恒判 RETIRED_NO_PROMOTION、样本冻结在退役日, 数字永不再变 ⇒ 纯噪音。
+    #   改成一行状态; 退役证据与判据原文留在 data/e2_momentum_graduation_report.json。
+    #   ⚠️ 该报告 verdict 里的「统计不可分辨(|diff|<MDE)」一条已登记待更正 (MDE 按配对差
+    #   多乘了 √2 ⇒ |diff|=29.91 实为 > 真 MDE 28.91); 退役结论不依赖单条支柱,
+    #   但修正判据公式属判据级变更, 须单独呈裁后再动脚本, 本处不改脚本。
     e2 = check_e2_gate()
     if e2.get("error"):
         out.append(f"⚠️ E2动量毕业门: {e2['error']}")
     else:
-        dc2 = e2.get("daily_clustered", {})
-        out.append(
-            f"E2动量确认: 拦截n={e2.get('n_blocked')} 净${e2.get('blocked', {}).get('net')} "
-            f"(均${e2.get('blocked', {}).get('mean')}) vs 放行n={e2.get('n_passed')} "
-            f"净${e2.get('passed', {}).get('net')} (均${e2.get('passed', {}).get('mean')})")
-        out.append(
-            f"  日聚类 {dc2.get('n_paired_days')}配对日 diff=${dc2.get('diff_mean')} "
-            f"t={dc2.get('t')} MDE={dc2.get('mde')}")
-        out.append(f"  判定: {e2.get('verdict')}")
+        out.append("E2动量确认: 🪦 已退役 (2026-09-13 用户裁) — 读数冻结, 不再周报; "
+                   "证据见 data/e2_momentum_graduation_report.json")
 
     # 5. 影子注册表 (分流对比组 + 全部影子攒样进度)
     reg = check_shadow_registry()
@@ -443,19 +513,45 @@ def main():
         #   不依赖另一载体的覆盖面 (跨载体去重会静默丢项)。
         #   同一批影子的白话结论 + eval 指引在周六 09:14 待裁决通知里质量更高, 本段只留
         #   判据备查, 避免两处各写一遍长文。
-        _notifs = reg.get("notifs", [])
-        if _notifs:
-            out.append(f"🔔 影子样本量达标 (READY) {len(_notifs)} 项 — 仅样本量, "
-                       f"判据需实测; 白话结论+eval 指引见周六待裁决通知")
-            for n in _notifs:
-                m = re.search(r"影子 \[([a-z0-9_]+)\] (.+?) 样本量已达 (\d+)/(\d+)", n)
-                c = re.search(r"判据: (.*)$", n, re.S)
-                if m:
-                    out.append(f"  · {m.group(1)} n={m.group(3)}/{m.group(4)}"
-                               + (f" | {c.group(1).strip()}" if c else ""))
-                else:
-                    out.append(f"  · {n[:160]}")  # 形态不合预期 ⇒ 原样截断, 不静默吞
-        out.append(reg.get("summary", ""))
+        _ready = reg.get("ready") or []
+        # 2026-11-07 (周六周检复查): 只把「样本量达标 ∧ 判据从未读/待你处置」当待办。
+        #   原实现把 get_ready_to_evaluate() 全量 26 项印成「判据需实测」, 实测其中 23 项
+        #   read_at 已有值、needs_user=false (10-31 已读毕, 自动续观), 且与 09:15 待裁决
+        #   通知逐项重复 (原文 25.6% 正文 = 100% 重复内容)。
+        _unread = [r for r in _ready
+                   if not r["state"].get("adjudicated") or r["state"].get("needs_user")]
+        _read = [r for r in _ready if r not in _unread]
+        if _unread:
+            out.append(f"🔔 待裁决 {len(_unread)} 项 (样本量达标 ∧ 判据从未读过/待你处置) "
+                       f"— 白话结论+eval 指引见周六待裁决通知")
+            for r in _unread:
+                out.append(f"  · {r['id']} n={r['n']}/{r['min_n']}"
+                           + (f" | {str(r['criteria']).strip()}" if r.get("criteria") else ""))
+        if _read:
+            _line = (f"  (另 {len(_read)} 项样本量达标但判据已读毕 → 自动续观, 不构成待办;"
+                     f" 明细见 09:15 待裁决通知)")
+            _overdue = [r["id"] for r in _read if r["state"].get("overdue")]
+            if _overdue:
+                _line += f"; ⏰ 已到重看日 {len(_overdue)} 项: {', '.join(_overdue)}"
+            out.append(_line)
+        # 2026-11-07 (周六周检复查): summary() 的 [READY_TO_EVALUATE] 段与上面「待裁决 /
+        #   已读毕」两块逐项重复 (26-27 行), 且已读毕项的明细以 09:15 待裁决通知为准
+        #   ⇒ 周检里剪掉该段, 只留 OBSERVING 与终态账本。summary() 本体不动 (其他载体照用)。
+        #   [KILLED]/[SUPERSEDED] 是**永不变化的死账本** (46+4 行, 实测占正文 47.4%),
+        #   周检重印没有决策价值 ⇒ 压成一行计数 (明细仍由 scripts/shadow_board.py 与
+        #   注册表本体提供; 09:15 载体另有「⑤ 已否决轴」清单)。合计正文 30.9KB → ~9KB。
+        _sum = reg.get("summary", "")
+        _nk = _section_count(_sum, "KILLED")
+        _ns = _section_count(_sum, "SUPERSEDED")
+        for _sec in ("READY_TO_EVALUATE", "KILLED", "SUPERSEDED"):
+            _sum = _cut_section(_sum, _sec)
+        out.append(_sum)
+        _term = " / ".join(x for x in (
+            f"KILLED {_nk}" if _nk is not None else "",
+            f"SUPERSEDED {_ns}" if _ns is not None else "") if x)
+        if _term:
+            out.append(f"[终态账本] {_term} — 死账本不逐条重印; 明细见 scripts/shadow_board.py "
+                       f"或 app/playbook/shadow_registry.py (09:15 载体另列『已否决轴』)")
 
     print("\n".join(out))
     return 0

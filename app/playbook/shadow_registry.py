@@ -103,6 +103,18 @@ class ShadowItem:
     # futu_channel_iv_hv (9/21 已停采, 10/21 重看) / ticket_size_breakeven
     # (read-only 按需重算) 的 27d/15d 超龄是预期状态, 不是断流.
     stale_expected: bool = False
+    # 产出缺失属**设计内休眠**: 非空 ⇒ check_mounting 跳过「产出缺失」告警
+    # (超龄检查对不存在的文件本就不做)。2026-11-07 周六周检复查批引入, 病灶:
+    # 三条 10-25/26 登记的只读影子的写方**只在非 sim 分支或仅在检出异常时**落盘
+    #   - broker_capacity_shadow: dual_broker.submit_order 内 `if target_env == "real"`;
+    #   - broker_stop_drift_shadow: exit_monitor_flow `if _src == "PLAYBOOK_LIVE"`;
+    #   - exit_intent_reaper_shadow: `_append_shadow` 开头 `if not findings: return`,
+    #     而它的判据原文就是「检出 0 ⇒ 崩溃窗口未发生」⇒ 文件不存在 = 通过态。
+    # sim 账户下前两条**永远**不写、第三条只有出事才写 ⇒ 哨兵按「文件缺失」每周报错,
+    # 是结构性假警报 (永久噪音), 与「采集真的断了」混在同一个形态里。
+    # 纪律: 本字段只抑制**缺失**告警; 文件一旦存在, 超龄检查照旧 (stale_expected 管那侧)。
+    # 设本字段前必须读到写方的门控条件 (grep 写方), 不能凭「应该是 sim 才没写」推断。
+    dormant_reason: str = ""
     # 判据不可裁决时的显式挂账原因 (2026-09-21 清账批 RFC-092 引入): 非空 ⇒
     # refresh_counts 不迁移 READY_TO_EVALUATE (防周检把"样本量达标但无判据可跑"的项
     # 当成"待用户裁决")。取值形如 "PERMANENT_MEASURE: ..." (无毕业门, 永久测量项) /
@@ -134,6 +146,19 @@ ADJUDICATED: dict[str, dict] = {
     # ── 2026-10-31 DEB-20261031 清账批: 5 条「判据从未读过」的首次登记 ──────────
     # 病灶: 这 5 条 READY 但 ADJUDICATED 无记录 ⇒ 每周被印成「① 需要你决定」的
     # 首次待裁欠账, 而其中 4 条此前连 eval 都没人跑过 (产物无读数)。本批实跑登记。
+    # ── 2026-11-07 周六周检复查补登: confidence_tier_gate 的读数 10-31 就已出
+    #    (推送 ④「状态变化，结论已出」条目 + data/shadow/confidence_tier_latest.json),
+    #    但 ADJUDICATED 台账从未登记 ⇒ 11-07 把它的计数轴修好 (n=454/300) 后,
+    #    它立刻被印成「判据从未读过」的第 4 条假待裁。本条只**补账**, 不新增裁决:
+    #    结论 KEEP_SHADOW 由 10-31 首读与 11-07 周检复跑共同给出 (两次同判)。
+    "confidence_tier_gate": {
+        "read_at": "2026-10-31", "recheck_after": "2027-01-31", "needs_user": False,
+        "note": "10-31 首读 KEEP_SHADOW; 11-07 周检复查复跑 (只读) 同判: T1 两子期同号 ✓ / "
+                "T3 conf<60 组 |毛利/R|≈0.005 ✓ / T2 Welch t=1.43 <2.0 ✗ ⇒ KEEP_SHADOW "
+                "(同号且零边际成立, 但 t 不过 ⇒ 不许当门用)。读数 n: 低档 454 净 −$2,856 / "
+                "高档 283 净 +$1,020; 10-31 时 408/282, t=1.29。口径提醒: conf 是离散档 "
+                "(35/50/55/70/90), 不是连续信心分。",
+    },
     # ── 2026-10-31 DEB-20261031: 元标签首版证伪 (KILLED) ──────────
     "meta_label_shadow": {
         "read_at": "2026-10-31", "recheck_after": None, "needs_user": False,
@@ -898,8 +923,16 @@ REGISTRY: list[ShadowItem] = [
               "其中净 +$785 (在砍盈利单); 4.0% 取的是风险胃口(最坏同亏 $3,984≈13 笔并发) 而非回测最优点。"
               "⚠️ 名义下限 $5,500 的效力≈「高价股不做」(69 笔 −50bps), 属事后发现的过滤, 非费用因果, 待影子对照。"
               "诚实边界: 回放各方案符号不稳 (-190/+1,117/-660 取决于帽组合), "
-              "说明经济效应在噪声内; 确定的部分是「笔数减少、费用率下降、最坏同时亏损从 5.1% 压到 2.5%」。",
-        count_mode="where:settled",
+              "说明经济效应在噪声内; 确定的部分是「笔数减少、费用率下降、最坏同时亏损从 5.1% 压到 2.5%」。"
+              "2026-11-05 用户知情裁「恢复供给启用」：名义下限 5500→2500 + max_fee_bps=11.54，"
+              "原 J3 不沿用于新 cohort；结算器保留新旧 cohort 警示，增量只作描述，详见 "
+              "DEB-20261105-da-main-pool-supply-expansion §11。",
+        count_mode="json_key:live.n",
+        # ↑ 2026-11-07 复查修正: 原 "where:settled" 只对 .jsonl 生效; 对 .json 会落进
+        #   固定键扫描 (n/n_total/n_events/stats), 本产物无这些键 ⇒ _count_samples 返回
+        #   None ⇒ current_n 恒 0, 显示 "0/60" 把「已攒 50 笔」伪装成「没在采样」
+        #   (同型已在本文件 :1474/:2855 的 notes 里记过, 但一直只写警告未改口径)。
+        #   live.n = 新 cohort 已结算笔数。
     ),
     # ── 隔夜暴露治理: 三条方案已被真实数据证伪 (2026-10-31, DEB-20261031-overnight-exposure) ──
     ShadowItem(
@@ -948,7 +981,9 @@ REGISTRY: list[ShadowItem] = [
         notes="只读影子, 零交易行为变更。**禁止**在 t 未达 2.0 前把它接成硬门 —— 那等于拿 57% 的笔数换一个"
               "不显著的分组。conf 取值是离散档 (35/50/55/70/90), 不是连续信心分; 35 与 70 都来自 "
               "deep_analysis, 所以它不是简单的通路标签, 但仍须防「拿通路当信号」。",
-        count_mode="where:settled",
+        count_mode="json_key:full.low.n",
+        # ↑ 2026-11-07 复查修正: 同 budget_p3_sizing — .json 无顶层 n 键时 current_n 恒 0,
+        #   显示 0/300 掩盖了 full.low.n=454 (低档已结算笔数, 即 T3 判据的 n 轴)。
     ),
     # ── Phase 1 (2026-08-23) ──
     ShadowItem(
@@ -1921,7 +1956,9 @@ REGISTRY: list[ShadowItem] = [
               "**原料面**, 不是一道要裁决的门 ⇒ 给它一个 READY 状态反而会造出一条永不结案的假待裁项; "
               "②给 `_count_samples` 加 DB 轴 = 新机制 (违反做减法), 且该函数正被并行 agent 改 "
               "(json_key 点号嵌套), 同期改同函数必冲突; ③现设计 (eval 现算 + notes 记真读数) "
-              "已能让读数可见。⇒ 处置 = 留痕真读数, 不动计数器/不加轴/不改 status。",
+              "已能让读数可见。⇒ 处置 = 留痕真读数, 不动计数器/不加轴/不改 status。"
+              "2026-11-07 周六周检复查复算: **191 行 / 56 个日期 (≥30)** 仍达标, 上述裁定不变 "
+              "(本项仍不迁 READY)。",
     ),
 
     # ── DEB-20260903 议题二后续 (2026-09-03 用户裁"A") — 三登记之①注册表本体;
@@ -4512,6 +4549,10 @@ REGISTRY: list[ShadowItem] = [
         eval_script="scripts/live_safety_shadow_report.py",
         eval_on_demand=True,
         created="2026-10-25",
+        dormant_reason="写方 app/execution/broker_capacity_shadow.py 的调用点在 "
+                       "dual_broker.submit_order 内 `if target_env == \"real\"` 分支"
+                       "(app/execution/dual_broker.py:270) ⇒ sim 账户下永不落盘。"
+                       "第二条缺省通道 (LIVE 平仓) 亦未接线。缺文件 = 未进入 REAL, 非断流。",
         notes="DEB-20261025。方向映射 LONG 开=max_cash_buy / LONG 平=max_position_sell / "
               "SHORT 开=max_sell_short / SHORT 回补=max_buy_back。数量单位=股, 价格=USD。"
               "样本口径仅覆盖 submit_order 路径, 不得据此声称覆盖全部 LIVE 平仓。"
@@ -4536,6 +4577,9 @@ REGISTRY: list[ShadowItem] = [
         eval_script="scripts/live_safety_shadow_report.py",
         eval_on_demand=True,
         created="2026-10-25",
+        dormant_reason="写方调用点在 app/playbook/pipeline_parts/exit_monitor_flow.py:622 "
+                       "`if not exit_reason and _src == \"PLAYBOOK_LIVE\"` ⇒ sim 账户 "
+                       "(_src=PLAYBOOK_SIM) 永不落盘。缺文件 = 未进入 LIVE, 非断流。",
         notes="DEB-20261025。单位: 价格 USD, 漂移 bps。计数轴=独立 stop_order_id, 防止同一 "
               "STOP 每 5 分钟重复记录虚增样本。回滚: 删 exit_monitor_flow 的观测调用 "
               "(parity: 退出规则/券商 STOP 均不变)。",
@@ -4560,6 +4604,10 @@ REGISTRY: list[ShadowItem] = [
         eval_script="scripts/exit_intent_reaper.py",
         eval_on_demand=True,
         created="2026-10-26",
+        dormant_reason="写方 scripts/exit_intent_reaper.py 的 `_append_shadow` 开头即 "
+                       "`if not findings: return` ⇒ 无检出就不建文件; 而本项判据原文是"
+                       "「检出数=0 ⇒ 崩溃窗口未发生」⇒ **文件不存在 = 通过态**, 非断流。"
+                       "巡检本身在跑 (cron 每 5 分钟, 日志 '未检出账实不符')。",
         notes="RFC-168 方案 E。现状 (2026-10-26): 229 条 intent 全 BOOKED, 非 BOOKED = 0 ⇒ "
               "本项是**预防性**巡检, 非救火。STALE_AFTER_S=300 (排除正在 ack 的在途)。"
               "计数轴=检出条数 (非样本累积), 故 min_n=1 即表示「发生过一次」。回滚: 摘 cron 行 "
@@ -4664,10 +4712,12 @@ def refresh_counts() -> list[str]:
         if s.status not in (ShadowStatus.OBSERVING, ShadowStatus.READY_TO_EVALUATE):
             continue
         n = _count_samples(s, _base)
-        if n is not None:
-            s.current_n = n
+        # None = 计数轴不适用/未见产物 (如 .db 型 data_path、产物无约定 n 键)。
+        # 2026-11-07: 不再静默保留 0 —— 0 会被读成「没在采样」, 与「没量到」是两件事
+        # (实测 budget_p3 已攒 50 笔却显示 0/60)。显示层把 None 渲染成 "—"。
+        s.current_n = n
         if (s.status == ShadowStatus.OBSERVING and not s.no_adjudication_reason
-                and s.current_n >= s.min_n):
+                and s.current_n is not None and s.current_n >= s.min_n):
             s.status = ShadowStatus.READY_TO_EVALUATE
             notifications.append(
                 f"🔔 影子 [{s.id}] {s.name} 样本量已达 {s.current_n}/{s.min_n} → "
@@ -4825,7 +4875,8 @@ def summary() -> str:
             continue
         lines.append(f"\n[{st}] ({len(items)})")
         for s in items:
-            progress = f"n={s.current_n}/{s.min_n}" if s.min_n else ""
+            progress = (f"n={s.current_n if s.current_n is not None else '—'}/{s.min_n}"
+                        if s.min_n else "")
             lines.append(f"  {s.id:25} {s.name:20} {progress:12} {s.notes[:60]}")
     return "\n".join(lines)
 
@@ -5052,7 +5103,8 @@ def check_mounting() -> list[str]:
         if str(p).endswith(".db"):
             continue
         if not p.exists():
-            if not created_recent:
+            # 设计内休眠 (写方只在 real / 只在检出异常时落盘) ⇒ 缺失是预期态, 不报
+            if not created_recent and not s.dormant_reason:
                 warnings.append(
                     f"🪝 产出缺失 [{s.id}] {s.name}: data_path={s.data_path} 不存在 "
                     f"(创建于 {s.created}, 已过初生豁免期 {_GRACE_DAYS} 天)")
