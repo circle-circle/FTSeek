@@ -8,6 +8,7 @@
 4. DegradationMonitor降级计数
 5. signal_snapshots forward_return NULL率
 6. capital_state一致性
+7. 事件采集时延 (发布→入库 P50/P90/超窗 + 市场级风险的 as-of 可见性, RFC-189)
 
 输出: 飞书推送
 """
@@ -147,6 +148,25 @@ def check_signal_snapshots():
     except Exception as e:
         return f"🟡 signal_snapshots检查异常: {e}"
 
+def check_event_ingest_latency():
+    """事件采集时延 + as-of 可见性 (F1-b, 只读, 零交易行为变更)。
+
+    2026-11-07 落地 (RFC-189 / DEB-20261106 §16.3): 11-05 的崩盘新闻 02:35Z 发布、
+    18:49Z 才入库, DA 批次 (13:35Z) 根本看不到 —— 所以"盘前模型只看见平静"的根因是
+    **晚到**, 不是渲染层缺一行。本项只把"今天晚了多少、有几条市场级风险在 as-of 前可见"
+    印出来, 不设阈值门、不影响任何下单。
+    """
+    try:
+        db_path = BASE / "data" / "event_stream.db"
+        if not db_path.exists():
+            return "🟡 event_stream.db不存在 (采集未启动)"
+        from app.event_stream.latency_report import daily_latency_stats, format_health_line
+        stats = daily_latency_stats(db_path, days=7)
+        return format_health_line(stats)
+    except Exception as e:
+        return f"🟡 事件时延检查异常: {e}"
+
+
 def check_capital_state():
     """capital_state一致性"""
     try:
@@ -175,6 +195,7 @@ def main():
         ("StockTwits API", check_stocktwits),
         ("Degradation", check_degradation),
         ("Signal Snapshots", check_signal_snapshots),
+        ("Event Ingest", check_event_ingest_latency),
         ("Capital State", check_capital_state),
     ]
     
