@@ -37,6 +37,7 @@
 | ticket_size_breakeven.py | 678 | **活体·手动(建议不入 cron)** | DEB-20260907 §五: 客单价费率盈亏平衡账。**非回放** (无 bar、无网络), 只读 `ftseek_us.db` + `unified_config.yaml`, 费率走 `fee_model.estimate_round_trip`; 输出 `data/shadow/ticket_size_breakeven_latest.json`。归口本台账防散落。档位反事实仍归 `admission_replay.py` (勿重复) |
 | trivial_rule_control_arm.py | 805 | **活体·手动(建议不入 cron)** | DEB-20260907 §六: 全系统第一个**对照臂** (浮现层 `signal_snapshots`, 五条平庸规则臂, 按日聚类配对差 + MDE@80% + 四离群口径同号表)。**非回放**: 只读 `replay_bars_daily` 缓存、零网络拉取 (同 gate_counterfactual_ruler 族口径); 输出 `data/shadow/trivial_rule_control_arm_latest.json` |
 | gap_alignment_shadow.py | 170 | **活体** | DEB-20260901 P1/Phase C: cron 52 5 * * 2-6 + 注册表 gap_alignment; 影子落盘非回放 (无 bar 拉取), 归口本台账防散落 |
+| rfc192_verification.py | 355 | **活体·手动(建议不入 cron)** | RFC-192 复核尺子 (2026-11-08)。**非回放**: 只读 `ftseek_us.db` (mode=ro) + `data/da_checkpoint/`, 零网络、零写入 (连 `data/shadow/` 都不写), 费率走 `fee_model.estimate_round_trip`。答 8 问: A 宇宙/基线复现 (三套"现状"基线各自出处) / B **开盘跳空 vs 盘前跳空**两口径的阈值表与一致性 / C 单地板 vs 双地板费率 vs 实测 / D sizing 机制与 C1 可达区间 (含"历史风险预算不可还原"的证明) / E A·A'·B 方案复算 (日聚类 t) / F 时代分层 (分月) / G RFC-192 §5 五道门逐条可达性 / H 多空拆分。**同一 gap 口径的阈值表逐位复现 DEB §54.3** (143/+1609.03, 205/+953.20, 230/+865.66, 307/+774.48, 362/+544.12, 全做 499/−400.35) ⇒ 该尺子与被审文档同源可核。被 RFC-192 §10 与 RFC-191 §8.6 引用为证据基线 ⇒ **证据冻结** (改它=裁决记录失真) |
 | archetype_bars_ensure.py | 94 | **活体** | DEB-20260901 Phase B 补盲: cron 35 5 * * 2-6; `import exit_replay_backtest.fetch_bars` 复用 (公约合规), 工具类非回放 |
 | da_blocked_signal_cf_eval.py | 240 | **活体** | DEB-20260901 Phase C 观察点③ (B14): cron 15 6 * * 2-6 + 注册表 da_blocked_cf; 日K缓存 CF 评估族 (同 gate_counterfactual_ruler 口径, 只读零拉取) |
 
@@ -82,4 +83,13 @@
 - 2026-09-07 (DEB-20260907): ①**官方引擎救活** — `exit_replay_backtest.py` 自 P2a 提交 14e9a544 起 ImportError (从 `app.playbook.pipeline` 取已被撤掉转发器的 `_compute_dynamic_effective_sl`), 级联打穿 6 个复用方: 模块级硬断 `limit_entry_counterfactual` / `entry_gate_replay` / `be_counterfactual_replay`, 懒 import 断 `archetype_bars_ensure`(cron 35 5 * * 2-6) / `post_exit_path_shadow`(cron 45 5 * * 2-6) / `position_path_collector`(cron 15 5 * * 2-6)。修根因 (改指 SSOT `exit_engine`, 数学零变化) + 新增 `tests/test_replay_engine_import_smoke.py` 9 例; **首次带病 cron = 9/8**, 活体旁证 `post_exit_path.jsonl` 末次成功写入 9/5 05:45。②**新登记 4 脚本** (exit_path_replay / ticket_size_breakeven / trivial_rule_control_arm 新增, cf_pullback_limit_replay 升 v2)。③**公约附则**写入 (单一入口必须有 import 钉子)。④**盲区登记**: 台账"证据冻结"状态的脚本既不会被改也不会被测 ⇒ 静默腐烂无人知, 本次 36 小时即实例; 冻结不等于豁免冒烟。
 - 2026-09-07c (DEB-20260907 §4.9 判据换轨): 给唯一现行判读入口装上**自我声明**能力 — 三级(四许可)卡 + 机械纪年守卫 + 人话读数卡。台账含义三条: ①**尺子必须自带分辨率声明**, 「过门/不过门」这种单一二元读数会同时过松与过严 (9/1–9/4 实测: 逐笔不可判读 MAE/中位净额 = 1.25–1.88, 而两臂同尺的配对差可用 ⇒ 同一把尺子部分可用); ②**判据生效日必须落库** (`MONEY_CRITERIA_BINDING_FROM`), 在设计判据所用的窗上裁决 = 凑门; ③**纪年守卫要从数据算不能人工点名** — 人工字典漏一条轨, 整窗读数的数学上限就被误读成「重放器不努力」。零 live 改动 (`app/` 与 `main.py` 未碰), DB 全 `mode=ro`, 零历史回填。
 - 2026-09-07b (DEB-20260907 §4.8 重放器保真度专项): `exit_path_replay.py` 三步全部落地 (三轨 + arm_lag + sample_source), 保真度 全窗 0.400→**0.570**、8/15 单纪年∧当日域 →**0.791**、ADR-035 窗当日域 0.633→**0.786/0.821**(两口径)。**新登记两道结构性上限**: 参数纪年 (MFE_STALL/TIME_EXIT 现纪年不可达 ⇒ 全窗上限 0.843) 与跨日出场 (8/15+ 窗 20/178 ⇒ 上限 0.888) ⇒ **0.8 门只能在「同纪年∧当日出场」域上要求**, 两条排除预声明并随报告落盘。台账含义: 回放脚本的保真度读数**必须带域与口径标签**, 否则不同窗/不同口径的数字会被互相冒充 (本批之前 0.400/0.633/0.646 三个读数就曾在同一句里被当成同一条尺子)。
+- 2026-11-08 (RFC-192 复核批): 新登记 `rfc192_verification.py` — **只读尺子, 不入 cron**。
+  缘起: RFC-192 与 DEB §44/§54 的关键读数 (499 笔阈值表 / A·A′·B 方案) **没有产出脚本**,
+  且同一份 RFC 出现三套互不吻合的"现状"基线 (−$400 / −$882 / −$1,270) ⇒ 违反"没有命令的读数等于没有读数"。
+  尺子复现了 DEB §54.3 的阈值表逐位数值, 并补出三条原文没有的事实:
+  ① 阈值表用的 gap 字段是**开盘跳空** (`entry_gap.aligned_gap_pct` = open vs prev_close) 而非盘前跳空;
+  ② 费率是**双地板** `max(39800/N, 262/P)+0.21`, 第二项与名义无关 ⇒ 抬帽压不掉;
+  ③ 历史风险预算不可还原 (549/598 行 `risk_amount` 被 re-price 覆写为派生值) ⇒ C1 只能给区间。
+  台账含义: **判据类文档必须自带可复算脚本**, 否则其"改善幅度"不可判读;
+  且**阈值类证据必须与被执行层读同一个字段** (字段口径漂移 = 拿没标定的阈值去筛)。
 - 不做的事: 不重写证据冻结脚本 (可复现性 > 整洁); 不建回放框架抽象层 (脚本即一次性证据, 框架化是过度设计)。
