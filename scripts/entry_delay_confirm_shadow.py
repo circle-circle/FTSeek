@@ -58,7 +58,11 @@ GAP_JSONL = REPO / "data" / "shadow" / "gap_alignment_shadow.jsonl"
 OUT = REPO / "data" / "shadow" / "entry_delay_confirm.jsonl"
 OUT_LATEST = REPO / "data" / "shadow" / "entry_delay_confirm_latest.json"
 
-DELAYS_MIN = (2, 5)
+# 2026-11-07 (RFC-191 / DEB-20261106 §40): (2,5) → (2,5,10,15)。
+#   理由: §40 网格扫描显示 10 分钟无收益(净 -$25, t=-0.01)、15 分钟明确更差(-$844);
+#   但那是**已成交样本**的幸存者口径, 无法观察"延后导致没进场"的新增机会。
+#   扩档后由影子自己 forward 攒样, 避免每次手动扫描、也避免再拍脑袋调参。
+DELAYS_MIN = (2, 5, 10, 15)
 GRAD_MIN_N = 20
 GRAD_MIN_AVOID_RATE = 0.30
 GRAD_MAX_OPP_COST_PCT = 0.3   # %, 严格小于
