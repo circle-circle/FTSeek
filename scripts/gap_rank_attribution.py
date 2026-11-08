@@ -131,6 +131,7 @@ def main() -> int:
     ap.add_argument("--date")
     ap.add_argument("--backfill", action="store_true")
     ap.add_argument("--summary", action="store_true")
+    ap.add_argument("--brief", action="store_true", help="cron 用：只输出一行；无成交则静默退出 1")
     a = ap.parse_args()
 
     conn = sqlite3.connect("file:%s?mode=ro" % DB, uri=True)
@@ -166,6 +167,16 @@ def main() -> int:
         return 1
     led[day] = row
     save(led)
+    if a.brief:
+        rows = [x for x in led.values() if x.get("delta_per_trade") is not None]
+        diffs = [x["delta_per_trade"] for x in rows]
+        m, sd = statistics.mean(diffs), statistics.pstdev(diffs)
+        t = m / (sd / len(diffs) ** 0.5) if sd and len(diffs) > 2 else None
+        print("📊 %s | %d 笔 全体 %+.2f/笔 → 取3只 %+.2f/笔 (差 %+.2f) | 选中 %s | 累计 %d 天 差 %+.2f/笔 t=%s" % (
+            row["date"], row["all_n"], row["all_per_trade"] or 0, row["pick_per_trade"] or 0,
+            row["delta_per_trade"] or 0, ",".join(s.replace("US.", "") for s in row["pick"]),
+            len(rows), m, ("%.2f" % t) if t is not None else "n/a"))
+        return 0
     print(json.dumps(row, ensure_ascii=False, indent=2))
     summarize(led)
     return 0
