@@ -1405,7 +1405,7 @@
                             if (ctx.plan_match) parts.push('✅ 计划匹配');
                             if (ctx.in_avoid_list) parts.push('⚠️ 回避列表');
                             if (ctx.signal) parts.push(`信号: ${escHtml(ctx.signal.direction)}(${ctx.signal.strength})`);
-                            if (ctx.vix) parts.push(`VIX: ${escHtml(String(ctx.vix))}`);
+                            if (ctx.vix) parts.push(`VIX: ${escHtml(String(ctx.vix))}${ctx.vix_caliber ? ' (' + escHtml(ctx.vix_caliber) + (ctx.vix_as_of ? '·' + escHtml(String(ctx.vix_as_of)) : '') + ')' : ''}`);
                             if (ctx.history_7d) parts.push(`7天: ${ctx.history_7d.wins}W/${ctx.history_7d.trades - ctx.history_7d.wins}L`);
                             if (parts.length) html += `<div style="color:#8b949e;margin-top:4px">${escHtml(parts.join(' · '))}</div>`;
                         }

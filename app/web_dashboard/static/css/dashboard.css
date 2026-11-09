@@ -31,6 +31,8 @@ td, .v, .ts-value, .value, .metric .value, .lc-pnl { font-variant-numeric: tabul
 .status-strip .pill .dot.warn { background: #fbbf24; box-shadow: 0 0 4px #fbbf24; }
 .status-strip .pill .dot.danger { background: #f87171; box-shadow: 0 0 4px #f87171; }
 .status-strip .pill .v { font-weight: 700; font-variant-numeric: tabular-nums; }
+/* VIX 口径角标 (RFC-190 第三轮): 让"18.0 是代理/T-1"一眼可见, 悬停看真值行 */
+.vix-caliber { font-size: 10px; color: #7d8590; cursor: help; border-bottom: 1px dotted #484f58; }
 .status-strip .pill.warn-border { border-color: #fbbf24; }
 .status-strip .pill.danger-border { border-color: #f87171; }
 

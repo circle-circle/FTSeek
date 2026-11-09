@@ -75,6 +75,10 @@ class VIXMonitor:
         self._consecutive_failures = 0
         self._next_retry_at = 0.0
         self._last_success_time = 0.0
+        # 观测日 (RFC-190 第三轮): 缓存里的 timestamp 是"写入时刻", 不是"数据观测日"。
+        #   FRED VIXCLS 日频, 写入时刻可以是 T-2 收盘之后 ⇒ 读数面只有 timestamp
+        #   时无法标注 as-of。这里记录**数据本身的日期**, 取不到则 None (不猜)。
+        self._last_as_of = None
 
         logger.info("VIX 监控器已初始化 | 缓存 TTL=%ds | 退避策略 %d-%ds",
                      CACHE_TTL_SECONDS, BACKOFF_BASE, BACKOFF_MAX)
@@ -186,6 +190,7 @@ class VIXMonitor:
         _order = _vixy_first if is_vixy_proxy_window(phase) else _fred_first
         vix = None
         _src_name = None
+        self._last_as_of = None  # 每次取数重置: 不得把上一次源的数据日期带给出价者
         for _name, _fetch in _order:
             vix = _fetch()
             if vix is not None:
@@ -200,6 +205,9 @@ class VIXMonitor:
                     "timestamp": time.time(),
                     "source": _src_name or "unknown",
                     "source_chain": "vixy_first" if _order is _vixy_first else "fred_first",
+                    # 观测日 (RFC-190 第三轮): FRED → CSV 首列日期; 代理/实时源无
+                    # 可核观测日 → None。读数面据此写 "as of 未知", 不拿写入时刻冒充。
+                    "as_of": self._last_as_of,
                 }
             self._save_cache(self._cache)
         else:
@@ -208,18 +216,30 @@ class VIXMonitor:
         return vix
 
     def _fetch_vix_fred(self) -> Optional[float]:
-        """从 FRED CSV API 获取 VIX (主数据源, 免费无频率限制)"""
+        """从 FRED CSV API 获取 VIX (主数据源, 免费无频率限制)
+
+        2026-11-09 (RFC-190 第三轮): 同时记录**观测日** (CSV 首列), 并跳过
+        FRED 用 '.' 占位的行 (假期/当日未发布)。修前 `lines[-1]` 直接 float(),
+        遇到 '.' 会抛异常 → 整条 FRED 腿被吞成 None, 却没有任何口径信息。
+        """
         try:
             url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=VIXCLS"
             resp = requests.get(url, timeout=10)
             resp.raise_for_status()
             lines = resp.text.strip().split("\n")
-            if len(lines) >= 2:
-                parts = lines[-1].split(",")
-                if len(parts) >= 2:
+            for line in reversed(lines[1:]):
+                parts = line.strip().split(",")
+                if len(parts) < 2:
+                    continue
+                try:
                     vix = float(parts[1])
-                    logger.debug("VIX (FRED): %.2f", vix)
-                    return vix
+                except ValueError:
+                    continue  # '.' 占位行: 继续往前找最近一个有效观测
+                if vix <= 0:
+                    continue
+                self._last_as_of = parts[0].strip() or None
+                logger.debug("VIX (FRED): %.2f (as of %s)", vix, self._last_as_of)
+                return vix
         except Exception as e:
             logger.debug("FRED VIX 获取失败: %s", e)
         return None

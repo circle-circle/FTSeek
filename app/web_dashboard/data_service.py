@@ -627,6 +627,49 @@ class DataService:
             pass
         return None
 
+    async def get_vix_detail(self) -> dict:
+        """VIX 值 + 口径 + 观测日 + 官方真值 (RFC-190 第三轮)。
+
+        与 `get_vix()` 的关系: 后者保持"裸浮点"契约不动 (既有前端/接口),
+        本方法只做**加法** —— 同一个缓存值, 多带 caliber / as_of / truth。
+        看板据此把"VIX 18.0"标成"VIX 18.0 (代理·as of 2026-11-06)"，并给出
+        CBOE 现货真值与偏离, 消除"看板 28 / 交易 18 两个真相"。零判定、零阈值。
+        """
+        async def _fetch():
+            return await self._run(self._fetch_vix_detail)
+
+        return await self._deduplicated_fetch("vix_detail", _fetch, ttl=30) or {}
+
+    def _fetch_vix_detail(self) -> dict:
+        cache: dict = {}
+        try:
+            vix_path = Path(__file__).parent.parent.parent / "data" / "vix_cache" / "vix_data.json"
+            if vix_path.exists():
+                with open(vix_path) as f:
+                    cache = json.load(f) or {}
+        except Exception as e:
+            logger.debug(f"[DataService] VIX detail 读缓存失败: {e}")
+
+        value = cache.get("vix")
+        value = round(float(value), 2) if value and value > 0 else None
+        source = cache.get("source")
+        as_of = cache.get("as_of")
+
+        try:
+            from app.data.market_env_truth import describe
+            detail = describe(proxy_value=value, proxy_source=source, proxy_as_of=as_of)
+        except Exception as e:
+            logger.warning(f"[DataService] 环境真值合成失败 (降级为裸值): {e}")
+            detail = {"truth": None, "proxy": None, "gap_pct": None,
+                      "line": f"VIX {value}" if value is not None else "VIX 不可用"}
+
+        detail["value"] = value
+        detail["source"] = source
+        detail["as_of"] = as_of
+        detail["caliber"] = (detail.get("proxy") or {}).get("caliber", "未知口径")
+        detail["caliber_short"] = (detail.get("proxy") or {}).get("short", "未知")
+        return detail
+
     # ═══════════════════════════════════════════
     #  Futu 扩展 API (板块/关联股票)
     # ═══════════════════════════════════════════

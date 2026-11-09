@@ -60,9 +60,10 @@ def register(app, templates, dashboard):
         ds = get_data_service()
         spy_task = ds.get_market_snapshot(["US.SPY"], ttl=30)
         vix_task = ds.get_vix()
-        snap, vix = await asyncio.gather(spy_task, vix_task)
+        detail_task = ds.get_vix_detail()
+        snap, vix, vix_detail = await asyncio.gather(spy_task, vix_task, detail_task)
 
-        result = {"spy": None, "vix": vix}
+        result = {"spy": None, "vix": vix, "vix_detail": vix_detail}
         spy_row = snap.get("US.SPY")
         if spy_row:
             cur = safe_float(spy_row.get("cur_price"))
@@ -93,12 +94,13 @@ def register(app, templates, dashboard):
         ds = get_data_service()
 
         # 并行获取所有原始数据 (DataService 内部有 TTL cache)
-        acc_raw, pos_raw, orders_raw, spy_snap, vix = await asyncio.gather(
+        acc_raw, pos_raw, orders_raw, spy_snap, vix, vix_detail = await asyncio.gather(
             ds.get_account_raw(),
             ds.get_positions_raw(),
             ds.get_today_orders_raw(),
             ds.get_market_snapshot(["US.SPY"], ttl=30),
             ds.get_vix(),
+            ds.get_vix_detail(),
         )
 
         svc = ds.svc()
@@ -115,7 +117,7 @@ def register(app, templates, dashboard):
         today_orders = _parse_today_orders(orders_raw)
 
         # ── 3. Market (SPY + VIX) ─
-        market = _parse_market(spy_snap, vix)
+        market = _parse_market(spy_snap, vix, vix_detail)
 
         # ── 4. Margin ──
         margin = _calc_margin(account)
@@ -798,8 +800,8 @@ def _parse_today_orders(orders_raw: list) -> dict:
     }
 
 
-def _parse_market(spy_snap: dict, vix) -> dict:
-    result = {"spy": None, "vix": vix}
+def _parse_market(spy_snap: dict, vix, vix_detail: dict = None) -> dict:
+    result = {"spy": None, "vix": vix, "vix_detail": vix_detail or {}}
     spy_row = spy_snap.get("US.SPY")
     if spy_row:
         cur = safe_float(spy_row.get("cur_price"))

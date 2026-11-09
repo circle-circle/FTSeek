@@ -221,10 +221,11 @@ def register(app, templates):
             return cached
 
         # 并行获取数据
-        acc_raw, pos_raw, vix = await asyncio.gather(
+        acc_raw, pos_raw, vix, vix_detail = await asyncio.gather(
             ds.get_account_raw(),
             ds.get_positions_raw(),
             ds.get_vix(),
+            ds.get_vix_detail(),
         )
 
         from app.web_dashboard.routes.dashboard import _parse_account, _parse_positions, _calc_margin
@@ -268,6 +269,7 @@ def register(app, templates):
         result = {
             "margin_pct": round(margin_pct, 1),
             "vix": round(vix, 2) if vix else 0,
+            "vix_detail": vix_detail or {},
             "kill_switch_active": kill_switch_active,
             "earnings_count": earnings_count,
             "suggestions": suggestions,

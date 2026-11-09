@@ -71,7 +71,15 @@ def auto_generate_thesis(service: "ManualOrderService", order: "ManualOrder") ->
         _vix_path = Path(__file__).resolve().parent.parent.parent.parent / "data" / "vix_cache" / "vix_data.json"
         if _vix_path.exists():
             import json as _json
-            ctx["vix"] = float(_json.loads(_vix_path.read_text()).get("vix", 0))
+            _vd = _json.loads(_vix_path.read_text())
+            ctx["vix"] = float(_vd.get("vix", 0))
+            # 口径 + as-of (RFC-190 第三轮): 论据栏里不能只有裸数字
+            try:
+                from app.data.market_env_truth import caliber_short
+                ctx["vix_caliber"] = caliber_short(_vd.get("source"))
+                ctx["vix_as_of"] = _vd.get("as_of")
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -248,12 +256,19 @@ def build_exit_context(service: "ManualOrderService", symbol: str,
     except Exception:
         pass
 
-    # VIX
+    # VIX (口径 + as-of, RFC-190 第三轮)
     try:
         _vix_path = Path(__file__).resolve().parent.parent.parent.parent / "data" / "vix_cache" / "vix_data.json"
         if _vix_path.exists():
             import json as _json
-            exit_ctx["vix"] = float(_json.loads(_vix_path.read_text()).get("vix", 0))
+            _vd = _json.loads(_vix_path.read_text())
+            exit_ctx["vix"] = float(_vd.get("vix", 0))
+            try:
+                from app.data.market_env_truth import caliber_short
+                exit_ctx["vix_caliber"] = caliber_short(_vd.get("source"))
+                exit_ctx["vix_as_of"] = _vd.get("as_of")
+            except Exception:
+                pass
     except Exception:
         pass
 

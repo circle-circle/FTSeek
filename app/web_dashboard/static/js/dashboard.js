@@ -237,7 +237,12 @@
         var vix = market.vix;
         if (vix) {
             var cls = vix < 15 ? 'green' : vix < 25 ? '' : vix < 35 ? 'yellow' : 'red';
-            document.getElementById('pillVix').innerHTML = 'VIX <span class="' + cls + '">' + vix.toFixed(1) + '</span>';
+            var vd = market.vix_detail || {};
+            var tag = vd.caliber_short || '';
+            var asof = vd.as_of ? ('·' + vd.as_of) : '';
+            var title = vd.line ? ' title="' + escHtml(vd.line) + '"' : '';
+            document.getElementById('pillVix').innerHTML = 'VIX <span class="' + cls + '">' + vix.toFixed(1) + '</span>' +
+                (tag ? ' <span class="vix-caliber"' + title + '>' + escHtml(tag + asof) + '</span>' : '');
         }
         updateMarketStatus();
     }
@@ -611,8 +616,12 @@
         // Line 2: Risk context
         var vixVal = risk.vix || 0;
         var vixCls = vixVal < 15 ? 'ds-green' : vixVal < 25 ? '' : vixVal < 35 ? 'ds-yellow' : 'ds-red';
+        var vdR = risk.vix_detail || {};
+        var vixTag = vdR.caliber_short ? ' <span style="color:var(--text-dim);font-size:11px"' +
+            (vdR.line ? ' title="' + escHtml(vdR.line) + '"' : '') + '>' +
+            escHtml(vdR.caliber_short + (vdR.as_of ? '·' + vdR.as_of : '')) + '</span>' : '';
         var marginVal = risk.margin_pct || 0;
-        var l2 = 'VIX <span class="' + vixCls + '">' + vixVal.toFixed(1) + '</span>' +
+        var l2 = 'VIX <span class="' + vixCls + '">' + vixVal.toFixed(1) + '</span>' + vixTag +
                  ' <span style="color:var(--text-dim)">·</span> ' +
                  '保证金 <span class="' + (marginVal > 70 ? 'ds-red' : marginVal > 50 ? 'ds-yellow' : '') + '">' + marginVal.toFixed(0) + '%</span>' +
                  ' <span style="color:var(--text-dim)">·</span> ' +

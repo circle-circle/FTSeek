@@ -93,8 +93,13 @@ def _load_config() -> dict:
 # 数据获取函数
 # ──────────────────────────────────────────────────────────────────────
 
-def _get_vix() -> float:
-    """从VIX缓存读取当前VIX值"""
+def _get_vix_meta() -> dict:
+    """从VIX缓存读取当前值 + 口径/as-of (RFC-190 第三轮)。
+
+    修前只返回裸浮点, 且取不到时静默回落 20.0 —— 读数面无法区分
+    "VIX 真是 20" 与 "取数失败用了默认", 也无法知道这是现货收盘还是
+    VIXY×0.85 代理 (RFC-190 §1: 两者可差 30%+)。
+    """
     try:
         vix_path = os.path.join(_PROJECT_ROOT, "data", "vix_cache", "vix_data.json")
         if os.path.exists(vix_path):
@@ -102,10 +107,22 @@ def _get_vix() -> float:
                 data = json.load(f)
             vix_val = data.get("vix")
             if vix_val is not None:
-                return float(vix_val)
+                try:
+                    from app.data.market_env_truth import caliber_short
+                    caliber = caliber_short(data.get("source"))
+                except Exception:
+                    caliber = "未知口径"
+                return {"value": float(vix_val), "source": data.get("source"),
+                        "as_of": data.get("as_of"), "caliber": caliber, "fallback": False}
     except Exception as e:
         logger.debug(f"[DayScore] VIX读取失败: {e}")
-    return 20.0  # 默认中等波动
+    return {"value": 20.0, "source": None, "as_of": None,
+            "caliber": "默认值(取数失败)", "fallback": True}
+
+
+def _get_vix() -> float:
+    """从VIX缓存读取当前VIX值 (裸值; 口径见 `_get_vix_meta`)。"""
+    return _get_vix_meta()["value"]
 
 
 def _get_spy_trend() -> dict:
@@ -342,21 +359,26 @@ def calculate_day_score(
     _stats_prefix = stats_ledger_label or ""
 
     # ── 1. VIX因子 (-20 ~ +10) ──
-    vix = _get_vix()
+    _vix_meta = _get_vix_meta()
+    vix = _vix_meta["value"]
+    # 口径角标: 读数面必须能看出"现货收盘/代理/默认值"以及观测日 (RFC-190)
+    _vix_tag = " (%s%s)" % (
+        _vix_meta["caliber"],
+        "·as of %s" % _vix_meta["as_of"] if _vix_meta.get("as_of") else "")
     if vix > cfg["vix_extreme"]:
         score -= 20
-        reasons.append(f"VIX={vix:.1f} 极高，假突破概率大增")
+        reasons.append(f"VIX={vix:.1f}{_vix_tag} 极高，假突破概率大增")
         suggestions.append("缩小仓位，设紧止损，避免追涨")
     elif vix > cfg["vix_high"]:
         score -= 15
-        reasons.append(f"VIX={vix:.1f} 偏高，市场不确定性强")
+        reasons.append(f"VIX={vix:.1f}{_vix_tag} 偏高，市场不确定性强")
         suggestions.append("降低仓位规模，优先观望")
     elif vix > cfg["vix_moderate"]:
         score -= 5
-        reasons.append(f"VIX={vix:.1f} 中等波动")
+        reasons.append(f"VIX={vix:.1f}{_vix_tag} 中等波动")
     elif vix < cfg["vix_low"]:
         score += 10
-        reasons.append(f"VIX={vix:.1f} 低位，市场稳定有利趋势")
+        reasons.append(f"VIX={vix:.1f}{_vix_tag} 低位，市场稳定有利趋势")
         suggestions.append("可适度放大仓位追趋势")
 
     # ── 2. SPY趋势因子 (-10 ~ +10) ──

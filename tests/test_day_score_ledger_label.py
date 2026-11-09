@@ -35,14 +35,27 @@ CASH = 43250.33         # 任意实盘现金, 用于验证风险预算不受标�
 
 @pytest.fixture
 def frozen(monkeypatch):
-    """冻结全部外部取数, 让 calculate_day_score 变成纯函数 (否则测试依赖行情/日历/账本)"""
+    """冻结全部外部取数, 让 calculate_day_score 变成纯函数 (否则测试依赖行情/日历/账本)
+
+    2026-11-09 (RFC-190 第三轮): VIX 读数改走 `_get_vix_meta` (值 + 口径 + as-of),
+    故此处一并冻结 —— 否则用例会读生产 `vix_data.json`, 变成环境依赖的假红/假绿。
+    """
     monkeypatch.setattr(ds, "_load_config", lambda: dict(ds._DEFAULT_CONFIG))
     monkeypatch.setattr(ds, "_get_vix", lambda: VIX_LOW)
+    monkeypatch.setattr(ds, "_get_vix_meta", lambda: {
+        "value": VIX_LOW, "source": "fred", "as_of": None,
+        "caliber": "现货收盘", "fallback": False,
+    })
     monkeypatch.setattr(ds, "_get_spy_trend", lambda: {"range_5d": 0.01, "trend": "UP"})
     monkeypatch.setattr(ds, "_get_economic_events", lambda: [])
     monkeypatch.setattr(ds, "_get_weekly_pnl", lambda: WEEKLY_PNL)
     monkeypatch.setattr(ds, "_get_recent_win_rate", lambda lookback_days=7, limit=5: WIN_RATE)
     return ds
+
+
+# VIX 文案后缀 = 口径披露 (RFC-190 第三轮: 数字旁必须能看出是现货/代理/默认值)。
+# 只改文案, 不改分数与档位 —— 下面 test_label_changes_no_number_and_no_verdict 钉住。
+VIX_REASON_SUFFIX = " (现货收盘)"
 
 
 def _scored(label=None):
@@ -60,7 +73,7 @@ def test_default_reasons_are_byte_identical_to_legacy(frozen):
     reasons = _scored().reasons
     assert f"近5笔胜率 {WIN_RATE*100:.0f}%，状态良好" in reasons
     assert (f"本周已盈 ${WEEKLY_PNL:.0f} >= 目标 $2000，建议收手保护利润") in reasons
-    assert f"VIX={VIX_LOW:.1f} 低位，市场稳定有利趋势" in reasons
+    assert f"VIX={VIX_LOW:.1f}{VIX_REASON_SUFFIX} 低位，市场稳定有利趋势" in reasons
     assert not any(r.startswith("模拟盘") for r in reasons), "默认口径不应带标注前缀"
 
 
@@ -90,7 +103,7 @@ def test_label_prefixes_only_ledger_derived_reasons(frozen):
     assert f"模拟盘近5笔胜率 {WIN_RATE*100:.0f}%，状态良好" in reasons
     assert f"模拟盘本周已盈 ${WEEKLY_PNL:.0f} >= 目标 $2000，建议收手保护利润" in reasons
     # 非账本来源的文案 (VIX = 真实市场数据) **不得**被标注 —— 全都加前缀等于没加
-    assert f"VIX={VIX_LOW:.1f} 低位，市场稳定有利趋势" in reasons
+    assert f"VIX={VIX_LOW:.1f}{VIX_REASON_SUFFIX} 低位，市场稳定有利趋势" in reasons
     assert not any(r.startswith("模拟盘") and "VIX" in r for r in reasons)
 
 
