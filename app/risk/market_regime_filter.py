@@ -124,12 +124,21 @@ class MarketRegimeFilter:
 
         return None
     
-    def get_regime_summary(self, spy_context: Dict, vix: float) -> Dict[str, Any]:
+    def get_regime_summary(self, spy_context: Dict, vix: Optional[float]) -> Dict[str, Any]:
         """获取大盘状态摘要 (供 LLM prompt 注入)"""
-        regime = self._determine_regime(spy_context, vix)
         spy_price = spy_context.get("spy_price", 0)
         spy_ma50 = spy_context.get("spy_ma50", 0)
         change_5d = spy_context.get("price_change_5d", 0)
+        if vix is None:
+            return {
+                "regime": "UNKNOWN",
+                "regime_label": "⚪ VIX 数据不可用（不做波动率分级）",
+                "vix": None,
+                "vix_level": "不可用",
+                "spy_vs_ma50": f"SPY ${spy_price:.0f} {'>' if spy_price > spy_ma50 else '<'} MA50 ${spy_ma50:.0f}" if spy_ma50 > 0 else "MA50 数据不足",
+                "trend_5d": f"5日{'涨' if change_5d > 0 else '跌'} {abs(change_5d)*100:.1f}%",
+            }
+        regime = self._determine_regime(spy_context, vix)
         
         regime_labels = {
             RegimeMode.BULL: "🟢 牛市格局",

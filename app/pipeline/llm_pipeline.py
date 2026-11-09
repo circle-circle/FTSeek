@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import sqlite3
 import time
@@ -73,15 +74,18 @@ def _fallback_to_finnhub_news(limit: int = 15) -> list:
 
 def _generate_degraded_recommendation(news: list, market_state: dict, positions: list) -> str:
     """当 LLM 返回异常时，基于规则生成降级推荐 (2026-04-20 新增)"""
-    vix = market_state.get('vix', 20)
-    if vix < 15:
+    vix = market_state.get('vix')
+    if vix is None:
+        vix_status = "不可用（不据此判断市场波动）"
+    elif vix < 15:
         vix_status = "偏低 (市场平稳)"
     elif vix < 25:
         vix_status = "正常"
     else:
         vix_status = "偏高 (市场恐慌)"
 
-    lines = [f"📊 市场状态: VIX={vix:.1f}, {vix_status}", ""]
+    vix_text = "N/A" if vix is None else f"{vix:.1f}"
+    lines = [f"📊 市场状态: VIX={vix_text}, {vix_status}", ""]
 
     if news:
         lines.append("📰 重要新闻:")
@@ -109,6 +113,20 @@ def _generate_degraded_recommendation(news: list, market_state: dict, positions:
 
     lines.append("⚠️ LLM 深度分析暂不可用，请关注上述新闻和持仓动态。")
     return "\n".join(lines)
+
+
+def _market_vix_or_none(scheduler):
+    getter = getattr(scheduler.market_data, "get_vix_or_none", None)
+    value = getter() if callable(getter) else scheduler.market_data.get_vix()
+    try:
+        value = float(value)
+        return value if math.isfinite(value) and value > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _vix_prompt_text(vix) -> str:
+    return "N/A（数据不可用，禁止编造或当作正常波动）" if vix is None else f"{vix:.1f}"
 
 
 def _get_et_time_str(fmt: str = '%Y-%m-%d %H:%M') -> str:
@@ -280,14 +298,15 @@ def run_llm_strategy_scan(scheduler):
             degrade_level = 3
     
     # 2. 获取行情上下文 + 大盘状态
-    vix = 20.0
+    vix = None
+    vix_score_fallback = 20.0
     spy_ctx = {"spx_change_percent": 0}
     spy_change = 0
     spy_trend = "flat"
     
     if phase != MarketPhase.WEEKEND:
         try:
-            vix = scheduler.market_data.get_vix()
+            vix = _market_vix_or_none(scheduler)
             spy_ctx = scheduler.market_data.get_spy_context()
             spy_change = spy_ctx.get("spx_change_percent", 0)
             
@@ -318,7 +337,8 @@ def run_llm_strategy_scan(scheduler):
                 logger.debug(f"[LLM策略] 获取 {sym} 盘前数据失败: {e}")
         
         market_state = {
-            "vix": vix, "spy_trend": spy_trend, "pre_market_changes": pre_market,
+            "vix": vix, "vix_score_fallback": vix_score_fallback,
+            "spy_trend": spy_trend, "pre_market_changes": pre_market,
             "sector_momentum": {},
             "livermore_regime": regime_summary,
             "livermore_sectors": sector_summary,
@@ -327,7 +347,8 @@ def run_llm_strategy_scan(scheduler):
         regime_summary = {"regime": "UNKNOWN", "description": "周末休市"}
         sector_summary = []
         market_state = {
-            "vix": vix, "spy_trend": spy_trend, "pre_market_changes": {},
+            "vix": vix, "vix_score_fallback": vix_score_fallback,
+            "spy_trend": spy_trend, "pre_market_changes": {},
             "sector_momentum": {},
             "livermore_regime": regime_summary,
             "livermore_sectors": sector_summary,
@@ -409,14 +430,19 @@ def run_llm_strategy_scan(scheduler):
         if gate:
             history_data = get_history_data(strategy.symbol)
             try:
-                vix = scheduler.market_data.get_vix()
+                vix = _market_vix_or_none(scheduler)
                 spy_context = scheduler.market_data.get_spy_context()
+                vix_score_fallback = 20.0
             except Exception as e:
                 logger.debug(f"[交易质量门] 获取 VIX/SPY 上下文失败: {e}")
-                vix = 18.0
+                vix = None
+                vix_score_fallback = 18.0
                 spy_context = {}
 
-            market_ctx = {'vix': vix, 'spy_context': spy_context}
+            market_ctx = {
+                'vix': vix, 'vix_score_fallback': vix_score_fallback,
+                'spy_context': spy_context,
+            }
             gate_result = gate.evaluate(strategy.symbol, strategy, history_data or {}, market_ctx)
             logger.debug(f"[门控归因] {strategy.symbol} | Score={gate_result['opportunity_score']:.2f}")
             
@@ -461,7 +487,11 @@ def run_llm_strategy_scan(scheduler):
                 except Exception:
                     price = 0
                 router = get_short_strategy_router()
-                context = {"price": price, "vix": 20.0}
+                context = {
+                    "price": price,
+                    "vix": vix if vix is not None else vix_score_fallback,
+                    "vix_observed": vix is not None,
+                }
                 exec_result = router.execute_signal(signal_obj, context)
                 
                 if exec_result.get("success"):
@@ -542,7 +572,9 @@ def run_llm_strategy_scan(scheduler):
                     continue
                 
                 context = {
-                    "price": price, "symbol": strategy.symbol, "vix": 20.0,
+                    "price": price, "symbol": strategy.symbol,
+                    "vix": vix if vix is not None else vix_score_fallback,
+                    "vix_observed": vix is not None,
                     "news_sentiment": strategy.confidence, "market_regime": "RANGE",
                 }
                 
@@ -613,11 +645,11 @@ def run_after_hours_llm_scan(scheduler, phase=None):
         return
     
     if phase == MarketPhase.WEEKEND:
-        market_state = {"vix": 20.0, "phase": phase.value}
+        market_state = {"vix": None, "phase": phase.value}
     else:
-        market_state = {"vix": 20.0, "phase": phase.value}
+        market_state = {"vix": None, "phase": phase.value}
         try:
-            market_state["vix"] = scheduler.market_data.get_vix()
+            market_state["vix"] = _market_vix_or_none(scheduler)
         except Exception as e:
             logger.debug(f"[LLM推荐] 获取 VIX 失败: {e}")
     
@@ -637,7 +669,7 @@ def run_after_hours_llm_scan(scheduler, phase=None):
             recent_news = [{
                 "source": "degraded", "source_name": "纯行情模式",
                 "title": "无可用新闻数据，基于 VIX/SPY 分析",
-                "summary": f"当前 VIX={market_state.get('vix', 20):.1f}",
+                "summary": f"当前 VIX={_vix_prompt_text(market_state.get('vix'))}",
                 "published_at": 0,
             }]
     
@@ -674,7 +706,7 @@ def run_after_hours_llm_scan(scheduler, phase=None):
         prompt = f"""你是 FTSeek-US 的首席宏观策略师。当前是{phase_label}阶段。
 
 ## 市场数据
-VIX: {market_state.get('vix', 20):.1f}
+VIX: {_vix_prompt_text(market_state.get('vix'))}
 {pos_text}
 
 ## 最新新闻 (最近 4 小时)
@@ -717,7 +749,7 @@ VIX: {market_state.get('vix', 20):.1f}
         msg = f"""{emoji} FTSeek-US {phase_label}推荐
 ⏰ {time_str}
 
-VIX: {market_state.get('vix', 20):.1f}
+VIX: {_vix_prompt_text(market_state.get('vix'))}
 
 {llm_result}
 """

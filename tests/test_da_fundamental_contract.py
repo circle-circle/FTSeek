@@ -54,9 +54,15 @@ def test_fundamental_view_reads_real_keys():
     assert v["market_cap"] == SNAP["total_market_val"] and v["market_cap"] > 0
     assert v["high_52w"] == SNAP["highest52weeks_price"]
     assert v["low_52w"] == SNAP["lowest52weeks_price"]
-    # 涨跌幅现算: 与 last/prev_close 一致 (非读幻键的恒 0)
+    # 有效价字段优先；盘前/盘后不得退回 last/prev_close 的伪零涨跌。
+    assert v["change_pct"] == SNAP["effective_chg_pct"]
+    assert v["effective_price"] == SNAP["effective_price"]
+
+    regular = dict(SNAP, session="regular")
+    regular.pop("effective_chg_pct")
+    regular.pop("effective_price")
     expect = round((SNAP["last_price"] - SNAP["prev_close"]) / SNAP["prev_close"] * 100, 2)
-    assert v["change_pct"] == expect
+    assert L._fundamental_view(regular)["change_pct"] == expect
 
 
 def test_rendered_prompt_has_no_zero_facade():

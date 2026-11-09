@@ -3447,3 +3447,365 @@ VIX 28.18 (FRED VIXCLS 现货收盘·as of 2026-11-05)
 - 输入链现在满足三件事: **出处可查** (source/source_chain)、**观测日可查** (as_of)、**失败可见** (WARNING, 不再静默);
 - 所有会改变成交集合的项 (阈值/分档/复活死门/真值喂模型) **一律未动**, 全部带预注册门槛留待裁决;
 - 仍待外部/另案: `vix_data.json` 比 CBOE 慢一天 (§57.4-2)、DA bridge 缺失 (另案)。
+
+## 五十九、跨输入真实性独立复核：当前全链不能判为「真实精准」（2026-11-09）
+
+> 用户令「针对当前的 VIX 数据分析输入做检查，有 DEB 更新；确保不限于 VIX 在内真实有效精准的信息输入，
+> 不要在错误的信息上做糊涂输入」。本轮为第三视角只读复核：官方源交叉核对 + 源码消费者追踪 +
+> 2026-11-06 DA raw/prompt 重放。**未改生产代码/配置/DB/cron，未推送，未重启。**
+>
+> **结论：§58 修掉的缺陷属实，但 §58.5「输入链现在满足出处/观测日/失败可见」只能限定于已改路径，
+> 不能外推为全链合格。本节复核时，DA/盘前辩论仍存在确定性的错误输入，状态 = NOT_CERTIFIED。**
+
+### 59.1 VIX 官方值核验通过；FRED 滞后一日是事实，不得把两个日期混成同一时点
+
+2026-11-09 16:04 CST（03:04 ET）实取官方源：
+
+| 序列 | 本地账本/缓存 | 官方独立源 | 判定 |
+|---|---|---|---|
+| VIX | 2026-11-06 = 25.64 | CBOE `VIX_History.csv` 2026-11-06 close = 25.64 | 一致 |
+| VIX9D | 2026-11-06 = 27.18 | CBOE `VIX9D_History.csv` close = 27.18 | 单源，**未独立复核**（本机取 CDN 被反爬拦截） |
+| VIX3M | 2026-11-06 = 24.60 | CBOE `VIX3M_History.csv` close = 24.60 | 单源，**未独立复核**（同上） |
+| FRED VIXCLS | 缓存 28.18 / `as_of=2026-11-05` | FRED CSV 最新有效行 2026-11-05 = 28.18 | 数值一致，**比 CBOE 少 11-06 一行** |
+
+因此当前可说清的事实只有：「FRED 的 11-05 收盘 28.18」与「CBOE 的 11-06 收盘 25.64」。
+前者不是此刻现货，后者也不是盘前可实时交易价格。`vix_caliber_divergence.py` 独立复跑仍得
+23 日、15 阈值翻转 15/23、regime 分项不同 18/23；`vix_caliber_audit.py` 复跑得 23/23 盘前代理
+仍等于上一交易日 VIXY 收盘。**DA 的 VIXY×0.85 只能作为带日期的近似代理，不得写成今日真实 VIX。**
+
+### 59.2 P0：盘前经济日历是伪精确输入，且今日实测给出假「无重要事件」
+
+`app/data/premarket_enrichment.py::_get_economic_calendar` 自称「硬编码规则 — 最可靠」，实际：
+
+1. FOMC 日期与联储官方 2026 日程不符：代码写 5/6、11/4、12/16；官方分别为 **4/27–28、10/26–27、12/7–8**。
+   （2026-11-09 20:1x 第三方复核勘误：本节初稿写的 4/28–29、10/27–28、12/8–9 各晚一天，以
+   fed `fomccalendars.htm`（Last Update 2026-10-28）为准。原批评结论不变：硬编码日期确实是错的。）
+2. CPI 用 `8<=day<=15` + 周一/周二猜「likely this week」；NFP/初请也只按星期推断，没有真实发布表。
+3. 查不到这几条硬编码规则时输出 `No major scheduled events this week`，把「本函数没覆盖」谎成「本周无事件」。
+4. 2026-11-09 实测该函数返回上述「无重要事件」；同一时刻仓内已有的动态源
+   `macro_calendar_shadow_collect._fetch_futu_event_schedule(now)` 返回 **7 条**美国 HIGH/MEDIUM 事件，
+   包括 10:00 ET 批发销售/批发库存、11:00 ET 纽约联储一年通胀预期等。
+5. 消费链真实存在：`llm_pipeline.py:1039-1052` → `collect_premarket_data()` → `format_for_debate()`，
+   这段错误文本会进入盘前辩论 enrichment，不是孤立死代码。
+
+**处置判据（纯数据正确性，不是新交易门）**：硬编码猜测版不得再进 prompt；可复用已实测的动态日历，
+每条必须带 `title/ts_et/star/source`，失败只写「日历不可用」，不得写「无重要事件」。替换前后须做离线
+prompt 对照；不新增任何阈值或交易动作。
+
+### 59.3 P0：DA 个股与行业涨跌仍混用口径，「5日」还存在 off-by-one
+
+对 `data/da_checkpoint/2026-11-06/US.*.raw.json` 共 36 份逐一复算，并用当前
+`deep-stock-analysis/scripts/llm_synth.py` 重放 prompt：
+
+| 缺陷 | 实测 | 根因 | 影响 |
+|---|---|---|---|
+| 盘前基本面「涨跌幅」不是今日涨跌 | **35/35** 个有效盘前快照均约 `-0.0%/+0.0%`；FROG 同行却显示盘前 **+22.23%** | `_fundamental_view` 用 `last_price/prev_close`；盘前二者经 reconcile 后都指向昨收 | 同一 prompt 给出相互冲突的涨跌信息 |
+| 行业「今日」涨跌混合时点 | 36/36 行业块存在；FROG 明细同时有 `0.0%` 与非零值 | peer 同样用 `last_price/prev_close`，但 peer 没走统一 prev-close reconcile | 行业均值/趋势不是同一口径，不能称「今日」 |
+| 行业「5日」实际只有 4 个收益间隔 | 36 块、页面展示的 **177 个 peer** 全走该实现 | `collect_kline(..., 5)` 后 `closes[-1]/closes[0]-1`；5 个收盘只有 4 段收益 | 数值及排序均偏离字段声明 |
+
+**正确修法**：盘前现价/涨跌统一读 session-aware `effective_price/effective_chg_pct` 并带快照时刻；
+行业 5 日收益至少取 6 个有效日 K（或明确改名 4 日）；缺有效盘前价时标 N/A，不能回退成 0。
+这些会改变 prompt 数值，先跑离线 raw A/B 与契约测试再进 DA，不与 VIX 真值注入（A2）捆成一批。
+
+### 59.4 P1：VIX/FRED 同根缺陷仍有漏网生产者，as-of 也未全链闭合
+
+| 位置 | 仍存在的事实 | 风险 |
+|---|---|---|
+| `app/data/alphavantage_provider.py:669-688` | `_fetch_fred_vix` 仍取 `lines[-1]` 直接 `float(parts[1])` | §58 的 `.` 吞腿缺陷在 Router/AV 降级链仍会复发；本轮未被 §58 测试覆盖 |
+| `app/data/premarket_enrichment.py:951-1015` | 10Y/2Y/5Y/VIX/DFF 只看末行；末行 `.` 就缺整个字段；结果不带各序列观测日 | 末行未发布会丢宏观输入；不同发布日期可混算 10Y−2Y |
+| `app/risk/vix_monitor.py:324-370` | VXVCLS 仍直接解析末行，spot/vxv 也没有强制同 as-of | 期限结构可能缺腿或跨日期混算 |
+| `app/analysis/market_state.py:253-256,329-331` | live proxy/AV 成功时未清空/重写 `_vix_last_as_of` | FRED 旧观测日可能贴到后来的实时/AV 来源上，形成错误的元数据 |
+| `app/core/position_sync.py:2919-2934`、`app/pipeline/llm_pipeline.py` | 仍有 `get_vix()` 的 20.0、异常时 18.0 等哨兵进入 ATR/质量门 | 「没数据」继续伪装成正常波动环境；不能由 WARNING  alone 视为已消除 |
+
+建议用一个共享的 FRED CSV「最近有效 `(observation_date, value)`」原语收口上述路径；
+期限利差/收益率利差只允许同观测日相减，缺日期即 N/A。契约测试必须覆盖第三条 AV FRED 腿、
+宏观序列、VXV，以及 live 恢复后 as-of 不串源。
+
+### 59.5 对上轮「零数值语义变更」的治理勘误
+
+§58.1 同时把 `position_exit_monitor` 的 VIXY 系数从 1.05 改成 0.85，并承认同一 VIXY=21.22 时
+ATR 输入会从 22.28 变为 18.04。**这会改变降级路径的 ATR 止损宽度，不能归为「零数值语义变更 /
+零交易行为变更」**；即使生产命中频率未举证，也只能写「修复口径，潜在退出行为变化，命中频率未知」。
+本节不是要求回滚该修复，而是更正变更分类，避免以后把同类退出改动当纯文案直接上线。
+
+### 59.6 当前可用边界与执行顺序
+
+- **可用**：带 `date/as_of` 的 CBOE/FRED 收盘值；带快照时刻与盘前标签的 SPY/QQQ 日线、盘前价格。
+- **只可降级使用**：VIXY×0.85 代理，必须同时展示「非现货、非今日实时、系数漂移」；不得据此说「今日平静」。
+- **不得使用**：硬编码经济日历的「无重要事件」、盘前 `last_price/prev_close` 的「今日涨跌」、当前行业 5 日值。
+- **执行顺序**：P0 先撤掉/替换伪日历与错误涨跌输入 → P1 补齐 FRED/as-of 漏网路径 → 再按 RFC-190 A2
+  既有 N≥10 噪声基线决定是否把 VIX 现货真值注入 DA。**不在本批新增 VIX 门、阈值或分级缩仓。**
+
+复现锚点：`app/data/premarket_enrichment.py:920`、`app/pipeline/llm_pipeline.py:1034`、
+`app/data/alphavantage_provider.py:669`、`/root/.hermes/skills/deep-stock-analysis/scripts/data_collector.py:1255`、
+`/root/.hermes/skills/deep-stock-analysis/scripts/llm_synth.py:290`；官方源为 Fed `fomccalendars.htm`、
+CBOE `*_History.csv` 与 FRED `fredgraph.csv`。
+
+## 六十、§59 修复实施与部署闭环（2026-11-09 17:06 CST）
+
+用户裁「按建议执行，不减少成交标的，确保输入和输出链路合理且完整」。本批只修数据口径与缺失值表达，
+**未新增筛选门、未改 VIX 阈值/仓位规则、未删除候选或 peer，也未启动 RFC-190 A2 现货真值注入**。
+
+### 60.1 已落地的生产修复
+
+1. **FRED/VIX 同源解析**：新增 `app/data/fred_series.py`，统一返回最近有效 `(observation_date, value)`，
+   跳过 `.`、非法日期和非有限数；`market_state`、`AlphaVantageProvider`、`VIXMonitor`、盘前宏观序列全部复用。
+   AV/Finnhub/Yahoo 成功分支补真实 `as_of`，live 恢复前清除旧 FRED 日期，避免跨来源串日期。
+2. **利差禁止跨日期**：VIX/VXV 与 10Y/2Y 只有观测日一致才计算；不一致或缺腿时 `spread=None/N/A`，
+   同时输出双方日期。盘前展示逐项带 `as_of`，不再把缓存写入时刻当观测日。
+3. **动态经济日历**：删除硬编码 FOMC/CPI/NFP 猜测，复用 `_fetch_futu_event_schedule(now)`；
+   每条带 `title/ts_et/star/source`，失败明确写「日历不可用，不得推断无事件」。
+4. **DA 时段有效价**：主标的与 peer 统一使用 session-aware 有效价/涨跌并带快照时间；盘前缺有效价时为 `N/A`，
+   不再以 `last_price/prev_close` 制造 0。行业 5 日收益必须至少 6 个有效日 K，均值只使用有效样本并披露样本数。
+   单个 peer 快照失败也保留该 peer，缺值不进入均值。
+5. **旧 raw 防误读**：没有 `session_effective_v1` 证据的旧行业价格/涨跌在重放时标为未验证 `N/A`；
+   保留 peer 和估值字段，不把旧 4 间隔数值冒充已修好的 5 日收益。
+   扫描器同步兼容缺失涨跌：候选仍进入分桶，缺值只从涨跌统计中排除并显示「未知/N/A」，不触发跌幅规则；
+   全失败 peer 结果不缓存，避免 `round(None)` 或错误缓存造成隐性减项。
+6. **VIX 哨兵与观测值分离**：`position_sync` 改读 `get_vix_or_none()`，失败仍返回原 1.0 ATR 因子。
+   LLM 推荐/策略文本在缺数时写 `N/A`，不再写「VIX=20 正常市场」。质量门保留原 18/20 回退分与既有阈值，
+   但新增 `vix_observed=False` 和「非观测值」原因；执行 context 使用真实值，缺数才沿用原回退值。
+   因此本批是输入正确性修复，**不宣称所有反事实交易行为逐笔等价**。
+
+### 60.2 离线 A/B：36/36 标的与 177/177 peer 保留
+
+只读复放 `data/da_checkpoint/2026-11-06/*.raw.json`，执行生产同源的 prev-close reconcile → data text →
+full prompt 构建；不调用 LLM、不写 checkpoint、不改交易结果。机器证据：
+`docs/analysis/2026-11-09-da-input-caliber-replay.json`，复现器：`scripts/da_input_caliber_replay.py`。
+
+| 判据 | A（原始输入） | B（修复后重放） |
+|---|---:|---:|
+| raw / 唯一候选 / 成功构建 full prompt | 36 / 36 / 36 | 36 / 36 / 36 |
+| 有效盘前快照的基本面伪零涨跌 | 35 | 0 |
+| 有效涨跌与快照 `effective_chg_pct` 一致 | 0/35 | 35/35 |
+| 展示 peer 行 | 177 | 177 |
+| 旧行业数值被当作已验证 5 日收益 | 36 块 / 177 行 | 0；36 块 / 177 行均显式 `N/A` |
+
+35 只有效盘前快照的涨跌均发生变化；FROG 从错误的 `+-0.0%` 修为 `$91.21 / +22.23%`，并带
+`2026-11-06 08:32:05.322` 快照时刻。另 1 只无有效盘前价，保持 `N/A`。本 A/B 验证的是**输入、prompt 输出和数量保留**；
+因 `llm_calls=0`，不据此声称模型方向或成交结果不变。
+
+### 60.3 实时探针与回归证据
+
+- 动态日历在 2026-11-09 实测返回 **7 条**美国 HIGH/MEDIUM 事件，字段齐全，不再是假「本周无重要事件」。
+- FRED 实测：10Y/2Y/5Y/VIX/DFF = 4.84/4.46/4.59/28.18/3.88，观测日均为 **2026-11-05**；
+  10Y−2Y = **0.38**，同日期才可计算。VIX/VXV = **28.18/25.55**，同为 11-05，利差 **-9.33%**。
+- DA 实时探针 FROG：8 个 peer 全保留，今日与 5 日有效样本均 **8/8**；每条含 session 与快照时间。
+- 仓内聚焦回归：**201 passed**。DA skill 全量：**142 passed, 1 skipped, 1 failed**；唯一失败是
+  `test_prev_close_apply_changes_snapshot_and_prompt` 使用固定 2026-10-20/21 日 K，在当前日期触发既有
+  `stale_bar` 守卫，单独复跑亦失败，与本批代码无关，未顺手修改该无关测试。
+- `git diff --check` 与所有改动 Python 文件 `py_compile` 通过。
+
+### 60.4 部署与边界
+
+重启前核对 `trade_records` 未平仓为 MCD/GOOG/PLTR/MRVL/AVGO 共 5 个；其他 agent 的 3 个
+`app/event_stream` 未跟踪文件自 11-06 起未变，早于当时进程 15:43 启动，重启前后 SHA256 一致。
+2026-11-09 17:06 仅用 `systemctl restart ftseek-us` 部署，PID=2339967；启动冒烟 7 项全过、零 Traceback/CRITICAL，
+启动时 5 个持仓不变。此后 PLTR/AVGO 分别于 17:06:46/17:10:18 按既有 `SL_BREAKEVEN`/`SL_TRAIL_LOC`
+正常平仓；截至 17:10:46 其余 MCD/GOOG/MRVL 共 3 个未平仓。这些是 Playbook 出场，并非本批输入修复或筛选减项。
+
+**当前结论：§59 所列 P0/P1 输入缺陷已修复并部署，限定范围状态为 VERIFIED。**
+这不等于「所有数据源永远实时准确」：FRED 仍是带观测日的日频值，VIXY×0.85 仍是近似代理；
+RFC-190 A2 的 N≥10 噪声基线未因此豁免，VIX 现货真值注入 DA 仍待既有裁决。下一 DA 批次只需例行核对
+`caliber_version/session_effective_v1`、样本数和 `N/A` 表达，不新增交易门。
+
+## 六十一、推荐证据卡 v1 与离线基线（2026-11-09 17:47 CST）
+
+用户裁「同意，请基于缺口做好补充和优化」。本批范围限于**推荐证据输出与可审计性**：
+不把仓内离线事件原型接入生产，不新增 VIX/事件门，不改 prompt、方向、候选预算、仓位或执行规则。
+
+### 61.1 生产记录链已补齐
+
+- 新增 DA `scripts/recommendation_evidence.py`，统一生成 `recommendation_evidence_v1`：
+  原始新闻 `evidence_id/story_id`、发布时间与 prompt 可见性、VIX/指数/行业口径、session-aware 价格对齐、
+  计划确认位/失效条件、挑战者反证及 evidence gaps。新闻语义固定为 `UNADJUDICATED`，不直接推断利好/利空。
+  单源失败标 `PARTIAL`，双源失败/缺字段标 `UNAVAILABLE`，不得被另一源空列表掩盖成“无新闻”。
+- 论点链接只允许完整 ID、URL 或完整标题精确命中；否则 `UNLINKED`。不做模糊相似度硬配，也不把未链接当方向扣分。
+- `pipeline.py` 将卡片写入 analysis、bridge candidate 和 `raw_instruction.recommendation_evidence`；
+  卡片生成异常仅落 `status=ERROR` 并保留原分析，不得让候选因观测字段失败而丢失。
+- 唯一新增消费者为 `scripts/da_recommendation_evidence_replay.py`；skill 版本同步为 v0.97。
+  无 app Python、cron、notifier、DB schema 或 Playbook 执行变更，因此不需重启 `ftseek-us`；下一次 cron 调用 skill 时生效。
+
+### 61.2 36 份 raw 离线 A/B 结果
+
+复现命令：
+
+```bash
+venv/bin/python scripts/da_recommendation_evidence_replay.py \
+  --date 2026-11-06 \
+  --output docs/analysis/2026-11-09-da-recommendation-evidence-replay.json
+```
+
+| 判据 | 结果 |
+|---|---:|
+| raw 候选 / 唯一候选 / 成功证据卡 | 36→36 / 36 / 36 |
+| 生产 prompt 构建结果不变 / collected 未变异 | 36/36 / 36/36 |
+| LLM 调用 / DB 写入 / checkpoint 写入 | 0 / 0 / 0 |
+| 新闻引用 / prompt 可见引用 / 发布时间可解析 | 549 / 477 / 549 |
+| 有价格时点 / 可判方向价格对齐（仅非 SKIP） | 35 / 31 |
+| 挑战者反证可用 / evidence gaps | 36 / 25 条 |
+| bull/bear 论点 / 精确新闻链接 / 未链接 | 174 / 2 / 172 |
+| 旧 raw 可回溯行业相对收益 / VIX 观测日历日 | 0 / 0 |
+
+**解释边界**：2/174 是“论点与新闻可按完整 ID/URL/标题机器精确连接”的比例，不是总体论据质量分；
+论点可能引用技术、估值或其他数据，也可能转述新闻。它证明语义引用仍需专门 prompt shadow A/B，
+不能通过模糊匹配伪装成已闭环。旧 raw 缺少可验证行业口径和 VIX 日历日，保持空值，不回填编造。
+
+### 61.3 验证与下一步
+
+- 新增证据卡测试 11 项；聚焦回归 **27 passed**。DA skill 全量 **153 passed, 1 skipped, 1 failed**；
+  唯一失败仍是 §60 已记录的固定旧日期 `stale_bar` 测试，与本批无关，未修改该无关测试。
+- 仓内 `tests/test_da_output_contract.py`（含 v0.97 版本同步棘轮）**69 passed**。
+- 改动 Python `py_compile`、回放机器断言与 `git diff --check` 全过。
+- 下一 DA 批次例行检查 checkpoint/bridge/raw_instruction 的卡片覆盖及 `ERROR` 数，候选数不得因卡片变化。
+- 若下一变量要让模型显式引用 `SRC/STORY` ID，须独立做重复控制 + prompt shadow A/B，再评方向稳定性和费后经济；
+  本批没有调用 LLM，不宣称方向、成交或净 bps 已改善。
+
+## 六十二、SRC/STORY 引用层离线 A/B 预注册（2026-11-09，执行前）
+
+用户批「继续」，授权 §61 所述下一变量。本实验为**一次性、当日结算的离线测量**，不挂 cron、不持续采集、
+不写生产 DB/pool/checkpoint、不重启，不属于新增常驻影子实验；生产 prompt/Gate/admission/Playbook 全部不变。
+
+### 62.1 唯一变量与样本
+
+- 控制臂：§61 原始生产数据文本和 system/user 契约。
+- 处理臂：只增加 prompt 可见新闻的 `SRC/STORY` 引用表、分析师 per-claim `evidence_ids` 契约、
+  挑战者 `citation_errors` 核验契约。新闻内容、VIX、价格、行业数据及方向规则不变。
+- 两臂均关闭动态历史/股性卡注入、blind shadow 和 schema repair，避免额外变量与额外修补调用；
+  模型、温度、token、思考参数沿用生产。该设置只用于引用可行性与方向噪声，不是生产经济反事实。
+- 目标总体为 §61 中“有新闻且精确链接=0”的候选，按原方向分层：BUY 6 / SELL_SHORT 2 / SKIP 2，共 **10 只**；
+  各层按 `sha256('20261109|symbol')` 排序选取，禁止看处理结果后换样。LLM 只跑这 10 只，不能宣称 36 只全量审阅。
+- 每只执行 control_1、treatment_1、control_2、treatment_2；共 40 次 synthesize、预计 80 次主/挑战者调用，
+  传输重试/模型降级另如实计数。输出目录隔离在 `data/shadow/da_citation_ab/2026-11-06_v1/`。
+
+**执行前冻结样本**：ARM(SHORT)、BWXT(SKIP)、CAT(SHORT)、FROG(BUY)、INTT(BUY)、
+KLAC(BUY)、LLY(SKIP)、LMT(BUY)、ORCL(BUY)、U(BUY)。纯函数/单变量测试 **5 passed**；
+API key 仅检查存在性，主/挑战者模型为生产 qwen3.7-max / deepseek-v4.1-flash，temperature=0。
+
+### 62.2 执行前判据
+
+1. **输出保留**：20 个处理臂 run 均有可解析结果和合法 direction；候选样本 10→10，任何失败逐只披露。
+2. **结构契约**：处理臂 bull/bear claims 的 `evidence_ids` 数组覆盖率目标 ≥95%；引用 ID 合法率必须 **100%**，
+   任何编造 ID 都列出，不能靠过滤坏行提高比例。
+3. **有效供给**：至少 **8/10** 标的在任一处理 run 中出现 ≥1 条带合法新闻引用的 claim；
+   非新闻论据允许空数组，不以“所有 claim 必须引新闻”为目标。
+4. **人工语义抽检**：按 symbol/run/section 确定性排序，最多 30 条引用 claim 逐条对照原始标题/摘要，
+   支持率目标 ≥90%；不支持、证据不足分别计数，不用另一个 LLM 自评代替人工核验。
+   主支持率=`SUPPORTED/全部抽检`，`INSUFFICIENT` 也占分母；另报剔除 INSUFFICIENT 的敏感性，不用后者放宽主判据。
+5. **方向噪声**：分别报告 control 两次、treatment 两次的稳定率，以及处理 modal direction 与控制 modal direction
+   的一致率。控制臂自身不稳定时，方向差异只能记“不可归因”，不得记为引用层收益或损害。
+
+本 n=10 只判**引用结构可行性**，不判 edge、不转正、不改生产。即使全部通过，下一窗仍须按现行纪律扩样；
+任何费用后经济结论必须另用可成交价格、DA-only、日聚类与 MDE，不在本实验偷跑。
+
+### 62.3 执行与结构门结算（2026-11-09 18:47 CST）
+
+40/40 run 已全部结束，无后台任务。复现与定稿命令：
+
+```bash
+venv/bin/python scripts/da_citation_ab_replay.py \
+  --output-dir data/shadow/da_citation_ab/2026-11-06_v1 --summarize
+venv/bin/python scripts/da_citation_ab_replay.py \
+  --output-dir data/shadow/da_citation_ab/2026-11-06_v1 --finalize-audit
+```
+
+| 预注册判据 | 实测 | 结果 |
+|---|---:|---|
+| 输出保留 | 40/40 run；处理臂 20/20 有效；10→10 标的 | PASS |
+| `evidence_ids` 数组覆盖 | 95/100 claims = **95.00%** | PASS（恰好达线） |
+| 引用 ID 合法率 | 97/97 = **100%**；非法 ID=0 | PASS |
+| 有效供给 | 50 条 cited claims；**10/10** 标的有引用 | PASS |
+| 人工语义主支持率 | **28/30 = 93.33%** | PASS |
+
+实际主模型 40 次、挑战者 40 次，共 **80 次**调用。`summary.json` 五项 `feasibility_gates` 全为 true，
+但 `promotion` 固定为 **`NOT_APPROVED_N10_STRUCTURE_ONLY`**。输入、方向规则、VIX、Gate、候选预算、
+仓位和执行均未改；生产 DB/pool/checkpoint/cron/Playbook 写入为 0，未重启服务。
+
+机器产物：`data/shadow/da_citation_ab/2026-11-06_v1/summary.json`；
+样本身份哈希与逐条理由：`citation_audit_adjudicated.json`；
+带原文对照的裁决：`citation_audit_sample.adjudicated.json`。定稿器另补强重复 `audit_id` 和非空理由校验，
+防止重复行被字典覆盖后伪装成完整审计；聚焦测试 **7 passed**。
+
+### 62.4 人工语义与挑战者复核
+
+裁决只要求新闻直接支持核心新闻命题；技术、估值、基本面等独立输入不要求新闻重复。复合论据若只剩部分核心腿有支持，
+记 `INSUFFICIENT`；引用与论点方向相反或张冠李戴，记 `UNSUPPORTED`。结果为 **SUPPORTED 28 /
+UNSUPPORTED 1 / INSUFFICIENT 1**；主支持率 93.33%，剔除 INSUFFICIENT 的敏感性为 **28/29=96.55%**，
+后者不用于放宽主判据。
+
+- KLAC `e4aa069df4c27723`：论点称“买入 put/看跌建仓”，标题却是“看跌期权空头建仓”，即 short put，
+  方向含义相反，且新闻日为 11-03 而非所称 11-06 盘前，判 **UNSUPPORTED**。
+- ARM `07b77973afb5767a`：评级标题支持分析师与 330 美元目标价，但不能支持“卖出 260/270 Put =
+  大资金远端支撑”这一独立核心腿，判 **INSUFFICIENT**，不是把整条分析师论据都判错。
+- 抽样按预注册排序取前 30 条，只覆盖 ARM/BWXT/CAT/FROG/INTT/KLAC 六只；结果不能外推到全部 50 条或 10 只。
+  U 的抽样外真实错引就是反例，后续若扩样须事前改为按 symbol 分层抽检，不能在本窗事后换样。
+
+挑战者共报 7 条 `citation_errors`，逐条人工复核如下；模型自评未直接代替裁决：
+
+| 标的/run | 挑战者指摘 | 人工复核 |
+|---|---|---|
+| ARM treatment_2 | Put 支撑论据错引 | **成立**；对应抽样 INSUFFICIENT |
+| ARM treatment_2 | 12.45% 与 K 线口径不同 | **不作为错引**；标题直接含 12.45%，K 线差异另属价格口径风险 |
+| FROG treatment_1 | EPS/营收指引区间不可见 | **误报**；完整标题含全部区间 |
+| INTT treatment_1 | Lake Street 21 美元不可见 | **误报**；完整标题明确含 21 美元 |
+| INTT treatment_1 | 新闻不含 3.33%/ATR | **不作为错引**；核心财报新闻成立，市场/ATR 来自技术输入 |
+| INTT treatment_2 | 16–21 美元区间无支持 | **误报**；三条标题分别支持 17/16/21 美元 |
+| U treatment_2 | BTIG 60 美元错配 ID | **成立**；所引 `SRC-82c279a09a751795` 实为 Wedbush 63 美元 |
+
+U 的正确 BTIG 60 美元引用 `SRC-068efb6395c69ccc` 原本就在新闻表，但模型未选用，且该 claim 不在前 30 条样本。
+因此“ID 合法率 100%”只证明 ID 存在，**不证明语义正确**；93.33% 也只是指定样本的抽检通过率，不是全量认证。
+
+### 62.5 方向噪声与最终边界
+
+- control 两次方向稳定 **7/10**，treatment **8/10**；n=10 不能把 1 只之差写成稳定性改善。
+- 原始 modal match 为 **7/10**，其中 CAT 是 `MIXED==MIXED`，只是双臂各自翻转，不能算积极一致证据；
+  排除该并列后同向 modal 为 6/10。control 稳定子集的一致率为 **6/7**。
+- ARM、LMT 的 control 自身分别为 SHORT→BUY，处理臂稳定不能归因于引用层；CAT 两臂均翻转。
+  FROG control=SKIP/SKIP、treatment=SKIP/BUY，也只能记噪声/潜在反证，不能宣称损害或收益。
+
+**最终结论：仅引用结构可行性通过，生产推广不批准。** 本实验没有成交价格、费后盈亏、DA-only 日聚类或 MDE，
+不得据此声称方向、成交、净 bps 或 VIX+事件选股 edge 已改善。候选数量未减少，生产链路未改变。
+后续若要继续，须另做预注册与实验预算，优先拆原子论据、逐事实绑定 ID，并按标的分层扩大人工审计；
+不得把本批处理臂直接接入生产。
+
+## 六十二、第三方独立复核（2026-11-09 20:2x CST）：§59–61 的成立面与两处勘误
+
+> 用户令「核查另一 agent 的 DEB 更新，给出分析和通俗解释」。本节为**只读复核**：
+> 官方源重取、两份 replay 脚本重跑、DB/服务状态核对、相关测试重跑。未改交易规则。
+
+### 62.1 我独立复算并一致的项
+
+| 声称 | 复核方式 | 结果 |
+|---|---|---|
+| CBOE 11-06 VIX=25.64 | 取 `VIX_History.csv` | ✅ 11/05=28.180、11/06=25.640 |
+| FRED 28.18 的 as_of=11-05 | 实取 CSV + 跑代码 | ✅ 一致；比 CBOE 少 11-06 行 |
+| 日历 7 条、字段齐 | 调 `fetch_us_event_schedule(now_et())` | ✅ 7 条，title/ts_et/star/source 齐 |
+| 10Y/2Y/5Y/VIX/DFF 同日 11-05 | 调 `_collect_treasury_yields()` | ✅ 4.84/4.46/4.59/28.18/3.88，利差 0.38 仅同日 |
+| 36/36 标的、177/177 peer、35 个伪零 | **重跑** `da_input_caliber_replay.py` | ✅ 数字逐项一致，llm_calls=0 |
+| 证据卡 36 张 / 549 引用 / 2 链接 | **重跑** `da_recommendation_evidence_replay.py` | ✅ 549、477 可见、174 论点中 2 链接、31 可判向 |
+| PLTR/AVGO 17:06/17:10 按既有出场平仓 | 查 `trade_records` | ✅ +7.81 `SL_BREAKEVEN` / +18.22 `SL_TRAIL_LOC` |
+| 代理 23/23 = 上一交易日 VIXY 收盘 | 重跑 `vix_caliber_audit.py` | ✅ 23/23；现货>28 仅拦 11-06（18 笔 +135.45） |
+| 相关回归 | 重跑 7 文件 | ✅ 134 passed（含新增 `test_macro_input_caliber`） |
+
+### 62.2 两处勘误（已就地改正）
+
+1. **§59.2 的"官方 FOMC 日期"各晚一天**：Fed `fomccalendars.htm`（Last Update 2026-10-28）
+   为 1/26–27、3/16–17、**4/27–28**、6/8–9、7/27–28、9/14–15、**10/26–27**、**12/7–8**。
+   原代码日期确实是错的（批评成立），但 DEB 初稿引用的"官方"日期也错，已在原位更正。
+2. **VIX9D / VIX3M 未获独立复核**：本机 curl 与 web 提取均被 CBOE CDN 反爬拦截，只有 VIX
+   主序列取到。§59.1 表中这两行已改标「单源，未独立复核」，不得与 25.64 并列作同级证据。
+
+### 62.3 本轮新增（补 §60 的第 3 项建议）
+
+生产 prompt 不再依赖影子脚本私有函数：新增 `app/data/economic_calendar.py`
+（`fetch_us_event_schedule`，契约：失败只返回 status，不返回空列表冒充"无事件"），
+`premarket_enrichment` 改从 app 侧导入；`scripts/macro_calendar_shadow_collect.py`
+保留同名兼容壳。新增 `tests/test_economic_calendar_caliber.py` 6 例
+（字段齐备/失败不得写"无事件"/0 事件须标明来源/异常可见/代码无硬编码日期/配置关闭）；
+变异：把 unavailable 改回 "No major scheduled events this week" ⇒ 2 红/6 绿，复原 ⇒ 6 绿。
+
+### 62.4 仍未闭环
+
+- `/root` skill 侧（v0.97、data_collector/llm_synth/market_scanner/pipeline）改动尚未提交，
+  与本仓同批需各自 commit 才有回滚点。
+- 阈值重标、两个死门复活（§58.2）仍待裁；本轮修复未改变其负 edge 结论。

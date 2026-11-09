@@ -654,7 +654,15 @@ class AlphaVantageProvider:
                 if vix_est is None:
                     self._vix_probe_fail_ts = time.time()
                     return None
-                result = {"vix": vix_est, "source": "finnhub_vixy"}
+                try:
+                    from app.utils.timezone import ET
+                    timestamp = float(fh_data["t"])
+                    if timestamp <= 0:
+                        raise ValueError("missing quote timestamp")
+                    as_of = datetime.fromtimestamp(timestamp, tz=ET).date().isoformat()
+                except (KeyError, TypeError, ValueError, OSError):
+                    as_of = None
+                result = {"vix": vix_est, "source": "finnhub_vixy", "as_of": as_of}
                 self.cache[cache_key] = result
                 self.cache_time[cache_key] = datetime.now()
                 self._vix_probe_fail_ts = 0.0     # 成功 ⇒ 清冷却
@@ -672,17 +680,14 @@ class AlphaVantageProvider:
             fred_url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=VIXCLS"
             response = requests.get(fred_url, timeout=10)
             if response.status_code == 200:
-                lines = response.text.strip().split('\n')
-                if len(lines) > 1:
-                    last_line = lines[-1]
-                    parts = last_line.split(',')
-                    if len(parts) >= 2 and parts[1]:
-                        vix = float(parts[1])
-                        result = {"vix": vix, "source": "fred"}
-                        self.cache[cache_key] = result
-                        self.cache_time[cache_key] = datetime.now()
-                        logger.info(f"[FRED] 获取 VIX 成功: {vix:.2f}")
-                        return vix
+                from app.data.fred_series import latest_valid_observation
+                as_of, vix = latest_valid_observation(response.text)
+                if as_of is not None and vix is not None and vix > 0:
+                    result = {"vix": vix, "source": "fred", "as_of": as_of}
+                    self.cache[cache_key] = result
+                    self.cache_time[cache_key] = datetime.now()
+                    logger.info(f"[FRED] 获取 VIX 成功: {vix:.2f} (as of {as_of})")
+                    return vix
         except Exception as fred_e:
             logger.debug(f"[FRED] VIX 获取失败: {fred_e}")
         return None

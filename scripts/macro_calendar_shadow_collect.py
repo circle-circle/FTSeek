@@ -165,85 +165,12 @@ def _load_prev_snapshot() -> Dict[str, Dict]:
 
 
 def _fetch_futu_event_schedule(now: datetime) -> Dict[str, Any]:
-    """未来 7 天宏观经济事件日程 (Futu get_economic_calendar, 2026-08-21 接入).
+    """兼容壳: 实现在 app/data/economic_calendar.py (2026-11-09 提升为生产模块).
 
-    FRED 段采的是"已公布值" (滞后); 事件避让影子需要的是"未来日程表"
-    (哪天几点披露), 两者互补同源脚本一次采齐. 实测 17 事件/2天, 字段全.
-    Fail-open: Futu 不可达/异常时返回 status=failed, 不影响 FRED 主链.
-    回滚: macro_calendar.event_schedule_enabled=false + 重启.
+    影子脚本保留此名称, 避免既有调用点/CLI 断裂; 逻辑单一真源在 app 侧。
     """
-    out: Dict[str, Any] = {"status": "skipped", "events": []}
-    try:
-        from app.core.config_container import get_config
-        if not bool(get_config().get_dotted(
-                "macro_calendar.event_schedule_enabled", True)):
-            out["status"] = "disabled"
-            return out
-    except Exception:
-        pass  # 配置读不到 → 默认启用
-    try:
-        from futu import OpenQuoteContext, RET_OK
-        from app.data.futu_lv3_provider import silence_futu_sdk_logs
-        silence_futu_sdk_logs()
-        import os
-        import socket
-        host = os.getenv("FUTU_OPEND_HOST", "127.0.0.1")
-        port = int(os.getenv("FUTU_OPEND_PORT", "11111"))
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(2.0)
-        ok = sock.connect_ex((host, port)) == 0
-        sock.close()
-        if not ok:
-            out["status"] = "opend_unreachable"
-            return out
-        ctx = OpenQuoteContext(host=host, port=port)
-        try:
-            begin = now.strftime("%Y-%m-%d")
-            end = (now + timedelta(days=7)).strftime("%Y-%m-%d")
-            r = ctx.get_economic_calendar(begin, end)
-            ret, df = r[0], r[1]
-            if ret != RET_OK or df is None or not len(df):
-                out["status"] = f"empty ret={ret}"
-                return out
-            events = []
-            _now_et = now
-            for _, row in df.iterrows():
-                country = str(row.get("country", ""))
-                star = str(row.get("star", ""))
-                if country != "美国" or star not in ("HIGH", "MEDIUM"):
-                    continue
-                try:
-                    from app.utils.timezone import ET
-                    from datetime import timezone as _tz
-                    ts = datetime.fromtimestamp(
-                        float(row.get("timestamp", 0)), tz=_tz.utc)
-                    ts_et = ts.astimezone(ET)
-                    # 2026-08-21 (Qoder 第5轮 #6): 过滤已发布事件 —
-                    # Futu 日期边界按北京时间解释, 窗口会含 ET 前一日已发布
-                    # 事件 (带 actual 值); 消费侧需要的是未来日程.
-                    if ts_et.replace(tzinfo=None) < _now_et.replace(tzinfo=None):
-                        continue
-                    events.append({
-                        "title": str(row.get("title", "")),
-                        "ts_et": ts_et.strftime("%Y-%m-%d %H:%M"),
-                        "star": star,
-                        "previous": str(row.get("previous", "")),
-                        "consensus": str(row.get("consensus", "")),
-                        "actual": str(row.get("actual", "")),
-                    })
-                except Exception:
-                    continue
-            out["status"] = "ok"
-            out["events"] = events
-            out["n_us_high_medium"] = len(events)
-        finally:
-            try:
-                ctx.close()
-            except Exception:
-                pass
-    except Exception as e:
-        out["status"] = f"error: {type(e).__name__}: {str(e)[:120]}"
-    return out
+    from app.data.economic_calendar import fetch_us_event_schedule
+    return fetch_us_event_schedule(now)
 
 
 def _build_snapshot(now: datetime) -> Dict[str, Any]:

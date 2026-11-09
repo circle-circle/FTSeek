@@ -145,6 +145,7 @@ class VIXMonitor:
             if self._cache.get("vix") and self._cache.get("vix", 0) > 25:
                 logger.debug("VIX>25 极端行情，跳过缓存，重新获取")
             elif self._cache.get("vix") and time.time() - self._cache.get("timestamp", 0) < CACHE_TTL_SECONDS:
+                self._last_as_of = self._cache.get("as_of")
                 return self._cache["vix"]
 
             if not self._can_retry():
@@ -156,6 +157,7 @@ class VIXMonitor:
                     return None
                 logger.debug("退避中，使用缓存 (剩余 %.0fs, age=%.0fs)",
                               remaining, cache_age)
+                self._last_as_of = self._cache.get("as_of")
                 return self._cache.get("vix")
 
         # 网络请求在锁外执行 (避免阻塞其他线程)
@@ -226,18 +228,10 @@ class VIXMonitor:
             url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=VIXCLS"
             resp = requests.get(url, timeout=10)
             resp.raise_for_status()
-            lines = resp.text.strip().split("\n")
-            for line in reversed(lines[1:]):
-                parts = line.strip().split(",")
-                if len(parts) < 2:
-                    continue
-                try:
-                    vix = float(parts[1])
-                except ValueError:
-                    continue  # '.' 占位行: 继续往前找最近一个有效观测
-                if vix <= 0:
-                    continue
-                self._last_as_of = parts[0].strip() or None
+            from app.data.fred_series import latest_valid_observation
+            as_of, vix = latest_valid_observation(resp.text)
+            if as_of is not None and vix is not None and vix > 0:
+                self._last_as_of = as_of
                 logger.debug("VIX (FRED): %.2f (as of %s)", vix, self._last_as_of)
                 return vix
         except Exception as e:
@@ -265,7 +259,8 @@ class VIXMonitor:
                 quote = data["Global Quote"]
                 price = float(quote.get("05. price", 0))
                 if price > 0:
-                    logger.debug("VIX (AlphaVantage): %.2f", price)
+                    self._last_as_of = quote.get("07. latest trading day") or None
+                    logger.debug("VIX (AlphaVantage): %.2f (as of %s)", price, self._last_as_of or "未知")
                     return price
         except Exception as e:
             logger.debug("AlphaVantage VIX 失败: %s", e)
@@ -297,7 +292,16 @@ class VIXMonitor:
                 vix_est = vixy_to_vix(price)
                 if vix_est is None:
                     return None
-                logger.debug("VIX (Finnhub/VIXY proxy): VIXY=$%.2f → VIX≈%.2f", price, vix_est)
+                try:
+                    from app.utils.timezone import ET
+                    timestamp = float(data["t"])
+                    if timestamp <= 0:
+                        raise ValueError("missing quote timestamp")
+                    self._last_as_of = datetime.fromtimestamp(timestamp, tz=ET).date().isoformat()
+                except (KeyError, TypeError, ValueError, OSError):
+                    self._last_as_of = None
+                logger.debug("VIX (Finnhub/VIXY proxy): VIXY=$%.2f → VIX≈%.2f (as of %s)",
+                             price, vix_est, self._last_as_of or "未知")
                 return vix_est
         except Exception as e:
             logger.debug("Finnhub VIXY 获取失败: %s", e)
@@ -315,8 +319,17 @@ class VIXMonitor:
                 result = data["chart"]["result"][0]
                 if "meta" in result and "regularMarketPrice" in result["meta"]:
                     price = result["meta"]["regularMarketPrice"]
-                    logger.debug("VIX (Yahoo): %.2f", price)
-                    return price
+                    if price and float(price) > 0:
+                        try:
+                            from app.utils.timezone import ET
+                            timestamp = float(result["meta"]["regularMarketTime"])
+                            if timestamp <= 0:
+                                raise ValueError("missing quote timestamp")
+                            self._last_as_of = datetime.fromtimestamp(timestamp, tz=ET).date().isoformat()
+                        except (KeyError, TypeError, ValueError, OSError):
+                            self._last_as_of = None
+                        logger.debug("VIX (Yahoo): %.2f (as of %s)", price, self._last_as_of or "未知")
+                        return float(price)
         except Exception as e:
             logger.debug("Yahoo Finance VIX 失败: %s", e)
         return None
@@ -335,8 +348,10 @@ class VIXMonitor:
         result = {
             "status": "ok",
             "spot_vix": None,
+            "spot_as_of": None,
             "vxv": None,
-            "spread_pct": 0.0,
+            "vxv_as_of": None,
+            "spread_pct": None,
             "regime": "unknown",
             "adjustment": 1.0,
         }
@@ -344,20 +359,24 @@ class VIXMonitor:
         try:
             # 获取 VIX spot
             spot = self._fetch_vix_fred()
+            spot_as_of = self._last_as_of
             if spot is None:
                 spot = self._cache.get("vix")
+                spot_as_of = self._cache.get("as_of")
             result["spot_vix"] = spot
+            result["spot_as_of"] = spot_as_of
 
             # 获取 VXV (3-month VIX futures)
             url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=VXVCLS"
             resp = requests.get(url, timeout=10)
             resp.raise_for_status()
-            lines = resp.text.strip().split("\n")
-            if len(lines) >= 2:
-                vxv = float(lines[-1].split(",")[1])
+            from app.data.fred_series import latest_valid_observation
+            vxv_as_of, vxv = latest_valid_observation(resp.text)
+            if vxv_as_of is not None and vxv is not None and vxv > 0:
                 result["vxv"] = vxv
+                result["vxv_as_of"] = vxv_as_of
 
-                if spot and spot > 0:
+                if spot and spot > 0 and spot_as_of == vxv_as_of:
                     spread = (vxv - spot) / spot
                     result["spread_pct"] = round(spread * 100, 2)
 
@@ -372,6 +391,10 @@ class VIXMonitor:
                     else:
                         result["regime"] = "flat"
                         result["adjustment"] = 1.0
+                else:
+                    result["status"] = "mismatched_observation_date" if spot and spot > 0 else "unavailable"
+            else:
+                result["status"] = "unavailable"
         except Exception as e:
             result["status"] = "error"
             logger.debug("VIX 期限结构获取失败: %s", e)

@@ -918,34 +918,26 @@ def _collect_futu_analyst_consensus(watchlist_symbols: List[str]) -> Dict[str, A
 
 
 def _get_economic_calendar() -> str:
-    """本周重要经济数据 (硬编码规则 — 最可靠)"""
+    """未来 7 天美国高/中重要性事件，使用动态日历而非日期猜测。"""
     from app.utils.timezone import now_et
-    today = now_et().date()
-    week_end = today + timedelta(days=7)
-    events = []
-
-    # FOMC 2026 dates
-    fomc_dates = [
-        (2026, 1, 28), (2026, 3, 18), (2026, 5, 6), (2026, 6, 17),
-        (2026, 7, 29), (2026, 9, 16), (2026, 11, 4), (2026, 12, 16),
-    ]
-    for y, m, d in fomc_dates:
-        fomc = datetime(y, m, d).date()
-        if today <= fomc <= week_end:
-            events.append(f"⚡ FOMC Decision: {fomc.strftime('%b %d')} — HIGH IMPACT")
-
-    weekday = today.weekday()
-    if today.day <= 7 and weekday == 4:
-        events.append("📊 NFP Jobs Report TODAY (8:30 AM ET)")
-    if 8 <= today.day <= 15 and weekday in (1, 2):
-        events.append("📊 CPI Release likely this week (8:30 AM ET)")
-    if weekday == 3:
-        events.append("📊 Weekly Jobless Claims TODAY (8:30 AM ET)")
-
+    source = "Futu/get_economic_calendar"
+    try:
+        # 2026-11-09: 生产 prompt 不再依赖影子脚本的下划线私有函数 (见 app/data/economic_calendar.py)
+        from app.data.economic_calendar import fetch_us_event_schedule
+        schedule = fetch_us_event_schedule(now_et())
+    except Exception as exc:
+        return f"Economic calendar unavailable ({type(exc).__name__}); source={source}; do not infer no events"
+    if schedule.get("status") != "ok":
+        return (f"Economic calendar unavailable (status={schedule.get('status', 'unknown')}); "
+                f"source={source}; do not infer no events")
+    events = schedule.get("events") or []
     if not events:
-        events.append("No major scheduled events this week")
-
-    return "\n".join(events)
+        return f"Dynamic calendar returned 0 US HIGH/MEDIUM events in next 7 days; source={source}"
+    return "\n".join(
+        f"⚡ title={event.get('title') or 'N/A'} | ts_et={event.get('ts_et') or 'N/A'} ET | "
+        f"star={event.get('star') or 'N/A'} | source={source}"
+        for event in events
+    )
 
 
 def _collect_treasury_yields() -> Dict[str, Any]:
@@ -961,6 +953,7 @@ def _collect_treasury_yields() -> Dict[str, Any]:
     }
 
     results = {}
+    observation_dates = {}
     from app.utils.timezone import now_et as _now_et_fred
     today = _now_et_fred().date()
     start = (today - timedelta(days=14)).strftime("%Y-%m-%d")
@@ -970,20 +963,24 @@ def _collect_treasury_yields() -> Dict[str, Any]:
         try:
             url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?chart_type=line&id={sid}&cosd={start}&coed={end}"
             r = _req.get(url, timeout=10)
-            lines = r.text.strip().split('\n')
-            if len(lines) >= 2:
-                last = lines[-1].split(',')
-                if len(last) == 2 and last[1] != '.':
-                    results[label] = round(float(last[1]), 2)
+            r.raise_for_status()
+            from app.data.fred_series import latest_valid_observation
+            as_of, value = latest_valid_observation(r.text)
+            if as_of is not None and value is not None:
+                results[label] = round(value, 2)
+                observation_dates[label] = as_of
         except Exception:
             continue
+    results["as_of"] = observation_dates
+    results["source"] = "FRED/fredgraph.csv"
 
     # Compute spread
     y10 = results.get("10Y")
     y2 = results.get("2Y")
     spread = None
     curve_shape = "unknown"
-    if y10 is not None and y2 is not None:
+    if (y10 is not None and y2 is not None
+            and observation_dates.get("10Y") == observation_dates.get("2Y")):
         spread = round(y10 - y2, 2)
         if spread > 0.5:
             curve_shape = "steep (growth expected)"
@@ -993,6 +990,9 @@ def _collect_treasury_yields() -> Dict[str, Any]:
             curve_shape = "flat (uncertainty)"
         else:
             curve_shape = "INVERTED (recession signal)"
+    elif y10 is not None and y2 is not None:
+        curve_shape = (f"unavailable (observation dates differ: 10Y={observation_dates.get('10Y')}, "
+                       f"2Y={observation_dates.get('2Y')})")
 
     results["spread_10y_2y"] = spread
     results["curve_shape"] = curve_shape
@@ -1127,17 +1127,21 @@ def format_for_debate(enrichment: Dict[str, Any]) -> str:
 
     # Treasury Yields (FRED)
     ty = enrichment.get("treasury_yields", {})
-    if ty and "10Y" in ty:
+    if ty:
         lines.append("🏦 TREASURY YIELDS (FRED):")
+        as_of = ty.get("as_of") or {}
         for label in ["2Y", "5Y", "10Y"]:
             if label in ty:
-                lines.append(f"  {label}: {ty[label]}%")
+                lines.append(f"  {label}: {ty[label]}% (as of {as_of.get(label, 'N/A')})")
         if ty.get("spread_10y_2y") is not None:
-            lines.append(f"  10Y-2Y Spread: {ty['spread_10y_2y']}% → {ty.get('curve_shape', '')}")
-        if ty.get("VIX"):
-            lines.append(f"  VIX: {ty['VIX']}")
-        if ty.get("FedFunds"):
-            lines.append(f"  Fed Funds: {ty['FedFunds']}%")
+            lines.append(f"  10Y-2Y Spread: {ty['spread_10y_2y']}% → {ty.get('curve_shape', '')} "
+                         f"(as of {as_of.get('10Y')})")
+        else:
+            lines.append(f"  10Y-2Y Spread: N/A ({ty.get('curve_shape', 'observation unavailable')})")
+        if ty.get("VIX") is not None:
+            lines.append(f"  VIX: {ty['VIX']} (FRED close, as of {as_of.get('VIX', 'N/A')})")
+        if ty.get("FedFunds") is not None:
+            lines.append(f"  Fed Funds: {ty['FedFunds']}% (as of {as_of.get('FedFunds', 'N/A')})")
         lines.append(f"  → {ty.get('interpretation', '')}")
         lines.append("")
 

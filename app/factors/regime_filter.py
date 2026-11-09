@@ -63,9 +63,13 @@ class RegimeFilter:
         try:
             # 1. 获取 VIX
             vix = market_ctx.get('vix', 0.0)
+            vix_observed = True
             # 12Data 返回的 VIX 有时是字符串或负数，需处理
-            try: vix = float(vix)
-            except (ValueError, TypeError): vix = 20.0
+            try:
+                vix = float(vix)
+            except (ValueError, TypeError):
+                vix = float(market_ctx.get('vix_score_fallback', 20.0))
+                vix_observed = False
             
             if vix > self.max_vix:
                 return GateResult(
@@ -92,9 +96,13 @@ class RegimeFilter:
                 # DEB-20260903 #51: 加上界钓位 min(1.0,...) — VIX<15 时原式 score>1.0
                 # 违反 GateResult score 0-1 约定 (:24)
                 score = min(1.0, max(0.5, 1.0 - (vix - 15.0) / 30.0))
-                reason = f"市场环境正常 (VIX={vix:.1f})"
+                reason = (f"市场环境正常 (VIX={vix:.1f})" if vix_observed else
+                          f"VIX 不可用；沿用既有回退评分输入={vix:.1f}（非观测值）")
 
-            return GateResult(name="RegimeFilter", passed=True, score=score, reason=reason)
+            return GateResult(
+                name="RegimeFilter", passed=True, score=score, reason=reason,
+                metadata={"vix_observed": vix_observed},
+            )
 
         except Exception as e:
             logger.warning(f"[RegimeFilter] 检查异常: {e}")

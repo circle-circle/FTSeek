@@ -226,6 +226,8 @@ class MarketStateChecker:
         """
         import requests
 
+        self._vix_last_as_of = None
+
         # ★ 0. 盘前/盘中: VIXY 实时代理优先 (与 MarketDataRouter 同口径同条件)
         #    VIX 现货无盘前交易 (CBOE 现金指数不撮合), 此处是盘前唯一有效值。
         #    盘中: 每 tick 变动, 捕捉当日 VIX 跳升 (FRED 日频做不到)。
@@ -280,22 +282,9 @@ class MarketStateChecker:
             fred_url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=VIXCLS"
             response = requests.get(fred_url, timeout=10)
             if response.status_code == 200:
-                lines = response.text.strip().split('\n')
-                # 2026-11-09 (RFC-190 第三轮): 原实现取 lines[-1] 直接 float() —— FRED 用
-                #   '.' 占位"当日未发布/假期", 一旦末行是 '.' 就抛异常, 整条 FRED 腿被吞成
-                #   None ⇒ 执行门 fail-close 拒绝开新仓, 而日志里只有 debug 级"FRED 失败"。
-                #   现改为向前找最近一个有效观测, 并记录其观测日 (as_of)。
-                for _line in reversed(lines[1:]):
-                    parts = _line.strip().split(',')
-                    if len(parts) < 2:
-                        continue
-                    try:
-                        vix = float(parts[1])
-                    except ValueError:
-                        continue
-                    if vix <= 0:
-                        continue
-                    _asof = parts[0].strip() or None
+                from app.data.fred_series import latest_valid_observation
+                _asof, vix = latest_valid_observation(response.text)
+                if _asof is not None and vix is not None and vix > 0:
                     # 写入**日频独立槽位** (不占实时代理槽位 ⇒ 实时代理恢复后可立即回切)
                     self._vix_fred_cache = (vix, _now, _asof)
                     self._vix_last_source = "fred_daily"
@@ -327,7 +316,8 @@ class MarketStateChecker:
                     price = float(quote.get("05. price", 0))
                     if price > 0:
                         self._vix_last_source = "alphavantage"
-                        logger.info(f"VIX 当前值={price:.2f} (AlphaVantage)")
+                        self._vix_last_as_of = quote.get("07. latest trading day") or None
+                        logger.info(f"VIX 当前值={price:.2f} (AlphaVantage, as of {self._vix_last_as_of or '未知'})")
                         return price
             except Exception as e:
                 logger.debug(f"AlphaVantage 获取 VIX 失败: {scrub_secrets(e)}")
