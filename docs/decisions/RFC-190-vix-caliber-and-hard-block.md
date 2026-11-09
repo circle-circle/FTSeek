@@ -153,10 +153,20 @@ API 返回 `VIX 28.18 (FRED VIXCLS 现货收盘·as of 2026-11-05) | 真值 25.6
 | `data_collector._get_vix` 的 `caliber` | 「盘前/盘中实时代理 (VIX 现货无盘前交易)」 | 「VIXY×0.85 代理 · 盘前读到上一交易日收盘 (非实时)」+ `as_of_basis=prev_close` |
 | `data_collector._get_vix` docstring | 「盘前 VIXY 报价有效」 | 实测口径：23/23 交易日盘前 `last_price` = 上一交易日收盘 |
 | `llm_synth._format_data_for_prompt` | 「[代理值: US.VIXY×0.85 校准, VIXY=…; VIX 现货无盘前交易]」 | 追加「口径=上一交易日收盘, **非今日实时 VIX**」 |
+| `llm_synth` VIX 行涨跌 | 「今日+0.0%」（盘前 last==prev_close ⇒ 恒 0.0，被读成"今日波动率没动"） | 「今日涨跌不可得(盘前快照=上一交易日收盘)」；非代理源仍照印真实 chg |
+
+**实测渲染**（用 2026-11-06 生产生料 `US.AMD.raw.json` 回放）：
+
+```
+- VIX: 18.04 今日涨跌不可得(盘前快照=上一交易日收盘) [代理值: US.VIXY×0.85 校准,
+  VIXY=$21.22; 口径=上一交易日收盘, 非今日实时 VIX; 现货无盘前交易]
+```
 
 **为什么不顺手把真值塞进 prompt**：那是 §2 的 A2（输入变更），本 RFC 自定门槛是 N≥10 噪声基线；
 本轮只消除"标签与事实相反"这一条语义错误（零数值、零阈值、零判定）。
 
-测试：skill `tests/test_vix_caliber_label.py` 3 例（prompt 文本、无代理元数据时不臆造、源码契约）；
-变异验证 = 标签回退旧文案 + 删「非今日实时」⇒ 2 红/3 绿，复原 ⇒ 3 绿。
-全量 skill 测试见同批运行记录。
+测试：skill `tests/test_vix_caliber_label.py` 4 例（prompt 文本、chg 抑制双向、无代理元数据时不臆造、
+源码契约）；变异验证 = 标签回退旧文案 + 删「非今日实时」⇒ 2 红/3 绿；关掉 chg 抑制 ⇒ 1 红/4 绿；
+复原 ⇒ 4 绿。skill 全量：**135 passed / 1 pre-existing time-dependent failure**
+（`test_prompt_source_truth::test_prev_close_apply_changes_snapshot_and_prompt`：fixture 日K 为
+2026-10-20/21，`reconcile_prev_close` 的 `gap_days>4` 跳过 ⇒ 与本批无关，未动）。

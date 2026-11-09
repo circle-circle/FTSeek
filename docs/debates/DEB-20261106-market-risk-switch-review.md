@@ -3371,9 +3371,10 @@ VIX 28.18 (FRED VIXCLS 现货收盘·as of 2026-11-05)
    写入方实际是 `~/.hermes/skills/deep-stock-analysis/scripts/data_collector.py::_get_vix`
    （DA 采集 skill，不在 FTSeek 仓内，故上一轮 grep 未命中）。现标签为
    「`VIXY×0.85 代理 · 盘前读到上一交易日收盘 (非实时)`」+ `as_of_basis=prev_close`，
-   `llm_synth._format_data_for_prompt` 同步渲染「口径=上一交易日收盘, 非今日实时 VIX」。
+   `llm_synth._format_data_for_prompt` 同步渲染「口径=上一交易日收盘, 非今日实时 VIX」，
+   并把盘前恒为 0.0 的 chg 改印「今日涨跌不可得(盘前快照=上一交易日收盘)」。
    **只改标签语义、不注入现货真值** —— RFC-190 §2 的 A2（把 T-1 现货也喂模型）属输入变更，
    仍须先做 N≥10 噪声基线，未裁。契约测试：skill `tests/test_vix_caliber_label.py` 3 例
-   （变异验证 2 红/3 绿）。
+   （4 例；变异验证 2 红/3 绿 + chg 抑制关掉 1 红/4 绿）。
 2. **`vix_data.json` 仍走 FRED，比 CBOE 慢一天**（实测 11-09 晨：cache 28.18 = 11-05 收盘，
    CBOE 已有 11-06 = 25.64）。换源 = 改门，须另开 RFC；本轮只在文本里标出滞后，未改源。
