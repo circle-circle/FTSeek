@@ -170,3 +170,23 @@ API 返回 `VIX 28.18 (FRED VIXCLS 现货收盘·as of 2026-11-05) | 真值 25.6
 复原 ⇒ 4 绿。skill 全量：**135 passed / 1 pre-existing time-dependent failure**
 （`test_prompt_source_truth::test_prev_close_apply_changes_snapshot_and_prompt`：fixture 日K 为
 2026-10-20/21，`reconcile_prev_close` 的 `gap_days>4` 跳过 ⇒ 与本批无关，未动）。
+
+## 10. 已落地（第五轮，2026-11-09）：输入链准确性审计（两个真缺陷 + 两个死门 + 翻转量化）
+
+**改（均为口径/可见性，不改成交集合）**
+- `market_state._fetch_vix_data`：FRED 末行 `.` 不再吞掉整条腿（向前找最近有效观测），
+  日频槽位升为 `(value, fetched_at, as_of)` 并兼容旧 2 元组；日志带 `as of`。
+- `position_exit_monitor._get_vix`：`VIXY×1.05`（方向与 SSOT 相反）改为 `vixy_to_vix()`(0.85)；
+  `provider.get_vix()` → `get_vix_or_none()`（不再把兜底 20.0 当真值缓存）；ATR 缺 VIX 时显式 WARNING。
+- `pre_trade_check`：两处 `MarketStateChecker._fetch_vix()`（方法不存在，恒 AttributeError）不再静默，
+  首次失败打 WARNING 并点名 RFC-190 §10；**门仍休眠**（复活属行为变更，未做）。
+
+**不改（待裁）**
+- 阈值表 (15/18/20/22/25/28/30/35) 与 regime 评分表仍两把尺子共用；翻转量化见 DEB §58.3
+  （15 档 65% 天不一致；18/23 天 regime 分项偏乐观，3 天差 3 分；30/35 无样本）。
+- `llm_pipeline` 的 `18.0`、`market_data_router.get_vix()` 的 `20.0` 哨兵保留登记（DEB §58.4）。
+
+**测试**：`tests/test_vix_consumers_input_accuracy.py` 6 例 —— FRED `.` 回退、as_of 持久化与旧 2 元组兼容、
+VIXY 腿走 SSOT、不缓存 provider 默认值、源码无 `*1.05`、死门留痕且未被复活。
+变异验证：还原末行取值 + 还原 `*1.05` + 还原 `get_vix()` ⇒ **4 红/6 绿**，复原 ⇒ 6 绿。
+VIX 相关 6 个测试文件合计 **74 passed**。

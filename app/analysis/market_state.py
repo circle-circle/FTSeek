@@ -78,9 +78,13 @@ class MarketStateChecker:
         self._spy_cache: Optional[Tuple[float, float, datetime]] = None  # (price, ma200, cached_at)
         self._vix_cache: Optional[Tuple[float, datetime]] = None  # (vix, cached_at) — 实时代理槽位
         # FRED 日频序列独立槽位 (2026-11-03 P0-2 续批): 与实时代理槽位分开, 各自 TTL
-        self._vix_fred_cache: Optional[Tuple[float, datetime]] = None
+        self._vix_fred_cache: Optional[Tuple[float, datetime, str]] = None  # (value, fetched_at, as_of)
         self._vix_live_fail_ts: float = 0.0   # 实时代理失败时间戳 (冷却用)
         self._vix_last_source: str = "unknown"  # 最近一次取数的来源 (诊断用)
+        # 最近一次取数的**观测日** (2026-11-09 RFC-190 第三轮): FRED 日频下
+        #   "取到值的时刻" ≠ "数据的观测日" —— T-2 收盘可能在今天 21:00 才被取到。
+        #   执行门的日志/诊断必须能说出"这个 28.18 是哪天收盘", 否则与实时值无法区分。
+        self._vix_last_as_of: Optional[str] = None
         self._cache_ttl = timedelta(minutes=30)  # 盘外缓存 30 分钟
         
         logger.info("市场状态检查器已初始化")
@@ -189,7 +193,8 @@ class MarketStateChecker:
             self._vix_cache = (vix, datetime.now())
             # 来源留痕 (2026-11-03 P0-2 续批): 日频兜底时来源会是 fred_daily* ——
             # 日志里能一眼看出"闸门这次读到的是 T-1 日频值还是实时值"。
-            logger.debug("[market_state] VIX 取数完成: %.2f (来源=%s)", vix, self._vix_last_source)
+            logger.debug("[market_state] VIX 取数完成: %.2f (来源=%s, as of %s)", vix,
+                         self._vix_last_source, self._vix_last_as_of or "n/a")
         return vix
 
     def _fetch_vix_data(self) -> Optional[float]:
@@ -262,26 +267,41 @@ class MarketStateChecker:
         #   最坏每分钟下一次 (实时代理槽位 60s 过期) ⇒ 配额/延迟双输。
         _now = datetime.now()
         if self._vix_fred_cache:
-            _fv, _fts = self._vix_fred_cache
+            # 兼容 2 元组 (旧缓存/测试) 与 3 元组 (value, fetched_at, as_of)
+            _entry = self._vix_fred_cache
+            _fv, _fts = _entry[0], _entry[1]
+            _fasof = _entry[2] if len(_entry) > 2 else None
             if (_now - _fts).total_seconds() < VIX_DAILY_CACHE_TTL_S:
                 self._vix_last_source = "fred_daily_cached"
-                logger.info(f"VIX 当前值={_fv:.2f} (FRED CSV, 日频槽位缓存)")
+                self._vix_last_as_of = _fasof
+                logger.info(f"VIX 当前值={_fv:.2f} (FRED CSV, 日频槽位缓存, as of {_fasof or '未知'})")
                 return _fv
         try:
             fred_url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=VIXCLS"
             response = requests.get(fred_url, timeout=10)
             if response.status_code == 200:
                 lines = response.text.strip().split('\n')
-                if len(lines) > 1:
-                    last_line = lines[-1]
-                    parts = last_line.split(',')
-                    if len(parts) >= 2 and parts[1]:
+                # 2026-11-09 (RFC-190 第三轮): 原实现取 lines[-1] 直接 float() —— FRED 用
+                #   '.' 占位"当日未发布/假期", 一旦末行是 '.' 就抛异常, 整条 FRED 腿被吞成
+                #   None ⇒ 执行门 fail-close 拒绝开新仓, 而日志里只有 debug 级"FRED 失败"。
+                #   现改为向前找最近一个有效观测, 并记录其观测日 (as_of)。
+                for _line in reversed(lines[1:]):
+                    parts = _line.strip().split(',')
+                    if len(parts) < 2:
+                        continue
+                    try:
                         vix = float(parts[1])
-                        # 写入**日频独立槽位** (不占实时代理槽位 ⇒ 实时代理恢复后可立即回切)
-                        self._vix_fred_cache = (vix, _now)
-                        self._vix_last_source = "fred_daily"
-                        logger.info(f"VIX 当前值={vix:.2f} (FRED CSV)")
-                        return vix
+                    except ValueError:
+                        continue
+                    if vix <= 0:
+                        continue
+                    _asof = parts[0].strip() or None
+                    # 写入**日频独立槽位** (不占实时代理槽位 ⇒ 实时代理恢复后可立即回切)
+                    self._vix_fred_cache = (vix, _now, _asof)
+                    self._vix_last_source = "fred_daily"
+                    self._vix_last_as_of = _asof
+                    logger.info(f"VIX 当前值={vix:.2f} (FRED CSV, as of {_asof or '未知'})")
+                    return vix
         except Exception as e:
             logger.debug(f"FRED CSV 获取 VIX 失败: {e}")
 

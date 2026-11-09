@@ -2317,7 +2317,12 @@ class ExitMonitor:
             return 0.0
 
         # 2. VIX 缩放 (VIX=20 为基线, VIX 越高 ATR 越大)
-        vix = self._get_vix() or 20.0
+        vix = self._get_vix()
+        if not vix or vix <= 0:
+            # 与旧 `vix = self._get_vix() or 20.0` 数值等价 (基线 20 ⇒ 不放大),
+            # 但把"静默用基线"变成可见告警: 极端波动期缺 VIX 会让止损按平静市宽度算。
+            logger.warning("[ATR] VIX 不可用, 使用基线 20.0 (不做波动放大, 止损可能偏窄)")
+            vix = 20.0
         vix_baseline = 20.0
         vix_factor = max(1.0, vix / vix_baseline)
         # 限制: 最多放大 2.5×, 防止 VIX 极端值过度放大
@@ -2366,7 +2371,11 @@ class ExitMonitor:
             #   改共享单例; 本方法自身 300s 缓存语义不变。
             from app.data.alphavantage_provider import get_alpha_vantage_provider
             provider = get_alpha_vantage_provider()
-            vix = provider.get_vix()
+            # 2026-11-09 (RFC-190 第三轮): 原来调 get_vix() —— 它在失败时返回**兜底 20.0**
+            #   (truthy), 于是一次取数失败会把 20.0 当作真值缓存 5 分钟, 而 ATR 用 VIX/20
+            #   做波动放大 ⇒ 高波动期静默"不放大止损"。改用 get_vix_or_none(), 拿不到就
+            #   走 VIXY 降级腿, 而不是把 20.0 当真值。
+            vix = provider.get_vix_or_none()
             if vix and vix > 0:
                 self._vix_cached = float(vix)
                 self._vix_ts = now
@@ -2391,8 +2400,14 @@ class ExitMonitor:
                 )
                 if ret == 0 and data is not None and len(data) > 0:
                     vixy_close = float(data["close"].values[-1])
-                    # VIXY ≈ VIX × 0.85~1.15 (期限结构), 粗略校正
-                    vix_estimated = vixy_close * 1.05  # 经验校正因子
+                    # 2026-11-09 (RFC-190 第三轮): 此处原用 `* 1.05` —— 与全仓单一真源
+                    #   `vix_source.VIXY_CONTANGO_FACTOR=0.85` **方向相反** (1.05 会把 VIX
+                    #   算得比 VIXY 还高, 而 VIXY 是 VIX 期货 ETF, 正常应高于现货)。
+                    #   同一标的两个系数 ⇒ 口径漂移 (vix_source 立项要消灭的正是这类复制)。
+                    from app.data.vix_source import vixy_to_vix
+                    vix_estimated = vixy_to_vix(vixy_close)
+                    if vix_estimated is None:
+                        raise ValueError(f"VIXY close invalid: {vixy_close}")
                     logger.debug(
                         f"[VIX] VIXY=${vixy_close:.2f} → 估计 VIX≈{vix_estimated:.2f} "
                         f"(降级源, 精度有限)"

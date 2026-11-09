@@ -29,6 +29,22 @@ _BLACKLIST_CACHE: Set[str] = set()
 _BLACKLIST_CACHE_TS: float = 0.0
 _BLACKLIST_TTL: float = 60.0
 
+# 2026-11-09 (RFC-190 第三轮): 两处 VIX 读取调的是 `MarketStateChecker._fetch_vix()`
+# —— 该方法**不存在** (真名 `_fetch_vix_data` / `get_vix_cached`), 故恒 AttributeError
+# 被 `except` 吞掉 ⇒ P1-1 HIGH_VOL 警戒与 RFC-056 分档削弱**从未生效**。
+# 本批不改判定 (复活门 = 行为变更, 须预注册), 只把"静默死亡"变成一次性可见告警。
+_VIX_READ_DEAD_WARNED = False
+
+
+def _warn_vix_read_dead(site: str, exc: BaseException) -> None:
+    global _VIX_READ_DEAD_WARNED
+    if _VIX_READ_DEAD_WARNED:
+        return
+    _VIX_READ_DEAD_WARNED = True
+    logger.warning("[VIX 读取失败·%s] 门本次不生效 (%s: %s) — 若为 AttributeError, "
+                   "说明调用了不存在的 _fetch_vix(), 见 RFC-190 §10",
+                   site, type(exc).__name__, exc)
+
 
 def _load_blacklist() -> Set[str]:
     """读 unified_config.yaml::risk.global_blacklist + data/dynamic_blacklist.json (60s 缓存)"""
@@ -233,7 +249,8 @@ class PreTradeChecker:
                 logger.info(f"[P1-1] HIGH_VOL 警戒: VIX={_vix:.1f} (20-25区间), 收紧入场门槛")
             else:
                 self._high_vol_active = False
-        except Exception:
+        except Exception as _hv_err:
+            _warn_vix_read_dead("P1-1 HIGH_VOL", _hv_err)
             self._high_vol_active = False
 
         # 0.1. P0 辩论止血守卫 (2026-05-23, 基于309笔实盘数据)
@@ -280,8 +297,8 @@ class PreTradeChecker:
                     _msc2 = _MSC2()
                     _vd = _msc2._fetch_vix()
                     _cur_vix = _vd[0] if isinstance(_vd, tuple) else _vd
-                except Exception:
-                    pass
+                except Exception as _rfc_err:
+                    _warn_vix_read_dead("RFC-056 分档削弱", _rfc_err)
                 if isinstance(_cur_vix, (int, float)) and _cur_vix > 0:
                     _vix_critical = float(_vix_levels.get("critical", 28))
                     _vix_high = float(_vix_levels.get("high", 25))
