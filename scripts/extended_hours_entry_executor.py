@@ -412,6 +412,18 @@ def _research_existing_symbols(research_pool, results):
     return existing
 
 
+def _is_throttle_error(exc) -> bool:
+    """是否 Futu 限频类错误 (共享额度已紧), 而非"执行器故障"。
+
+    RFC-191 (2026-11-09): 两类错误在旧代码里走同一条 `❌ 执行器异常` 推送, 实测把
+    `查询未完成订单频率太高，每30秒最多10次` 报成故障 (2026-11-09 US.TSM 研究臂两次)。
+    限频只说明账户级 10/30s 额度被抢光, 与执行器健康无关 ⇒ 单独分类。
+    """
+    text = str(exc).lower()
+    return any(marker in text for marker in
+               ("频率", "最多", "too frequent", "throttl", "rate limit"))
+
+
 def _record_research_funnel(session, today, item, stage, reason=""):
     """源级漏斗 (只读 append): 每条研究候选的选取/拒绝/下单去向。"""
     if not RESEARCH_SOURCES_ON:
@@ -1624,6 +1636,7 @@ def _research_pass_real(
             "surprise_pct": None, "period": None,
             "period_age_days": None, "report_date": None, "report_phase": None,
         }
+        throttle_backoff = False
         try:
             result = _execute(
                 symbol, qty, order_price, session, item["chg"], item["vol"],
@@ -1634,11 +1647,24 @@ def _research_pass_real(
             result["decision_price"] = item["px"]
             result["pretrade"] = gate
         except Exception as exc:
+            throttled = _is_throttle_error(exc)
             result = {
                 "ok": False, "symbol": symbol, "session": session,
                 "error": f"executor_exception:{exc}",
+                "throttled": throttled,
             }
-            _push(f"❌ 延长时段开仓执行器异常 (研究臂)\n{symbol}\n{exc}")
+            if throttled:
+                # RFC-191 (2026-11-09): 限频 = 账户级 OpenD 额度已紧 (10 次/30s)。
+                #   研究臂是 record-only 影子、不产生真仓 ⇒ 自退避 + 不打告警 (原 _push 让它
+                #   看起来像"执行器坏了"); 留痕走 audit(skip) + research funnel, 且本轮剩余
+                #   候选一并不再打额度 (下一轮 cron 重试)。
+                result["skip"] = "throttled_order_query"
+                throttle_backoff = True
+                _record_research_funnel(
+                    session, today, item, "reject", "throttled_order_query"
+                )
+            else:
+                _push(f"❌ 延长时段开仓执行器异常 (研究臂)\n{symbol}\n{exc}")
             _audit(result)
         result["symbol"] = symbol
         result["session"] = session
@@ -1664,6 +1690,17 @@ def _research_pass_real(
             session_today += 1
             opened_today[day_key] = session_today
         _save_state(state)
+        if throttle_backoff:
+            # 自退避留痕 (attempts 已落 failed/不占配额): 本轮剩余候选不再打 OpenD 额度。
+            counts["research_throttled_backoff"] = (
+                counts.get("research_throttled_backoff", 0) + 1
+            )
+            print(
+                f"[ext_entry] 研究臂遇限频自退避 (不告警, 剩余候选让位): {symbol} "
+                f"{str(result.get('error'))[:160]}",
+                file=sys.stderr,
+            )
+            break
     counts["research_ordered"] = counts.get("research_ordered", 0) + ordered
     return total_today, session_today
 
