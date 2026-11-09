@@ -666,6 +666,11 @@ class DataService:
         detail["value"] = value
         detail["source"] = source
         detail["as_of"] = as_of
+        # 2026-11-09: 当日水平估计 (真值锚 + VIXY 变化), 与真值/代理并列, 不替代任何判定
+        est = cache.get("estimate") or {}
+        detail["estimate"] = est or None
+        if est.get("est") is not None and est.get("line"):
+            detail["line"] = f"{detail.get('line') or ''} | {est['line']}"
         detail["caliber"] = (detail.get("proxy") or {}).get("caliber", "未知口径")
         detail["caliber_short"] = (detail.get("proxy") or {}).get("short", "未知")
         return detail

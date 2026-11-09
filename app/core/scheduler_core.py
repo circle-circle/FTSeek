@@ -2933,6 +2933,18 @@ class TradingScheduler:
                         _log_fn = logger.info if self._is_market_open() else logger.debug
                         _log_fn("[VIX] 当前值=%.1f | 级别=%s | %s", vix, level, vix_data.get("message", ""))
 
+                        # 跳变告警 (2026-11-09): 与级别解耦 —— 崩盘当天 VIX 可能还没
+                        #   越过 25/28 的门槛, 但一天内 +60% 才是真该叫醒人的信号。
+                        _jump = vix_data.get("jump") or {}
+                        if _jump and self.notifier:
+                            try:
+                                self.notifier.send_text(
+                                    f"[VIX 跳变] {_jump.get('message', '')}\n"
+                                    f"建议: {_jump.get('recommendation', 'N/A')}"
+                                )
+                            except Exception as _jump_e:
+                                logger.warning(f"[VIX] 跳变推送失败: {_jump_e}")
+
                         # 级别变化时推送告警
                         if level != self._last_vix_alert_level and level in ("WARNING", "HIGH", "CRITICAL"):
                             self._last_vix_alert_level = level

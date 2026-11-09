@@ -234,3 +234,15 @@ DEB §59 的 FRED 最近有效观测、全源 as-of、同日利差、动态经�
 重开条件沿用 §10（真值 ≥28 累积 ≥10 交易日重跑同一脚本）。
 
 另修 `pre_entry_gate` 的 `vix=None → TypeError` / `vix=0.0` 渲染（默认关闭，潜伏缺陷）。
+
+## 12. 第七轮（2026-11-09）：水平/变化分离（只读观测）
+
+标定（361 日）：ΔVIX% ≈ **2.015 × ΔVIXY%**，R²=0.816；滚动 60 日 1.48–2.60。
+同日预测 MAE：昨收真值 1.041 / VIXY×0.85 **7.676**（bias +7.06）/ 真值锚定×2.02 **0.431**。
+
+落地：`app/data/vix_estimator.py`（估计+跳变判据）、`vix_source.fetch_vixy_quote_via_opend`、
+`vix_monitor.check_vix_level` 附加 `estimate`/`jump`（级别语义逐字不变）、
+`scheduler_core` 独立推送、`data_service.vix_detail.estimate`。
+
+不变项：任何阈值/仓位/DA prompt/`vix_data.json` 的 vix·source·as_of 均未动。
+测试：13 例，变异 4 红；重标脚本 `scripts/vixy_beta_calibration.py`（手动，无 cron）。

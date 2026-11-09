@@ -51,6 +51,9 @@ CACHE_FILE = CACHE_DIR / "vix_data.json"
 CACHE_TTL_SECONDS = 180
 CACHE_MAX_AGE_SECONDS = 3600  # P0 修复 (2026-05-11): 硬超时 1 小时，超时后返回 None 触发降级
 
+# 跳变告警的"今日已告警"状态 (落盘, 重启不重复刷)
+VIX_JUMP_STATE_PATH = Path(__file__).resolve().parents[2] / "data" / "vix_cache" / "vix_jump_state.json"
+
 # 退避配置
 BACKOFF_BASE = 60       # 初始退避间隔 (秒)
 BACKOFF_MAX = 480       # 最大退避间隔 (秒)
@@ -401,7 +404,102 @@ class VIXMonitor:
 
         return result
 
+    def _live_estimate(self) -> Dict:
+        """T-1 真值锚 + VIXY 当日变化 ⇒ 当日水平估计 (只读, 不参与级别判定)。
+
+        2026-11-09 (RFC-190 第六轮): 解决"水平准但慢、变化快但偏"的错配 ——
+        级别 (level/message) 仍用真值, 本方法只额外给出"今天大概多少"。
+        任何一环缺失 ⇒ est=None, 不猜测、不影响既有告警。
+        """
+        info = {"est": None, "prev_truth": None, "prev_as_of": None,
+                "vixy_prev_close": None, "vixy_live": None, "change_pct": None}
+        try:
+            from app.data.vix_source import fetch_vixy_quote_via_opend, live_vixy_price
+            from app.data.vix_estimator import estimate_level, change_pct, describe
+            prev_truth = self._fetch_vix_fred()
+            prev_as_of = getattr(self, "_last_as_of", None)
+            quote = fetch_vixy_quote_via_opend()
+            live = live_vixy_price(quote)
+            prev_close = (quote or {}).get("prev_close")
+            est = estimate_level(prev_truth, prev_close, live)
+            info.update({
+                "est": est, "prev_truth": prev_truth, "prev_as_of": prev_as_of,
+                "vixy_prev_close": prev_close, "vixy_live": live,
+                "change_pct": change_pct(prev_truth, est),
+            })
+            info["line"] = describe(prev_truth, prev_as_of, prev_close, live, est)
+        except Exception as _e:
+            logger.warning("[VIX] 实时估计失败 (不参与判定): %s", _e)
+        return info
+
+    def _jump_alert_due(self, prev_truth: Optional[float], est: Optional[float],
+                        prev_as_of: Optional[str] = None) -> bool:
+        """上跳告警: 每日最多一次 (状态落盘, 重启不重复刷)。
+
+        锚点陈旧 (as_of 距今 > 5 个自然日, 如长假/FRED 断更) 时不告警: 那时
+        "变化"可能跨了多个交易日, 用一天的变化率外推会系统性夸大。
+        """
+        from app.data.vix_estimator import is_jump
+        if not is_jump(prev_truth, est):
+            return False
+        if prev_as_of:
+            try:
+                from datetime import date as _date
+                from app.utils.timezone import now_et
+                if (now_et().date() - _date.fromisoformat(prev_as_of)).days > 5:
+                    logger.warning("[VIX] 跳变告警跳过: 锚点 as_of=%s 已过期", prev_as_of)
+                    return False
+            except Exception:
+                pass
+        try:
+            from app.utils.timezone import now_et
+            today = now_et().date().isoformat()
+            state_path = VIX_JUMP_STATE_PATH
+            if state_path.exists():
+                try:
+                    if json.loads(state_path.read_text()).get("date") == today:
+                        return False
+                except Exception:
+                    pass
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            state_path.write_text(json.dumps({"date": today, "est": est}))
+            return True
+        except Exception as _e:
+            logger.warning("[VIX] 跳变告警状态读写失败 (按未告警处理): %s", _e)
+            return True
+
     def check_vix_level(self) -> Dict:
+        """对外入口: 级别判定 (真值) + 实时估计 + 跳变告警标记。
+
+        级别语义逐字不变; 新增字段对下游是纯加法:
+          - `estimate`: {est, prev_truth, prev_as_of, vixy_prev_close, vixy_live, change_pct, line}
+          - `jump`: 仅当日内上跳 >=25% 且今日未告警时出现。
+        """
+        res = self._check_vix_level_base()
+        est = self._live_estimate()
+        res["estimate"] = est
+        # 供看板/接口读取 (只加字段, 不改 vix/source/as_of 语义)
+        try:
+            with self._cache_lock:
+                if CACHE_FILE.exists():
+                    _data = json.loads(CACHE_FILE.read_text())
+                    _data["estimate"] = est
+                    CACHE_FILE.write_text(json.dumps(_data, indent=2))
+        except Exception as _ce:
+            logger.debug("[VIX] 估计写入缓存失败 (不影响判定): %s", _ce)
+        if self._jump_alert_due(est.get("prev_truth"), est.get("est"), est.get("prev_as_of")):
+            res["jump"] = {
+                "est": est.get("est"),
+                "change_pct": est.get("change_pct"),
+                "message": (f"⚡ VIX 跳变: T-1 真值 {est.get('prev_truth'):.2f} → 实时估计 "
+                            f"{est.get('est'):.2f} ({est.get('change_pct'):+.0f}%, "
+                            f"VIXY {(est.get('vixy_live') or 0):.2f} / prev "
+                            f"{(est.get('vixy_prev_close') or 0):.2f})"),
+                "recommendation": "波动率飙升: 复核在仓止损距离, 暂停追高开仓; 本值为估计非成交真值",
+            }
+        return res
+
+    def _check_vix_level_base(self) -> Dict:
         """Check VIX level and return alert status.
         
         Returns dict with status, message, level, recommendation.

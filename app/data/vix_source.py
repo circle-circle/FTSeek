@@ -116,6 +116,64 @@ def is_trading_phase(phase=None) -> bool:
     return getattr(phase, "name", str(phase)) in TRADING_PHASES
 
 
+def fetch_vixy_quote_via_opend(host: Optional[str] = None,
+                               port: Optional[int] = None) -> Optional[dict]:
+    """US.VIXY 快照: last / pre_price / prev_close_price (2026-11-09 新增)。
+
+    与 `fetch_vixy_via_opend` 的差别: 后者只返回**换算后的 VIX** 且盘前用的
+    `last_price` 实为上一交易日收盘 (见其 docstring 2026-11-07 更正)。本函数把
+    原始三个价一起返回, 供 `vix_estimator` 计算"当日变化":
+      - 盘中: last_price 是真当日价;
+      - 盘前: pre_price 是盘前真价, last_price 停在昨收 —— 二者不可混用。
+    任一缺失返回 None 对应字段, 由调用方判断; 不猜测、不兜底。
+    """
+    _host = host or os.getenv("FUTU_OPEND_HOST", "127.0.0.1")
+    try:
+        _port = int(port if port is not None else os.getenv("FUTU_OPEND_PORT", "11111"))
+    except (TypeError, ValueError):
+        _port = 11111
+    try:
+        from futu import OpenQuoteContext
+        ctx = OpenQuoteContext(host=_host, port=_port)
+        try:
+            ret, snap = ctx.get_market_snapshot(["US.VIXY"])
+            if ret != 0 or snap is None or len(snap) == 0:
+                return None
+            row = snap.iloc[0]
+
+            def _num(key):
+                try:
+                    v = float(row.get(key, 0) or 0)
+                    return v if v > 0 else None
+                except (TypeError, ValueError):
+                    return None
+
+            return {
+                "last": _num("last_price"),
+                "pre_price": _num("pre_price"),
+                "prev_close": _num("prev_close_price"),
+                "update_time": str(row.get("update_time") or ""),
+            }
+        finally:
+            try:
+                ctx.close()
+            except Exception as _ce:
+                logger.warning("[vix_source] Futu context 关闭失败: %s", _ce, exc_info=True)
+    except Exception as e:
+        logger.warning("[vix_source] VIXY 原始快照失败: %s", e, exc_info=True)
+        return None
+
+
+def live_vixy_price(quote: Optional[dict]) -> Optional[float]:
+    """从快照里取"当前有效价": 有 pre_price 用 pre_price (盘前真价), 否则 last。"""
+    if not quote:
+        return None
+    pre = quote.get("pre_price")
+    if pre:
+        return float(pre)
+    return quote.get("last")
+
+
 def is_vixy_proxy_window(phase=None) -> bool:
     """当前 (或给定) 市场阶段是否处于 **VIXY 实时代理优先** 窗口 — 唯一判据入口。
 
