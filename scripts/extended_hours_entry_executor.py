@@ -424,6 +424,126 @@ def _is_throttle_error(exc) -> bool:
                ("频率", "最多", "too frequent", "throttl", "rate limit"))
 
 
+# ── RFC-194 (2026-11-09): T-1 走势 / 市场波动分位 — 审计字段, 只记不判 ─────────
+# 动机 (4 年 200 只日线, 同日横截面剔 beta): ①连涨 3-5 日 ⇒ 后续 5-20 日跑输其余
+#   (CS -0.58%/-2.12%, t -3.0/-5.2); ②单日≤-7% 或 5 日≤-10% 急跌 ⇒ 后续 1-5 日跑赢
+#   (CS +0.70%/+1.17%), 但钱主要在**隔夜跳空** (隔夜 +0.57% t3.4 vs 盘中 +0.19% t1.0),
+#   且只在 SPY 20 日实现波动上三分位成立 (低波动组 -0.20%, t -0.2)。
+# 纪律: 本批只把"决策时可见"的 T-1 值与波动分位写进审计/仓位 metadata, **不参与任何
+#   判定、不拦单、不改任何阈值**; 数据缺失返回 None; 全部读本地日K缓存 (零外部调用/零额度)。
+# 为什么存而不是事后重算: 缓存是滚动的 (约 276 根), 且复权/拆股会改写历史 ⇒ 事后重建的
+#   值可能与当时可见值不同 (前视/落地偏差)。存下来即锁住决策时点口径。
+DAILY_BARS_CACHE = ROOT / "data" / "cache" / "daily_kline_v1.json"   # RFC-171 日K缓存 (只读)
+_PRIOR_MOVE_CACHE = {"loaded": False, "bars": {}, "spy_as_of": "",
+                     "spy_rv20_pct": None, "spy_rv20_rank": None}
+
+
+def _rv20_series(closes):
+    """(当前 rv20%, 过去 252 个 session 内的分位 0-100); 数据不足返回 (None, None)。"""
+    if len(closes) < 25:
+        return None, None
+    rets = [closes[i] / closes[i - 1] - 1 for i in range(1, len(closes))]
+
+    def _rv(end):
+        seg = rets[max(0, end - 20):end]
+        if len(seg) < 20:
+            return None
+        m = sum(seg) / len(seg)
+        var = sum((x - m) ** 2 for x in seg) / len(seg)
+        return math.sqrt(var) * math.sqrt(252) * 100
+
+    hist = [v for k in range(21, len(rets) + 1) for v in (_rv(k),) if v is not None]
+    if not hist:
+        return None, None
+    window = hist[-252:]
+    return hist[-1], 100.0 * sum(1 for h in window if h <= hist[-1]) / len(window)
+
+
+def _load_prior_move_cache():
+    """惰性加载本地日K缓存 (每进程一次)。任何异常 ⇒ 空缓存, 字段为 None, 不阻断下单。"""
+    if _PRIOR_MOVE_CACHE["loaded"]:
+        return _PRIOR_MOVE_CACHE
+    _PRIOR_MOVE_CACHE["loaded"] = True
+    try:
+        raw = json.loads(DAILY_BARS_CACHE.read_text())["symbols"]
+    except Exception:
+        _log.warning("prior_move: 日K缓存不可读, 审计字段留空", exc_info=True)
+        return _PRIOR_MOVE_CACHE
+    bars = {}
+    for sym, item in raw.items():
+        rows = sorted((str(b["time"])[:10], float(b["close"])) for b in item.get("bars") or [])
+        if len(rows) > 21:
+            bars[sym] = rows
+    _PRIOR_MOVE_CACHE["bars"] = bars
+    spy = bars.get("US.SPY") or []
+    if spy:
+        _PRIOR_MOVE_CACHE["spy_as_of"] = spy[-1][0]
+        rv, rank = _rv20_series([c for _, c in spy])
+        _PRIOR_MOVE_CACHE["spy_rv20_pct"] = round(rv, 2) if rv is not None else None
+        _PRIOR_MOVE_CACHE["spy_rv20_rank"] = round(rank, 1) if rank is not None else None
+    return _PRIOR_MOVE_CACHE
+
+
+_LIVE_STATE = {"ctx": None, "subscribed": set()}
+
+
+def _live_prior_bars(symbol, count=25):
+    """缓存断档兜底: get_cur_kline (订阅式实时K线, **不消耗历史K线额度**, 实测 0.04s)。
+
+    只在缓存 as_of 落后时调用, 且调用点在下单成交之后 ⇒ 即使卡住也不影响下单时延。
+    """
+    try:
+        from futu import OpenQuoteContext, KLType, SubType, RET_OK
+        if _LIVE_STATE["ctx"] is None:
+            _LIVE_STATE["ctx"] = OpenQuoteContext(
+                host=os.getenv("FUTU_OPD_HOST", "127.0.0.1"),
+                port=int(os.getenv("FUTU_OPD_PORT", "11111")))
+        ctx = _LIVE_STATE["ctx"]
+        if symbol not in _LIVE_STATE["subscribed"]:
+            ret, _ = ctx.subscribe([symbol], [SubType.K_DAY])
+            if ret != RET_OK:
+                return None
+            _LIVE_STATE["subscribed"].add(symbol)
+        ret, df = ctx.get_cur_kline(symbol, count, KLType.K_DAY)
+        if ret != RET_OK or df is None or len(df) < 21:
+            return None
+        return [(str(t)[:10], float(c)) for t, c in zip(df["time_key"], df["close"])]
+    except Exception:
+        _log.warning("prior_move: 实时K线兜底失败 %s", symbol, exc_info=True)
+        return None
+
+
+def _prior_move_context(symbol, today_et):
+    """决策时可见的 T-1 走势 (as-of 明确标注) + 市场波动分位。取不到返回 None。
+
+    源优先级: 本地日K缓存 (零调用) → 断档/缺失时 live get_cur_kline (零额度)。
+    stale=True 表示该标的 as_of 早于 SPY 的上一交易日 —— 分析面应剔除, 不要当 T-1 用
+    (防止把 T-3 的值静默当 T-1)。
+    """
+    st = _load_prior_move_cache()
+    rows = [(d, c) for d, c in (st["bars"].get(symbol) or []) if d < str(today_et)]
+    source = "cache"
+    if len(rows) < 21 or (st["spy_as_of"] and rows[-1][0] < st["spy_as_of"]):
+        live = _live_prior_bars(symbol)
+        if live:
+            rows, source = [(d, c) for d, c in live if d < str(today_et)], "live"
+    if len(rows) < 21:
+        return None
+    closes = [c for _, c in rows]
+    as_of = rows[-1][0]
+    return {
+        "as_of": as_of,
+        "source": source,
+        "stale": bool(st["spy_as_of"] and as_of < st["spy_as_of"]),
+        "t1_ret_pct": round((closes[-1] / closes[-2] - 1) * 100, 2),
+        "t5_ret_pct": round((closes[-1] / closes[-6] - 1) * 100, 2),
+        "t20_ret_pct": round((closes[-1] / closes[-21] - 1) * 100, 2),
+        "spy_rv20_pct": st["spy_rv20_pct"],
+        "spy_rv20_rank": st["spy_rv20_rank"],
+        "spy_as_of": st["spy_as_of"] or None,
+    }
+
+
 def _record_research_funnel(session, today, item, stage, reason=""):
     """源级漏斗 (只读 append): 每条研究候选的选取/拒绝/下单去向。"""
     if not RESEARCH_SOURCES_ON:
@@ -2195,6 +2315,7 @@ def _reconcile_broker_entry_orders(
                 chg=0.0,
                 vol=0.0,
                 buy_order_id=row["order_id"],
+                prior_move=_prior_move_context(row["symbol"], today or _today_et()),
             )
             if position_id and isinstance(state, dict) and today:
                 reconciled_session = _order_session(row, fallback_session)
@@ -3261,6 +3382,7 @@ def _write_open_position(
     symbol, qty, entry_px, decision_px, session, earn, chg, vol,
     buy_order_id="", position_usd=None, grade="B", structure=None,
     gate_mode="strict", side="LONG", decision_id="", admission_meta=None,
+    prior_move=None,
 ):
     """成交后写 open_positions + trade_records (盘中监控读 trade_records.metadata_json.stop_loss).
     返回 position_id. 幂等且不覆盖既有仓位.
@@ -3286,6 +3408,7 @@ def _write_open_position(
                            "ext_turnover_usd": float(entry_px or 0) * float(vol or 0),
                            "entry_grade": grade,
                            "gate_mode": gate_mode,
+                           "prior_move": prior_move,   # RFC-194 只记不判
                            "research_source": (earn or {}).get("research_source"),
                            "late_premarket": (earn or {}).get("late_premarket"),
                            "entry_position_usd": float(position_usd or POSITION_USD),
@@ -3500,12 +3623,15 @@ def _execute(
         except Exception as _adm_exc:  # 留痕失败绝不阻成交 (宁缺归因不误交易)
             rec["admission_error"] = str(_adm_exc)[:120]
         # 成交 → 写 open_positions + trade_records (盘中监控闭环; metadata.stop_loss 供 SL 判定)
+        # RFC-194: T-1 走势在**成交后**才算 — 兜底路径要调实时K线, 绝不占用下单前的时延。
+        rec["prior_move"] = _prior_move_context(symbol, _today_et())
         try:
             pos_id = _write_open_position(
                 symbol, fqty, fpx, price, session, earn, chg, vol, buy_oid,
                 position_usd=requested_position_usd, grade=grade, structure=structure,
                 gate_mode=gate_mode, side=side,
                 decision_id=ext_did, admission_meta=admission_meta,
+                prior_move=rec.get("prior_move"),
             )
         except Exception as exc:
             rec["ok"] = False
