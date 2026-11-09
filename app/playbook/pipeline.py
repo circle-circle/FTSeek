@@ -1817,11 +1817,11 @@ def _trim_majority_sector(valid: List[Any], sector: str, target_pct: float) -> i
 
 
 # ── 入口 1: 盘前生成 (regime → 收集 → 筛选 → 决策适配器 → 入库 → 飞书) ──
-def _mark_generate_done(today: str) -> None:
-    """[#22] 写生成完成标记 (best-effort, 失败不阻断返回)."""
+def _mark_generate_done(today: str, source: str = "pipeline") -> None:
+    """[#22] 写生成完成标记 (best-effort, 失败不阻断返回). source=[RFC-196] 来源留痕."""
     try:
         from app.playbook.db import PlaybookDB
-        PlaybookDB().mark_generate_completed(today)
+        PlaybookDB().mark_generate_completed(today, source)
     except Exception as e:
         logger.warning(f"[playbook] 生成完成标记写入失败(不影响本次结果): {e}")
 

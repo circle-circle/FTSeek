@@ -201,6 +201,18 @@ class PlaybookDB:
             # fwd_return_t1/t3/t5 在 schema 里定义但旧 DB 未迁移, 导致 ic_tracker 写入
             # 因列不存在而失败 (被 except 吞 → IC 永远 0). 显式 ALTER 补列.
             self._migrate_instruction_columns(conn)
+            # [RFC-196 2026-11-10] 生成完成标记的来源列 (老库 CREATE IF NOT EXISTS 不会补列)
+            try:
+                _gs_cols = {
+                    r[1] for r in conn.execute(
+                        "PRAGMA table_info(playbook_generate_state)"
+                    ).fetchall()
+                }
+                if "source" not in _gs_cols:
+                    conn.execute("ALTER TABLE playbook_generate_state ADD COLUMN source TEXT")
+                    logger.info("[playbook] 迁移: 已补列 playbook_generate_state.source")
+            except Exception as _gs_e:
+                logger.warning(f"[playbook] 迁移: 补列 playbook_generate_state.source 失败: {_gs_e}")
             # RFC-066 (2026-08-25): 存量表移除 UNIQUE(date, symbol) — 多轮指令共存前提.
             self._migrate_drop_date_symbol_unique(conn)
             self._backfill_execution_state(conn)
@@ -879,14 +891,27 @@ class PlaybookDB:
         ).fetchone()
         return int(row[0] or 0) if row else 0
 
-    def mark_generate_completed(self, date: str) -> None:
-        """[#22] 标记当日生成已完成 (幂等门依据; 异常中断不写, 允许重跑)."""
+    def mark_generate_completed(self, date: str, source: str = "pipeline") -> None:
+        """[#22] 标记当日生成已完成 (幂等门依据; 异常中断不写, 允许重跑).
+
+        source [RFC-196 2026-11-10]: 完成者来源, 审计留痕 —
+          'pipeline'  服务侧全量生成收尾写
+          'da_supply' DA 供给已完整落库 ⇒ 视作当日完成 (跳过全量生成)
+        老库无 source 列时降级为两列写入 (标记语义不变, 只是少一列留痕)。
+        """
         conn = self._conn()
-        conn.execute(
-            "INSERT OR REPLACE INTO playbook_generate_state (date, completed_at) "
-            "VALUES (?, ?)",
-            (date, now_utc().isoformat()),
-        )
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO playbook_generate_state (date, completed_at, source) "
+                "VALUES (?, ?, ?)",
+                (date, now_utc().isoformat(), source),
+            )
+        except Exception:
+            conn.execute(
+                "INSERT OR REPLACE INTO playbook_generate_state (date, completed_at) "
+                "VALUES (?, ?)",
+                (date, now_utc().isoformat()),
+            )
         conn.commit()
 
     def is_generate_completed(self, date: str) -> bool:
@@ -2266,9 +2291,11 @@ CREATE TABLE IF NOT EXISTS playbook_weekly_markers (
 
 -- [DEB-fullchain #22 2026-08-16] 生成完成标记: 幂等门从"任意行存在"改为"生成完成",
 -- UE 盘前写入不再锁死 pipeline 生成 (中断的半成品也可重跑)。
+-- [RFC-196 2026-11-10] source 列: 完成者来源留痕 ('pipeline' / 'da_supply')。
 CREATE TABLE IF NOT EXISTS playbook_generate_state (
     date TEXT PRIMARY KEY,
-    completed_at TEXT NOT NULL
+    completed_at TEXT NOT NULL,
+    source TEXT
 );
 
 -- [TZ-1 2026-08-30 DEB-timezone-duplication-audit] 熔断器锁存持久化:

@@ -12,6 +12,15 @@ from app.observability.progress_beat import progress_ping  # noqa: E402
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional
 
+# [RFC-196 2026-11-10] 当日全量生成尝试计数 (进程内; 崩溃即每轮重来 = 盘前窗被死步占满)
+#   11-09 实证: generate NameError 每轮烧 ~300s 后崩, 09:01→10:35 共 18 轮,
+#   watchdog 于 09:31 判"跨开盘卡死", 首轮入场拖到 09:40。上限只在**未成功**时生效
+#   (成功即写完成标记 → 后续轮次走幂等短路), 进程重启归零属预期。
+_GENERATE_MAX_ATTEMPTS = 2
+_GENERATE_ATTEMPTS: Dict[str, int] = {}
+_GENERATE_CAPPED: set = set()
+_GENERATE_NOTICE_ONCE: set = set()
+
 
 def _topup_window(hhmm: int, cfg: Dict[str, Any]) -> Optional[str]:
     """topup 时间窗判定 → "premarket" / "intraday" / None (窗外)。"""
@@ -38,8 +47,9 @@ def run_playbook_generate(
     build_runtime_context: Callable,
     build_instructions_from_votes: Callable,
     instruction_to_db_dict: Callable,
-    mark_generate_done: Callable[[str], None],
+    mark_generate_done: Callable[..., None],
     logger,
+    now_et_provider: Optional[Callable[[], Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     盘前生成今日交易指令 (Layer 0 + Layer 1)。
@@ -64,7 +74,10 @@ def run_playbook_generate(
             # 改为 ET 09:00 生成 → pre-market价格已反映隔夜消息, 更接近开盘reality
             from datetime import datetime as _dt
             import pytz as _pz
-            _now_et = _dt.now(_pz.timezone('US/Eastern'))
+            _now_et = (
+                now_et_provider() if now_et_provider is not None
+                else _dt.now(_pz.timezone('US/Eastern'))
+            )
             _generate_hour = _now_et.hour
             if _generate_hour < 9:
                 logger.debug(
@@ -72,6 +85,9 @@ def run_playbook_generate(
                     f"等待盘前数据成熟后生成 (目标: ET 09:00+)"
                 )
                 return None
+            from app.playbook.pipeline_parts.supply_gate import (
+                latest_generate_start_hhmm as _latest_start_hhmm,
+            )
             # [v0.70 P0-2 2026-08-26] 运行期bridge重载探测 — 服务启动早于19:00CST产出时,
             #   内存恒为 TechnicalFallback; 此处(ET≥09:00 已过闸)文件应已就绪, 补挂 Bridge.
             #   一天一次幂等, 失败静默 (缺失告警由 _check_bridge_health_and_alert 兜底).
@@ -99,6 +115,41 @@ def run_playbook_generate(
                     logger.debug(f"[playbook] {today} 生成完成标记存在，跳过生成 (幂等)")
                     scheduler._playbook_generated_date = today  # 同步内存标志
                     return None
+                # [RFC-196 2026-11-10] DA 供给已完整落库 ⇒ 当日视作生成完成, 不重跑全量生成。
+                #   #22 之后 "有行无标记" 仍判"上次中断", DA 先落库的日子每天白跑一轮
+                #   300-400s (11-05 实测 09:00:20→09:06:50); 11-09 崩溃时放大成 18 轮死循环。
+                #   判据/边界 (含"组合闸开启时不得跳过") 见 pipeline_parts/supply_gate.py。
+                try:
+                    from app.playbook.pipeline_parts.supply_gate import (
+                        da_supply_state as _da_supply_state,
+                        guardrail_blocks_skip as _guardrail_blocks_skip,
+                    )
+                    _sup = _da_supply_state(today)
+                    if _sup["state"] == "complete":
+                        if _guardrail_blocks_skip():
+                            logger.info(
+                                f"[playbook] {today} DA供给已落库 {_sup['have']}/"
+                                f"{_sup['want']} 候选, 但组合闸 (方向偏斜/sector) 开启 "
+                                f"⇒ 仍跑生成 (该闸只在生成侧生效)"
+                            )
+                        else:
+                            logger.info(
+                                f"[playbook] {today} DA供给已完整落库 "
+                                f"{_sup['have']}/{_sup['want']} 候选 ⇒ 视作生成完成, "
+                                f"跳过全量生成 (RFC-196)"
+                            )
+                            scheduler._playbook_generated_date = today
+                            mark_generate_done(today, source="da_supply")
+                            return None
+                    elif _sup["state"] == "partial":
+                        logger.info(
+                            f"[playbook] {today} DA供给仅落库 {_sup['have']}/"
+                            f"{_sup['want']} 候选 (缺 {_sup['missing']}) ⇒ 继续生成补行"
+                        )
+                except Exception as _sup_e:
+                    logger.warning(
+                        f"[playbook] 供给完成判定失败 (按未完成处理, 继续生成): {_sup_e}"
+                    )
                 _existing_cnt = 0
                 try:
                     _existing_cnt = len(db.get_instructions_by_date(today))
@@ -114,6 +165,38 @@ def run_playbook_generate(
                 if getattr(scheduler, "_playbook_generated_date", None) == today:
                     logger.debug(f"[playbook] {today} 已生成 (内存标志), 跳过")
                     return None
+            # [RFC-196 2026-11-10] 尝试上限 + 开盘前启动截止 —— 盘前全量生成是**单步不可中断**
+            #   的长步 (筛 69 只 + 基本面预取 + horizon, 实测 300-400s/轮)。崩一次就每轮重来
+            #   (11-09 NameError: 18 轮/94min), 一旦跨开盘就阻塞同轮入场执行 (首单拖到 09:40)。
+            #   两道都是"少跑一步"的减法护栏, 不改变任何已生成指令的内容。
+            if _GENERATE_ATTEMPTS.get(today, 0) >= _GENERATE_MAX_ATTEMPTS:
+                if today not in _GENERATE_CAPPED:
+                    _GENERATE_CAPPED.add(today)
+                    logger.error(
+                        f"[playbook] {today} 全量生成已尝试 "
+                        f"{_GENERATE_ATTEMPTS.get(today, 0)} 次仍未完成 → 今日不再重试 "
+                        f"(防每轮烧 300s 占死盘前窗; 排查: grep '盘前生成异常' logs/)"
+                    )
+                else:
+                    logger.debug(f"[playbook] {today} 生成尝试已达上限, 今日不再重试")
+                return None
+            # [RFC-196 2026-11-10] 开盘前启动截止 — 09:20 后再启动必跨开盘, 卡住同轮入场执行。
+            #   每日只提示一次 (盘前约每 2min 一轮, 免得刷屏)。
+            _deadline_hhmm = _latest_start_hhmm()
+            _now_hhmm = _now_et.hour * 100 + _now_et.minute
+            if _now_hhmm > _deadline_hhmm:
+                _notice_key = f"{today}:deadline"
+                if _notice_key not in _GENERATE_NOTICE_ONCE:
+                    _GENERATE_NOTICE_ONCE.add(_notice_key)
+                    logger.warning(
+                        f"[playbook] {today} ET {_now_et.strftime('%H:%M')} 已过全量生成"
+                        f"启动截止 {_deadline_hhmm // 100:02d}:{_deadline_hhmm % 100:02d}"
+                        f" → 本轮不启动生成 (长步跨开盘=阻塞入场; 人工可 force=True 重跑)"
+                    )
+                return None
+
+        if not force:
+            _GENERATE_ATTEMPTS[today] = _GENERATE_ATTEMPTS.get(today, 0) + 1
 
         logger.info(f"[playbook] 🚀 盘前生成开始 (date={today})")
 

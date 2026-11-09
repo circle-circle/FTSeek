@@ -1148,6 +1148,10 @@ playbook:
   enabled: true
   execute_mode: futu_simulate
   execution_parameters:
+    # [RFC-196 2026-11-10] 盘前全量生成最晚启动时点 (ET HHMM) — 单轮实测 300-400s 且
+    #   单步不可中断, 09:20 之后再启动必跨开盘, 卡住同轮入场执行 (11-09 实证: 18 轮/94min,
+    #   首单拖到 09:40)。过期即不启动 (人工应急可 force=True 重跑)。
+    generate_latest_start_et_hhmm: 920
     intraday_volume_ratio: 1.5
     min_confidence: 60
     daily_notional_cap_pct: 0.8
