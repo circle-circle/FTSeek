@@ -159,7 +159,8 @@ def _build_prompt(symbol: str, direction: str, signal: Dict[str, Any],
         f"  recent_holding_hours={history['sample_holding_hours']}\n\n"
         f"Market context:\n"
         f"  regime={market_ctx.get('regime', 'UNKNOWN')} "
-        f"vix={market_ctx.get('vix', 0):.1f} "
+        # 2026-11-09: VIX 缺失时不得按 0.0 渲染 (0 会被读成"极低波动"), 也不得崩在 None 上
+        f"vix={market_ctx.get('vix') if market_ctx.get('vix') is not None else 'N/A'} "
         f"spy_5m_momentum={market_ctx.get('spy_momentum_pct', 0):.2f}%\n\n"
         f"Decide: should this trade proceed?"
     )
