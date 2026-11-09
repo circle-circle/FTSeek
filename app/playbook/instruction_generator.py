@@ -407,6 +407,7 @@ def compute_instruction_values(
     atr_multiplier: float = None,
     horizon: str = "short",
     regime_context: "Optional[RegimeContext]" = None,
+    trade_date: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     基于 LLM 决策 + 原始数据，确定性计算所有数值。
@@ -423,10 +424,23 @@ def compute_instruction_values(
         atr_multiplier: ATR 止损倍数, None 时读配置 (当前未使用, 保留兼容)
         horizon: 持有周期 ("short" / "long"), 影响 rr_ratio
         regime_context: 市场环境上下文 (Phase 4 2026-06-30), 用于 VIX/regime 叠加
+        trade_date: 指令所属交易日 (YYYY-MM-DD, ET), 供费用模型选 SEC §31 费率档;
+            None ⇒ 取 ET 当日。费用可行下限 sizing 与费用率判据都吃这个日期。
 
     Returns:
         计算后的数值字段 dict
     """
+    # [RFC-195] 2026-11-06 RFC-186b 引入 `trade_date=trade_date` 实参但本函数没有该形参,
+    #   每轮盘前生成最后一步恒定 NameError ⇒ 生成永不完成/每轮烧 ~300s 后崩。
+    #   形参在此补齐; 未显式传入时按 ET 当日取 (fee_model 用该日期选费率档, 无日期=最新档)。
+    if not trade_date:
+        try:
+            from app.utils.timezone import now_et as _now_et_td
+            trade_date = _now_et_td().date().isoformat()
+        except Exception as _td_e:
+            logger.warning("[instruction_generator] trade_date 解析失败, 费用按最新费率档: %s", _td_e)
+            trade_date = None
+
     # 读取配置 (未显式传入时使用统一配置)
     pb_cfg = get_playbook_config()
     # 2026-06-26: 按 horizon 取 R:R 和止损参数, 优先从 playbook_horizon.yaml 读取

@@ -35,6 +35,46 @@ EXTERNAL_CLOSE_DUP_SQL = (
 )
 
 
+def _align_open_position_stops(conn, symbol: str, sl: float, tp: float) -> int:
+    """[RFC-195] 把 open_positions 的止损对齐到**指令真值** (仅限恢复路径合成的旧值).
+
+    病灶 (2026-11-09 实测 US.LLY): `_sync_to_position_store_locked` 在 playbook 落库前抢先建仓,
+    用 ATR×mult→`max_loss_pct` 2% 硬底合成 SL (1351.79 = −2%); 31s 后
+    `_reconcile_playbook_execution_states` 用指令真值 (1311.52 = −5%) 补录 trade_record。
+    出场链只读 trade_records (`exit_engine` 无 open_positions 引用) ⇒ 无交易影响, 但
+    open_positions 是推送/看板/旧风控告警的取值面 ⇒ 同一笔仓两表两个止损。
+
+    CAS 语义 (防松掉已收紧的止损): 只更新 initial_sl 与「current_sl 仍等于旧 initial_sl
+    的行」(即从未被 trailing 收紧过); current_sl 已被 trail 抬高/压低的行保持原值。
+    tp 只在原值为空时补, 不覆盖。
+
+    返回受影响行数; 任何异常只告警不外抛。
+    """
+    try:
+        if not symbol or not sl or float(sl) <= 0:
+            return 0
+        try:
+            from app.utils.timezone import now_et as _now_et_align
+            _ts = _now_et_align().isoformat()
+        except Exception:
+            _ts = datetime.now(timezone.utc).isoformat()
+        cur = conn.execute(
+            "UPDATE open_positions SET "
+            "  initial_sl = ?, "
+            "  initial_tp = CASE WHEN COALESCE(initial_tp,0)=0 THEN ? ELSE initial_tp END, "
+            "  current_sl = CASE WHEN ABS(COALESCE(current_sl,0)-COALESCE(initial_sl,0))<1e-6 "
+            "                    THEN ? ELSE current_sl END, "
+            "  updated_at = ? "
+            "WHERE symbol=? AND COALESCE(initial_sl,0)>0 "
+            "  AND ABS(initial_sl-?)>0.005 AND strategy_id LIKE 'playbook%'",
+            (float(sl), float(tp or 0), float(sl), _ts, symbol, float(sl)),
+        )
+        return int(cur.rowcount or 0)
+    except Exception as e:
+        logger.warning("[US Sync] open_positions 止损对齐失败 %s (sl=%s): %s", symbol, sl, e)
+        return 0
+
+
 def _playbook_position_fields(cursor, symbol: str):
     """算 Playbook SIM 仓位的 open_positions 写入值 (initial_sl / initial_tp / entry_time)。
 
@@ -726,6 +766,15 @@ class USPositionSync:
                                 entry_ts=_pick_order_ts(snapshot))
                             if ok:
                                 from app.utils.timezone import now_et
+                                # [RFC-195] 补录用的是指令真值 SL/TP ⇒ 同步对齐 open_positions,
+                                #   消除恢复路径抢先写入的合成止损 (LLY 11-09: 2% vs 5%)。
+                                _aligned = _align_open_position_stops(
+                                    conn, row['symbol'], float(row['stop_loss'] or 0),
+                                    float(row['take_profit'] or 0))
+                                if _aligned:
+                                    logger.info(
+                                        "[US Sync] %s open_positions 止损对齐指令真值 sl=%.2f (行数=%d)",
+                                        row['symbol'], float(row['stop_loss'] or 0), _aligned)
                                 pdb.mark_execution_booked(
                                     iid, attempt, execution_price=observation['price'],
                                     execution_time=row['execution_time'] or now_et().isoformat(),

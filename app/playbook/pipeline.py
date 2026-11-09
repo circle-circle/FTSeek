@@ -3007,7 +3007,7 @@ _sl_burst_alerted = set()
 
 # 2026-07-20 (DEB-20260720 修复3b): 平仓失败/仓位卡住告警去重 (进程级, symbol+day+reason).
 #   补上"为什么平仓失败"这一半黑暗 — 平仓失败=仓位卡住无止损保护, 切实盘后最致命.
-_close_fail_alerted = set()
+#   [RFC-195] 状态本体已搬到 app/playbook/close_alert_state.py (ALERTED)。
 
 # 2026-09-14 (复核方修复, 用户裁「按照建议执行」建议①): 瞬态 pending 与终态失败分流.
 #   病灶: exit_lifecycle 的 8 个 `*_pending` error 语义是"成交证据尚未回流"(腿刚提交、
@@ -3025,7 +3025,15 @@ _close_fail_alerted = set()
 #   终态零延迟 (宁可多告不可漏告): error 不以 `_pending` 结尾 (25 个, 含 9/11 事故根因
 #   exit_identity_required、exit_order_identity_conflict、exit_terminal_shortfall、
 #   exit_account_mismatch) 或 error 为空 ⇒ 立即 ERROR + 推送, 与修复前逐字同语义.
-_close_fail_first_seen = {}
+#   [RFC-195] 两族状态搬进 app/playbook/close_alert_state.py (pipeline.py 行数棘轮
+#   只降不升): 键按 symbol:date:reason 记且原先从不清除 ⇒ 同标的当天第二笔平仓继承
+#   上一笔的首见时刻 (11-09 US.GOOG 误报 age=11553s), 且告警去重键会让真卡单静默。
+#   成功收口时调 clear_symbol() 清该标的两族键。
+from app.playbook.close_alert_state import (
+    ALERTED as _close_fail_alerted,
+    FIRST_SEEN as _close_fail_first_seen,
+    clear_symbol as _clear_close_fail_state,
+)
 _TRANSIENT_PENDING_GRACE_S = 120.0
 #   宽限取值依据: sim 实测腿提交→回报落定 34s (LIMIT 3s 超时 + MARKET 30s deadline + 4s 回报
 #   滞后), 120s ≈ 3.5x 余量; 真卡单持续数分钟至数小时, 仍会升级告警, 只是晚 120s
@@ -3325,6 +3333,9 @@ def _book_playbook_exit_result(dual, result, conn=None):
             symbol=owner["symbol"], close_futu_order_id=result.get("futu_order_id"),
             exit_intent_id=intent_id, exit_owner=owner, exit_metadata=meta, exit_time=closed_at,
             fee_broker=dual)
+        # [RFC-195] 成功收口清该标的 pending 计时器/告警去重键 (状态见 close_alert_state.py)
+        if booked:
+            _clear_close_fail_state(owner["symbol"])
         if booked and decision.get("emit_overnight_shadow"):
             try:
                 from app.playbook.overnight_hold_shadow import emit as overnight_emit
