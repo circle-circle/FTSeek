@@ -142,3 +142,21 @@ API 返回 `VIX 28.18 (FRED VIXCLS 现货收盘·as of 2026-11-05) | 真值 25.6
 
 **未闭环**：DA 生料 `market_context.vix.caliber` 仍写"盘前/盘中实时代理"（写入方不在本仓，
 见 DEB §57.4）；`vix_data.json` 仍 FRED（比 CBOE 慢一天），换源=改门，另开 RFC。
+
+## 9. 已落地（第四轮，2026-11-09）：DA 生料口径标签（skill 侧，只改语义不注入真值）
+
+§57.4 记的"写入方不在本仓"已定位：DA 采集由 `~/.hermes/skills/deep-stock-analysis/` 驱动，
+`scripts/data_collector.py::_get_vix` 就是写 `collected.market_context.vix` 的地方。
+
+| 位置 | 修前 | 修后 |
+|---|---|---|
+| `data_collector._get_vix` 的 `caliber` | 「盘前/盘中实时代理 (VIX 现货无盘前交易)」 | 「VIXY×0.85 代理 · 盘前读到上一交易日收盘 (非实时)」+ `as_of_basis=prev_close` |
+| `data_collector._get_vix` docstring | 「盘前 VIXY 报价有效」 | 实测口径：23/23 交易日盘前 `last_price` = 上一交易日收盘 |
+| `llm_synth._format_data_for_prompt` | 「[代理值: US.VIXY×0.85 校准, VIXY=…; VIX 现货无盘前交易]」 | 追加「口径=上一交易日收盘, **非今日实时 VIX**」 |
+
+**为什么不顺手把真值塞进 prompt**：那是 §2 的 A2（输入变更），本 RFC 自定门槛是 N≥10 噪声基线；
+本轮只消除"标签与事实相反"这一条语义错误（零数值、零阈值、零判定）。
+
+测试：skill `tests/test_vix_caliber_label.py` 3 例（prompt 文本、无代理元数据时不臆造、源码契约）；
+变异验证 = 标签回退旧文案 + 删「非今日实时」⇒ 2 红/3 绿，复原 ⇒ 3 绿。
+全量 skill 测试见同批运行记录。
