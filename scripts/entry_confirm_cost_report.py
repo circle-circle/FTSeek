@@ -25,6 +25,7 @@ import argparse
 import json
 import sqlite3
 import statistics as st
+import sys
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -45,7 +46,8 @@ def _rows(days: int):
             continue
         try:
             r = json.loads(line)
-        except Exception:
+        except Exception as exc:
+            print(f"[entry_confirm_cost_report] 坏前向行跳过: {type(exc).__name__}: {exc}", file=sys.stderr)
             continue
         if r.get("arm") != "treatment" or r.get("status") != "ok":
             continue

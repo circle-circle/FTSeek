@@ -163,7 +163,8 @@ def premarket_freshness(checkpoint_root: Path, vixy: Dict[str, float]) -> List[d
         for path in raws:
             try:
                 payload = json.loads(path.read_text())
-            except (OSError, ValueError):
+            except (OSError, ValueError) as exc:
+                print(f"[vix_caliber_audit] raw 读取失败跳过 {path}: {type(exc).__name__}", file=sys.stderr)
                 continue
             vix = ((payload.get("collected") or {}).get("market_context") or {}).get("vix") or {}
             price = vix.get("vixy_price")

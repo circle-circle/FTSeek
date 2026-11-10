@@ -38,5 +38,5 @@ def clear_symbol(symbol: str) -> int:
             dropped += 1
         return dropped
     except Exception as e:
-        logger.warning("[playbook] 平仓成功清告警态失败 (%s): %s", symbol, e)
+        logger.warning("[playbook] 平仓成功清告警态失败 (%s): %s", symbol, e, exc_info=True)
         return 0

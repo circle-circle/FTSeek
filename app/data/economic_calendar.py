@@ -49,8 +49,8 @@ def _opend_reachable(host: str, port: int) -> bool:
     finally:
         try:
             sock.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("socket close 失败(忽略): %s", exc, exc_info=True)
 
 
 def fetch_us_event_schedule(now: datetime) -> Dict[str, Any]:
@@ -96,7 +96,8 @@ def fetch_us_event_schedule(now: datetime) -> Dict[str, Any]:
             try:
                 ts = datetime.fromtimestamp(float(row.get("timestamp", 0)), tz=timezone.utc)
                 ts_et = ts.astimezone(_et())
-            except Exception:
+            except Exception as exc:
+                logger.warning("事件时间戳坏行跳过: %s", exc, exc_info=True)
                 continue
             # 过滤已发生事件: Futu 日期边界按北京时间解释, 窗口会含 ET 前一日的
             # 已发布事件 (带 actual 值); 消费侧需要的是"未来日程"。
@@ -119,8 +120,8 @@ def fetch_us_event_schedule(now: datetime) -> Dict[str, Any]:
         if ctx is not None:
             try:
                 ctx.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("futu ctx close 失败(忽略): %s", exc, exc_info=True)
     return out
 
 

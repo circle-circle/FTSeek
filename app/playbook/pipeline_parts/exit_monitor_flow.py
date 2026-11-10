@@ -858,7 +858,7 @@ def monitor_playbook_exits(
                         source_type=r["source_type"],
                     )
                 except Exception as _sw_e:
-                    logger.debug(f"[ExitSessionWindowShadow] 记录异常 (已隔离): {_sw_e}")
+                    logger.warning(f"[ExitSessionWindowShadow] 记录异常 (已隔离): {_sw_e}", exc_info=True)
 
                 # 真实平仓 (broker) — target_env 按 source_type (PLAYBOOK_LIVE→real, 否则 sim)
                 _row_target = "real" if r["source_type"] == "PLAYBOOK_LIVE" else "sim"
@@ -997,7 +997,7 @@ def monitor_playbook_exits(
                         limit_price=_close_limit_price, limit_timeout_s=_be_timeout,
                         exit_owner=_playbook_exit_owner(db_path, r, meta), exit_decision=decision)
                 except Exception as _e:
-                    logger.error(f"[playbook dual] 平仓异常 {symbol} ({_row_target}): {_e}")
+                    logger.error(f"[playbook dual] 平仓异常 {symbol} ({_row_target}): {_e}", exc_info=True)
                     _alert_close_failure(symbol, _row_target, "BROKER_EXCEPTION", str(_e))
                     if _handle_live_rule_exit_failure is not None:
                         _handle_live_rule_exit_failure(

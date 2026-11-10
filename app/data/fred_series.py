@@ -2,9 +2,12 @@
 
 import csv
 import io
+import logging
 import math
 from datetime import date
 from typing import Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 def latest_valid_observation(csv_text: str) -> Tuple[Optional[str], Optional[float]]:
@@ -20,7 +23,8 @@ def latest_valid_observation(csv_text: str) -> Tuple[Optional[str], Optional[flo
         try:
             date.fromisoformat(observation_date)
             value = float(row[1].strip())
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            logger.warning("FRED 坏观测行跳过 %s: %s", observation_date, exc, exc_info=True)
             continue
         if not math.isfinite(value):
             continue

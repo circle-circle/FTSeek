@@ -93,7 +93,8 @@ def load_ledger() -> dict:
         try:
             r = json.loads(line)
             led[r["date"]] = r
-        except Exception:
+        except Exception as exc:
+            print(f"[gap_rank_attribution] 坏台账行跳过: {type(exc).__name__}: {exc}", file=sys.stderr)
             continue
     return led
 

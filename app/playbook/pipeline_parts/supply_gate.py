@@ -69,7 +69,7 @@ def bridge_candidate_symbols(trade_date: str) -> Optional[List[str]]:
         syms = [normalize_symbol(c.get("symbol")) for c in cands if c.get("symbol")]
         return syms or None
     except Exception as e:
-        logger.warning(f"[supply_gate] bridge 读取失败 (按未完成处理): {e}")
+        logger.warning(f"[supply_gate] bridge 读取失败 (按未完成处理): {e}", exc_info=True)
         return None
 
 
@@ -131,7 +131,7 @@ def guardrail_blocks_skip() -> bool:
         )
         return bool(portfolio_guardrail_enabled())
     except Exception as e:
-        logger.warning(f"[supply_gate] 组合闸开关读取失败 (按开启处理, 不跳过): {e}")
+        logger.warning(f"[supply_gate] 组合闸开关读取失败 (按开启处理, 不跳过): {e}", exc_info=True)
         return True
 
 
@@ -145,6 +145,7 @@ def latest_generate_start_hhmm() -> int:
     except Exception as e:
         logger.warning(
             f"[supply_gate] 生成截止时点读取失败 (按 "
-            f"{DEFAULT_LATEST_START_ET_HHMM} 处理): {e}"
+            f"{DEFAULT_LATEST_START_ET_HHMM} 处理): {e}",
+            exc_info=True,
         )
         return DEFAULT_LATEST_START_ET_HHMM

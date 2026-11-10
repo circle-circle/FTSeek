@@ -118,8 +118,8 @@ def fetch_index_bars(symbol: str, start: str, end: str) -> list:
     if fp.exists():
         try:
             return json.loads(fp.read_text())
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[p3_market_premise_probe] 缓存不可用重建 {fp.name}: {type(exc).__name__}", file=sys.stderr)
     from futu import AuType, KLType, RET_OK, OpenQuoteContext
     ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
     try:
@@ -199,7 +199,8 @@ def load_breadth():
             try:
                 gap = (datetime.strptime(d, "%Y-%m-%d")
                        - datetime.strptime(str(bars[i - 1]["time"])[:10], "%Y-%m-%d")).days
-            except Exception:
+            except Exception as exc:
+                print(f"[p3_market_premise_probe] 坏日期跳过 {d}: {type(exc).__name__}", file=sys.stderr)
                 continue
             if not prev or gap > 4:
                 continue

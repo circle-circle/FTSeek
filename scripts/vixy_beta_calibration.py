@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 import urllib.request
 from typing import Tuple
 
@@ -35,7 +36,8 @@ def _fred(series: str) -> pd.Series:
             continue
         try:
             rows.append((parts[0], float(parts[1])))
-        except ValueError:
+        except ValueError as exc:
+            print(f"[vixy_beta_calibration] 坏行跳过 {parts[0]}: {type(exc).__name__}: {exc}", file=sys.stderr)
             continue
     s = pd.Series(dict(rows))
     s.index = pd.to_datetime(s.index)

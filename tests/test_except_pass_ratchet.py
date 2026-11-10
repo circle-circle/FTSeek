@@ -14,8 +14,20 @@ import pathlib
 import re
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-BASELINE = 905  # 2026-11-03 校准 (只做等价校准, 未清剿): 实测 905 且该值**早于**本批已存在
-#   —— 在 worktree @5bec3843d (11-02 批次之前的提交) 上同口径计数同为 905, 本批净贡献 0。
+BASELINE = 899  # 2026-11-09 清剿 RFC-190/192/193/195 新增 36 处后调低 (935→899): 逐文件就地
+#   留痕, 零控制流变更 (脚本无 logger → print(..., file=sys.stderr) 带异常类型; app 模块 →
+#   logger.warning(..., exc_info=True) — 一律 warning, 不用 debug: W4 棘轮把新点位 debug 判违反)。
+#   36 处全部活体探针逼走 except 分支, 证实无 NameError 且输出/落盘不变。只降不升 (原 905 是 11-03 等价校准值)。
+#   组成对账 (勿用总数差额冒充清零): 935 = 905 + 36 (RFC-190/192/193/195 新增点位) − 6
+#   (他批顺带愈合: macro_calendar_shadow_collect −3 / signal_context_store −2 /
+#   pre_trade_check −1)。36 处里 **31 处在已跟踪文件** (本提交清剿), 另 **5 处**落在 4 个
+#   **他人未提交的新脚本** (early_tight_acceptance_replay 2 / entry_confirm_chase_cap_evidence 1 /
+#   playbook_fee_gate_audit 1 / da_regime_divergence_check 1) — 那 4 个文件不属本批, 不 add,
+#   修复留在工作区随其作者入库。
+#   899 = 本提交落地后 HEAD 与工作区的**同口径实测** (提交后另开 worktree 复核, 见 RFC-197 §5);
+#   基线取两数之上 ⇒ 两侧都绿。他批把新脚本 + 未提交愈合入库后要按实测重新等价校准。
+#   [历史] 2026-11-03 校准 (只做等价校准, 未清剿): 实测 905 且该值**早于**当时批次已存在
+#   —— 在 worktree @5bec3843d (11-02 批次之前的提交) 上同口径计数同为 905, 该批净贡献 0。
 #   原 900 是 2026-10-28 的值, 之后有并行工作流新增 5 处未同步基线 ⇒ 棘轮长期常驻红,
 #   而常驻红会把真缺口掩埋成"那条老红"。本次仅校准口径恢复信号 (任一新出现即 fail);
 #   那 5 处清剿不属本批范围, 留给日志卫生批 (清完把本值继续调低)。

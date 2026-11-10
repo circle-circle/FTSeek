@@ -155,5 +155,5 @@ def record(direction: str, symbol: str, entry: float, cur: float, peak_pct: floa
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
         return row
     except Exception as e:  # 影子失败不得影响退出链
-        logger.warning("[RFC-188 shadow] 落盘失败: %s", e)
+        logger.warning("[RFC-188 shadow] 落盘失败: %s", e, exc_info=True)
         return None

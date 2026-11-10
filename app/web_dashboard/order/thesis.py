@@ -78,8 +78,8 @@ def auto_generate_thesis(service: "ManualOrderService", order: "ManualOrder") ->
                 from app.data.market_env_truth import caliber_short
                 ctx["vix_caliber"] = caliber_short(_vd.get("source"))
                 ctx["vix_as_of"] = _vd.get("as_of")
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("thesis vix 口径标签获取失败: %s", exc, exc_info=True)
     except Exception:
         pass
 
@@ -267,8 +267,8 @@ def build_exit_context(service: "ManualOrderService", symbol: str,
                 from app.data.market_env_truth import caliber_short
                 exit_ctx["vix_caliber"] = caliber_short(_vd.get("source"))
                 exit_ctx["vix_as_of"] = _vd.get("as_of")
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("exit_ctx vix 口径标签获取失败: %s", exc, exc_info=True)
     except Exception:
         pass
 

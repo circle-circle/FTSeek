@@ -109,7 +109,7 @@ def _stale_did_guard_enabled() -> bool:
         from app.core.config_container import get_config as _gc_sd
         return bool(_gc_sd().get_dotted("playbook.stale_did_overwrite_guard_enabled", True))
     except Exception as _sd_e:
-        logger.warning(f"[save_instruction] 陈旧did守卫开关读取失败 (保持开启): {_sd_e}")
+        logger.warning(f"[save_instruction] 陈旧did守卫开关读取失败 (保持开启): {_sd_e}", exc_info=True)
         return True
 
 

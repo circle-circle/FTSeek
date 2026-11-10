@@ -111,7 +111,8 @@ def main(argv=None) -> int:
             for line in JSONL.read_text(encoding="utf-8").splitlines():
                 try:
                     rec = json.loads(line)
-                except Exception:
+                except Exception as exc:
+                    print(f"[premarket_index_snapshot] 坏行情行跳过: {type(exc).__name__}: {exc}", file=sys.stderr)
                     continue
                 n += 1
                 if rec.get("session_valid"):

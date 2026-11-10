@@ -528,7 +528,7 @@ def run_playbook_morning_push(
             logger.warning(f"[playbook] ⚠️ 盘前指令推送未成功 ({today}), 下轮重试")
         return ok
     except Exception as e:
-        logger.warning(f"[playbook] 盘前指令推送任务异常 (已隔离): {e}")
+        logger.warning(f"[playbook] 盘前指令推送任务异常 (已隔离): {e}", exc_info=True)
         return None
 
 

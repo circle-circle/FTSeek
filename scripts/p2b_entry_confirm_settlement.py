@@ -65,7 +65,8 @@ def checkpoint_direction(day: str, sym: str, alt_day: str | None = None) -> str 
             continue
         try:
             j = json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as exc:
+            print(f"[p2b_entry_confirm_settlement] checkpoint 解析失败跳过 {p.name}: {type(exc).__name__}", file=sys.stderr)
             continue
         cand = ((j.get("_llm_output") or {}).get("direction")) or j.get("direction")
         cu = str(cand or "").upper()

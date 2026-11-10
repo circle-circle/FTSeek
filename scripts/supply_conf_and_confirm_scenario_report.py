@@ -21,6 +21,7 @@ import json
 import random
 import sqlite3
 import statistics as st
+import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -105,7 +106,8 @@ def vol_map():
         for r in rows:
             try:
                 out[(sym, r[0])] = (r[2] - r[3]) / max(r[4], 1e-9) * 100
-            except Exception:
+            except Exception as exc:
+                print(f"[supply_conf_and_confirm_scenario_report] 坏 bar 跳过 {sym}: {type(exc).__name__}: {exc}", file=sys.stderr)
                 continue
     return out
 

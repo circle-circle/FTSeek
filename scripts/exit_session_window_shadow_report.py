@@ -38,7 +38,8 @@ def _load_rows() -> list[dict]:
             continue
         try:
             out.append(json.loads(ln))
-        except Exception:
+        except Exception as exc:
+            print(f"[exit_session_window_shadow_report] 坏影子行跳过: {type(exc).__name__}: {exc}", file=sys.stderr)
             continue
     return out
 
@@ -65,8 +66,8 @@ def _fetch_1m(symbol: str, date: str) -> dict[str, float]:
     finally:
         try:
             ctx.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[exit_session_window_shadow_report] ctx.close 失败: {type(exc).__name__}: {exc}", file=sys.stderr)
 
 
 def run(use_fill: bool = False) -> int:

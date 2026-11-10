@@ -188,7 +188,8 @@ def _write_jsonl(rows: list) -> None:
         for line in _OUT_JSONL.read_text(encoding="utf-8").splitlines():
             try:
                 seen.add(json.loads(line)["trade_id"])
-            except Exception:
+            except Exception as exc:
+                print(f"[wweek_peak_axis_shadow] 坏去重行跳过: {type(exc).__name__}: {exc}", file=sys.stderr)
                 continue
     fresh = [r for r in rows if r["trade_id"] not in seen]
     if fresh:

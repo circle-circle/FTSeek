@@ -60,7 +60,8 @@ def load_cards() -> List[dict]:
             continue
         try:
             j = json.loads(Path(p).read_text())
-        except Exception:
+        except Exception as exc:
+            print(f"[entry_reach_audit] checkpoint 解析失败跳过 {Path(p).name}: {type(exc).__name__}", file=sys.stderr)
             continue
         lo = j.get("_llm_output") or {}
         ep = lo.get("execution_plan") or {}

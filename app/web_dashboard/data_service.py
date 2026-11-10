@@ -353,7 +353,7 @@ class DataService:
                 self._last_account_data_at = _fresh_iso()
                 return dict(funds.iloc[0])
         except Exception as e:
-            logger.error(f"[DataService] accinfo failed: {e}")
+            logger.error(f"[DataService] accinfo failed: {e}", exc_info=True)
         return {}
 
     async def get_positions_raw(self) -> list:
@@ -648,7 +648,7 @@ class DataService:
                 with open(vix_path) as f:
                     cache = json.load(f) or {}
         except Exception as e:
-            logger.debug(f"[DataService] VIX detail 读缓存失败: {e}")
+            logger.warning(f"[DataService] VIX detail 读缓存失败: {e}", exc_info=True)
 
         value = cache.get("vix")
         value = round(float(value), 2) if value and value > 0 else None

@@ -124,7 +124,7 @@ def compute_position_size(
                     )
                     size = _q_fee
         except Exception as _ff_err:  # 求解失败不得阻断 sizing (原股数照常, 由 admission 判)
-            logger.warning(f"[sizing] 费用可行下限求解失败 (用原股数): {_ff_err}")
+            logger.warning(f"[sizing] 费用可行下限求解失败 (用原股数): {_ff_err}", exc_info=True)
     return size
 
 
@@ -438,7 +438,7 @@ def compute_instruction_values(
             from app.utils.timezone import now_et as _now_et_td
             trade_date = _now_et_td().date().isoformat()
         except Exception as _td_e:
-            logger.warning("[instruction_generator] trade_date 解析失败, 费用按最新费率档: %s", _td_e)
+            logger.warning("[instruction_generator] trade_date 解析失败, 费用按最新费率档: %s", _td_e, exc_info=True)
             trade_date = None
 
     # 读取配置 (未显式传入时使用统一配置)

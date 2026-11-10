@@ -53,7 +53,8 @@ def load_pool(day: str) -> List[dict]:
     for p in sorted(CKPT.glob(f"{day}/*.raw.json")):
         try:
             j = json.loads(p.read_text())
-        except Exception:
+        except Exception as exc:
+            print(f"[da_crosssection_replay] checkpoint 解析失败跳过 {p.name}: {type(exc).__name__}", file=sys.stderr)
             continue
         s = (j.get("collected") or {}).get("snapshot") or {}
         if not isinstance(s, dict) or not s:

@@ -33,6 +33,7 @@ import glob
 import json
 import random
 import sqlite3
+import sys
 import statistics as st
 from collections import defaultdict
 from datetime import datetime
@@ -58,27 +59,30 @@ def load_bars() -> dict:
             for r in rows:
                 try:
                     out.setdefault(sym, {})[r[0]] = (float(r[1]), float(r[2]), float(r[3]), float(r[4]))
-                except Exception:
+                except Exception as exc:
+                    print(f"[non_nominated_counterfactual] 坏 bar 跳过 {sym}: {type(exc).__name__}: {exc}", file=sys.stderr)
                     continue
     for p in glob.glob(str(REPLAY)):
         try:
             data = json.loads(Path(p).read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as exc:
+            print(f"[non_nominated_counterfactual] 坏 json 跳过 {p}: {type(exc).__name__}: {exc}", file=sys.stderr)
             continue
         for r in data:
             # 文件名形如 daily_US_AAPL_<start>_<end>.json ⇒ 从文件名取 symbol
             sym = Path(p).name.split("_")[1] + "." + Path(p).name.split("_")[2]
             try:
                 out.setdefault(sym, {})[r[0]] = (float(r[1]), float(r[2]), float(r[3]), float(r[4]))
-            except Exception:
+            except Exception as exc:
+                print(f"[non_nominated_counterfactual] 坏 bar 跳过 {sym}: {type(exc).__name__}: {exc}", file=sys.stderr)
                 continue
     if CCF_BARS.exists():                       # 自抓数据优先级最高
         try:
             for sym, dd in json.loads(CCF_BARS.read_text(encoding="utf-8")).items():
                 for d, ohlc in dd.items():
                     out.setdefault(sym, {})[d] = tuple(ohlc)
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[non_nominated_counterfactual] 自抓 bars 解析失败 {CCF_BARS}: {type(exc).__name__}: {exc}", file=sys.stderr)
     return out
 
 
@@ -117,8 +121,8 @@ def refresh_bars(symbols, start: str, end: str, verbose=True) -> dict:
         try:
             if ctx is not None:
                 ctx.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[non_nominated_counterfactual] ctx.close 失败: {type(exc).__name__}: {exc}", file=sys.stderr)
     CCF_BARS.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
     if verbose:
         print(f"[refresh] 成功 {ok} / 失败 {fail} 只 → {CCF_BARS.name} ({len(out)} symbols)")

@@ -138,5 +138,5 @@ def record_exit_session_window_shadow(
         )
         return True
     except Exception as e:  # pragma: no cover - 保险丝
-        logger.debug(f"[ExitSessionWindowShadow] 记录失败 (已隔离): {e}")
+        logger.warning(f"[ExitSessionWindowShadow] 记录失败 (已隔离): {e}", exc_info=True)
         return False

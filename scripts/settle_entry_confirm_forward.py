@@ -607,7 +607,8 @@ def avoided_bps_from_post(decision_row, posts):
             continue
         try:
             move = float(raw)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            print(f"[settle_entry_confirm_forward] {field} 非数值跳过 {raw!r}: {type(exc).__name__}", file=sys.stderr)
             continue
         if not math.isfinite(move):
             continue

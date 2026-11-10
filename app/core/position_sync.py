@@ -71,7 +71,7 @@ def _align_open_position_stops(conn, symbol: str, sl: float, tp: float) -> int:
         )
         return int(cur.rowcount or 0)
     except Exception as e:
-        logger.warning("[US Sync] open_positions 止损对齐失败 %s (sl=%s): %s", symbol, sl, e)
+        logger.warning("[US Sync] open_positions 止损对齐失败 %s (sl=%s): %s", symbol, sl, e, exc_info=True)
         return 0
 
 

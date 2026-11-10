@@ -125,7 +125,7 @@ class VIXMonitor:
                         logger.debug("缓存已超出 TTL 但未超硬超时 (age=%.0fs)", age)
                         return data  # 仍可用但会尝试刷新
         except Exception as e:
-            logger.error("加载缓存失败：%s", e)
+            logger.error("加载缓存失败：%s", e, exc_info=True)
         return {}
 
     def _save_cache(self, data: Dict):
@@ -238,7 +238,7 @@ class VIXMonitor:
                 logger.debug("VIX (FRED): %.2f (as of %s)", vix, self._last_as_of)
                 return vix
         except Exception as e:
-            logger.debug("FRED VIX 获取失败: %s", e)
+            logger.warning("FRED VIX 获取失败: %s", e, exc_info=True)
         return None
 
     def _fetch_vix_alphavantage(self) -> Optional[float]:
@@ -449,8 +449,8 @@ class VIXMonitor:
                 if (now_et().date() - _date.fromisoformat(prev_as_of)).days > 5:
                     logger.warning("[VIX] 跳变告警跳过: 锚点 as_of=%s 已过期", prev_as_of)
                     return False
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("[VIX] 锚点新鲜度检查失败, 按未过期继续: %s", exc, exc_info=True)
         try:
             from app.utils.timezone import now_et
             today = now_et().date().isoformat()
@@ -459,8 +459,8 @@ class VIXMonitor:
                 try:
                     if json.loads(state_path.read_text()).get("date") == today:
                         return False
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("[VIX] 跳变日标记读取失败(可能重复告警一天): %s", exc, exc_info=True)
             state_path.parent.mkdir(parents=True, exist_ok=True)
             state_path.write_text(json.dumps({"date": today, "est": est}))
             return True
@@ -594,7 +594,7 @@ def send_vix_alert(feishu_webhook: str, vix_data: Dict):
         response.raise_for_status()
         logger.info("VIX 警报已推送至飞书 | 级别=%s", level)
     except Exception as e:
-        logger.error("推送 VIX 警报失败：%s", e)
+        logger.error("推送 VIX 警报失败：%s", e, exc_info=True)
 
 
 if __name__ == "__main__":

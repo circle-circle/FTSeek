@@ -523,7 +523,7 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
                 live_sl=effective_sl, held_minutes=held_minutes, meta=meta,
             )
         except Exception as _stg_err:  # 影子失败绝不阻断退出链
-            logger.warning(f"[RFC-188 shadow] hook 失败: {_stg_err}")
+            logger.warning(f"[RFC-188 shadow] hook 失败: {_stg_err}", exc_info=True)
 
     # ── 退出判断 (按优先级, if/elif/elif 链) ──
     # 优先级: SL > TAKE_PROFIT > OVERNIGHT_GAP > PRE_CLOSE > TIME_EXIT > MAX_HOLD

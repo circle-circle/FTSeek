@@ -234,7 +234,7 @@ def _close_trade_record(
                     # fallback: wall-clock 差值 (比 0 好); abs 兜底防 naive 北京时间被当 ET 导致负值 (如 EOG -6.7h)
                     holding_hours = round(abs((_now_dt - _entry_dt).total_seconds()) / 3600, 1)
         except Exception as _hh_err:
-            logger.debug(f"[_close_trade_record] holding_hours 重算失败 trade_id={trade_id}: {_hh_err}")
+            logger.warning(f"[_close_trade_record] holding_hours 重算失败 trade_id={trade_id}: {_hh_err}", exc_info=True)
             # 降级: 用调用方传入的 holding_hours (比0好)
 
         # 2026-07-16 P1 修复: pnl_pct 兜底反算.

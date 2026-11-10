@@ -79,11 +79,13 @@ def fetch_cboe(name: str) -> Dict[str, float]:
             continue
         try:
             day = datetime.strptime(row[0], "%m/%d/%Y").strftime("%Y-%m-%d")
-        except ValueError:
+        except ValueError as exc:
+            print(f"[market_env_ledger] 坏日期行跳过 {row[:1]}: {type(exc).__name__}: {exc}", file=sys.stderr)
             continue
         try:
             out[day] = float(row[4])
-        except ValueError:
+        except ValueError as exc:
+            print(f"[market_env_ledger] 坏值行跳过 {row[:1]}: {type(exc).__name__}: {exc}", file=sys.stderr)
             continue
     return out
 
@@ -163,7 +165,8 @@ def read_proxy_values() -> Dict[str, dict]:
         for path in day_dir.glob("US.*.raw.json"):
             try:
                 payload = json.loads(path.read_text())
-            except (OSError, ValueError):
+            except (OSError, ValueError) as exc:
+                print(f"[market_env_ledger] raw 读取失败跳过 {path}: {type(exc).__name__}", file=sys.stderr)
                 continue
             vix = ((payload.get("collected") or {}).get("market_context") or {}).get("vix") or {}
             if vix.get("vixy_price"):
