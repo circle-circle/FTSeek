@@ -1,5 +1,99 @@
 # FTSeek-US · HANDOFF
 
+## 2026-11-09 18:47 · SRC/STORY 引用层 n=10 离线 A/B：结构 PASS，生产 NOT_APPROVED
+
+- **执行完整**：预注册 BUY6/SHORT2/SKIP2 共10只，40/40 run、80次主/挑战者调用全部结束；
+  处理臂20/20有效，100条claim中95条含 `evidence_ids`，97/97引用ID合法，10/10标的有引用。
+- **人工审计**：确定性前30条为 SUPPORTED28 / UNSUPPORTED1 / INSUFFICIENT1，主支持率93.33%，五项结构门全过；
+  KLAC short put被写成买入put为明确反向错引，ARM复合Put支撑腿证据不足。
+- **反证保留**：挑战者7条告警中ARM/U两条成立，其余5条不作为错引；U把Wedbush 63美元ID错配到BTIG 60美元，
+  且不在前30条样本，故不能把抽检通过率外推为50条全量认证。样本只覆盖6只。
+- **方向/经济边界**：control稳定7/10、treatment8/10，原始modal match 7/10含CAT的MIXED==MIXED；
+  不据此宣称方向改善，更无成交、费后净bps或edge结论。promotion=`NOT_APPROVED_N10_STRUCTURE_ONLY`。
+- **零生产变更**：候选10→10，未改生产prompt/VIX/Gate/admission/仓位/Playbook，生产DB/pool/checkpoint/cron零写入，无需重启。
+  证据见 DEB §62.3–62.5、`data/shadow/da_citation_ab/2026-11-06_v1/summary.json`；复跑器测试7 passed。
+
+## 2026-11-09 17:47 · DA 推荐证据卡 v1：记录链已落地，语义引用待独立 shadow
+
+- **生产记录**：新增 `recommendation_evidence_v1`，统一新闻稳定 ID/时点、市场口径、价格/行业对齐、反证和证据缺口；
+  写入 analysis→bridge→`raw_instruction.recommendation_evidence`，异常只落 `ERROR` 不丢候选。skill 同步 v0.97。
+- **零交易行为变更**：不改 prompt、VIX、Gate、admission、候选数量、仓位或执行，不接离线 event_stream 原型；
+  无 app/cron/schema 变更，无需重启，下一次 DA cron 调用生效。
+- **离线 A/B**：36→36 候选、36/36 证据卡、prompt 36/36 不变、输入 36/36 未变异；549 条新闻引用时间全可解析，
+  35 条有价格时点，36 条有挑战者反证；LLM/DB/checkpoint 写入均为 0。
+- **未闭环证据**：174 条 bull/bear 论点仅 2 条精确链接新闻、172 条明确 `UNLINKED`，不做模糊硬配；
+  旧 raw 行业相对收益和 VIX 日历日不可回溯，保持空值。该链接率不是总体论据质量分，也不证明 edge。
+- **验证/下一步**：聚焦 27 passed；DA 全量 153 passed/1 skipped/1 个既有固定旧日期失败；仓内 DA 输出契约 69 passed；
+  回放断言/py_compile/diff-check 通过。
+  证据见 DEB §61、`docs/analysis/2026-11-09-da-recommendation-evidence-replay.json`；下批检查卡片覆盖/ERROR 与候选数，
+  SRC/STORY 显式引用须另做重复控制 + prompt shadow A/B。
+
+## 2026-11-09 17:06 · VIX/宏观/DA 输入真实性修复：已部署，§59 范围 VERIFIED
+
+- **生产修复**：共享 FRED 最近有效观测+as-of；VIX/VXV 与 10Y/2Y 仅同日期计算；动态经济日历替换硬编码猜测；
+  DA 主标的/peer 统一时段有效价，行业 5 日收益至少 6 根日 K；缺值 `N/A`，旧 raw 未验证行业数值不再冒充真值。
+- **数量约束**：离线复放 36 份 raw，候选 36→36、prompt 36/36 构建、展示 peer 177→177；
+  35/35 有效盘前快照涨跌与 `effective_chg_pct` 一致。未新增筛选门、未改 VIX 阈值/仓位规则，未启动 A2 真值注入。
+- **透明边界**：旧行业数值因无法回溯而标 `N/A`，不是编造的修复值；回放 `llm_calls=0`，只证明输入/输出 prompt 与数量，
+  不声称模型方向或成交反事实不变。质量门保留原 18/20 回退分并标非观测；LLM 文本缺数写 `N/A`。
+- **验证**：仓内 201 passed；DA skill 142 passed/1 skipped/1 个固定旧日期导致的既有 stale_bar 测试失败；
+  动态日历实测 7 条事件，FRED 与 VIX/VXV 同日利差通过，FROG 实时 peer 8/8 有效。
+- **部署**：17:06 `systemctl restart ftseek-us`，PID=2339967，启动冒烟全过，启动时 MCD/GOOG/PLTR/MRVL/AVGO
+  5 个未平仓不变；随后 PLTR/AVGO 按既有 `SL_BREAKEVEN`/`SL_TRAIL_LOC` 正常平仓，截至 17:10:46
+  MCD/GOOG/MRVL 3 个未平仓，均非本批筛选减项。
+  其他 agent 的 event_stream 文件哈希重启前后一致。
+- **证据/下一步**：DEB §60、RFC-190 §12、`docs/analysis/2026-11-09-da-input-caliber-replay.json`；
+  下一 DA 批次例行核对 `session_effective_v1`、样本数与 `N/A`，A2 仍等既有 N≥10 噪声基线，不新增交易门。
+
+## 2026-11-09 16:2x · VIX/宏观/DA 输入真实性独立复核：全链 NOT_CERTIFIED
+
+- **已核实**：CBOE 11-06 VIX/VIX9D/VIX3M = 25.64/27.18/24.60，与本地账本一致；FRED 最新有效值仍为
+  11-05 = 28.18，确慢一个交易日。VIX 口径脚本复跑维持 23/23 盘前代理=上一交易日 VIXY 收盘、
+  15 阈值翻转 15/23、regime 分项不同 18/23。
+- **P0 新发现**：盘前经济日历硬编码 FOMC 日期与联储官方不符，11-09 实测输出「本周无重要事件」，
+  而仓内动态日历同刻有 7 条美国 HIGH/MEDIUM 事件；该文本真实进入盘前辩论。
+- **P0 新发现**：11-06 共 36 份 DA raw 中，35/35 有效盘前快照的基本面「涨跌幅」约为 0，和盘前实际涨跌冲突；
+  行业「今日」混用基准，行业「5日」用 5 个收盘只算 4 个收益间隔（展示层 177 个 peer）。
+- **P1 漏网**：AV provider 的 FRED 腿仍有 `.` 吞腿缺陷；宏观利率/VXV 未带 as-of；live VIX 恢复可能串用旧 FRED 日期。
+  另将 `position_exit_monitor` 1.05→0.85 的变更分类勘误为「潜在退出行为变化」，不再称零行为变更。
+- **落档**：完整证据与修复顺序见 `docs/debates/DEB-20261106-market-risk-switch-review.md` §59；
+  RFC-190 新增 §11。当前可信/禁用输入边界已明确，**不得继续把全链描述为真实精准**。
+- **边界**：本轮只读外网/DB/文件与 prompt 重放；仅改 3 份文档，无生产代码/配置/DB/cron 变更，无推送、无重启。
+- **下一步**：先撤换伪经济日历并修 DA 涨跌口径（离线 A/B 后进入 DA）；再统一 FRED 最近有效观测+as-of；
+  VIX 真值注入仍走 RFC-190 A2 的 N≥10 噪声基线，不新增任何 VIX 交易门。
+
+最后更新：2026-11-09（本条）
+
+## 2026-11-08 19:5x · RFC-192（禁跳空 + 抬单名帽）复核：进入勘误态，建议只批 C2
+
+- **触发**：用户要求核查最新 RFC（RFC-192 v2，2026-11-08 18:21）+ 授权把复核写回文档。
+- **复核方式**：只读复算，产出**可复现尺子** `scripts/rfc192_verification.py`（DB `mode=ro`、零写入、零网络、不入 cron）；
+  已登记 `docs/REPLAY-SCRIPT-LEDGER.md`（证据冻结，被 RFC-192 §10 与 RFC-191 §8.6 引用）。
+- **8 条勘误**（详见 `docs/decisions/RFC-192-fewer-larger-trades.md` §10.1）：
+  **F1 致命** C2 要滤的 gap 字段 ≠ 证据字段（证据是**开盘跳空** open vs prev_close，C2 字面写"盘前跳空"；
+  盘前字段只覆盖 148/578 笔，两口径 1.0% 判定一致仅 77%；盘前口径同一阈值表 <1.0% → 62 笔 +$81 而非 230 笔 +$866）。
+  **F2 致命** §5 五道门在 A 臂自己的历史读数上 **3 道 FAIL**（t=0.74<2 / 大亏率 3.5%>3% / 剔前3 = −$184、单日 52%>50%），
+  且 C1 三档口径 t = 0.68/0.74/0.76 **全部 <2** ⇒ §9"建议只批 A"不成立。
+  **F3** "现状负值"是时代混算：负号几乎全在最早 11 个交易日（−$738），最近 74 日 DA 已 **+$83**；§2.6 的 −$882 复现不出。
+  **F4** 费率公式与仓内 SSOT 冲突：单地板 vs **双地板** `max(39800/N, 262/P)+0.21`（`scripts/ticket_size_breakeven.py`），
+  第二项与名义无关 ⇒ 判据 #3（费 <7bps）对低价股结构性不可达（≤$20 的 17 笔中位 17.9bps）。
+  **F5** Phase 0 影子**未上线**：crontab 与 `/etc/cron.d/ftseek-tasks` 均无 `gap_rank_attribution.py`，ledger 是手工回填，
+  且 `entry_gap` 覆盖率退化（11-05 仅 2 笔、11-06 为 6/12）。
+  **F6** C1 机制：名义 = min(风险预算, 帽)，保留组只有 67/230 顶到帽；历史风险预算**不可还原**（549/598 行被 re-price 覆写）⇒ C1 只能给区间。
+  **F7** 实现事实 8 处与文档不符（无独立执行队列 / C2 无现成字段可读 / playbook 热载有效 / `max_position_pct` 三处默认值 /
+  EXT 占 playbook 日计数 / `max_daily_positions:16` 是活键 / 新键须走 `ConfigContainer.get_dotted()` / C2 实为事后拒绝）。
+  **F8** RFC-191 §8 已撤回 Option B 并作废 C，RFC-192 未继承该撤回 ⇒ 已在 RFC-191 §8.6 补交叉引用。
+- **修正建议（§10.9/§10.10）**：只批 **C2 单变量**（gap 口径先定死 + 口径一致性前置检查 + 影子真装上）；
+  **C1 单独立项**（其可判读性应落在"实测费 bps 与帽绑定笔数"，不是组合净额）；**C3 暂不批**（已有活键，且对 t 仅 +0.06）；B（排序）不批。
+  判据重标为 t≥1.5 / 费中位 <6.0bps / 大亏率 <5% / 剔前3 > −$200 且单日 <60% / 时代分层三口径同报。
+- **未触碰生产**：无 `app/` 改动、无配置改动、无 DB 写入、无重启、无 cron 变更、无 notifier 调用。
+  本批只动 4 个文档 + 新增 1 个只读脚本。
+- **下一步**：① 用户裁"只批 C2"还是"整体重裁"；② 若裁 C2：先补 Phase 0 cron 与 `entry_gap` 覆盖率体检，
+  再定 C2 键语义（建议用开盘跳空口径，与历史证据同源）；③ 若要重开 C1：先补 sizing 决策日志或重跑 sizing 链，
+  并解决 RFC-191 §8 的撤回冲突；④ `docs/OKR-2026-11.md` 的主 KR（DA-only 净 bps/笔 >0）与本文结论需对齐。
+
+最后更新：2026-11-08（本条）
+
 ## 2026-11-06 09:43 · Event Intelligence 离线原型 R0/R1＋抽样 R2b/R3 已实施
 
 - **链路落地**：新增只读 as-of 快照、事件哈希/精确去重、采集时延、日内游标、共享双 LLM MarketEventBrief、标的方向/数值指令卡、增量修订/失效、在途保护与独立仲裁。代码在 `app/event_stream/intelligence.py`、`market_brief.py`、`instructions.py`；复现脚本与隔离产物见 DEB §17，未写生产 DB/pool、未接 cron/notifier/Playbook、未重启。
