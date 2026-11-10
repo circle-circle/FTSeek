@@ -43,6 +43,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 os.chdir(str(ROOT))
 sys.path.insert(0, str(ROOT))
+# 影子目录 (DEB-20261109 Batch 1.2/1.3: EXT 入场风险影子 record-only)
+SHADOW_DIR = ROOT / "data" / "shadow"
 
 from app.core.trade_identity import ensure_test_symbol_not_in_production_db, is_test_symbol
 
@@ -3378,6 +3380,72 @@ def collect(session, dry=False):
 
 
 
+def _ext_entry_risk_shadow(symbol, qty, entry_px, session, side, decision_id, init_sl):
+    """EXT 入场风险影子 (DEB-20261109 Batch 1.2/1.3) — **record-only, 绝不拦单**。
+
+    记什么
+    ------
+    ① 跨夜敞口口径: EXT 仓只写 SL 不写 TP (cohort B 允许隔夜), 止盈完全依赖出场引擎;
+       这里落每笔入场的名义/SL/最大亏损, 供事后算"若强制 TP 或不许跨夜会怎样"。
+    ② 跨臂方向: 当日 DA 对同一标的的方向 (若此刻已出卡) 与 EXT 方向是否相反。
+       **DA 卡是 08:33 ET 批量生成的** (11-09 实测 created_at 全为 13:33:48Z),
+       而 EXT 盘前入场普遍在 07:30-08:20 ⇒ 盘前段多半 **da_available=false**,
+       这个覆盖缺口本身就是本影子要量的东西 (否则会误以为"跨臂约束可全覆盖")。
+
+    关闭开关: EXT_ENTRY_RISK_SHADOW=false (默认开; 只写影子文件, 零交易影响)。
+    """
+    if str(os.getenv("EXT_ENTRY_RISK_SHADOW", "true")).strip().lower() in ("0", "false", "no"):
+        return
+    try:
+        qty = float(qty or 0)
+        entry_px = float(entry_px or 0)
+        init_sl = float(init_sl or 0)
+        notional = qty * entry_px
+        sl_pct = ((init_sl / entry_px) - 1.0) * 100.0 if entry_px else None
+        max_loss = abs(entry_px - init_sl) * qty if entry_px else None
+        side_u = str(side or "").upper()
+        ext_dir = "SHORT" if ("SHORT" in side_u or side_u == "SELL") else "LONG"
+
+        da_direction, da_available = None, False
+        try:
+            rconn = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=10)
+            rrow = rconn.execute(
+                "SELECT direction FROM playbook_instructions "
+                "WHERE date=? AND symbol=? AND row_kind='instruction' AND decision_id LIKE 'DA-%' "
+                "ORDER BY created_at DESC LIMIT 1",
+                (_today_et(), symbol)).fetchone()
+            rconn.close()
+            if rrow and rrow[0]:
+                da_available = True
+                d = str(rrow[0]).upper()
+                da_direction = "SHORT" if ("SHORT" in d or d == "SELL") else (
+                    "LONG" if ("BUY" in d or d == "LONG") else d)
+        except Exception:
+            da_direction, da_available = None, False
+
+        row = {
+            "ts": _now_et().isoformat(timespec="seconds"),
+            "date": _today_et(),
+            "symbol": symbol, "side": side_u, "ext_direction": ext_dir,
+            "session": session, "entry_px": round(entry_px, 4), "qty": qty,
+            "notional": round(notional, 2),
+            "sl": round(init_sl, 4), "sl_pct": round(sl_pct, 4) if sl_pct is not None else None,
+            "max_loss_usd": round(max_loss, 2) if max_loss is not None else None,
+            "cross_night_candidate": True,      # EXT cohort B 允许隔夜
+            "has_tp": False,                     # EXT 写入路径不落 TP (现状)
+            "da_available": da_available, "da_direction": da_direction,
+            "direction_conflict": bool(da_available and da_direction and da_direction != ext_dir),
+            "decision_id": decision_id or None,
+        }
+        out = Path(SHADOW_DIR) / "ext_entry_risk_shadow.jsonl"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with out.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception as _sh_err:
+        # 影子失败不得影响下单路径
+        print("[ext_entry_risk_shadow] 影子写入失败 (不影响下单): %s" % _sh_err)
+
+
 def _write_open_position(
     symbol, qty, entry_px, decision_px, session, earn, chg, vol,
     buy_order_id="", position_usd=None, grade="B", structure=None,
@@ -3466,16 +3534,24 @@ def _write_open_position(
             # 2026-10-20 记录卫生: 未平仓 exit_time 必须 NULL, 不能是空串 —
             #   `WHERE exit_time IS NULL` 的重启/运维查询会漏掉 EXT 未平仓行
             #   (10/19 实测 ASML/TSM/BA 三行空串, 只有 ADSK 是 NULL)。
-            " 'extended_hours_entry', 'extended_hours_entry', ?, ?, ?, 0, NULL, 'v2', ?, ?)",
+            # 2026-11-10 记录卫生 (DEB-20261109 Batch 0.1): 未平仓 exit_price 同样必须 NULL,
+            #   不能是 0 —— 规范写入方 app/storage/trade_store.py:823 早已是
+            #   `record.get("exit_price") if ... else None`, EXT 是唯一偏离者。
+            #   危害: 0 是"真实价格 0"的同形值, 不过滤 exit_time IS NULL 的聚合会拿到假价 0
+            #   (11-09 US.CVS 实测: exit_price=0.0 + exit_time=NULL 至今是全库唯一一行)。
+            #   消费方已同时兼容 0 与 NULL (exit_price>0 过滤 / COALESCE / IS NULL OR =0),
+            #   改 NULL 语义不变, 可安全回滚 (改回 0)。
+            " 'extended_hours_entry', 'extended_hours_entry', ?, ?, ?, NULL, NULL, 'v2', ?, ?)",
             # config_version='v2': 与规范写入方 app/storage/trade_store.py 一致。该表 schema 是
             # DEFAULT 'v1'，本列不写会落默认值 ⇒ W1 冻结窗出现版本分裂假象 (2026-09-18 F7 修复)。
             # decision_id (RFC-126): EXT-<date>-<symbol>-<session> 归因, 消灭空 did 成交。
             (_today_et(), symbol, side, now, entry_px, qty, buy_order_id, meta, now, session,
              decision_id or None))
         conn.commit()
-        return pos_id
     finally:
         conn.close()
+    _ext_entry_risk_shadow(symbol, qty, entry_px, session, side, decision_id, init_sl)
+    return pos_id
 
 
 def _execute(

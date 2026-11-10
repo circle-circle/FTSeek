@@ -1,5 +1,131 @@
 # FTSeek-US · HANDOFF
 
+## 2026-11-10 20:0x · DEB-20261109 落地：Batch 0 全批 + 1.1 + 1.2/1.3 影子（用户裁「按建议优化」）
+
+- **产出**：`docs/debates/DEB-20261109-session-review.md` **§九 落地记录**（含逐项落点/验证/回滚）；
+  新脚本 3 个 + 迁移 1 个 + 契约测试 1 组；台账已登记；本条为 SSOT 进度登记。
+- **已落地（全部零交易行为变化，除 1.1 的 env 配额）**：
+  - **0.1** EXT 开仓行 `exit_price` 0 → **NULL**（`extended_hours_entry_executor.py:3469`）；对齐规范写入方
+    `app/storage/trade_store.py:823`（EXT 是唯一偏离者）。迁移 `scripts/migrate_ext_open_exitprice_null.py` 已执行：
+    命中 1 行（id=1828 US.CVS），备份 `data/ftseek_us.db.bak-deb20261109-b01-20261110-193246`，
+    **校验：全库 `exit_price=0` 计数 = 0**。消费方全部已兼容 0/NULL ⇒ 语义不变，回滚 = 改回 0。
+  - **0.2/0.4/0.5/0.6** 三个只读尺子：`scripts/session_attribution.py`（段 A–H）、
+    `scripts/gate_interception_daily.py`（贴边排行 + vwap A/B 四象限 + 记分牌对照）。
+  - **1.1** `.env.us` `EXT_ENTRY_PREMARKET_MAX_PER_DAY` 10 → **9**（恢复"盘后预留≥1 笔"意图；
+    历史盘前每日 max=8/均值2.4 ⇒ 观测样本内不触发；env 面每分钟 cron 读取，**无需重启**；回滚 = 改回 10）。
+    ⚠️ `.env.us` 是 gitignored 部署面 ⇒ 变更无 git 痕迹，**以本条 + DEB §9.1 为准**。
+  - **1.2/1.3** EXT 入场风险影子（**record-only，绝不拦单**）：`extended_hours_entry_executor.py::_ext_entry_risk_shadow`
+    → `data/shadow/ext_entry_risk_shadow.jsonl`（开关 `EXT_ENTRY_RISK_SHADOW=false` 可关）；
+    契约测试 `tests/test_ext_entry_risk_shadow.py` **6 passed**；盘前 dry-run **exit 0**、不写影子文件。
+- **读数更正（重要，方向被推翻）**：复查时写的"闸门拦截代价从未被算过"**不准确** —— 既有记分牌
+  `scripts/gate_block_counterfactual.py`（周六 06:50 cron）早就在算。本轮跑出：**vwap 门 = 避坑✓（被拦票 −1.09%）、
+  斜率门 = 中性、而 chase/追价类门（runaway_up/down）= 杀机会✗（+0.42%/+1.14%）**
+  ⇒ **调阈值的优先级要反过来**：不是放松 vwap，而是审查追价类门的判定条件。
+- **实施中发现的硬约束**：**DA 指令 08:33:48 ET 批量生成**，而 EXT 盘前入场集中在 07:30–08:20
+  ⇒ 盘前 8 笔里 **7 笔在 DA 卡之前** ⇒ **跨臂方向约束（1.3）对盘前段基本无效**（只覆盖盘后段）。
+  真要约束盘前 EXT 需把方向提前到 DA 出卡之前可得（UE/候选池方向）。影子已逐笔落 `da_available` ⇒ 20 日后可量化真实覆盖率。
+- **未做（留待裁决/条件）**：0.3 归因渲染层（`app/review/*` 有并行 WIP，待 DEB-20261110 收口后合并）；
+  0.5 台账字段改造（需改 `pipeline.py` ⇒ **需重启** ⇒ 会连带上线别人在途 WIP，AGENT.md 禁止 ⇒ 已用只读四象限替代）；
+  1.2 强制 EXT 落 TP / 无 TP 跨夜仓次日盘前收口、1.3 方向冲突拦截（行为变更 ⇒ 先攒 20 日影子）；
+  Batch 2（C2 跳空门 / 同标的冷却 / BE 降级）须另立 RFC。
+- **仍待用户裁**：① **C2 口径二选一**（建议盘前口径 + 重标阈值 + 给 EXT 补 gap 采集；11-09 单日旁证 n=1）；
+  ② **EXT 旁路臂定位**（研究臂 vs 第二条主线；现状占已实现 65%、名义更大，却无 TP、盘前预留曾失效、方向不受 DA 约束）；
+  ③ 1.2/1.3 的 20 日影子期是否接受，以及是否需要为 EXT 臂单独立 DEB。
+- **与并行 WIP 的分工**：`app/review/*` 正被并行 agent 修改（DEB-20261110 实施轮），本批**未碰该目录**；
+  `app/playbook/pipeline.py`（0.5 台账字段）**故意未改**（避免重启带上别人 WIP）。
+  本批改动集中在 `scripts/extended_hours_entry_executor.py`（cron 脚本，**每分钟重跑 ⇒ 无需重启服务**）、
+  `.env.us`（部署面）、以及新增只读脚本/测试/文档。
+- **未触碰**：DA/出场/止损逻辑、DB schema、cron、notifier、券商连接。
+
+最后更新：2026-11-10（本条）
+
+## 2026-11-10 · 11-09 交易日复查：落 DEB-20261109 + 双 agent 交叉复核；Batch 0 待批
+
+- **触发**：用户要求复查 2026-11-09（周一）的交易过程与逻辑，找值得优化的问题点；并要求多 agent 交叉确认 + 给落地优化方案。
+- **复核方式**：只读复算 + **双厂商 agent**（GLM-5.3 `glm-verifier` 独立重算 10 组断言 / Kimi-K3.1-Pro `kimi-reviewer` 对抗核查 8 组断言）
+  + 新尺子 `scripts/session_attribution.py`（只读、DB `mode=ro`、零写入、已登记台账）。
+- **落档**：`docs/debates/DEB-20261109-session-review.md`（主交付物）+ `docs/decisions/RFC-192-fewer-larger-trades.md` §10.13（C2 首个前瞻样本）+ 台账 + 本文。
+- **当日结构（一句话）**：+$312.55 里 EXT 研究臂 +$203.73、3~4 天前的遗留仓 +$74.71、DA 主线已平仅 +$34.11；
+  当日开仓未平 3 笔按盘后水位 **−$208.48** ⇒ **DA 主线当天实际 −$174，账面 ≈ +$85**。
+- **6 个问题点**：P1 口径与结构（日报把旁路臂利润记成主管线）｜P2 过夜仓无 TP + `exit_price=0` 数据卫生修了一半
+  （EXT 隔夜本身是设计内且历史盈利 12 笔 +$272，勿误判为"禁止隔夜"）｜P3 BE 出场 20% 漏损
+  （`be_exit_class` OK/GAP/SLIP **已存在**，要改的是归因层，不是加字段）｜P4 闸门拦截代价从未算过
+  且 vwap 门 A/B 已被下游二次拦截污染（5 个 bypass 里 4 个被别的门拦下）｜P5 EXT 旁路臂成主导臂却不读 DA 方向
+  （TSLA：DA SELL_SHORT 被斜率门拦 → EXT 开 LONG）且 `.env.us` 盘前预留额度已失效（10=10）｜P6 同标的平后立即重入
+  （GOOG 11-06 平 +8.99 → 11-09 10:01 再开 → −80.73）。
+- **自查更正要留档**（DEB §5）：我自己的 5 条初判被推翻 —— "SL_BREAKEVEN 标签不可信需拆字段"（错，`be_exit_class` 早已存在）、
+  "vwap 门拦价格不利移动"（不准确，实为当前价 vs 当日 VWAP）、"falsification slope 是 >= 边界 bug"（错，严格不等号）、
+  "三个收益口径互相矛盾"（部分错，287.82 与 312.55 是**生成时点快照差**：复盘 md 生成于 17:35 ET，QCOM 19:20 ET 才平）、
+  "CVS 是无主裸奔"（过重，已公允化）。
+- **落地方案（三批 · 一次一变量 · 每批可回滚）**：
+  **Batch 0（零行为变更，建议全批）**：0.1 EXT 开仓行 `exit_price` 0→NULL（与 10/19 已修的 `exit_time` 同类，
+  `extended_hours_entry_executor.py:3461-3469`；守卫在 `trade_store.py:684-700` 只拦已平仓行）｜0.2 日报/复盘共用收益聚合
+  （落 `stage_stats.py:45-75`，输出三口径+未平浮盈+按臂分账）｜0.3 归因表加 `be_exit_class` 分层｜0.4 闸门拦截代价影子脚本
+  （复用 `gate_block_counterfactual.py:59-109` JOIN 模式）｜0.5 vwap A/B 加"被下游二次拦截"标记（只加字段不改分流）｜
+  0.6 只读体检（无 TP 跨夜 / 同标的重入 / 跨臂冲突）｜0.7 **11-10 开盘前处置 CVS**（EXT 巡检每分钟，ET 04:00-20:05）。
+  **Batch 1（配置/契约，先影子 20 日）**：1.1 EXT 配额恢复盘前预留（`.env.us:131-133`，env 面不需重启）｜
+  1.2 EXT 仓强制落 TP + 无 TP 跨夜仓次日盘前收口｜1.3 跨臂方向冲突（EXT 已有 DB 只读连接，落点 `_execute` 既有"同标的已有仓"检查旁）。
+  **Batch 2（行为，须另立 RFC）**：C2 跳空门（口径二选一）／同标的冷却／BE 降级策略。
+- **待用户裁**：① Batch 0 是否全批（建议全批，零行为变更、无重启、逐项可关）；② Batch 1 三项是否批（建议 1.1 批、1.2/1.3 先攒影子）；
+  ③ **C2 口径二选一**（建议盘前口径 + 重标阈值 + 给 EXT 补 gap 采集）；④ **EXT 旁路臂定位**（研究臂还是第二条主线）—— 现状贡献 65% 已实现利润、
+  名义更大，却不受 DA 方向约束、无 TP、配额预留失效，是本次最需一次明确裁决的治理问题。
+- **与同日 11:11 那条的关系**：那条记了 RFC-160 终裁 + GOOG 存量 SL 校正（286.3756→277.52）与"不强平 BA/GOOG/CAT"；
+  本条不重复该动作，只在 P2/P6 侧给出机制层结论（BA/GOOG/CAT 的隔夜与重入问题属于机制缺口，不是当日处置问题）。
+- **与并行 WIP 的分工（重要）**：同日另一 agent 的 `DEB-20261110-da-postclose-chain-review.md` 其 P0-A/P0-B 与本文 **P1 同源**，
+  两边独立复算得到同一组数字（DA 已平 +$34.11 与三仓毛浮亏 −$208.48 并存）⇒ 互为交叉验证。
+  该 agent **正在改 `app/review/*`（bundle_builder.py +370 / daily_review.py +64）并已实现 MTM 分栏**，
+  故本条 **Batch 0.2/0.3 明确不并行改该目录**，改为"只读侧先出数（已完成）→ 待其收口后合并归因层改造"。
+  本文其余各批落点（`scripts/extended_hours_entry_executor.py`、`.env.us`、`scripts/session_attribution.py`、影子脚本）与在途 WIP 无重叠。
+- **未触碰生产**：`app/`、配置、DB、cron、notifier、券商连接全未改；本批只新增 1 个只读脚本 + 5 处文档改动。
+
+最后更新：2026-11-10（本条）
+
+## 2026-11-10 11:11 · RFC-160 终裁纠偏 + GOOG 存量校正与分钟回放已收口
+
+- **RFC-160 终局**：06:30 `mfe_track` 已 n=12、ΣΔ=+$52.14、误杀9>1，机械 verdict=GATE_NOT_WORTH；
+  注册表转 KILLED，撤销“继续观察等待转硬闸”的过期表述。共享打点/结算仍 record-only，
+  config/cron/EOD豁免不变，不强平BA/GOOG/CAT、不新造同轴门。
+- **GOOG 数据修复**：备份后严格旧值 CAS，仅把 open_positions SL 286.3756→277.52、
+  TP 382.70→314.04（并补同值TP JSON）；trade_records与实际出场参数未改，BA/CAT不变。
+  常规收盘有效SL=277.52；288.545仅早段紧SL。GOOG fill RR=1.484354<1.5，固定TP已被既有门忽略，
+  314.04只是指令目标，不冒充有效固定止盈单。
+- **分钟/重定价**：390根1m bar证明原286直到16:00最后一根才首次触价，无“早盘本可低价成交”证据；
+  292.13决策价在292.20 cap内、292.22实际成交高cap $0.02。8笔RR为6降2升，但5笔已平全部费后为正，
+  只登记RR漂移和cap决策价/成交价差异，不改chase cap、路由、RR门、仓位或减少标的。
+- **验证/部署**：JSON/bar/DB/registry断言及diff-check通过；聚焦回归71 passed，
+  另有1个既有A11注册可见性失败（本批未改判据字典/A11）。重启冒烟7/7，服务active PID=2454012，
+  BA/CAT/CVS/GOOG未平保持不变，GOOG校正值重启后稳定。
+- **落档/下一步**：DEB §8、RFC-160 §8、OKR KR3及两份机器摘要已更新；下一开盘验收RFC-195/196，
+  VIX残差继续N≥10基线，RR/cap只做跨日费用后测量，未有样本与MDE前不提交易门。
+
+## 2026-11-10 10:28 · 11-09 复盘测量修复已部署：20/8 对齐，MTM 与 DA/EXT 路径分账
+
+- **根因修复**：新增严格 instruction attribution（metadata instruction_id 优先、唯一 decision_id 兜底），
+  `bundle_builder`/`daily_review`/`PlanEffectivenessTracker` 三路 11-09 一致为 20计划/8执行/40%，
+  10笔EXT未归属、无方向错配；APP假执行与TSLA假反向消除，候选/成交标的不减。
+- **风险分栏**：日报新增新DA已实现毛/费/净/费毛比 + 常规收盘open MTM/as_of/逐仓有效止损；
+  复现5笔净+$34.11、费用$20.99、3仓毛MTM-$208.48，GOOG实际止损277.52而非回填286.3756。
+- **成交后结论**：post_exit按DA/EXT分账，DA n6均值/中位+0.2749/+0.0715pp，EXT n12为+4.1501/+4.7683pp；
+  混合“早退”主要由EXT驱动，不全球放宽DA退出。BA/GOOG/CAT低MFE且水下持夜进入既有RFC-160观察，
+  不新门、不立即强平；GOOG reprice继续等as-of 1m/5m回放，chase cap不动。
+- **验证/部署**：broader 157 passed/1 skipped，渲染16 passed；生产只读build/render与diff-check通过。
+  重启前BA/CAT/CVS/GOOG未平，app/scripts仅本批；重启冒烟7/7、服务active、持仓不变，交易规则零改动。
+- **落档/下一步**：DEB-20261110 §7与机器摘要已补；下一开盘验收RFC-195/196，既有影子攒样，
+  不把测量修复冒充edge改善。
+
+## 2026-11-10 09:51 · 11-09 DA 收盘复盘：执行率错配确认，MTM 与开盘验收待办
+
+- **真实结果**：36分析→22落库（20方向+2 admission SKIP）→decision_id成交8；新DA已平5笔净+$34.11，
+  BA/GOOG/CAT三仓常规收盘毛浮亏-$208.48。常规全通道18笔+$287.82，盘后再加QCOM +$24.73→19笔+$312.55。
+- **P0测量缺陷**：日报按symbol+direction把APP的EXT成交误算成DA执行，9/20=45%应修为8/20=40%；
+  既有 `review_orchestrator` 权威instruction_id/decision_id锚可复用，需补跨通道同向/反向契约测试。
+- **关联边界**：SPY +2.37%、Yahoo VIX 19.92(-22.31%)，风险缓和；36份DA仍全risk_off，不能把个股盈亏归因VIX。
+  prompt代理17.88低于T-1真值25.64；只读估计22.84较Yahoo高2.92点，攒N≥10残差，不调beta不接门。
+- **优化顺序**：先修日报配对+分cohort补open MTM/as_of；下一开盘验收RFC-195/196零NameError和首轮执行；
+  再补1m/5m bar做GOOG等reprice与分通道exit shadow。不得直接放松chase cap/VIX/仓位，证据卡0/176精确链接不冒充因果。
+- **落档**：`docs/debates/DEB-20261110-da-postclose-chain-review.md`、
+  `docs/analysis/2026-11-10-da-postclose-review.json`；本批只读无生产变更、无重启。
+
 ## 2026-11-09 18:47 · SRC/STORY 引用层 n=10 离线 A/B：结构 PASS，生产 NOT_APPROVED
 
 - **执行完整**：预注册 BUY6/SHORT2/SKIP2 共10只，40/40 run、80次主/挑战者调用全部结束；
