@@ -1,5 +1,21 @@
 # FTSeek-US · HANDOFF
 
+> **写入约定（2026-11-11 起）**：每条交接必须带三件可核凭据 —— `**凭据**`（commit sha / 改动文件数，`git show --stat` 可核）、`**验证**`（可复跑命令 + 日志路径，不写“已通过”）、`**未验证**`（显式列出没验的部分，无则写“无”）。自述≠事实，这三行是给下一个人核的。
+
+## 2026-11-11 08:20 · Orca 编排调研收口：不引框架，只留交接单三字段（用户裁「按建议执行」）
+
+- **决策**：GitHub 三个同名 Orca 中只有 `stablyai/orca` 具备多 agent 编排能力，但形态是 Electron 桌面 + 云 + 手机、编排层官方标 Experimental、Hermes/qodercli 只能走 terminal-backed 的二等公民 ⇒ **不作编排主干**。逐层映射后真缺口只有两项：worktree 隔离、子代理上报契约；DAG/状态机/GUI/心跳总线我们或缺而无用、或已有等价物。
+- **用户前提（决定取舍）**：可人工保证不同时启用多 agent 并发写同一 repo ⇒ worktree-per-agent 由「协议」降级为「按需工具」；心跳白板、工单板状态机整体砍掉（前提消失，收益随之消失）。
+- **落地（本条，L5 纯文档）**：① `handoff.md` 顶部加「写入约定」三字段；② skill `multi-agent-project-collaboration` 增一节「交接单三字段 + worktree 按需三场景 + 不做什么」。
+- **凭据**：本提交（sha 取 `git log -1 --format=%h -- handoff.md`）· 改动 1 文件（`handoff.md`），`git show --stat` 可核；提交走私有 `GIT_INDEX_FILE`，共享 index 未动，工作区另 3 条他人未提交条目原样保留、未被本提交带走。
+- **验证**：`git show HEAD:handoff.md | head -6` 见新约定与新条目；`git status --porcelain handoff.md` 仍为 `M`（在先 3 条未被带走）；`git diff --cached --name-only | wc -l` = 0（共享 index 干净）。本批无代码可跑，验证面仅此三条。
+- **未验证**：三字段是否被后续交接真正执行（要看下一条交接是否带「未验证」行）；worktree 三场景沿用既有 pitfall 经验，本批未实弹演练。
+- **skill 台账**：`multi-agent-project-collaboration` patch（新增「交接单三字段 + worktree 按需」）· ACCEPTED · 依据：用户裁「按建议执行」+ 实测全仓 `grep handoff.md` 无代码写入方（app/scripts/ops 仅注释引用）。
+- **未做（防误读）**：没建 worktree 脚本、没建状态机/JSON 工单板、没引 Orca、没改任何交易代码/配置、没下令任何服务重启。
+- **下一步**：无本批遗留；若日后真出现多写者并发，再按「worktree + 归属逐行核对」启用协议，不预先搭建。
+
+最后更新：2026-11-11（本条）
+
 ## 2026-11-10 20:0x · DEB-20261109 落地：Batch 0 全批 + 1.1 + 1.2/1.3 影子（用户裁「按建议优化」）
 
 - **产出**：`docs/debates/DEB-20261109-session-review.md` **§九 落地记录**（含逐项落点/验证/回滚）；
