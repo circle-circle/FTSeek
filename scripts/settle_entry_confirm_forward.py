@@ -230,6 +230,14 @@ def verdict_window(rows):
     return gate, (v2 or gate), ("v2" if v2 else "v1")
 
 
+def _mom_exclude_sql(con) -> str:
+    columns = {row[1] for row in con.execute("PRAGMA table_info(trade_records)")}
+    return (
+        "  AND COALESCE(decision_id, '') NOT LIKE 'MOM-ETF-V1-%' "
+        if "decision_id" in columns else ""
+    )
+
+
 def load_sim_pnl(since_date: str):
     """开门后 SIM 真实成交盈亏 — 裁决源 (富途 app 可见的那条链路)。
 
@@ -237,10 +245,12 @@ def load_sim_pnl(since_date: str):
       source_type='PLAYBOOK_SIM' AND exit_price>0 AND COALESCE(pnl_net,realized_pnl) IS NOT NULL
     2026-10-20 P0: 再排除 gate_mode=research_momentum 的研究臂 — 它是 10-19 才启用的
     新通道, 不在冻结基线人群内, 且不经过本门。strict EXT 保留 (基线窗内已存在)。
+    2026-11-12 P0: 排除 MOM-ETF-V1 试点桶 — 它绕过 RFC-141 确认门, 不得混入 DA-only 裁决。
     fee_bps 相关列一并带出 (判据④ 两端同尺需要, 见 §5.6 / DEB §33.3)。
     """
     con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
     con.row_factory = sqlite3.Row
+    mom_exclude_sql = _mom_exclude_sql(con)
     out = []
     for r in con.execute(
             "SELECT symbol, trade_date, entry_time, exit_time, exit_reason, fees_est, "
@@ -250,6 +260,7 @@ def load_sim_pnl(since_date: str):
             "WHERE source_type='PLAYBOOK_SIM' AND COALESCE(exit_price,0) > 0 "
             "  AND COALESCE(pnl_net, realized_pnl) IS NOT NULL "
             f"  AND {EXCLUDE_RESEARCH_ARM_SQL} "
+            f"{mom_exclude_sql}"
             "  AND trade_date >= ?", (since_date,)):
         out.append(dict(r))
     con.close()
@@ -343,11 +354,13 @@ def load_fills(since_date: str):
     """(symbol, date) → [pnl_net,...] 开门后成交 (供机制留痕 join, 不作裁决)。"""
     con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
     con.row_factory = sqlite3.Row
+    mom_exclude_sql = _mom_exclude_sql(con)
     fills = defaultdict(list)
     for r in con.execute(
             "SELECT symbol, trade_date, COALESCE(pnl_net, realized_pnl) AS net "
             "FROM trade_records WHERE source_type='PLAYBOOK_SIM' AND exit_price>0 "
             f"AND {EXCLUDE_RESEARCH_ARM_SQL} "
+            f"{mom_exclude_sql}"
             "AND trade_date>=?", (since_date,)):
         fills[(r["symbol"], r["trade_date"])].append(float(r["net"] or 0))
     con.close()

@@ -123,7 +123,7 @@ def _force_close_orphaned_sim_positions(
         conn.row_factory = sqlite3.Row
 
         rows = conn.execute("""
-            SELECT id, symbol, direction, entry_price, quantity, metadata_json, entry_time, source_type, futu_order_id
+            SELECT id, symbol, direction, entry_price, quantity, metadata_json, entry_time, source_type, decision_id, futu_order_id
             FROM trade_records
             WHERE source_type IN ('PLAYBOOK_SIM', 'PLAYBOOK_LIVE', 'ORB_ENGINE')
               AND (exit_price = 0 OR exit_price IS NULL OR exit_time = '' OR exit_time IS NULL)
@@ -158,6 +158,10 @@ def _force_close_orphaned_sim_positions(
                 _meta = _json.loads(r["metadata_json"]) if r["metadata_json"] else {}
                 if not isinstance(_meta, dict):
                     raise ValueError("trade metadata must be an object")
+                from app.playbook.pilot_policy import policy_for
+                _decision_id = r["decision_id"] if "decision_id" in r.keys() else ""
+                if policy_for(_decision_id) is not None:
+                    continue
                 _cohort = _meta.get("cohort", "A")
                 # P2b 单点化 (2026-09-06): 两公式收进 exit_engine (与 poll monitor 同源).
                 from app.playbook.exit_engine import (

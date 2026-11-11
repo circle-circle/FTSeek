@@ -10,6 +10,7 @@ PLAYBOOK_SOURCE_SQL = """CASE
              OR decision_id LIKE 'universe_expansion:%' THEN 'UE直写'
         WHEN raw_instruction_json LIKE '%ue_fresh_event%' THEN 'DA-UE新事件'
         WHEN raw_instruction_json LIKE '%ue_candidate%' THEN 'DA-UE确认'
+        WHEN decision_id LIKE 'MOM-ETF-V1-%' THEN 'MOM-ETF-V1'
         ELSE 'DA自选' END"""
 # [2026-10-14 RFC-136 execute转正 · rfc117_v3] 'DA-UE新事件' 腿: fresh-event 批
 #   (da_fresh_event_batch --execute) 的指令由 pipeline Stage 6b 写
@@ -50,4 +51,4 @@ def aggregate_source_direction(rows: Iterable[Dict]) -> Dict[str, int]:
 
 
 def source_labels() -> List[str]:
-    return ["DA自选", "DA-UE确认", "DA-UE新事件", "UE直写", "topup"]
+    return ["DA自选", "DA-UE确认", "DA-UE新事件", "UE直写", "topup", "MOM-ETF-V1"]

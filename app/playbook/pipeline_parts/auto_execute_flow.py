@@ -49,6 +49,43 @@ def execution_admission_evaluate(inst: Dict[str, Any],
     return _adm_eval(payload)
 
 
+def _reprice_quote_age_gate(
+    inst: Dict[str, Any],
+    ctx: Optional[Dict[str, Any]],
+    pb_cfg: Any,
+    db: Any,
+    logger: Any,
+    _emit_exec_gate_audit: Callable,
+) -> bool:
+    """RFC-185 报价陈旧度门; DA 与 MOM 共用, 过龄不起价。"""
+    if not bool(pb_cfg.get("reprice_quote_age_gate_enabled", True)):
+        return True
+    _qage_ok, _qage_why = True, ""
+    _qage_ms = None
+    try:
+        from app.risk.data_health_guard import check_reprice_quote_age as _qage_check
+        _qage_ok, _qage_ms, _qage_why = _qage_check(
+            ctx, pb_cfg.get("reprice_quote_age_max_ms", 30000))
+    except Exception as _qage_err:
+        _qage_ok, _qage_why = True, f"check_error: {_qage_err}"
+    if not _qage_ok:
+        _qage_reason = f"stale_quote_gate({_qage_why})"
+        db.update_instruction_tracking(inst["id"], {"skip_reason": _qage_reason})
+        _emit_exec_gate_audit(
+            inst, action="skipped_stale_quote",
+            entry=float(inst.get("entry_price") or 0),
+            size=float(inst.get("position_size") or 0),
+            notional=0.0,
+            extra={"gate": "reprice_quote_age",
+                   "why": _qage_why,
+                   "quote_age_ms": _qage_ms})
+        logger.info(
+            f"[playbook] {inst['symbol']} 报价过龄 ({_qage_why}) "
+            f"→ 本轮不起价 (下轮重试)")
+        return False
+    return True
+
+
 def run_playbook_auto_execute(
     scheduler,
     *,
@@ -198,6 +235,25 @@ def run_playbook_auto_execute(
         # 2026-08-22 audit: already_held 对账查询的共享连接 — 原每条命中指令新开
         #   sqlite3.connect (N+1), 现循环级懒建一次、循环尾关闭; 查询失败自动回退逐条建连.
         _ah_conn = None
+        from app.playbook.pilot_policy import (
+            after_entry_cutoff,
+            entries_enabled,
+            in_entry_window,
+            is_rebalance_day,
+            mom_budget_reject_reason,
+            mom_budget_snapshot,
+            mom_reprice_params,
+            policy_for,
+        )
+        _mom_open_count = 0
+        _mom_today_notional = 0.0
+        _mom_budget_ok = True
+        if any(policy_for(inst.get("decision_id")) is not None for inst in instructions):
+            try:
+                _mom_open_count, _mom_today_notional = mom_budget_snapshot(_now_et_dt)
+            except Exception as _mom_budget_err:
+                _mom_budget_ok = False
+                logger.error(f"[MOM-ETF-V1] 子帽预算查询失败 fail-close: {_mom_budget_err}")
         for inst in instructions:
             # 2026-11-03 (冻结长轮次): 主线程每处理一条指令打一次"进度"心跳 (5s 节流)。
             #   与出场快循环的 /run/ftseek-heartbeat 分开 (语义=有进展, 非"活着"),
@@ -214,21 +270,40 @@ def run_playbook_auto_execute(
             if (inst.get("skip_reason") or "") in INVALIDATED_SKIP_REASONS:
                 continue
 
+            _mom_policy = policy_for(inst.get("decision_id"))
+            if _mom_policy is not None:
+                if not entries_enabled():
+                    continue
+                if not _mom_budget_ok:
+                    skipped_count += 1
+                    continue
+                if not is_rebalance_day(_now_et_dt.date(), _mom_policy):
+                    db.mark_instruction_guardrail_skip(inst["id"], "MOM_NOT_REBALANCE_DAY")
+                    skipped_count += 1
+                    continue
+                if after_entry_cutoff(_now_et_dt, _mom_policy):
+                    db.mark_instruction_guardrail_skip(inst["id"], "MOM_SAME_DAY_EXPIRED")
+                    skipped_count += 1
+                    continue
+                if not in_entry_window(_now_et_dt, _mom_policy):
+                    continue
+
             # ── [RFC-141] 入场延迟确认门 (D2' forward) — pending 拦截 ──
             #   必须在 reprice **之前**: pending 期间若让 reprice 覆盖 DB entry_price,
             #   锚会逐轮漂移 ⇒ 120s 后判定的就不是 arm 时刻那把尺子 (语义不可审计)。
             #   终态 ABANDONED/EXPIRED 也在此拦 (跨重启有效, 靠 metadata 旗标)。
             #   门关闭时 read_state 恒空 ⇒ 恒 False, 零行为变更。
-            try:
-                from app.playbook.entry_confirm_gate import defer_pending as _ec_defer
-                from app.utils.timezone import now_et as _ec_now_et_fn
-                if _ec_defer(inst, _ec_now_et_fn()):
-                    skipped_count += 1
-                    continue
-            except Exception as _ec_defer_err:
-                # fail-open: 门自身异常不得阻断正常执行 (拦普通单不是安全方向)
-                logger.warning(f"[EntryConfirm] pending 复检异常 (放行): {_ec_defer_err}",
-                                   exc_info=True)
+            if _mom_policy is None:
+                try:
+                    from app.playbook.entry_confirm_gate import defer_pending as _ec_defer
+                    from app.utils.timezone import now_et as _ec_now_et_fn
+                    if _ec_defer(inst, _ec_now_et_fn()):
+                        skipped_count += 1
+                        continue
+                except Exception as _ec_defer_err:
+                    # fail-open: 门自身异常不得阻断正常执行 (拦普通单不是安全方向)
+                    logger.warning(f"[EntryConfirm] pending 复检异常 (放行): {_ec_defer_err}",
+                                       exc_info=True)
 
             # 2026-06-29 P0: 执行前查broker持仓 — 有仓则跳过，防重复下单+孤儿仓循环
             # 根因: fill=0时playbook拒绝记账但broker已成交, 下次auto_execute又下单 → 仓位叠加
@@ -324,7 +399,7 @@ def run_playbook_auto_execute(
                 logger.debug(f"[playbook] broker持仓检查失败 (放行): {_bh_err}")
 
             # triggered 只记录历史首次触发，不能代替本轮量能、VWAP、时间窗复验。
-            triggered = _check_intraday_trigger(scheduler, inst)
+            triggered = True if _mom_policy is not None else _check_intraday_trigger(scheduler, inst)
             if not triggered:
                 continue
             if not inst.get("triggered"):
@@ -446,13 +521,13 @@ def run_playbook_auto_execute(
             # DB 原值保留不动 (审计可追溯盘前价), custom_params 覆盖执行价
             _reprice_params = None
             _sl_clamp_meta = {}
-            _atr_required = True
-            _atr_validated = False
+            _atr_required = _mom_policy is None
+            _atr_validated = _mom_policy is not None
             _ctx = None
             atr_pct = None
             try:
                 _hp = pb_cfg.get_horizon_params(inst.get("horizon", "short"))
-                if not _hp:
+                if not _hp and _mom_policy is None:
                     # [RFC-185] 未知 horizon (如 "medium": playbook_horizon.yaml 只定义
                     #   short_horizon/long_horizon) 会让 get_horizon_params 返回 {} ⇒
                     #   re-price 静默回退固定 SL%(2.5/2.0) 且不落 vol_bucket。
@@ -461,8 +536,11 @@ def run_playbook_auto_execute(
                     logger.warning(
                         f"[playbook] {inst['symbol']} horizon={inst.get('horizon')!r} "
                         f"无对应 horizon 配置 (仅 short/long) → re-price 回退固定 SL%/TP 倍率")
-                _atr_required = bool(_hp.get("vol_buckets") or pb_cfg.get("vol_buckets"))
-                _dr = getattr(scheduler, "data_router", None) or getattr(scheduler, "market_data", None)
+                _atr_required = (_mom_policy is None
+                                 and bool(_hp.get("vol_buckets") or pb_cfg.get("vol_buckets")))
+                _dr = (None if _mom_policy is not None
+                       else (getattr(scheduler, "data_router", None)
+                             or getattr(scheduler, "market_data", None)))
                 if _dr:
                     _ctx = _dr.get_full_market_context(inst["symbol"])
                     # ── [RFC-185 2026-11-06] 报价陈旧度门 ──
@@ -472,32 +550,10 @@ def run_playbook_auto_execute(
                     #   过龄不起价、下轮重试; 判据/阈值见 config 同名键注记 (RFC-185)。
                     #   判定本体 = data_health_guard.check_reprice_quote_age (可单测);
                     #   age 取不到 / 判定异常 ⇒ 放行 (fail-open, 与全文件口径一致)。
-                    if bool(pb_cfg.get("reprice_quote_age_gate_enabled", True)):
-                        _qage_ok, _qage_why = True, ""
-                        try:
-                            from app.risk.data_health_guard import (
-                                check_reprice_quote_age as _qage_check)
-                            _qage_ok, _qage_ms, _qage_why = _qage_check(
-                                _ctx, pb_cfg.get("reprice_quote_age_max_ms", 30000))
-                        except Exception as _qage_err:
-                            _qage_ok, _qage_why = True, f"check_error: {_qage_err}"
-                        if not _qage_ok:
-                            _qage_reason = f"stale_quote_gate({_qage_why})"
-                            db.update_instruction_tracking(
-                                inst["id"], {"skip_reason": _qage_reason})
-                            _emit_exec_gate_audit(
-                                inst, action="skipped_stale_quote",
-                                entry=float(inst.get("entry_price") or 0),
-                                size=float(inst.get("position_size") or 0),
-                                notional=0.0,
-                                extra={"gate": "reprice_quote_age",
-                                       "why": _qage_why,
-                                       "quote_age_ms": _qage_ms})
-                            logger.info(
-                                f"[playbook] {inst['symbol']} 报价过龄 ({_qage_why}) "
-                                f"→ 本轮不起价 (下轮重试)")
-                            skipped_count += 1
-                            continue
+                    if not _reprice_quote_age_gate(
+                            inst, _ctx, pb_cfg, db, logger, _emit_exec_gate_audit):
+                        skipped_count += 1
+                        continue
                     if _ctx and _positive_finite_atr(_ctx.get("price")) is not None:
                         _cur = float(_ctx["price"])
                         _bid = float(_ctx.get("lv3_bid") or _ctx.get("bid") or _cur)
@@ -939,6 +995,48 @@ def run_playbook_auto_execute(
             except Exception as _rp_err:
                 logger.debug(f"[playbook] re-price 失败: {_rp_err}")
 
+            if _mom_policy is not None:
+                try:
+                    _dr_mom = (getattr(scheduler, "data_router", None)
+                               or getattr(scheduler, "market_data", None))
+                    _ctx = (_dr_mom.get_full_market_context(inst["symbol"])
+                            if _dr_mom is not None else None)
+                except Exception as _mom_ctx_err:
+                    logger.warning(f"[MOM-ETF-V1] {inst.get('symbol')} 报价获取失败: {_mom_ctx_err}")
+                    _ctx = None
+                if not _reprice_quote_age_gate(
+                        inst, _ctx, pb_cfg, db, logger, _emit_exec_gate_audit):
+                    skipped_count += 1
+                    continue
+                _reprice_params = mom_reprice_params(inst, _ctx, today, _mom_policy)
+                if _reprice_params is None:
+                    db.mark_instruction_guardrail_skip(inst["id"], "MOM_FEE_SIZE_INFEASIBLE")
+                    _emit_exec_gate_audit(
+                        inst, action="skipped_mom_fee_size",
+                        entry=float(inst.get("entry_price") or 0),
+                        size=float(inst.get("position_size") or 0),
+                        notional=0.0,
+                        extra={"gate": "mom_fee_size"})
+                    skipped_count += 1
+                    continue
+                try:
+                    db.merge_instruction_metadata(inst["id"], {
+                        "reprice_audit": {
+                            "policy_id": _mom_policy.policy_id,
+                            "reprice_from": _reprice_params["reprice_from"],
+                            "reprice_to": _reprice_params["reprice_to"],
+                            "reprice_original_sl": _reprice_params["reprice_original_sl"],
+                            "reprice_stop_loss": _reprice_params["stop_loss"],
+                            "reprice_take_profit": 0.0,
+                            "reprice_position_size": _reprice_params["position_size"],
+                            "audit_schema": "mom_reprice_audit_v1",
+                        },
+                    })
+                except Exception as _mom_audit_err:
+                    logger.warning(
+                        f"[MOM-ETF-V1] {inst.get('symbol')} reprice 审计落库失败 "
+                        f"(已隔离, 不影响下单): {_mom_audit_err}", exc_info=True)
+
             # 独立于重定价异常边界，落痕失败也不能放行缺 ATR 的新开仓。
             if _atr_required and not _atr_validated:
                 logger.warning(f"[playbook] {inst['symbol']} ATR不可用，本轮暂缓开仓")
@@ -1271,6 +1369,22 @@ def run_playbook_auto_execute(
                 skipped_count += 1
                 continue
 
+            if _mom_policy is not None:
+                _mom_reject = mom_budget_reject_reason(
+                    _new_notional, _mom_open_count, _mom_today_notional,
+                    _today_opened_notional, _today_opened_count,
+                    _daily_notional_cap, _max_daily_positions,
+                    _max_deploy, _bp_limit, _mom_policy,
+                )
+                if _mom_reject:
+                    db.mark_instruction_guardrail_skip(inst["id"], _mom_reject)
+                    _emit_exec_gate_audit(
+                        inst, action="skipped_mom_budget",
+                        entry=_entry, size=_size, notional=_new_notional,
+                        extra={"gate": "mom_budget", "reason": _mom_reject})
+                    skipped_count += 1
+                    continue
+
             if _open_positions_count >= _max_open_positions:
                 logger.info(
                     f"[playbook] {inst['symbol']} 跳过 — 在仓标的数上限 "
@@ -1298,30 +1412,31 @@ def run_playbook_auto_execute(
             #   且把「预算不足」误记成「延迟确认」样本 (污染判据人群)。
             #   锚取 reprice 后的执行锚 (_reprice_params.entry_price), 与影子裁决
             #   基准同源; 实测两锚分歧中位 2.10% ⇒ 用盘前计划锚 = 静默换尺子。
-            try:
-                from app.playbook.entry_confirm_gate import (
-                    gate_at_execute as _ec_gate, confirm_gate_config as _ec_cfg)
-                from app.utils.timezone import now_et as _ec_now_fn
-                # pb_cfg 注入: 与同函数其它门 (blackout/cooldown/chase_cap) 同一配置接缝
-                # v2 (RFC-141 §5.10): 传 scheduler ⇒ arm 瞬间快照 bid/ask 得 mid_arm
-                # (mid-mid 同尺判定的另一端); 取价失败自动回落 legacy 混尺 + ruler_used 留痕。
-                _ec_act = _ec_gate(inst, db, _reprice_params, _ec_now_fn(), _ec_cfg(pb_cfg),
-                                   scheduler=scheduler)
-                if _ec_act == "defer":
-                    _emit_exec_gate_audit(
-                        inst, action="deferred_entry_confirm",
-                        entry=float((_reprice_params or {}).get("entry_price")
-                                    or inst.get("entry_price") or 0),
-                        size=float((_reprice_params or {}).get("position_size")
-                                   or inst.get("position_size") or 0),
-                        notional=_new_notional,
-                        extra={"gate": "entry_confirm_d2_forward", "rfc": "RFC-141"})
-                    skipped_count += 1
-                    continue
-            except Exception as _ec_gate_err:
-                # fail-open: 门异常 ⇒ 照常执行 (维持基线, 不静默减少样本)
-                logger.warning(f"[EntryConfirm] arm 判定异常 (放行): {_ec_gate_err}",
-                               exc_info=True)
+            if _mom_policy is None:
+                try:
+                    from app.playbook.entry_confirm_gate import (
+                        gate_at_execute as _ec_gate, confirm_gate_config as _ec_cfg)
+                    from app.utils.timezone import now_et as _ec_now_fn
+                    # pb_cfg 注入: 与同函数其它门 (blackout/cooldown/chase_cap) 同一配置接缝
+                    # v2 (RFC-141 §5.10): 传 scheduler ⇒ arm 瞬间快照 bid/ask 得 mid_arm
+                    # (mid-mid 同尺判定的另一端); 取价失败自动回落 legacy 混尺 + ruler_used 留痕。
+                    _ec_act = _ec_gate(inst, db, _reprice_params, _ec_now_fn(), _ec_cfg(pb_cfg),
+                                       scheduler=scheduler)
+                    if _ec_act == "defer":
+                        _emit_exec_gate_audit(
+                            inst, action="deferred_entry_confirm",
+                            entry=float((_reprice_params or {}).get("entry_price")
+                                        or inst.get("entry_price") or 0),
+                            size=float((_reprice_params or {}).get("position_size")
+                                       or inst.get("position_size") or 0),
+                            notional=_new_notional,
+                            extra={"gate": "entry_confirm_d2_forward", "rfc": "RFC-141"})
+                        skipped_count += 1
+                        continue
+                except Exception as _ec_gate_err:
+                    # fail-open: 门异常 ⇒ 照常执行 (维持基线, 不静默减少样本)
+                    logger.warning(f"[EntryConfirm] arm 判定异常 (放行): {_ec_gate_err}",
+                                   exc_info=True)
 
             # ── [RFC-152] 执行 TCA 台账 + 点差/报价年龄只读影子 ──
             #   只在通过全部既有闸门、本轮真会下单时快照到达报价; 执行后收口一行 jsonl。
@@ -1401,6 +1516,14 @@ def run_playbook_auto_execute(
                                f"{_rs_build_err}", exc_info=True)
                 _risk_row = None
 
+            if _mom_policy is not None:
+                if not entries_enabled():
+                    continue
+                if after_entry_cutoff(datetime_cls.now(_now_et()), _mom_policy):
+                    db.mark_instruction_guardrail_skip(inst["id"], "MOM_SAME_DAY_EXPIRED")
+                    skipped_count += 1
+                    continue
+
             # 自动执行
             _audit_action = "error"
             try:
@@ -1419,6 +1542,9 @@ def run_playbook_auto_execute(
                     _today_opened_notional += _new_notional
                     _today_opened_count += 1
                     _open_positions_count += 1
+                    if _mom_policy is not None:
+                        _mom_open_count += 1
+                        _mom_today_notional += _new_notional
                     _audit_action = "executed"
                     logger.info(f"[playbook] ✅ 自动执行: {inst['symbol']} {inst['direction']}")
 

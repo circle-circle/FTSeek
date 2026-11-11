@@ -1901,6 +1901,50 @@ class PlaybookService:
         except Exception as _gd_e:
             logger.warning(f"[playbook] P1 gap 降仓判定异常 (fail-open 放行): {_gd_e}")
 
+        from app.playbook.pilot_policy import (
+            mom_final_order_reject_reason,
+            policy_for as _pilot_policy_for,
+        )
+        _pilot_policy = _pilot_policy_for(matched_decision_id)
+        if _pilot_policy is not None:
+            if _is_live:
+                return {"success": False,
+                        "message": "MOM-ETF-V1 仅限 SIM 试点, 拒绝 LIVE 执行"}
+            try:
+                from app.core.db_utils import safe_sqlite_connect
+                _mom_conn = safe_sqlite_connect(
+                    core_paths.get_trade_records_db_for_arm(target_env), timeout=5)
+                try:
+                    _mom_today_notional = float(_mom_conn.execute(
+                        "SELECT COALESCE(SUM(entry_price * quantity), 0) FROM trade_records "
+                        "WHERE decision_id LIKE 'MOM-ETF-V1-%' AND substr(entry_time, 1, 10)=?",
+                        (inst.get("date") or now_et().date().isoformat(),),
+                    ).fetchone()[0])
+                finally:
+                    _mom_conn.close()
+                _mom_final_reject = mom_final_order_reject_reason(
+                    float(entry_price or 0), int(position_size or 0),
+                    inst.get("date") or now_et().date().isoformat(),
+                    _mom_today_notional, _pilot_policy,
+                )
+            except Exception as _mom_final_err:
+                logger.error(
+                    f"[MOM-ETF-V1] {symbol} 最终股数费用/名义复核异常 fail-close: {_mom_final_err}",
+                    exc_info=True)
+                return {"success": False,
+                        "message": f"MOM_FINAL_CHECK_ERROR: {_mom_final_err}"}
+            if _mom_final_reject:
+                logger.warning(
+                    "[MOM-ETF-V1] %s 最终股数复核拒单: %s (qty=%s, entry=%s)",
+                    symbol, _mom_final_reject, position_size, entry_price)
+                try:
+                    self.db.update_instruction_tracking(
+                        instruction_id, {"skip_reason": _mom_final_reject})
+                except Exception:
+                    pass
+                return {"success": False, "message": _mom_final_reject,
+                        "skipped_mom_final_check": True}
+
         # 下单前报价健康门 (Tier B 2026-07-19): 复用 check_quote_health 拦截过宽 spread / 过期报价.
         try:
             from app.playbook.config import get_playbook_config as _get_pb_cfg_gate

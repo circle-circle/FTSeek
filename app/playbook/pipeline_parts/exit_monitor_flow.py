@@ -393,6 +393,63 @@ def monitor_playbook_exits(
                 except Exception:
                     pass
 
+                from app.playbook.pilot_policy import check_mom_exit, policy_for
+                _mom_policy = policy_for(r.get("decision_id"))
+                if _mom_policy is not None:
+                    _mom_now = datetime_cls.now(_et)
+                    exit_reason, _mom_exit_price = check_mom_exit(
+                        direction, entry_price, current_price, stop_loss,
+                        r["entry_time"] or "", _mom_now, _mom_policy)
+                    _mom_peak = float(meta.get("peak_price", 0) or 0)
+                    _mom_trough = float(meta.get("trough_price", current_price) or current_price)
+                    if direction == "LONG":
+                        _mom_peak = max(_mom_peak, current_price)
+                        _mom_trough = min(_mom_trough, current_price)
+                        _mom_mfe = max(0.0, (_mom_peak - entry_price) / entry_price * 100.0)
+                        _mom_mae = max(0.0, (entry_price - _mom_trough) / entry_price * 100.0)
+                    else:
+                        _mom_peak = current_price if _mom_peak == 0 else min(_mom_peak, current_price)
+                        _mom_trough = max(_mom_trough, current_price)
+                        _mom_mfe = max(0.0, (entry_price - _mom_peak) / entry_price * 100.0)
+                        _mom_mae = max(0.0, (_mom_trough - entry_price) / entry_price * 100.0)
+                    meta["peak_price"] = _mom_peak
+                    meta["trough_price"] = _mom_trough
+                    meta["mfe_pct"] = max(float(meta.get("mfe_pct", 0) or 0), round(_mom_mfe, 4))
+                    meta["mae_pct"] = max(float(meta.get("mae_pct", 0) or 0), round(_mom_mae, 4))
+                    meta["policy_id"] = _mom_policy.policy_id
+                    conn.execute(
+                        "UPDATE trade_records SET metadata_json = ? WHERE id = ?",
+                        (_json.dumps(meta), r["id"]),
+                    )
+                    conn.commit()
+                    if not exit_reason:
+                        continue
+                    from app.execution.dual_broker import get_dual_broker
+                    dual = get_dual_broker()
+                    decision = _playbook_exit_decision(
+                        exit_reason, current_price, meta, round(held_minutes / 60, 1))
+                    decision["decision_id"] = r["decision_id"]
+                    decision["emit_overnight_shadow"] = False
+                    try:
+                        close_res = dual.close_position(
+                            symbol, qty, direction, target_env=_row_target,
+                            exit_owner=_playbook_exit_owner(db_path, r, meta),
+                            exit_decision=decision)
+                    except Exception as _mom_close_err:
+                        logger.error(
+                            f"[MOM-ETF-V1] 平仓异常 {symbol} ({_row_target}): {_mom_close_err}",
+                            exc_info=True)
+                        _alert_close_failure(symbol, _row_target, "BROKER_EXCEPTION", str(_mom_close_err))
+                        continue
+                    if not close_res.get("success"):
+                        _alert_close_failure(
+                            symbol, _row_target, "EXIT_PENDING",
+                            close_res.get("error", "exit evidence pending"),
+                            error=close_res.get("error", ""))
+                        continue
+                    exited += _book_playbook_exit_result(dual, close_res, conn)
+                    continue
+
                 # OKR 优化 (2026-06-26): 入场后 30 分钟冷却期.
                 # 根因: PLAYBOOK_SIM 最近 7 笔闭环交易中, 3 笔在 1-5 分钟内被 SL_FIXED_PCT 扫出,
                 #       属开盘噪声/假突破, 不是信号本身失效. 冷却期内跳过 SL/TIME_EXIT,
