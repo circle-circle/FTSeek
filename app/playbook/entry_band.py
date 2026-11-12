@@ -42,6 +42,44 @@ def vol_widen_band_pct(atr_pct: Optional[float]) -> Tuple[float, float]:
     return knife, chase
 
 
+def classify_trigger(is_short: bool, entry_price: float, price: float,
+                     knife_floor: float, chase_zone: float, vol_ok: bool,
+                     near_miss_tol: float = 0.01) -> Tuple[bool, str]:
+    """方向性触发判定 (纯函数) — **单一真源**。
+
+    2026-11-12: 从 `trigger_flow.check_intraday_trigger` 的内联块抽出, 供生产判定与
+    开盘禁入窗观测 (record-only) 共用 —— 两处各写一份必然漂移, 而观测值一旦与生产
+    判定不同源, "若早开 10 分钟会成交什么"这个读数就是假的。
+
+    语义 (与抽出前的内联块逐字等价):
+      LONG : price <= entry            → pullback      (需 price >= entry*(1-knife))
+             否则 price <= entry*(1+chase)  → chase     (需 vol_ok)
+             否则 price <= entry*(1+chase+tol) → chase_near_miss (需 vol_ok)
+             否则                            → out_of_band
+      SHORT: 镜像 (price >= entry → pullback; 跌破 → chase)。
+    返回 (triggered, path); path ∈ {pullback, chase, chase_near_miss, out_of_band}。
+    """
+    e = float(entry_price or 0)
+    p = float(price or 0)
+    if e <= 0 or p <= 0:
+        return False, "out_of_band"
+    if is_short:
+        if p >= e:
+            return (p <= e * (1 + knife_floor)), "pullback"
+        if p >= e * (1 - chase_zone):
+            return bool(vol_ok), "chase"
+        if p >= e * (1 - chase_zone - near_miss_tol):
+            return bool(vol_ok), "chase_near_miss"
+        return False, "out_of_band"
+    if p <= e:
+        return (p >= e * (1 - knife_floor)), "pullback"
+    if p <= e * (1 + chase_zone):
+        return bool(vol_ok), "chase"
+    if p <= e * (1 + chase_zone + near_miss_tol):
+        return bool(vol_ok), "chase_near_miss"
+    return False, "out_of_band"
+
+
 def compute_entry_band(
     entry_price,
     is_short: bool,

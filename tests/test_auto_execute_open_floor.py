@@ -78,8 +78,13 @@ def frozen(monkeypatch):
 
     def _set(y, m, d, hh, mm):
         import pytz
-        state["now"] = pytz.timezone("America/New_York").localize(
-            real(y, m, d, hh, mm))
+        from datetime import datetime as _real_dt
+        frozen_at = pytz.timezone("America/New_York").localize(
+            _real_dt(y, m, d, hh, mm))
+        state["now"] = frozen_at
+        _set.now_dt = frozen_at      # 供直接调 emit_blackout_shadow 的用例取"当前时刻"
+        return frozen_at
+    _set.now_dt = None
     return _set
 
 
@@ -161,3 +166,168 @@ def test_source_has_no_hardcoded_open_floor():
     assert "_market_open_min + 5" not in SRC
     assert "_market_open_min" not in SRC
     assert "open_floor_minutes(" in SRC
+
+
+# ── 4. 黑窗只读观测 (2026-11-12 用户裁 A) ────────────────────────────
+class _FakeRouter:
+    def __init__(self, px):
+        self._px = px
+
+    def get_full_market_context(self, symbol):
+        if symbol not in self._px:
+            raise RuntimeError("no quote")
+        return {"price": self._px[symbol]}
+
+
+class _FakeDB:
+    """只暴露 get_instructions_by_date — 任何写口调用都会 AttributeError ⇒ 测试即红。"""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def get_instructions_by_date(self, today):
+        return self._rows
+
+
+def _inst(iid, symbol, direction, entry, **kw):
+    d = {"id": iid, "symbol": symbol, "direction": direction,
+         "entry_price": entry, "decision_id": f"DA-x-{symbol}",
+         "triggered": 0, "executed": 0, "skip_reason": "", "confidence": 40}
+    d.update(kw)
+    return d
+
+
+def _shadow_rows(tmp_path):
+    p = tmp_path / "entry_blackout_shadow.jsonl"
+    if not p.exists():
+        return []
+    import json as _j
+    return [_j.loads(x) for x in p.read_text().splitlines() if x.strip()]
+
+
+def _wire_shadow(monkeypatch, tmp_path, rows, px, enabled=True):
+    import app.playbook.db as pbdb
+    monkeypatch.setattr(pbdb, "route_playbook_db", lambda mode: _FakeDB(rows))
+    monkeypatch.setattr(aef, "_blackout_shadow_path",
+                        lambda: tmp_path / "entry_blackout_shadow.jsonl")
+    monkeypatch.setattr(aef, "_BLACKOUT_SHADOW_SEEN", set())
+    cfg = {"entry_open_blackout_enabled": True, "entry_open_blackout_hhmm": 945,
+           "entry_blackout_shadow_enabled": enabled,
+           "entry_band_vol_widen_enabled": False,
+           "intraday_vol_gate_grace_min": 15}
+    _patch_cfg(monkeypatch, cfg)
+    return cfg
+
+
+def test_blackout_shadow_records_band_hits_only(monkeypatch, frozen, tmp_path):
+    rows = [
+        _inst(1, "US.AAA", "BUY", 100.0),     # 99.5 → pullback (带内) ⇒ 应记
+        _inst(2, "US.BBB", "BUY", 100.0),     # 106.5 → 出带 ⇒ 不记
+        _inst(3, "US.CCC", "SHORT", 100.0),   # 101.0 → pullback ⇒ 应记
+        _inst(4, "US.DDD", "BUY", 100.0, triggered=1),   # 已触发 ⇒ 不评估
+        _inst(5, "US.EEE", "SKIP", 100.0),               # SKIP ⇒ 不评估
+        _inst(6, "US.FFF", "BUY", 0),                    # 无锚 ⇒ 跳过
+        _inst(7, "US.TEST_X", "BUY", 100.0),             # 测试标的 ⇒ 跳过
+    ]
+    px = {"US.AAA": 99.5, "US.BBB": 106.5, "US.CCC": 101.0,
+          "US.DDD": 99.0, "US.EEE": 99.0, "US.TEST_X": 99.0}
+    _wire_shadow(monkeypatch, tmp_path, rows, px)
+    frozen(2026, 11, 12, 9, 40)
+
+    class _Sched:
+        data_router = _FakeRouter(px)
+
+    aef.emit_blackout_shadow(_Sched(), "2026-11-12", frozen.now_dt, LOG, set(), 945)
+    got = _shadow_rows(tmp_path)
+    cyc = [r for r in got if r["kind"] == "cycle"]
+    hits = [r for r in got if r["kind"] == "hit"]
+    assert len(cyc) == 1 and cyc[0]["n_inst"] == 7 and cyc[0]["n_priced"] == 3
+    assert sorted(h["symbol"] for h in hits) == ["US.AAA", "US.CCC"]
+    aaa = [h for h in hits if h["symbol"] == "US.AAA"][0]
+    assert aaa["entry_path"] == "pullback" and aaa["band_would_trigger"] is True
+    assert aaa["vol_assumed_ok"] is True and aaa["blackout_hhmm"] == 945
+    assert "band geometry only" in aaa["caveat"]
+
+
+def test_blackout_shadow_dedupes_first_hit_per_instruction(monkeypatch, frozen, tmp_path):
+    rows = [_inst(1, "US.AAA", "BUY", 100.0)]
+    px = {"US.AAA": 99.5}
+    _wire_shadow(monkeypatch, tmp_path, rows, px)
+    frozen(2026, 11, 12, 9, 38)
+
+    class _Sched:
+        data_router = _FakeRouter(px)
+
+    aef.emit_blackout_shadow(_Sched(), "2026-11-12", frozen.now_dt, LOG, set(), 945)
+    frozen(2026, 11, 12, 9, 41)
+    aef.emit_blackout_shadow(_Sched(), "2026-11-12", frozen.now_dt, LOG, set(), 945)
+    got = _shadow_rows(tmp_path)
+    assert len([r for r in got if r["kind"] == "cycle"]) == 2      # 每轮都记 (证明活着)
+    assert len([r for r in got if r["kind"] == "hit"]) == 1        # 明细只首记一次
+
+
+def test_blackout_shadow_off_writes_nothing(monkeypatch, frozen, tmp_path):
+    rows = [_inst(1, "US.AAA", "BUY", 100.0)]
+    px = {"US.AAA": 99.5}
+    _wire_shadow(monkeypatch, tmp_path, rows, px, enabled=False)
+    frozen(2026, 11, 12, 9, 40)
+
+    class _Sched:
+        data_router = _FakeRouter(px)
+
+    aef.emit_blackout_shadow(_Sched(), "2026-11-12", frozen.now_dt, LOG, set(), 945)
+    assert _shadow_rows(tmp_path) == []
+
+
+def test_blackout_shadow_never_writes_db(monkeypatch, frozen, tmp_path):
+    """写口出现即 AttributeError(_FakeDB 只有读方法) ⇒ 本用例守"零 DB 写入"。"""
+    rows = [_inst(1, "US.AAA", "BUY", 100.0, skip_reason="thesis_drift_invalidate")]
+    px = {"US.AAA": 99.5}
+    _wire_shadow(monkeypatch, tmp_path, rows, px)
+    frozen(2026, 11, 12, 9, 40)
+
+    class _Sched:
+        data_router = _FakeRouter(px)
+
+    # skip_reason 已作废 ⇒ 连观测都不记 (与生产 trigger 的作废语义对齐)
+    aef.emit_blackout_shadow(_Sched(), "2026-11-12", frozen.now_dt, LOG,
+                             {"thesis_drift_invalidate"}, 945)
+    assert [r for r in _shadow_rows(tmp_path) if r["kind"] == "hit"] == []
+
+
+# ── 5. 触发判定单一真源 (classify_trigger) 与迁移前内联块逐字等价 ──
+def _legacy_classify(is_short, e, p, knife, chase, vol_ok, tol=0.01):
+    """迁移前 trigger_flow 内联块的逐字副本 — 仅用作对撞基准。"""
+    if is_short:
+        if p >= e:
+            return (p <= e * (1 + knife)), "pullback"
+        if p >= e * (1 - chase):
+            return vol_ok, "chase"
+        if p >= e * (1 - chase - tol):
+            return vol_ok, "chase_near_miss"
+        return False, "out_of_band"
+    if p <= e:
+        return (p >= e * (1 - knife)), "pullback"
+    if p <= e * (1 + chase):
+        return vol_ok, "chase"
+    if p <= e * (1 + chase + tol):
+        return vol_ok, "chase_near_miss"
+    return False, "out_of_band"
+
+
+@pytest.mark.parametrize("is_short", [False, True])
+@pytest.mark.parametrize("vol_ok", [True, False])
+def test_classify_trigger_matches_legacy_inline(is_short, vol_ok):
+    from app.playbook.entry_band import classify_trigger
+    knife, chase = 0.03, 0.05
+    for pct in [-0.12, -0.081, -0.08, -0.061, -0.06, -0.051, -0.05, -0.02,
+                0.0, 0.02, 0.05, 0.059, 0.06, 0.061, 0.08, 0.12]:
+        p = 100.0 * (1 + pct)
+        assert classify_trigger(is_short, 100.0, p, knife, chase, vol_ok) == \
+            _legacy_classify(is_short, 100.0, p, knife, chase, vol_ok), (is_short, pct, vol_ok)
+
+
+def test_classify_trigger_guards_bad_prices():
+    from app.playbook.entry_band import classify_trigger
+    assert classify_trigger(False, 0, 100, 0.03, 0.05, True) == (False, "out_of_band")
+    assert classify_trigger(False, 100, 0, 0.03, 0.05, True) == (False, "out_of_band")

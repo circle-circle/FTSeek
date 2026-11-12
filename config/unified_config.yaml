@@ -1310,6 +1310,12 @@ playbook:
     early_tight_sl_atr_mult: 0.5
     early_tight_sl_pct_max: 2.5
     entry_open_blackout_enabled: true
+    entry_blackout_shadow_enabled: true  # 2026-11-12 (用户裁 A): 黑窗内只读观测 (record-only) —
+    #   本闸让 auto_execute 整轮 return, 逐条 trigger 一次不跑 ⇒ 09:30-09:45 零遥测。
+    #   该影子每轮落一行汇总 + 每条指令首次落入带内落一行明细到 data/entry_blackout_shadow.jsonl,
+    #   只算 band 几何+gap (后续门未观测 ⇒ 是上限不是成交); 不写 DB/不改 skip_reason/不下单。
+    #   ⚠️ 键放 execution_parameters 扁平层 (PlaybookConfig._load 只拍平两节)。
+    #   回滚: false (热载 ~60s) 或删键。
     entry_open_blackout_hhmm: 0945    # 2026-08-15 (三问Q2,DEB§33)1015→0935 → 2026-11-12 用户令「开盘后5→15分钟避开盘波动,今晚观察」0935→0945. 回滚=改回0935(热载~60s). 注: auto_execute 早退闸已与本键**同源**(原硬编码 9:30+5 于 2026-11-12 删除, 现读本键; 关闸/非法值回落 0935) ⇒ 本键是唯一真源, 不存在第二处 09:35 floor.
     #   用户裁: sim核心是打磨链路和基建, 交易时间对齐实盘(开盘后5min), 不再延后.
     #   2026-11-12 改注: 「auto_execute 内置 5min 延迟(9:35) = 本值同刻」已过期 —— 硬编码

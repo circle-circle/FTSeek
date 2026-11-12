@@ -320,7 +320,9 @@ def check_intraday_trigger(
             from datetime import datetime as _dt2
             _now_oob = _dt2.now(_now_et())
             if _now_oob.hour * 100 + _now_oob.minute < _oob_hhmm:
-                _emit_trigger_miss("before_open_blackout", None)
+                # 2026-11-12: 原来传 None ⇒ 落盘 current_price=0/gap_pct=0, 一旦有人把
+                #   auto_execute 的 floor 调得比本键更早, 这行仍然读不出任何东西。改传实时价。
+                _emit_trigger_miss("before_open_blackout", current_price)
                 return False
         except Exception:
             pass  # 时间获取异常 → fail-open (不拦)
@@ -516,38 +518,13 @@ def check_intraday_trigger(
     #   根因是 chase_zone=5% 过严. 加"接近确认位"宽松条件: 距 chase_zone 边界 ±1% 内也触发.
     _entry_path = None
     _near_miss_tolerance = 0.01  # ±1% 接近确认位容忍度
-    if is_short:
-        if current_price >= entry_price:
-            # 反弹到入场价或更高 → 更优做空点, 直接触发 (设上限防已冲高背离)
-            triggered = current_price <= entry_price * (1 + _knife_floor)
-            _entry_path = "pullback"
-        elif current_price >= entry_price * (1 - _chase_zone):
-            # 跌破入场价 → 追空, 需量能确认 (防无量假跌)
-            triggered = _vol_ok
-            _entry_path = "chase"
-        elif current_price >= entry_price * (1 - _chase_zone - _near_miss_tolerance):
-            # P0: 接近 chase_zone 边界 (±1% 内) → 宽松触发
-            triggered = _vol_ok
-            _entry_path = "chase_near_miss"
-        else:
-            triggered = False
-            _entry_path = "out_of_band"
-    else:
-        if current_price <= entry_price:
-            # 回调到入场价或更低 → 更优买点, 直接触发 (设下限防接飞刀)
-            triggered = current_price >= entry_price * (1 - _knife_floor)
-            _entry_path = "pullback"
-        elif current_price <= entry_price * (1 + _chase_zone):
-            # 突破入场价 → 追涨, 需量能确认 (防无量假突破)
-            triggered = _vol_ok
-            _entry_path = "chase"
-        elif current_price <= entry_price * (1 + _chase_zone + _near_miss_tolerance):
-            # P0: 接近 chase_zone 边界 (±1% 内) → 宽松触发
-            triggered = _vol_ok
-            _entry_path = "chase_near_miss"
-        else:
-            triggered = False
-            _entry_path = "out_of_band"
+    # 2026-11-12: 判定体抽到 entry_band.classify_trigger (纯函数, 单一真源) ——
+    #   开盘禁入窗的 record-only 观测必须与本判定**同源**, 否则观测值不可用于裁决。
+    #   逐字等价: 分支顺序/边界/近失容忍度/量能确认要求全部未变 (74 例回归覆盖)。
+    from app.playbook.entry_band import classify_trigger as _classify_trig
+    triggered, _entry_path = _classify_trig(
+        is_short, entry_price, current_price,
+        _knife_floor, _chase_zone, _vol_ok, _near_miss_tolerance)
 
     # ── 2026-08-23 (用户裁分流对比): DA 源量能门线性 vs p50 影子对照 ──
     #   DA 走线性(不拦), 同轮记录"p50 会怎么判" — 毕业判据"DA 对比组方向一致"的

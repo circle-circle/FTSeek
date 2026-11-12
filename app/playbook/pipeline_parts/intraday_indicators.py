@@ -681,7 +681,14 @@ def _anchor_trigger_geometry(
     vol_ok: bool,
     near_miss_tol: float,
 ):
-    """反事实触发几何 (RFC-123 阶段0, 纯函数)。"""
+    """反事实触发几何 (RFC-123 阶段0, 纯函数)。
+
+    2026-11-12: 判定体统一到 `entry_band.classify_trigger` —— 生产 `check_intraday_trigger`、
+    本影子、开盘禁入窗观测三处原先各有一份同义分支, 改一处不同步另外两处就会让
+    "反事实几何 / 观测值"与生产判定脱钩 (本文件的测试 `test_geometry_stays_in_sync_*`
+    正是为此存在)。现在只有一份实现, 该测试改为钉"三处都委托同一函数"。
+    保留本函数的 None 契约: 无效价 → (None, None), 下游按 None 判"几何不可算"。
+    """
     try:
         anchor_value = float(anchor or 0)
         price = float(current_price or 0)
@@ -689,18 +696,6 @@ def _anchor_trigger_geometry(
         return None, None
     if anchor_value <= 0 or price <= 0:
         return None, None
-    if is_short:
-        if price >= anchor_value:
-            return price <= anchor_value * (1 + knife), "pullback"
-        if price >= anchor_value * (1 - chase):
-            return bool(vol_ok), "chase"
-        if price >= anchor_value * (1 - chase - near_miss_tol):
-            return bool(vol_ok), "chase_near_miss"
-        return False, "out_of_band"
-    if price <= anchor_value:
-        return price >= anchor_value * (1 - knife), "pullback"
-    if price <= anchor_value * (1 + chase):
-        return bool(vol_ok), "chase"
-    if price <= anchor_value * (1 + chase + near_miss_tol):
-        return bool(vol_ok), "chase_near_miss"
-    return False, "out_of_band"
+    from app.playbook.entry_band import classify_trigger as _classify
+    return _classify(bool(is_short), anchor_value, price,
+                     knife, chase, vol_ok, near_miss_tol)

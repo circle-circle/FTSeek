@@ -95,3 +95,55 @@ config 覆盖。任一方只改一处都会得到"改了没反应"的假象。
 2. 与近 5 日同档对照: 首单笔数是否被"掐掉机会" (对照 09:45-10:00 桶历史 4-6 笔/日)。
 3. 反方: 是否少了 MFE≥1.5% 的大赢家 (历史该档 16%、+$4.8k/78 日)。
 4. 停止条件: 若连续 3 个交易日出现"9:45 后首单即被 chase cap/出带跳过"占比明显上升, 视为延后把机会转成了空转, 回滚 0935。
+
+## 6. 追加批 A (2026-11-12, 用户裁「A」): 黑窗内只读观测
+
+**动机**: §3.1 的观测黑洞使本次改动无法用前向数据裁决。用户裁 A = 只加观测, 不改判定。
+
+**落地**:
+- `auto_execute_flow.emit_blackout_shadow()` — 闸内 `return None` 前调用, 纯 append;
+  每轮一行 `kind=cycle` (n_inst / n_priced / n_would_trigger, 证明观测自身活着) +
+  每条指令**首次**落带时一行 `kind=hit`; 落 `data/entry_blackout_shadow.jsonl`。
+- 配置 `playbook.execution_parameters.entry_blackout_shadow_enabled: true` (回滚 false, 热载)。
+- **硬约束 (测试钉住)**: 不写 DB / 不改 skip_reason / 不做永久作废 / 不下单 / 不 reprice。
+- **口径**: 只算 band 几何 + gap; 后续门 (VWAP/低ATR/流动性/借券/漂移/极端gap/admission)
+  未观测 ⇒ `band_would_trigger` 是**上限**, 不是"会成交"。行内 `caveat` 字段写死这句。
+- 窗口内量能门处开盘豁免 (`intraday_vol_gate_grace_min: 15`), 故 vol_ok 恒真且不必取量;
+  行里标 `vol_assumed_ok` 供 grace 被改小时事后剔除。
+- 附带修复: 内层 `_emit_trigger_miss("before_open_blackout", None)` → 传 `current_price`
+  (原来落盘 `current_price=0/gap_pct=0`, 外层 floor 一旦低于本键该行仍无信息量)。
+
+**顺带的真减法**: 触发判定原有三份同义分支 (生产 `check_intraday_trigger` / 双锚影子
+`_anchor_trigger_geometry` / 本观测)。抽成 `entry_band.classify_trigger()` 唯一实现, 两处委托。
+`test_geometry_stays_in_sync_with_production_branches` 从"token 扫描生产段"改为"钉
+三处都委托同一函数 + 分支字面量只许出现在 entry_band.py" —— 重新内联一份同义分支即红。
+
+**观测成本**: 黑窗 15min ≈ 5 轮 × 每指令 1 次 `get_full_market_context` (与正常轮次同量级);
+相对全天 ~120 轮 ≈ +4% 快照负载。
+
+**未做 (如实登记)**: 该台账**未注册进 `app/playbook/shadow_registry.py`** (那文件此刻有并行
+agent 在改)。⇒ 缺 `check_mounting` 停摆守卫: 若某天影子不再落行, 只能靠人看
+`n_priced>0` 的 cycle 行存在与否。补齐方式 = 建 evaluator 脚本后按 registry 格式登记。
+
+## 7. entry_confirm (RFC-141) 与 0945 的关系 — 结论: **本批不动它**
+
+用户 2026-11-12 追问「开盘交易后 entry_confirm 的逻辑是否需要调整」。实测结论是不需要改参数,
+但有三条口径必须写进判读:
+
+1. **无证据支持调整**: `data/shadow/entry_confirm_forward.jsonl` 仅 **69 条 arm**
+   (2026-11-05~11-11, 5 个交易日)。按 `session_min` 分桶: `0-15` n=48 放行 71% /
+   `15-30` n=10 放行 70% / `30-60` n=8 放行 62% / `>=60` n=3 放行 67% ——
+   差异在噪声内, 且桶内 n<40 = 无功效。**按这个样本调参 = 拿噪声当信号**。
+2. **判据人群已换 (最重要的口径风险)**: 上述 69 条里 **48 条 (70%)** 落在 `session_min<15`,
+   即 09:30-09:45 段 —— 这正是 0945 之后不再产生 arm 的窗口。⇒ RFC-141 预注册的裁决
+   基线是"开门窗为主"的人群, 0945 之后的人群变了。**引用 11-05..11-11 的读数续判 = 跨口径**,
+   裁决时必须按 `session_min` 分桶并声明"门后人群已变", 或重新预注册。
+3. **时间叠加要算清 (否则会误判"没提前")**: 0945 只是**触发**下界; 实际成交 =
+   09:45 arm → +`entry_confirm_delay_sec`(120s) 确认 → 下一次 auto_execute(≤180s) reprice 下单
+   ⇒ **首单成交约 09:47-09:50 ET**。核"首单≥09:45"只能看 arm/trigger 时间戳, 看成交时间戳会
+   把这道门的 2-5min 延迟误读成黑窗延长。
+4. **一个同刻联动 (设计巧合, 非缺陷)**: 量能门的开盘豁免也是 15min
+   (`intraday_vol_gate_grace_min: 15`, 判据 `0 <= 分钟 < 15`)。0945 之后, **当天第一笔入场
+   落在豁免窗之外**, 必须真过量能门 (1.5)。历史上 09:35-09:44 的入场是"豁免窗内"的,
+   所以这次改动不只是"晚 10 分钟", 还**多了一道量能确认**。方向上与用户意图一致 (更保守),
+   但解释"今晚首单为什么这么少"时必须把这条并列, 别只归因黑窗。

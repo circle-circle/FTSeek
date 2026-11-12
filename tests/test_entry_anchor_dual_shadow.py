@@ -114,18 +114,31 @@ def test_invalid_anchor_returns_none_not_guess():
 
 
 def test_geometry_stays_in_sync_with_production_branches():
-    """生产判定段的关键常量/分支若变更而本纯函数未同步 ⇒ 影子读数脱钩, 必须红。"""
+    """判定语义只有一份实现 (entry_band.classify_trigger); 三处消费方必须委托它。
+
+    2026-11-12 重构: 原内联分支在 trigger_flow / intraday_indicators 各有一份, 靠本测试
+    的 token 扫描钉住"改了生产必须同步影子"。现在改为钉**结构**: 分支字面量只允许出现在
+    entry_band.py, 其余两处必须是委托调用 —— 任何人重新内联一份同义分支 ⇒ 红。
+    """
     from pathlib import Path
-    src = (Path(__file__).resolve().parents[1] / "app" / "playbook"
-           / "pipeline_parts" / "trigger_flow.py").read_text(encoding="utf-8")
-    assert "_near_miss_tolerance = 0.01" in src, (
-        "生产 near_miss 容忍度已改 — _anchor_trigger_geometry 的 _T=0.01 须同步 "
-        "(否则反事实几何与生产语义脱钩)")
-    for token in ('_entry_path = "pullback"', '_entry_path = "chase"',
-                  '_entry_path = "chase_near_miss"', '_entry_path = "out_of_band"'):
-        assert token in src, f"生产判定段分支缺失/改名: {token} — 同步本纯函数"
-    assert "(1 + _knife_floor)" in src and "(1 - _knife_floor)" in src, (
-        "生产 knife 判定式已改 — 同步本纯函数")
+    root = Path(__file__).resolve().parents[1] / "app" / "playbook"
+    src_tf = (root / "pipeline_parts" / "trigger_flow.py").read_text(encoding="utf-8")
+    src_ii = (root / "pipeline_parts" / "intraday_indicators.py").read_text(encoding="utf-8")
+    src_eb = (root / "entry_band.py").read_text(encoding="utf-8")
+
+    # 1) 生产仍在用 1% 近失容忍度, 且判定委托单一真源
+    assert "_near_miss_tolerance = 0.01" in src_tf, (
+        "生产 near_miss 容忍度已改 — classify_trigger 的 tol 入参须同步")
+    assert "classify_trigger" in src_tf, "生产判定未委托 entry_band.classify_trigger"
+    # 2) 双锚影子 (RFC-123) 同样委托, 不得重新内联
+    assert "classify_trigger" in src_ii, "双锚影子的几何未委托单一真源"
+    assert '_entry_path = "pullback"' not in src_tf and '"pullback"' not in src_ii, (
+        "生产/影子段又出现内联分支字面量 — 判定需要扩散回两处 (必然漂移)")
+    # 3) 分支语义与 knife 表达式在 entry_band.py (唯一实现)
+    for token in ('"pullback"', '"chase"', '"chase_near_miss"', '"out_of_band"'):
+        assert token in src_eb, f"entry_band.classify_trigger 分支缺失/改名: {token}"
+    assert "(1 - knife_floor)" in src_eb and "(1 + knife_floor)" in src_eb, (
+        "entry_band.classify_trigger 的 knife 判定式已改")
 
 
 # ── 3. record-only 不变量 ────────────────────────────────────────────────────

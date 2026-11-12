@@ -123,6 +123,132 @@ def open_floor_minutes(logger: Any = None):
         return _legacy, 935
 
 
+def _blackout_shadow_path() -> Path:
+    """data/entry_blackout_shadow.jsonl — 锚定模块路径 (相对 cwd 会写进生产库旁边)。"""
+    return Path(__file__).resolve().parents[3] / "data" / "entry_blackout_shadow.jsonl"
+
+
+_BLACKOUT_SHADOW_SEEN: set = set()   # {(date, inst_id)} 首次落入可触发带去重 (进程内)
+
+
+def emit_blackout_shadow(scheduler, today: str, now_dt, logger: Any,
+                         invalidated_reasons, floor_hhmm: int = 945) -> None:
+    """开盘禁入窗内的**只读**观测 (2026-11-12, 用户裁 A)。
+
+    为什么存在: 黑窗闸在 `run_playbook_auto_execute` 顶部直接 return, 逐条 trigger
+    一次都不跑 ⇒ 09:30-09:45 **零遥测** (实测 20 日 `trigger_miss` 09:30-09:34 = 0 行)。
+    于是"延后到 09:45 到底切掉了什么"只能用历史回放回答, 前向永远没有对照样本。
+
+    零行为变更 (硬约束): 不写 DB / 不改 skip_reason / 不做永久作废 / 不下单 / 不 reprice,
+    只 append 两种行:
+      1) 每轮一行汇总 (kind=cycle): 候选数/取到价数/带内可触发数 —— 证明观测本身活着
+      2) 每条指令**首次**落入可触发带时一行明细 (kind=hit) —— 供离线对账
+         短期去重键 (date, inst_id) 进程内; 重启可能重复, 离线按 (date, inst_id) 去重。
+
+    口径声明 (别把它读成"会成交"): 只算 band 几何 + gap, **不**复算后续门
+    (VWAP/低ATR/流动性/借券/thesis漂移/极端gap/admission) ⇒ `band_would_trigger` 是
+    **上限**。窗口内量能门处于开盘豁免 (`intraday_vol_gate_grace_min: 15`, 0<=min<15),
+    故 vol_ok 恒真且不需要取量; 若有人把 grace 调到 <15, 本函数仍然按 vol_ok=True 记,
+    并在行里标 `vol_assumed_ok` 供事后剔除。
+    """
+    import json as _json
+    from app.playbook.config import get_playbook_config
+    _pb = get_playbook_config()
+    if not bool(_pb.get("entry_blackout_shadow_enabled", True)):
+        return
+    _dr = (getattr(scheduler, "data_router", None)
+           or getattr(scheduler, "market_data", None))
+    if _dr is None:
+        return
+    from app.playbook.db import route_playbook_db
+    _insts = route_playbook_db("sim").get_instructions_by_date(today) or []
+    from app.playbook.entry_band import (CHASE_ZONE_PCT, KNIFE_FLOOR_PCT,
+                                         classify_trigger, vol_widen_band_pct)
+    _widen = bool(_pb.get("entry_band_vol_widen_enabled", False))
+    _grace = float(_pb.get("intraday_vol_gate_grace_min", 15))
+    _rows = []
+    _n_priced = _n_would = 0
+    for inst in _insts:
+        try:
+            _d = str(inst.get("direction") or "").upper()
+            if _d in ("", "SKIP"):
+                continue
+            _is_short = ("SHORT" in _d) or _d in ("SELL", "SELL_SHORT")
+            if inst.get("triggered") or inst.get("executed"):
+                continue
+            if (inst.get("skip_reason") or "") in invalidated_reasons:
+                continue
+            _sym = str(inst.get("symbol") or "")
+            if not _sym or "TEST" in _sym.upper():
+                continue
+            _e = float(inst.get("entry_price") or 0)
+            if _e <= 0:
+                continue
+            _px = 0.0
+            try:
+                _ctx = _dr.get_full_market_context(_sym)
+                if isinstance(_ctx, dict):
+                    _px = float(_ctx.get("price") or 0)
+            except Exception as _px_err:
+                logger.debug(f"[blackout-shadow] {_sym} 取价异常: {_px_err}")
+            if _px <= 0:
+                continue
+            _n_priced += 1
+            if _widen:
+                _knife, _chase = vol_widen_band_pct(inst.get("atr_pct"))
+            else:
+                _knife, _chase = KNIFE_FLOOR_PCT, CHASE_ZONE_PCT
+            _trig, _path = classify_trigger(_is_short, _e, _px, _knife, _chase, True)
+            if not _trig:
+                continue
+            _n_would += 1
+            _key = (today, inst.get("id"))
+            if _key in _BLACKOUT_SHADOW_SEEN:
+                continue
+            _BLACKOUT_SHADOW_SEEN.add(_key)
+            _rows.append({
+                "kind": "hit",
+                "ts": now_dt.isoformat(timespec="seconds"),
+                "date": today,
+                "et_min": now_dt.hour * 60 + now_dt.minute,
+                "inst_id": inst.get("id"),
+                "decision_id": str(inst.get("decision_id") or ""),
+                "symbol": _sym,
+                "direction": "SHORT" if _is_short else "BUY",
+                "entry_price": round(_e, 4),
+                "price": round(_px, 4),
+                "gap_pct": round((_px - _e) / _e * 100.0, 4),
+                "entry_path": _path,
+                "band_would_trigger": True,
+                "knife_floor": round(_knife, 4), "chase_zone": round(_chase, 4),
+                "vol_assumed_ok": True, "vol_grace_min": _grace,
+                "atr_pct": inst.get("atr_pct"),
+                "confidence": inst.get("confidence"),
+                "blackout_hhmm": floor_hhmm,
+                "caveat": "band geometry only; later gates unobserved",
+            })
+        except Exception as _one_err:
+            logger.warning(f"[blackout-shadow] 单条评估失败 (不阻断): {_one_err}")
+    if not _rows and _n_priced == 0:
+        return
+    try:
+        _p = _blackout_shadow_path()
+        _p.parent.mkdir(parents=True, exist_ok=True)
+        _sum = {
+            "kind": "cycle", "ts": now_dt.isoformat(timespec="seconds"),
+            "date": today, "et_min": now_dt.hour * 60 + now_dt.minute,
+            "n_inst": len(_insts), "n_priced": _n_priced,
+            "n_would_trigger": _n_would, "n_new_hits": len(_rows),
+            "blackout_hhmm": floor_hhmm,
+        }
+        with open(_p, "a", encoding="utf-8") as _f:
+            _f.write(_json.dumps(_sum, ensure_ascii=False) + "\n")
+            for _r in _rows:
+                _f.write(_json.dumps(_r, ensure_ascii=False) + "\n")
+    except Exception as _w_err:
+        logger.warning(f"[blackout-shadow] 写盘失败 (不阻断交易): {_w_err}")
+
+
 def run_playbook_auto_execute(
     scheduler,
     *,
@@ -198,6 +324,14 @@ def run_playbook_auto_execute(
             logger.info(
                 f"[playbook] 开盘禁入窗内不执行 (now={_now_et_dt.strftime('%H:%M')} ET "
                 f"< {_open_floor_hhmm // 100:02d}:{_open_floor_hhmm % 100:02d} ET)")
+            # 2026-11-12 (用户裁 A): 黑窗内只读观测 — 本闸直接 return 使逐条 trigger
+            #   一次不跑, 否则这一整窗零遥测 (改动的收益/代价无法用前向数据裁)。
+            #   纯 append, 不写 DB/不改 skip_reason/不下单; 异常只 warn。
+            try:
+                emit_blackout_shadow(scheduler, today, _now_et_dt, logger,
+                                     INVALIDATED_SKIP_REASONS, _open_floor_hhmm)
+            except Exception as _bs_err:
+                logger.warning(f"[playbook] 黑窗观测异常 (不阻断): {_bs_err}")
             return None
 
         # 2026-07-19 (DEB-round3 #1): bridge 三态告警 — auto_execute 每30min入口,
