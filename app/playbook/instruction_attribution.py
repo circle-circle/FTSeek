@@ -46,6 +46,27 @@ class _AmbiguousInstructionId:
 
 AMBIGUOUS = _AmbiguousInstructionId()
 
+# 归因来源 (2026-11-12): 报表必须能分辨「metadata 精确归属」与「decision_id 猜的归属」,
+#   否则执行率里混着猜测值而无从审计。SOURCE_METADATA_STALE = metadata 记过 id 但该指令
+#   已不在指令表内 (被删/重建), 于是静默降级到模糊匹配 —— 这是最容易被误读成"精确"的形态。
+SOURCE_METADATA = "metadata"
+SOURCE_METADATA_STALE = "metadata_stale"
+SOURCE_DECISION_ID = "decision_id"
+SOURCE_AMBIGUOUS = "ambiguous"
+SOURCE_UNMATCHED = "unmatched"
+ATTRIBUTION_SOURCES = (
+    SOURCE_METADATA, SOURCE_METADATA_STALE, SOURCE_DECISION_ID,
+    SOURCE_AMBIGUOUS, SOURCE_UNMATCHED,
+)
+
+
+def count_sources(sources: Iterable[str]) -> Dict[str, int]:
+    """把来源列表压成 {source: n}, 五类恒有键 (0 也输出, 防"缺键=没发生"的误读)。"""
+    counts = {name: 0 for name in ATTRIBUTION_SOURCES}
+    for name in sources:
+        counts[name] = counts.get(name, 0) + 1
+    return counts
+
 
 def _context_matches(instruction: Mapping[str, Any], trade: Mapping[str, Any]) -> bool:
     """Narrow duplicate decision_ids with trade date / symbol / direction context.
@@ -74,6 +95,7 @@ def _context_matches(instruction: Mapping[str, Any], trade: Mapping[str, Any]) -
 def resolve_trade_instruction_ids(
     trades: Iterable[Mapping[str, Any]],
     instruction_rows: Iterable[Mapping[str, Any]],
+    sources: List[str] | None = None,
 ) -> List[Any]:
     """Resolve metadata instruction_id first, then a unique decision_id.
 
@@ -82,6 +104,12 @@ def resolve_trade_instruction_ids(
     decision_id survives date/symbol/direction disambiguation (e.g. same-day
     reentry rounds sharing a decision_id). Callers must treat ``AMBIGUOUS`` as
     "not attributable", not as "unplanned".
+
+    2026-11-12 (核查后加固): 传入 ``sources`` 列表时, 按同一顺序回填每笔的归因来源 —
+    ``metadata`` (精确) / ``metadata_stale`` (metadata 记了 id 但该指令已不在表内, 于是
+    **静默降级到 decision_id 模糊匹配**) / ``decision_id`` (模糊回退命中) /
+    ``ambiguous`` / ``unmatched``。没有这个标记, 报表无法区分「精确归属」与「猜的归属」,
+    二者会被算进同一个执行率 —— 那正是本函数存在的意义被抵消的地方。
     """
     instructions_by_id: Dict[int, Mapping[str, Any]] = {}
     ids_by_decision_id: Dict[str, List[int]] = defaultdict(list)
@@ -106,12 +134,17 @@ def resolve_trade_instruction_ids(
             instruction_id = None
         if instruction_id in instructions_by_id:
             resolved.append(instruction_id)
+            if sources is not None:
+                sources.append(SOURCE_METADATA)
             continue
 
         decision_id = str(trade.get("decision_id") or "").strip()
         candidates = ids_by_decision_id.get(decision_id, []) if decision_id else []
         if len(candidates) == 1:
             resolved.append(candidates[0])
+            if sources is not None:
+                sources.append(
+                    SOURCE_METADATA_STALE if instruction_id is not None else SOURCE_DECISION_ID)
             continue
         if len(candidates) > 1:
             narrowed = [
@@ -119,13 +152,27 @@ def resolve_trade_instruction_ids(
                 if _context_matches(instructions_by_id[candidate], trade)
             ]
             resolved.append(narrowed[0] if len(narrowed) == 1 else AMBIGUOUS)
+            if sources is not None:
+                sources.append(
+                    SOURCE_AMBIGUOUS if len(narrowed) != 1
+                    else (SOURCE_METADATA_STALE if instruction_id is not None
+                          else SOURCE_DECISION_ID))
             continue
         resolved.append(None)
+        if sources is not None:
+            sources.append(SOURCE_UNMATCHED)
     return resolved
 
 
 __all__ = [
     "AMBIGUOUS",
+    "ATTRIBUTION_SOURCES",
+    "SOURCE_AMBIGUOUS",
+    "SOURCE_DECISION_ID",
+    "SOURCE_METADATA",
+    "SOURCE_METADATA_STALE",
+    "SOURCE_UNMATCHED",
     "canonical_plan_direction",
+    "count_sources",
     "resolve_trade_instruction_ids",
 ]

@@ -317,3 +317,17 @@ def test_entry_window_boundaries_and_kill_switch_does_not_change_exit_policy(mon
     assert check_mom_exit(
         "LONG", 100.0, 96.0, 97.0, "2026-11-13T10:00:00-05:00", now,
     )[0] == "SL_INITIAL"
+
+
+def test_rebalance_day_status_has_explicit_bool_semantics():
+    """frozen dataclass 恒 truthy ⇒ 必须显式定义 __bool__ (2026-11-12 核查加固)。
+
+    没有它, 任何 `if rebalance_day_status(...)` 误写都会让闸**每天都开**且不报错。
+    """
+    from datetime import date as _date_cls
+    from app.playbook.pilot_policy import rebalance_day_status
+    off = rebalance_day_status(_date_cls(2026, 11, 12))       # before_anchor
+    on = rebalance_day_status(_date_cls(2026, 12, 15))        # 周期上
+    assert off.is_rebalance_day is False and bool(off) is False
+    assert on.is_rebalance_day is True and bool(on) is True
+    assert not off and on                                # 误用形态下也给出正确结论

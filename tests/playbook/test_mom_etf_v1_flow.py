@@ -330,8 +330,10 @@ def test_auto_execute_mom_quote_failure_is_transient_not_fee_skip(monkeypatch, q
     assert result["executed"] == 0 and result["skipped"] == 1
     assert executed == []
     assert updated["direction"] == "BUY", "报价故障不得终结当日指令"
-    assert updated["skip_reason"].startswith("MOM_QUOTE_UNAVAILABLE")
-    assert "MOM_FEE_SIZE_INFEASIBLE" not in updated["skip_reason"]
+    # 2026-11-12: defer 不再写 skip_reason (暂时态写终态字段会污染 premarket_invalidation /
+    #   shadow_tracker / ue_batch 三个读方)。留痕在 exec_gate_audit, 不在这列。
+    assert not (updated.get("skip_reason") or "").startswith("MOM_")
+    assert "MOM_FEE_SIZE_INFEASIBLE" not in (updated.get("skip_reason") or "")
 
 
 def test_auto_execute_mom_expires_after_cutoff(monkeypatch):

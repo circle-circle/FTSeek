@@ -426,8 +426,15 @@ def test_mom_quote_price_rejects_missing_and_malformed(ctx, expected):
     assert aef._mom_quote_price(ctx) == expected
 
 
-def test_mom_defer_is_audited_once_and_never_terminal(monkeypatch):
+def test_mom_defer_is_audited_once_and_never_writes_terminal_skip_reason(monkeypatch):
+    """暂时性 defer 只进审计台账, **不写 skip_reason** (2026-11-12 核查后修正)。
+
+    `skip_reason` 是终态字段 (只在 executed=1 时清空), 下游 ≥3 处把"非空 skip_reason"
+    当"已跳过" (premarket_invalidation 不作废 / shadow_tracker 不取样 / ue_batch 不打分)。
+    故本用例钉住: 一次 defer ⇒ 0 次 DB 写、1 条审计 (transient=True)、指令原样不动。
+    """
     monkeypatch.setattr(aef, "_MOM_DEFER_AUDIT_SEEN", set())
+
     class _DB:
         def __init__(self):
             self.updates = []
@@ -444,7 +451,7 @@ def test_mom_defer_is_audited_once_and_never_terminal(monkeypatch):
             action="skipped_mom_quote_unavailable", gate="mom_quote_available",
             why="test", logger=LOG,
             emit_exec_gate_audit=lambda row, **kw: audits.append((row, kw)))
-        inst["skip_reason"] = "MOM_QUOTE_UNAVAILABLE(test)"
     assert inst["direction"] == "BUY"
-    assert db.updates == [(1, {"skip_reason": "MOM_QUOTE_UNAVAILABLE(test)"})]
+    assert db.updates == [], "暂时态不得写终态字段 skip_reason (会污染 3 个下游读方)"
+    assert not inst.get("skip_reason")
     assert len(audits) == 1 and audits[0][1]["extra"]["transient"] is True

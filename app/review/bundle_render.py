@@ -351,6 +351,13 @@ def render_md(bundle: Bundle, escalated: Optional[Dict[str, Any]] = None) -> Tup
                 if plan["unplanned_symbols"]["value"]
                 else ""
             ),
+            # 2026-11-12: 归因来源分层。执行率里若混入 decision_id 回退/陈旧 metadata 的
+            #   "猜测归属", 单看执行率会以为是精确值 —— 必须与精确归属并列展示。
+            "- 归因来源: 精确 metadata {p} / decision_id 回退 {d} / 陈旧 metadata {s}".format(
+                p=plan.get("attribution_metadata_precise_count", {}).get("value", 0),
+                d=plan.get("attribution_decision_fallback_count", {}).get("value", 0),
+                s=plan.get("attribution_metadata_stale_count", {}).get("value", 0),
+            ),
             f"- 执行率：{_ratio(plan['execution_rate']['value'])}",
             f"- 方向错配：{', '.join(plan['direction_mismatch']['value']) or '无'}",
             "",

@@ -30,12 +30,30 @@ class _Holder:
 
 _PROD_CFG = _Holder()
 
+# 真函数引用 (fixture 会用 monkeypatch 顶掉 A.get_admission_config): 供"生产现状"用例
+# 绕过 fixture 覆盖直接读 config。
+_REAL_GET_ADMISSION_CONFIG = A.get_admission_config
+
 
 @pytest.fixture(autouse=True)
-def _prod_cfg():
-    """用生产 config 实值 (enforce=true, min_notional_usd=2500), 不注入测试缺省."""
+def _prod_cfg(monkeypatch):
+    """用生产 config 实值, 但**显式打开费用门**后注入。
+
+    2026-11-12 (核查修复, 5 例长期恒红): 生产自 2026-11-06 起 `fee_gate_enforce=false`
+    (用户裁「费用门拦截关闭」), 于是 NOTIONAL_TOO_SMALL / FEE_BPS_TOO_HIGH 只进
+    `metrics.would_reject`, 不再 reject ⇒ 本文件的"探针豁免"场景**无拦可豁**,
+    `exempted_reasons` 恒空。红的是场景, 不是豁免机制。
+
+    本文件守的是"豁免机制的边界"(只剥两项经济门/不吃安全门/伪标记不生效), 故在测试侧
+    把费用门打开以复现可拦场景; **生产当前"费用门已关"这一事实**由
+    `test_production_fee_gate_is_currently_unenforced` 单独钉住 —— 一旦有人把开关改回
+    true, 该用例会红, 提醒把这里的覆盖删掉、让测试直接跑生产口径。
+    """
     A.reset_cache()
-    _PROD_CFG.value = dict(A.get_admission_config(refresh=True))
+    base = dict(_REAL_GET_ADMISSION_CONFIG(refresh=True))
+    enforced = {**base, "enforce": True, "fee_gate_enforce": True}
+    _PROD_CFG.value = enforced
+    monkeypatch.setattr(A, "get_admission_config", lambda refresh=False: enforced)
     yield
     A.reset_cache()
 
@@ -161,3 +179,18 @@ def test_probe_marker_requires_both_target_env_and_mode():
     ok = evaluate({**base, "metadata": {"dual_arm": {
         "target_env": "real", "mode": "engineering_probe"}}})
     assert ok["verdict"] == "PASS"
+
+
+def test_production_fee_gate_is_currently_unenforced():
+    """生产现状留痕 (2026-11-12): 费用门拦截**当前是关的** (2026-11-06 用户裁)。
+
+    这条不是判据, 是防"测试被改绿灯"的哨兵: 上面 5 个豁免用例之所以需要测试侧打开
+    `fee_gate_enforce`, 正是因为生产把它关了, 那一刻起探针豁免在生产里**无事可做**。
+    若哪天有人把开关改回 true, 本用例会红 —— 正确响应是把 fixture 里的覆盖删掉,
+    让用例直接跑生产口径 (而不是把断言删掉)。
+    """
+    cfg = _REAL_GET_ADMISSION_CONFIG(refresh=True)
+    assert cfg.get("fee_gate_enforce") is False, (
+        "生产费用门拦截已重新打开 — 请删除本文件 fixture 的 fee_gate_enforce 覆盖, "
+        "让豁免用例直接跑生产口径 (而不是放宽断言)")
+    assert cfg.get("enforce") is True, "admission 总闸被关: 所有判据都不生效, 需人工确认"

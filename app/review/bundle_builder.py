@@ -17,7 +17,11 @@ from app.review.decision_diagnostics import build_decision_diagnostics
 from app.review.stage_stats import load_trades, stage_breakdown
 from app.playbook.instruction_attribution import (
     AMBIGUOUS,
+    SOURCE_DECISION_ID,
+    SOURCE_METADATA,
+    SOURCE_METADATA_STALE,
     canonical_plan_direction,
+    count_sources,
     resolve_trade_instruction_ids,
 )
 from app.utils.timezone import to_et
@@ -212,7 +216,10 @@ def build_plan_vs_actual(
         if key not in plan_gap_keys:
             plan_gap_keys.append(key)
 
-    resolved_ids = resolve_trade_instruction_ids(trades, instruction_identities)
+    _sources: list = []
+    resolved_ids = resolve_trade_instruction_ids(
+        trades, instruction_identities, sources=_sources)
+    _src = count_sources(_sources)
     executed_ids = set()
     executed_keys = set()
     unplanned_trades = []
@@ -294,6 +301,21 @@ def build_plan_vs_actual(
         ),
         "attribution_ambiguous_symbols": _metric(
             "attribution_ambiguous_symbols", ambiguous_symbols, sample_n, "text", evidence
+        ),
+        # 2026-11-12: 归因来源分层 — 「精确 (metadata)」与「猜的 (decision_id 回退)」必须
+        #   分开报, 否则执行率里混着推断值而无从审计。metadata_stale = metadata 记过指令 id
+        #   但该指令已不在表内, 静默降级到模糊匹配 (最易被误读成精确的形态)。
+        "attribution_metadata_precise_count": _metric(
+            "attribution_metadata_precise_count", _src[SOURCE_METADATA],
+            sample_n, "count", evidence
+        ),
+        "attribution_decision_fallback_count": _metric(
+            "attribution_decision_fallback_count", _src[SOURCE_DECISION_ID],
+            sample_n, "count", evidence
+        ),
+        "attribution_metadata_stale_count": _metric(
+            "attribution_metadata_stale_count", _src[SOURCE_METADATA_STALE],
+            sample_n, "count", evidence
         ),
         "execution_rate": _metric(
             "execution_rate", execution_rate, sample_n, "ratio", evidence

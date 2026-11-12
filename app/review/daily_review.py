@@ -29,6 +29,7 @@ from app.review.source_attribution import aggregate_source_direction, playbook_s
 from app.playbook.instruction_attribution import (
     AMBIGUOUS,
     canonical_plan_direction,
+    count_sources,
     resolve_trade_instruction_ids,
 )
 from app.core.trade_identity import summarize_trade_identity
@@ -881,7 +882,9 @@ class DailyReviewGenerator:
                 (date,)
             )
             planned_by_id = {int(row['id']): row for row in instructions}
-            resolved_ids = resolve_trade_instruction_ids(trades, instruction_identities)
+            _attr_sources: list = []
+            resolved_ids = resolve_trade_instruction_ids(
+                trades, instruction_identities, sources=_attr_sources)
             executed_ids = set()
             unplanned_trades = []
             ambiguous_trades = []
@@ -932,6 +935,8 @@ class DailyReviewGenerator:
             result['unplanned_count'] = len(unplanned_trades)
             result['planned_instruction_count'] = len(instructions)
             result['attribution_ambiguous_count'] = len(ambiguous_trades)
+            # 2026-11-12: 归因来源分层 (精确/回退/陈旧 metadata), 与 bundle_builder 同口径。
+            result['attribution_source_counts'] = count_sources(_attr_sources)
             result['attribution_ambiguous_symbols'] = sorted({
                 row['symbol'] for row in ambiguous_trades
             })

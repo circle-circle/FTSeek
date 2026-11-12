@@ -107,9 +107,16 @@ _MOM_DEFER_AUDIT_SEEN: set = set()  # {(trade_date, instruction_id, reason)}
 def _record_mom_defer(db: Any, inst: Dict[str, Any], today: str, reason: str,
                       action: str, gate: str, why: str, logger: Any,
                       emit_exec_gate_audit: Callable) -> None:
-    """记录暂时性 MOM 拦截；不改 direction=SKIP，审计按指令/日/原因去重。"""
-    if (inst.get("skip_reason") or "") != reason:
-        db.update_instruction_tracking(inst["id"], {"skip_reason": reason})
+    """记录暂时性 MOM 拦截；审计按指令/日/原因去重。
+
+    2026-11-12 (核查后修正): **不再写 `skip_reason`**。该列是终态字段 ——
+    `db.update_instruction_tracking` 只在 `executed=1` 时清空它, 所以把暂时态写进去
+    等于当天永久留痕; 而下游至少三处把"非空 skip_reason"直接当"已跳过":
+    `premarket_invalidation` (不再评估作废) / `shadow_tracker` (退出影子不取样) /
+    `ue_batch` (不参与 UE 打分)。这与本批同时修掉的 MOM `MOM_FEE_SIZE_INFEASIBLE`
+    终态跳过是同一个病根 (暂时态写进终态字段)。
+    留痕改由 `exec_gate_audit` 承担 (带 transient=True), 一行不丢, 且可离线审计。
+    """
     key = (today, inst.get("id"), reason)
     if key in _MOM_DEFER_AUDIT_SEEN:
         return

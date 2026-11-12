@@ -106,3 +106,53 @@ def test_duplicate_without_context_fields_stays_ambiguous_not_wrong_id():
     assert resolve_trade_instruction_ids(
         [_trade(decision_id="SHARED")], instructions
     ) == [AMBIGUOUS]
+
+# ── 2026-11-12 核查加固: 归因来源分层 ────────────────────────────────
+def test_sources_label_precise_vs_fallback_vs_stale():
+    """报表必须能分辨「精确 (metadata)」与「猜的 (decision_id 回退)」。
+
+    metadata_stale 是最危险的一格: metadata 记过指令 id, 但该指令已不在指令表内
+    (删了/重建了), 代码静默降级到 decision_id 模糊匹配 —— 结果看起来和精确归属一样,
+    却是猜的。没有这个标记, 执行率里混着推断值也无从审计。
+    """
+    from app.playbook.instruction_attribution import (
+        SOURCE_AMBIGUOUS, SOURCE_DECISION_ID, SOURCE_METADATA,
+        SOURCE_METADATA_STALE, SOURCE_UNMATCHED, count_sources,
+    )
+    instructions = [
+        _instruction(id=1, decision_id="DA-APP"),
+        _instruction(id=2, decision_id="DA-APP", symbol="US.OTHER"),
+        _instruction(id=3, decision_id="DA-NVDA", symbol="US.NVDA"),
+    ]
+    trades = [
+        # ① metadata 精确命中
+        _trade(metadata_json='{"playbook_instruction_id": 1}'),
+        # ② metadata 指向已删除的指令 99 → 只有唯一 decision_id 候选 ⇒ stale 回退
+        _trade(symbol="US.NVDA", direction="LONG", decision_id="DA-NVDA",
+               metadata_json='{"playbook_instruction_id": 99}'),
+        # ③ 无 metadata, 唯一 decision_id ⇒ 纯回退
+        _trade(symbol="US.GOOG", direction="LONG", decision_id="DA-GOOGX"),
+        # ④ 无 metadata 且无候选 ⇒ unmatched
+        _trade(symbol="US.ZZZ", direction="LONG", decision_id=""),
+    ]
+    instructions.append(_instruction(id=4, decision_id="DA-GOOGX", symbol="US.GOOG"))
+    sources: list = []
+    resolved = resolve_trade_instruction_ids(trades, instructions, sources=sources)
+    assert resolved[0] == 1 and sources[0] == SOURCE_METADATA
+    assert resolved[1] == 3 and sources[1] == SOURCE_METADATA_STALE
+    assert resolved[2] == 4 and sources[2] == SOURCE_DECISION_ID
+    assert resolved[3] is None and sources[3] == SOURCE_UNMATCHED
+    counts = count_sources(sources)
+    assert counts[SOURCE_METADATA] == 1
+    assert counts[SOURCE_METADATA_STALE] == 1
+    assert counts[SOURCE_DECISION_ID] == 1
+    assert counts[SOURCE_UNMATCHED] == 1
+    assert counts[SOURCE_AMBIGUOUS] == 0   # 五类恒有键 (0 也输出)
+
+
+def test_sources_backwards_compatible_when_not_requested():
+    """不传 sources 时行为与签名完全不变 (三个报表调用方按需接入)。"""
+    resolved = resolve_trade_instruction_ids(
+        [_trade(metadata_json='{"playbook_instruction_id": 1}')],
+        [_instruction(id=1, decision_id="DA-APP")])
+    assert resolved == [1]

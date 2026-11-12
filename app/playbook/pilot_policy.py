@@ -152,6 +152,15 @@ class RebalanceDayStatus:
     trading_day_index: Optional[int] = None
     error: Optional[BaseException] = None
 
+    def __bool__(self) -> bool:
+        """显式布尔语义 (2026-11-12 核查加固)。
+
+        frozen dataclass 恒 truthy —— 若调用方误写 `if rebalance_day_status(...)`,
+        闸会**每天都开**(照常下 ETF 调仓单)且不报错。同一提交里的 `AMBIGUOUS` 哨兵
+        已显式定义 `__bool__`, 本类型补齐, 让两种新类型防护对称。
+        """
+        return bool(self.is_rebalance_day)
+
 
 def _load_local_holidays() -> Dict[int, frozenset]:
     """纯本地美股假日表 (按年, 不连 Futu OpenD)。

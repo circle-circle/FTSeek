@@ -34,7 +34,9 @@ from typing import Any, Dict, List, Optional
 
 from app.playbook.instruction_attribution import (
     AMBIGUOUS,
+    ATTRIBUTION_SOURCES,
     canonical_plan_direction,
+    count_sources,
     resolve_trade_instruction_ids,
 )
 
@@ -119,6 +121,9 @@ class PlanEffectivenessTracker:
             "avg_pnl_of_planned": 0.0,
             "unplanned_trade_count": 0,
             "attribution_ambiguous_count": 0,
+            # 2026-11-12: 归因来源分层 — 精确 (metadata) / decision_id 回退 / 陈旧 metadata。
+            #   五类恒有键 (0 也输出), 防"缺键=没发生"的误读。
+            "attribution_source_counts": {name: 0 for name in ATTRIBUTION_SOURCES},
             "planned_count": 0,
             "abandoned_count": 0,
             "abandoned_symbols": [],
@@ -200,6 +205,8 @@ class PlanEffectivenessTracker:
         report["avg_pnl_of_planned"] = avg_pnl
         report["unplanned_trade_count"] = unplanned
         report["attribution_ambiguous_count"] = len(ambiguous_trade_indexes)
+        report["attribution_source_counts"] = count_sources(
+            trade.get("_attribution_source") or "" for trade in trades)
 
         try:
             self._save_report(report, date)
@@ -305,9 +312,12 @@ class PlanEffectivenessTracker:
                 ).fetchall()
                 trades = [dict(r) for r in rows]
                 identities = [dict(r) for r in instruction_rows]
-                resolved_ids = resolve_trade_instruction_ids(trades, identities)
-                for trade, instruction_id in zip(trades, resolved_ids):
+                _attr_sources: list = []
+                resolved_ids = resolve_trade_instruction_ids(
+                    trades, identities, sources=_attr_sources)
+                for trade, instruction_id, _src in zip(trades, resolved_ids, _attr_sources):
                     trade["_resolved_instruction_id"] = instruction_id
+                    trade["_attribution_source"] = _src
                 return trades
             finally:
                 conn.close()
