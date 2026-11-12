@@ -174,8 +174,8 @@ def main() -> int:
         m, sd = statistics.mean(diffs), statistics.pstdev(diffs)
         t = m / (sd / len(diffs) ** 0.5) if sd and len(diffs) > 2 else None
         print("📊 %s | %d 笔 全体 %+.2f/笔 → 取3只 %+.2f/笔 (差 %+.2f) | 选中 %s | 累计 %d 天 差 %+.2f/笔 t=%s" % (
-            row["date"], row["all_n"], row["all_per_trade"] or 0, row["pick_per_trade"] or 0,
-            row["delta_per_trade"] or 0, ",".join(s.replace("US.", "") for s in row["pick"]),
+            row.get("date"), row.get("all_n") or 0, row.get("all_per_trade") or 0, row.get("pick_per_trade") or 0,
+            row.get("delta_per_trade") or 0, ",".join(s.replace("US.", "") for s in (row.get("pick") or [])),
             len(rows), m, ("%.2f" % t) if t is not None else "n/a"))
         return 0
     print(json.dumps(row, ensure_ascii=False, indent=2))
