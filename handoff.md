@@ -2,6 +2,395 @@
 
 > **写入约定（2026-11-11 起）**：每条交接必须带三件可核凭据 —— `**凭据**`（commit sha / 改动文件数，`git show --stat` 可核）、`**验证**`（可复跑命令 + 日志路径，不写“已通过”）、`**未验证**`（显式列出没验的部分，无则写“无”）。自述≠事实，这三行是给下一个人核的。
 
+## 2026-11-12 15:20 · 多会话调整统一复核、全量验证与提交（主提交 10694b619）
+
+- **落地**：统一复核全部会话 WIP。除本批 RFC-199/200 安全与黑窗优化外，修复 BE 兜底 0.4 与 horizon 一致性、EXT 无 batch quote 反事实误判、DA 输入 ET/epoch 时间口径、PositionSync aware-ET、审计 CAS/日志、影子注册/控制环台账、测试 hermetic 与生产写隔离。`us_overnight_shadow` 以手动 PERMANENT_MEASURE 注册，未挂 cron。**排除** `scripts/manual_nvda_sl_override_20261111.py`（导入即写生产库、无 dry-run/CAS）与 `docs/debeate` 软链，未入库、未执行、未删本地文件。
+- **凭据**：主提交 **`10694b619`**，149 个确认文件（源码/测试/治理文档/vault）；handoff 单独提交回填 SHA。最终 `git diff --check`、`scripts/check_undefined_names.py` 均 exit 0；未改 `.env`/DB 文件。
+- **验证**：命令 `./venv/bin/python -m pytest -q --ignore=tests/test_da_citation_ab_replay.py`，日志 `/tmp/claude-0/-opt-ftseek-FTSeek-US/e83c5bf7-7d06-4829-96c9-e93c39ac6705/tasks/bn5o9ogqa.output` = **8805 passed / 73 skipped / 14 failed / 3 errors**。其中 `test_offline_full_chain` 的生产 SQLite URI 越界已修并复跑 **18 passed**；最终隔离+棘轮快速批 = **39 passed**，此前棘轮/影子家族 = **142 passed**，核心/报表/离线等批次见上条。剩余 13 failed + 3 errors：live_probe 过期费用门测试 5、coordinator 异步排空 1、config dead-key 3、字面 DB 路径 5、Hermes 内嵌 SQL 1、archive prose 1、线上未入库运维脚本 3、early_dead 历史测试污染 1、weekly row_kind 1、exit_compensation 网络边界 3。Hermes 收集错误另 1（`DASHSCOPE_KEY` 缺失）。LLM/SignalIC/EXT 测试写缝已补，历史生产污染未擅自清理。
+- **未验证**：未跑第三次全仓（最终离线修复由单文件 18 例复跑覆盖）；未重启、未做真实盘中黑窗/MOM 成交验证。NVDA id=1864 的 `stop_loss_price=165.43` 与 metadata=156 分歧仍在，未改仓/未改 DB，待用户裁展示与初始风险口径；手工脚本排除不代表该生产副作用已修复。
+- **下一步**：主提交 + handoff 提交后推 `origin/rfc-060-phase1-hotfixes`；不把剩余基线红写成“全绿”。生产重启另择窗口，重启前核在途出场和进程内旧代码。
+
+最后更新：2026-11-12（本条）
+
+## 2026-11-12 12:45 · RFC-199/200 安全与证据链优化：MOM P0 + 黑窗 R1 + 预检/报表（未重启）
+
+- **落地**：MOM 异常 entry_time 不再立即 MAX_HOLD；调仓/上一交易日/到期日改纯本地日历，故障明确 fail-closed；报价故障改暂时性重试，不再误写费用终态；metadata 仅变化时写库。黑窗内外层共用 `open_blackout`，影子每轮必写 cycle、quote 兜底、写盘成功后才去重；新增 evaluator + 注册表停摆守卫 + 历史 SQL 统计。盘前做空检查不再常绿；执行率恢复标的级去重，重复 decision_id 按上下文消歧，ambiguous 不再冒充计划外交易。RFC-199 R15、RFC-200 §8 落档；未改任何策略阈值/TP/SL/持有期。
+- **凭据**：本批未提交，33 个代码/测试/文档文件 + 本条 handoff；重点 `app/playbook/{open_blackout,pilot_policy,instruction_attribution}.py`、`pipeline_parts/{auto_execute_flow,exit_monitor_flow,trigger_flow}.py`、`scripts/{mom_etf_v1_generate,entry_blackout_shadow_eval,entry_blackout_window_stats,pre_market_check,ue_da_chain_health}.py`、`app/{analysis/plan_effectiveness,review/bundle_builder,review/daily_review}.py`。readiness `/tmp/mom_etf_v1_r15.json` sha256 `42a2ee1117300953c5b3f753d5e05cb65b3e50ed933a9f583c43328019ec3274`；历史统计 `/tmp/entry_blackout_window_stats_20261112.json` sha256 `c7d3d91d5fc2d72d48586957e9ba9cab68b8022a2db2d6e5e12524587749e8a7`。
+- **验证**：核心合并 `pytest -q tests/test_auto_execute_open_floor.py tests/test_playbook_pipeline.py tests/playbook/test_pilot_policy.py tests/playbook/test_mom_etf_v1_flow.py tests/test_entry_blackout_shadow_eval.py tests/test_entry_blackout_window_stats.py tests/test_plan_effectiveness_abandoned.py tests/test_instruction_attribution.py` = **178 passed**；预检/报表/UE + `tests/review` = **172 passed, 1 skipped**；`tests/playbook/test_offline_full_chain.py tests/playbook/test_entry_revalidation.py tests/playbook/test_exit_recovery.py` = **239 passed**；棘轮家族 = **82 passed / 2 failed**；影子+棘轮补充 = **74 passed / 2 failed**（两次红均为其他 WIP 的 W456 与 except:pass：backfill_forward_returns、extended_hours_entry_executor、twelvedata_provider；except:pass 899→910，本批新增文件 0 处）。`check_undefined_names`、py_compile、readiness 均 exit 0，MOM 指令/成交/持仓 0；`open_floor_minutes=(585,945)`，做空预检 PASS。
+- **未验证**：**未重启，运行进程仍是 11:23 启动的旧代码**；今晚真实黑窗 cycle/hit、首单时间、MOM 真实 SIM 订单/持夜/21 日退出均未验证；未跑全仓 golden；dry-run 在当前 ET 11/11 盘中按预期 fail-closed（bars asof=11/11、期望上一交易日=11/10），锚点路径由冻结时钟测试覆盖。
+- **下一步**：其他 app/scripts WIP 收口后，先核未平仓/在途出场和完整 diff，再统一 `systemctl restart ftseek-us` + `startup_smoke_check.py --wait 90`；今晚跑 `scripts/entry_blackout_shadow_eval.py --date 2026-11-12 --json --no-write`，无 cycle/QUOTE_ALL_FAIL 均非零。未加载本批前不得宣称 P0 已在生产生效。
+
+最后更新：2026-11-12（本条）
+
+## 2026-11-12 06:10 · SIM sleeve R13 独立复核：P0 属实并修复，重新开启入口/cron（仍 SIM，锚点日待验证）
+
+- **落地**：确认另一 AGENT 的 5 项 P0 属实并修复：MOM 收回 DA 共享主循环（报价年龄/chase/冷却/admission/TCA）；写入方 `confirm_saved` + asof=上一交易日；全局购买力帽 + 最终缩仓后费用/最小名义复核；`SL_INITIAL` 统一、过夜 5% 优先、日历失败保守兜底；RFC-141 `load_sim_pnl`/`load_fills` 排除 MOM。R13 再补执行前 cutoff/开关复检、四 ETF 完整性 fail-close、readiness 测试失败 exit 1。DEB §23/RFC-199 更新。入口 false→true 热重载，cron 挂回。四锁不动。
+- **凭据**：本批未提交；改动面见 `git status --short -- app/playbook/pilot_policy.py app/playbook/pipeline_parts/auto_execute_flow.py app/playbook/playbook_service.py app/playbook/pipeline_parts/overnight_cleanup.py app/playbook/pipeline_parts/exit_monitor_flow.py app/review/source_attribution.py scripts/mom_etf_v1_generate.py scripts/settle_entry_confirm_forward.py scripts/verify_mom_etf_v1_readiness.py config/unified_config.yaml tests/playbook/test_pilot_policy.py tests/playbook/test_mom_etf_v1_flow.py docs/debates/DEB-20261112-sim-visible-multi-sleeve-design.md docs/decisions/RFC-199-mom-etf-v1-sim-plumbing-pilot.md handoff.md`。readiness `data/readiness/mom_etf_v1_r13.json` sha256 `ba8a78a98aba90921647f2b51edad2f5af247fe53bde1397055f133fc6bdfbdb`；crontab 备份 `data/crontab.backup.20261112_rfc199_r13_pre_enable.txt`。
+- **验证**：`pytest -q tests/playbook/test_pilot_policy.py tests/playbook/test_mom_etf_v1_flow.py tests/test_reprice_quote_age_gate.py tests/execution/test_fee_model.py tests/test_fee_floor_sizing.py` = 63 passed；`pytest -q tests/playbook/test_offline_full_chain.py tests/playbook/test_eod_close_window_contract.py tests/playbook/test_overnight_decision_contract.py tests/test_chase_cap_enforce.py tests/test_execution_admission.py tests/test_reprice_audit_persistence.py tests/risk/test_exit_monitor.py` = 125 passed；全 `tests/playbook` 初版 1189 passed / 5 failed / 3 errors（无关 WIP）；`systemctl restart ftseek-us` + `scripts/startup_smoke_check.py --wait 90` = 7/7；`scripts/verify_mom_etf_v1_readiness.py --run-tests --json-out data/readiness/mom_etf_v1_r13.json` = 22 passed，MOM 指令/成交/持仓 0，entries=true，cron=1。
+- **未验证**：真实 SIM 订单/成交/持夜/21 交易日退出；富途 App UI；ETF PIT/复权/分红/时间戳；L2 同入场出场反事实；L3 基准 alpha；full golden。
+- **下一步**：锚点 `2026-11-13` ET，写入方 CST 22:35，auto_execute 09:50 ET 后执行。若 QQQ≤MA200 或数据不完整 ⇒ 正确空仓/跳过，记 `PLUMBING_PENDING / CASH_GATE_OK` 或 `DATA_GATE_OK`。首批只判 L1 管道；收益读数不足一律“功效不足/不可分辨”。回滚=`mom_etf_v1_entries_enabled=false` 热重载 + 删 RFC-199 cron；存量 V1 仍按 V1 退出。
+
+最后更新：2026-11-12（本条）
+
+## 2026-11-12 05:05 · SIM sleeve R12 指令生成方与入场质量边界澄清（纯文档，零行为变更）
+
+- **落地**：DEB 追加 §22/R12：MOM-ETF-V1 由 `scripts/mom_etf_v1_generate.py` 机械生成，非 LLM 辩论；`confidence=100` 是管道常量不是质量分；质量提升路径分 Q1 record-only 质量档案 / Q2 LLM advisory 旁路 / Q3 V2 单变量 RFC，均不改变当前 V1 行为。
+- **凭据**：本批未提交；文档改动 2 文件（DEB §22 + handoff），`git status --short -- docs/debates/DEB-20261112-sim-visible-multi-sleeve-design.md handoff.md` 可核。
+- **验证**：`git diff --check -- handoff.md` exit 0；`rg -n '[ \t]+$' docs/debates/DEB-20261112-sim-visible-multi-sleeve-design.md handoff.md` 无输出。零代码/配置/DB/cron/重启/下单变更。
+- **未验证**：Q1/Q2/Q3 未实现；LLM advisory 未预注册；V1 入场 alpha 未证明。
+- **下一步**：若用户要求提升入场质量，先做 Q1 record-only 质量档案；LLM 辩论只作 Q2 旁路建议，不直接改 V1 入场；任何硬门须独立 RFC + 预注册 + 用户批准。
+
+最后更新：2026-11-12（本条）
+
+## 2026-11-12 04:55 · SIM sleeve R11 用户批准实施：MOM-ETF-V1 切片落地 + 冒烟通过 + 入口开启（锚点日验证）
+
+- **落地**：用户裁「批准执行，明日交易日验证」。新增 RFC-199 与 DEB §21；`pilot_policy.py` 扩展候选/日历/定尺/预算/V1 退出/执行分支；新增 `scripts/mom_etf_v1_generate.py`；`auto_execute_flow` 在 DA 循环前处理 MOM 并过滤 DA 列表；`exit_monitor_flow` MOM 提前分支只跑 allowlist；`overnight_cleanup` 补 decision_id 并跳过 MOM EOD 强平；`source_attribution` 增 MOM 腿；config 增 `playbook.mom_etf_v1_entries_enabled`。crontab 备份 `data/crontab.backup.20261112_rfc199.txt` 后挂 RFC-199 写入方（CST 22:35 周一-五）。`systemctl restart ftseek-us` 后启动冒烟 7 项通过；入口开关 false→true 已热重载；锚点校准为 11/13 后二次重启冒烟通过。仍只 SIM，四锁不动。
+- **凭据**：本批未提交；改动面见 `git status --short -- app/playbook/pilot_policy.py app/playbook/pipeline_parts/auto_execute_flow.py app/playbook/pipeline_parts/exit_monitor_flow.py app/playbook/pipeline_parts/overnight_cleanup.py app/review/source_attribution.py scripts/mom_etf_v1_generate.py config/unified_config.yaml tests/playbook/test_mom_etf_v1_flow.py docs/decisions/RFC-199-mom-etf-v1-sim-plumbing-pilot.md docs/debates/DEB-20261112-sim-visible-multi-sleeve-design.md handoff.md`。只读 readiness：`/tmp/deb_sleeve_review/verify_r11_readiness.json` sha256 `e566238f698c7a8d1ad892a0a0fb23b6ccfc1ea30ede7e0ff8ca1ba81053da38`；crontab 备份 416 行。
+- **验证**：`./venv/bin/python -m pytest -q tests/playbook/test_pilot_policy.py tests/playbook/test_mom_etf_v1_flow.py` = 15 passed；`py_compile` 覆盖改动模块 exit 0；`PYTHONPATH=. ./venv/bin/python scripts/startup_smoke_check.py --wait 90` = 7 项通过；`logs/ftseek_us.log` 见 HotReloader 第 1 次重载成功；`systemctl is-active ftseek-us` = active；readiness MOM 成交 0。已知无关失败：`test_weekly_signal_funnel_reports_source_direction` 报 `no such column: row_kind`（现有 weekly_review/测试表结构 WIP）。
+- **未验证**：真实 SIM 订单/成交/持夜/21 交易日退出未发生；富途 App UI 未目检；full golden 未跑；ETF PIT/复权/分红/时间戳未补；L2 同入场出场反事实与 L3 基准 alpha 未开始；QQQ 11/10 收盘 674.76 < MA200 680.34，锚点日是否交易取决于 11/11 收盘刷新。
+- **下一步**：锚点 `2026-11-13` ET（北京时间 11/13 22:30 开盘）；写入方 CST 22:35 运行，auto_execute 09:50 ET 后执行。若 QQQ≤MA200 则正确空仓，不得放宽。首批只判 L1 `PLUMBING_OK/BROKEN`；回滚=`mom_etf_v1_entries_enabled=false` 热重载停新仓，存量 V1 仍按 V1 退出。
+
+最后更新：2026-11-12（本条）
+
+## 2026-11-12 04:30 · SIM sleeve R10 七条防误判约束采纳：三层证据分离 + V1 细节冻结（零交易行为）
+
+- **落地**：DEB 追加 §20/R10，采纳用户转贴七条：L1 管道 / L2 同入场出场反事实 / L3 入场基准 alpha 分离；swing 诊断改 1/5/10 日 R 口径；净期望+尾损并列；V1 冻结等名义/3% SL/5% 隔夜亏损阈值/当日有效/QQQ MA200/21 交易日；ETF 风险与 gap 保护表述收敛；预注册与对称“功效不足”规则。新增实现陷阱：21 交易日到期遇 `nth_trading_day_after(max_days=30)` 可能静默失败、EOD 5 日帽、15% 价格异常跳过、allowlist 必须真短路 DA 规则。本批文档改动 2 文件（DEB §20 + handoff）；复核 R9 已落地未接线 `app/playbook/pilot_policy.py` / `tests/playbook/test_pilot_policy.py`。模块未被 live 路径 import；未改 YAML/DB/cron/推送/影子注册；未重启/未下单。
+- **凭据**：本批未提交；`git status --short -- docs/debates/DEB-20261112-sim-visible-multi-sleeve-design.md handoff.md app/playbook/pilot_policy.py tests/playbook/test_pilot_policy.py` 可核。只读 readiness 脚本 sha256 `8c19a1bbedf7bbe33406866875b3d03d704b1e681c5fde26b2502a288586073e`；R10 产物 `/tmp/deb_sleeve_review/verify_r10_readiness.json` sha256 `6148e5285a0e7d98a1c0b50837c5a9b6e03dc56003eaf6ee11151c613c71f9a4`。关键读数：MOM 成交 0、entry flag 未配置、swing horizon 未新增、source_attribution 无 MOM 腿、overnight_hold_enabled=false、注册表 106 项。
+- **验证**：`./venv/bin/python -m pytest -q tests/playbook/test_pilot_policy.py` = 7 passed；`./venv/bin/python -m py_compile app/playbook/pilot_policy.py tests/playbook/test_pilot_policy.py` exit 0；`PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 ./venv/bin/python /tmp/deb_sleeve_review/verify_r9_readiness.py > /tmp/deb_sleeve_review/verify_r10_readiness.json` 只读复跑；`rg -n 'from app\.playbook\.pilot_policy|import app\.playbook\.pilot_policy' app scripts config` 无输出；`rg -n '[ \t]+$' app/playbook/pilot_policy.py tests/playbook/test_pilot_policy.py docs/debates/DEB-20261112-sim-visible-multi-sleeve-design.md handoff.md` 无输出；`git diff --check -- handoff.md` exit 0。
+- **未验证**：S1a/S1b/S2/S3/S4 未实现；golden 全量未跑；record-only 写入方未建；调仓锚点/预算/费用尺未裁；ETF PIT/复权/分红/时间戳未补；富途 App UI 未验证；SIM 未启用；未跑全仓测试。
+- **下一步**：先独立 RFC 写死调仓锚点、三项预算、L1/L2/L3 预注册判据与 MDE80；用户批准 A3/C1/KR4 占位/SIM 启用日后，再做默认关闭垂直切片 + golden。未批准前只继续 record-only/验证层，不启用 SIM 新仓。
+
+最后更新：2026-11-12（本条）
+
+## 2026-11-12 04:15 · SIM sleeve R9 共识汇总 + 第一层落地验证：未接线 policy_for + 6 契约测试（零交易行为）
+
+- **落地**：汇总 R3–R8 共识并追加 DEB §19。新增 `app/playbook/pilot_policy.py`（`policy_for` 单点路由、`MOM-ETF-V1` 21 交易日/TP=0/exit allowlist、稳定 decision_id）与 `tests/playbook/test_pilot_policy.py`。模块未被 live 路径 import，未接 auto_execute/exit_engine/EOD；未改配置/DB/cron/推送/影子注册；未重启/未下单。SIM 启用仍待用户裁 A3/C1、21 日语义、预算/费用尺、KR4 占位、启用日。
+- **凭据**：本批未提交；改动 4 文件（DEB §19、handoff、`app/playbook/pilot_policy.py`、`tests/playbook/test_pilot_policy.py`），`git status --short` 可核。只读 readiness：`/tmp/deb_sleeve_review/verify_r9_readiness.py` sha256 `8c19a1bbedf7bbe33406866875b3d03d704b1e681c5fde26b2502a288586073e`；产物 `/tmp/deb_sleeve_review/verify_r9_readiness.json` sha256 `2759196f81efa3a5b8fa3e04f0b2cc44d92923fb1180d2571b2dda6e7079d25f`。
+- **验证**：`./venv/bin/python -m pytest -q tests/playbook/test_pilot_policy.py` = 6 passed；`./venv/bin/python -m py_compile app/playbook/pilot_policy.py tests/playbook/test_pilot_policy.py` exit 0；`PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 ./venv/bin/python /tmp/deb_sleeve_review/verify_r9_readiness.py` 只读复跑；`rg -n '[ \t]+$' app/playbook/pilot_policy.py tests/playbook/test_pilot_policy.py docs/debates/DEB-20261112-sim-visible-multi-sleeve-design.md handoff.md` 无输出；`git diff --check -- handoff.md` exit 0。
+- **未验证**：S1a/S1b/S2/S3/执行侧子帽/S4 归因腿未实现；golden 全量未跑；record-only 写入方未建；ETF 数据/PIT 未补；富途 App UI 未验证；未跑全仓测试。
+- **下一步**：若用户批准 A3/C1/预算/费用尺，先独立 RFC，再在 `mom_etf_v1_entries_enabled=false` 下做默认关闭垂直切片 + §18.4 golden；未批准前只继续 record-only/验证层，不启用 SIM 新仓。
+
+最后更新：2026-11-12（本条）
+
+## 2026-11-12 · SIM sleeve DEB R8 最小实施裁决建议：单试点完整垂直切片 + 安全回滚（只读落档）
+
+- **落地**：按用户要求追加 DEB §18/R8。建议正式目标选择单一 `MOM-ETF-V1` A3 垂直切片；修正 §17.3 回滚冲突（开关只禁新仓，存量按原版本退出，禁止回退 DA_DEFAULT）；执行侧三项预算与 S4 报表归因列为正式试点前置；reprice 选 policy 分支且不改 horizon YAML；首版固定 21 个交易日退出、TP=0，排名替换不做；跳过手工 demo，首笔正式 SIM 天然验证可见性。全文仍为待裁决建议，未批准 A3/C1/预算/SIM 启用。
+- **凭据**：本批未提交；repo 文档改动 2 文件（DEB §18/R8 + handoff 顶部本条），`git status --short -- docs/debates/DEB-20261112-sim-visible-multi-sleeve-design.md handoff.md` 可核。DEB 当前为未跟踪文件；handoff 含其他会话未提交条目，本批未触碰其内容。只读代码锚点：`auto_execute_flow.py:454-587,806-829`（reprice/定尺覆盖）、`execution_flow.py:78-90`（全局帽）、`source_attribution.py:7-13`（未知前缀落 DA）。
+- **验证**：`git diff --check -- docs/debates/DEB-20261112-sim-visible-multi-sleeve-design.md handoff.md`；`rg -n '[ \t]+$' docs/debates/DEB-20261112-sim-visible-multi-sleeve-design.md handoff.md`。零下单、零重启、零代码/配置/DB/cron/推送/影子注册变更。
+- **未验证**：policy_for/S1a/S1b/S2/S3/执行侧子帽/S4 未实现；golden 未跑；record-only 写入方未建；费用尺与预算数值未裁；富途 App UI 未验证；PIT/OOS 未补。
+- **下一步**：用户裁 A3/C1 名额、固定 21 日假设、预算/费用尺与启用日；未裁前仅 record-only，不据本批文档改交易行为。若批准，先独立 RFC，再在默认关闭的新仓开关下实现并跑 §18.4 golden。
+
+最后更新：2026-11-12（本条）
+
+## 2026-11-12 03:42 · SIM sleeve DEB R6 极简收敛：一个试点 policy，不做通用框架（只读落档）
+
+- **落地**：回答“更合理优雅/避免过度设计”，DEB 追加 §16。关键简化：Playbook 成交 metadata 已有 `attribution.decision_id`，出场路由可读既有键，不必新增透传/注入；共识降为 `policy_for(decision_id)` 单点解析 + 一个 `MOM-ETF-V1` 试点；不做 sleeves 通用框架/REV 占位/S5 子帽/App remark；参数尽量放指令/policy 版本，不碰 horizon yaml 以保 DA cohort；出场先 SL+max_hold+TP=0，rank 退出后置；统计先前缀查询，报表腿后置。
+- **凭据**：本批未提交；repo 文档改动 2 文件（DEB §16 + handoff），`git status --short` 可核。代码锚点：`playbook_service.py:2308-2313` metadata.attribution.decision_id；`exit_monitor_flow.py:286` 读 metadata_json 为 meta。
+- **验证**：只读源码核验上述锚点；`git diff --check -- handoff.md` exit 0；`rg -n '[ \t]+$' docs/debates/DEB-20261112-sim-visible-multi-sleeve-design.md handoff.md` 无输出。零下单、零重启、零代码/配置/DB/cron/推送/影子注册变更。
+- **未验证**：policy_for/S1–S3 未实现；ETF 数据/PIT 未补；demo 人工 exclusion 未执行；富途 App UI 未验证；未跑全仓测试。
+- **下一步**：若用户认可极简版，先裁一个试点模式与费用尺；P0 只读口径/数据，P0.5 可选批准 demo，P1 单假设影子，P2 才做最小 policy 分支；不据本批落档改交易行为。
+
+最后更新：2026-11-12（本条）
+
+## 2026-11-12 03:36 · SIM 多 sleeve DEB v3/R4 核查 + R5 共识设计：只复用 DA 主链，但“零代码自动隔离/配置即用”仍有硬边界
+
+- **落地**：核查另一 AGENT 的 R4 增补，追加 DEB §15 R5 共识设计。共识：sleeve = 同一 Playbook/DA 管线的另一个写入方 + 显式语义档，不新建 DB/source_type/broker/退出循环/预算器。模式分 B 纯拆账 / A1 DA 语义内新信号 / A2 定时入场+DA 日内退出 / A3 定时+swing（S0 路由键+S1+S2+S3）。R4 方向成立，但修正：`-TEST` decision_id 不会自动 A9 排除也不会免影子（守卫只认 symbol=TEST）；`long_horizon max_hold_days:3` 不能突破隔夜总闸；`confirm_saved` 需 candidate_id/source；成交侧 exit_profile 不能只写指令 metadata，monitor 当前不注入 decision_id/profile；定时+21d 需 S1+S2+S3；QQQ 8 股精确 7.686bps。
+- **凭据**：本批未提交；repo 文档改动 2 文件（DEB §15 + handoff），`git status --short` 可核。只读探针：`/tmp/deb_sleeve_review/verify_r5.py`、`/tmp/deb_sleeve_review/verify_r5.json`；命令与 sha 见 DEB §15.7。
+- **验证**：`PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 ./venv/bin/python /tmp/deb_sleeve_review/verify_r5.py` 只读复算 A9/TEST 守卫/long_horizon/confirm_saved/EXT/整数股费用；`rg -n '[ \t]+$' docs/debates/DEB-20261112-sim-visible-multi-sleeve-design.md handoff.md` 无输出；`git diff --check -- handoff.md` exit 0。零下单、零重启、零 repo 代码/配置/DB/cron/推送/影子注册变更。
+- **未验证**：富途 App UI 是否展示 remark；S0–S5 未实现；ETF 历史/PIT mart 未补；未新建生产影子/注册表项；未跑全仓测试；demo 人工 exclusion 流程未执行（待用户批准）。
+- **下一步**：待用户裁模式 B/A1/A2/A3、demo 人工隔离、C1/KR4 名额、整数股费用尺、swing allowlist、App 标签。默认 P0 口径/数据/费用 → 可选批准 demo → P1 单 sleeve record-only → P2 最小分派（大概率 12 月）；不据本批核查改交易行为。
+
+最后更新：2026-11-12（本条）
+
+## 2026-11-12 03:12 · SIM 多 sleeve DEB v2 独立复核 R3：DA 主链内可行，但零代码 demo 有硬隔离 bug（只读落档）
+
+- **落地**：复查另一 AGENT 更新的 `docs/debates/DEB-20261112-sim-visible-multi-sleeve-design.md` v2，追加 §13 R3；按用户追加约束收窄为“DA 主链内 sleeve 化”，不新建平行下单/退出链路。结论：v2 方向正确但不可原样执行；App 可见容易，独立策略线需 metadata 透传、exit_profile allowlist、归因腿、治理名额。硬伤：指令 `metadata.exclusion_reason/sleeve` 不会自动透传到 `trade_records`；指令无 `source_type` 列；`decision_id` 需含 symbol；swing 漏 cooldown/TP/W_WEEK；`profit_override` 当前 0.8/1.0；ETF SPY/IWM 历史不足 252d；整数股费用高于 v2；注册表 106 项非 5。
+- **凭据**：本批未提交；repo 文档改动 2 文件（DEB §13 + handoff），`git status --short` 可核。只读探针：`/tmp/deb_sleeve_review/verify_r3.json`、`/tmp/deb_sleeve_review/verify_r3_supplement.py`、`/tmp/deb_sleeve_review/verify_r3_supplement.json`；命令与 sha 见 DEB §13.1。
+- **验证**：复跑 `verify_v2.py`（OUT 改 `verify_r3.json`）+ `verify_r3_supplement.py`，均只读 DB/本地缓存；`rg -n '[ \t]+$' docs/debates/DEB-20261112-sim-visible-multi-sleeve-design.md` 无输出；`git diff --check -- handoff.md` exit 0。上一轮聚焦 fee tests `tests/execution/test_fee_model.py tests/test_fee_floor_sizing.py` = 27 passed，但框架已知 `capital_state/capital_state_history/sqlite_master` 写入 ×5；本轮未重跑。早期探针一次 Futu quote-context 连接/断开（无下单），本轮已移除该 import，零券商调用。
+- **未验证**：富途 App UI 是否展示 remark；S1–S5 未实现；ETF 数据/PIT mart 未补；未新建生产影子/注册表项；未改 repo 代码/配置/DB/cron/推送；未重启/未下单；未跑全仓测试。
+- **下一步**：待用户裁语义边界（DA 日内子集 vs DA 主链内 swing 最小分派）、demo 隔离修复、C1/KR4 名额、整数股费用尺、swing allowlist、App 标签。默认路径：P0 修尺子/归因/透传 → 可选批准后一次性 demo → P1 单 sleeve record-only → P2 最小分派（大概率 12 月 pivot）；不据本批复查改交易行为。
+
+最后更新：2026-11-12（本条）
+
+## 2026-11-12 02:30 · 富途 SIM 可见多 sleeve 设计草案（保留 DA，独立编号/预算/退出；零行为变更）
+
+- **落地**：新增 `docs/debates/DEB-20261112-sim-visible-multi-sleeve-design.md`。核验现有 `PlaybookService.execute_instruction → DualBrokerAdapter.submit_order → TrdEnv.SIMULATE`，新 sleeve 走同一管线即可在富途 App 模拟盘可见；设计 `DA-/MOM-/REV-/ETF-` 独立 decision_id + metadata.sleeve 归因，DA KR 不混源；新增 sleeves policy/scheduled trigger/swing horizon/factor rules 草案，默认关闭，DA 路径不变；首试点建议 ETF/MOM 降低同票冲突；同票互斥/全局帽不变/sleeve 子帽；P1 record-only 影子→P2 SIM 可见小仓试点，直接 SIM 须知情破例。
+- **凭据**：本批未提交；文档改动 2 文件（新 DEB + handoff），`git status --short` 可核。代码锚点：`playbook_service.py::execute_instruction`、`dual_broker.py::submit_order/place_order(remark=client_order_id)`、`auto_execute_flow.py::_check_intraday_trigger`、`exit_engine.py::_load_horizon_config/MAX_HOLD`、`order_executor.py::_submit_order` 白名单。
+- **验证**：`git diff --check -- docs/debates/DEB-20261112-sim-visible-multi-sleeve-design.md handoff.md`；只读源码核验，零 DB 写入、零券商调用、零 Futu 盘中拉 K。
+- **未验证**：sleeves 配置/生成器/trigger 分派/swing 退出均未实现；ETF 数据未补；PIT mart 未建；未做 DA 回归测试；未新建生产影子；未改 repo 代码/配置/DB/cron/推送；未重启；未下单。
+- **下一步**：待用户裁首试点（ETF/MOM vs 个股 MOM）、是否 P1 影子先行、App remark 是否需 sleeve 字样；裁决后另起 RFC/实现批，一次一变量。
+
+最后更新：2026-11-12（本条）
+
+## 2026-11-12 02:20 · DA 保留式落地核查：fee/admission/horizon/PIT 可行性（只读，零行为变更）
+
+- **落地**：用户裁「不放弃 DA」。`DEB-20261112-beyond-da-strategy-research.md` 新增 §9：DA 保留式预注册核查 + 代码/数据可行性审计 + 落地路径。核心：DA 毛收益 70% 日内（intraday +5.34bps / overnight +2.27bps，n=571 对账误差 0），延长持有已否决 ⇒ DA 保留日内 sleeve；长周期候选用独立 `MOM-%` sleeve 复用 Playbook 执行，不污染 DA KR。现有 admission/fee_floor_sizing/price_floor/horizon/trend recorder/signal_snapshots 可复用；缺口=执行费率校准（19 例 precheck≤11.54 但 realized>11.54）、PIT 深度不足（instructions 6/14 起、snapshots 5/14 起）、ETF 1m/SPY/IWM/XLK/SMH 数据缺。realized fee>11.54 桶 −6.57bps vs ≤11.54 −0.78bps；DA 上下文更像回调/反转（signed_rev Q5 +21.67 vs Q1 −19.67），但全部 t<2/MDE 不足，不得转门。
+- **凭据**：本批未提交；文档改动 2 文件（DEB §9 + handoff），`git status --short` 可核。脚本/产物：`/tmp/strategy_lab/da_preserving_probe.py`、`da_preserving_results.json`、`da_fee_gate_audit.json`。
+- **验证**：`./venv/bin/python /tmp/strategy_lab/da_preserving_probe.py > /tmp/strategy_lab/da_preserving_results.json`；`PYTHONPATH=. ./venv/bin/python scripts/playbook_fee_gate_audit.py --from 2026-07-01 --to 2026-11-11 --source DA --json > /tmp/strategy_lab/da_fee_gate_audit.json`；`./venv/bin/python -m py_compile /tmp/strategy_lab/da_preserving_probe.py`；`git diff --check -- docs/debates/DEB-20261112-beyond-da-strategy-research.md handoff.md`。全部 sqlite `mode=ro` / 本地缓存，零券商、零 DB 写入、零 Futu 盘中拉 K。
+- **未验证**：执行费率跨线 19 例逐笔根因未拆；PIT mart 未建；ETF 数据未补；新 sleeve 未预注册/未影子；DA 上下文分层非前瞻、不可立项；未改 repo 代码/配置/DB/cron/推送/影子注册；未重启；未跑全仓测试。
+- **下一步**：P0 只读 DA 保留式日报 + 执行费率校准审计；P1 规划 PIT 候选 mart；12 月若 pivot 优先独立 MOM sleeve（DA 不动），费用拒单恢复须前瞻影子 + 用户裁，不抬票面。
+
+最后更新：2026-11-12（本条）
+
+## 2026-11-12 02:02 · 跳出 DA 单策略：外部策略研究沙盒首轮预注册探测（只读，零行为变更）
+
+- **落地**：新增 `docs/debates/DEB-20261112-beyond-da-strategy-research.md`；原文 `docs/analysis/2026-11-12-umar-method-borrowing.md` 追加 §13 指针。预注册 6 家族（5d 反转/12-1 动量/overnight-intraday/Donchian/30min ORB/配对），固定 10bps 往返费 + 3% 年借券、日簇 MDE80、OOS 半窗、benchmark alpha。核心结论：ORB/配对/无条件隔夜搬运/多空 primary 淘汰；长-only 12-1 动量与 5d 反转值得 12 月继续研究，利润集中 overnight、正偏斜、费/毛 2.7%/13.6% vs DA 123.6%；但非 PIT、alpha t 未达 2.802，不得上线。12 月 pivot 优先长-only 中期动量/dual momentum，先补 PIT 数据 mart。
+- **凭据**：本批未提交；文档改动 3 文件（新 DEB + 原文 §13 + handoff），`git status --short` 可核。研究脚本/产物：`/tmp/strategy_lab/daily_probes.py`、`orb_probe.py`、`daily_results.json`、`orb_results.json`；来源抓取 `/tmp/strategy_lab_sources/`。
+- **验证**：`./venv/bin/python /tmp/strategy_lab/daily_probes.py > /tmp/strategy_lab/daily_results.json`；`./venv/bin/python /tmp/strategy_lab/orb_probe.py > /tmp/strategy_lab/orb_results.json`；`./venv/bin/python -m py_compile /tmp/strategy_lab/daily_probes.py /tmp/strategy_lab/orb_probe.py`；`git diff --check -- docs/debates/DEB-20261112-beyond-da-strategy-research.md docs/analysis/2026-11-12-umar-method-borrowing.md handoff.md`。全部本地 bar 缓存只读，零 DB 写入、零券商、零 Futu 盘中拉 K。
+- **未验证**：PIT 票池/退市/借券/真实 bid-ask 未补；ETF 1m 未测；真实 tick/L1 未测；purged walk-forward 正式裁决未做；H2/H1 仅研究诊断，非 DA 证据；未新建生产影子/门/sizing/频率；未改 repo 代码/配置/DB/cron/推送；未重启；未跑全仓测试。
+- **下一步**：11 月继续 RFC-158/RFC-155 R2 攒样，不抢样本；P0 规划 PIT 研究数据 mart + 成本/benchmark 强制列；11-28 若 DA≤0 且 CI 含 0，按 OKR §6 优先“换策略类别”预注册 P1，不默认再加门。
+
+最后更新：2026-11-12（本条）
+
+## 2026-11-12 01:31 · P0 DA-only 结构读数 + R2/RFC-158 进度（只读，零行为变更）
+
+- **落地**：继续 Umar 复核 P0。`/tmp/umar_review/p0_readout.py` 补 DA-only R/MFE 捕获率/名义额分层/open15 半尺寸旧样本反事实；DEB-20261112 新增 §9。关键读数：DA 全窗赢家 MFE 捕获率中位 54.0%，open15 R/笔 −0.0323 vs 15–60min +0.0106；DA <$4,000 全窗 −22.98bps vs ≥$4,000 +2.85bps（仅描述，P3 费用候选）。open15 半尺寸旧样本全窗 Δ+$765.41 但日级 MDE80=$32.95>均值$10.21，不可裁；10-23→10-31 半尺寸后仍净 −$721.24 ⇒ 尺寸不是 alpha。执行补查：open15 滑点均值 1.005bps 不高于 15–60min 1.149bps；TCA 点差/年龄分桶均不可裁 ⇒ 尾损非滑点主导。
+- **实验进度**：RFC-155 R2 新窗 affected=0/30、days=1/10、resolved=1/3，`TOO_EARLY`。RFC-158 v2 `INSUFFICIENT`：treatment resolved45/coverage88.24%，holdout resolved15/coverage83.33%；净/resolved +$2.6707 vs +$0.0273，SL 负担 2.608 vs 7.3413；避免率 41.18%、opp 均值 0.129%。均不得提前改阈值/上线。
+- **凭据**：本批未提交；文档改动 2 文件（DEB §9 + handoff），`git status --short` 可核。产物：`/tmp/umar_review/p0_readout.json`、`risk_size_forward.json`、`entry_confirm_forward_latest.json`、`session_20261111.json`。
+- **验证**：`./venv/bin/python /tmp/umar_review/p0_readout.py > /tmp/umar_review/p0_readout.json`；`./venv/bin/python scripts/session_attribution.py --date 2026-11-11 --json > /tmp/umar_review/session_20261111.json`；`PYTHONPATH=. ./venv/bin/python scripts/risk_size_tier_forward_eval.py --out /tmp/umar_review/risk_size_forward.json`；`PYTHONPATH=. ./venv/bin/python -c 'from pathlib import Path; import scripts.settle_entry_confirm_forward as m; m.OUT=Path("/tmp/umar_review/entry_confirm_forward_latest.json"); m.main()'`；`PYTHONPATH=. ./venv/bin/python scripts/execution_tca_report.py --out /tmp/umar_review/execution_tca.json`。全部只读 DB/本地影子产物，零券商、零 DB 写入。
+- **未验证**：R2/RFC-158 样本门/覆盖率未达；open15 半尺寸与 <$4,000 费用分层均旧样本描述，非前瞻裁决；未改任何 repo 代码/配置/DB/cron/推送/影子注册；未重启；未跑全仓测试。
+- **下一步**：继续等 R2 2026-11-27 死线与 RFC-158 样本门；P0 读数可每日复跑；费用门若立项须另起 cohort、不与 R2 同批；11-28 DA 仍≤0 按 OKR 三选一。
+
+最后更新：2026-11-12（本条）
+
+## 2026-11-12 01:24 · Umar 方法论独立复核 + 外部策略本地探测（只读落档，零行为变更）
+
+- **落地**：复核 `docs/analysis/2026-11-12-umar-method-borrowing.md`，新增 `docs/debates/DEB-20261112-umar-review-external-strategies.md`，原文追加 §12 修正指针。核心修正：§10 R/死单/inside-day 混用全 Playbook；DA-only n=603/88 日净 −1.85bps，毛 +7.84bps/费 9.69bps，`ΣR_net=−8.41`、DA max R 仅 +1.556。尾损集中在 `SL_INITIAL`（34 笔 −$4,817.56）+ `OVERNIGHT_GAP_STOP`（11 笔 −$3,616.05）；open15 净 −10.10bps，15–60min +6.24bps。外部探测：OFI 基线 29,248 观测 IC≈0；45 只个股指数日内动量最后半小时净 −10.73bps；20d→5d TSMOM 多头侧 +30.97bps 但 MDE80=67.83bps/幸存者偏差。结论：不立项、不加门、不新建影子；继续 RFC-158/RFC-155 R2，P0 只做 DA-only 度量。
+- **凭据**：本批未提交；改动 3 文档（新 DEB + 原文 §12 + handoff），`git status --short` 可核。只读探测脚本在 `/tmp/umar_review/`：`da_metrics.py`、`da_structure.py`、`ofi_probe.py`、`intraday_mom_probe.py`、`tsmom_probe.py`；产物 `da_metrics.json`、`*.txt`。
+- **验证**：`./venv/bin/python /tmp/umar_review/da_metrics.py > /tmp/umar_review/da_metrics.json`；`./venv/bin/python /tmp/umar_review/da_structure.py`；`./venv/bin/python /tmp/umar_review/ofi_probe.py`；`./venv/bin/python /tmp/umar_review/intraday_mom_probe.py`；`./venv/bin/python /tmp/umar_review/tsmom_probe.py`；`./venv/bin/python /tmp/umar_probe/readout.py`。全部 sqlite `mode=ro` / 本地 bar/OFI 缓存，零网络交易、零 DB 写入、零券商调用。
+- **未验证**：真实逐笔订单流/footprint 未测；SPY/QQQ 指数 1m 未测（缓存缺，交易时段禁开 Futu）；FOMC/inside-day 仅历史描述；R2/RFC-158 新 cohort 未达样本门；未跑全仓测试；未改任何 `.py`/YAML/ENV/DB/cron/推送/影子注册；未重启服务。
+- **下一步**：P0 复用 `session_attribution.py` 做 DA-only R/费/MFE 捕获率 + open15/SL_INITIAL early/original/OGS 度量（零行为）；P1 RFC-158 按原判据攒样，不改 120s/mid/grace/holdout；P2 RFC-155 R2 2026-11-11→11-27 前瞻确认，功效不足只能 INCONCLUSIVE；P3 费用另起 cohort、不与 R2 同批、不抬票面摊费；11-28 若 DA 仍≤0 按 OKR 三选一，不默认加门。
+
+最后更新：2026-11-12（本条）
+
+## 2026-11-12 00:46 · Umar 方法论调研结题（形态 / R 口径 / C1 三案否决）+ RFC-158 附录B 只读分层
+
+- **落地**：调研 Umar Ashraf（早盘冲高失败做空 + 订单流背离 + 不交易日过滤）能否借鉴。三案全部收口，**无任何交易行为变更**：① 形态在本池无增量（`/tmp/umar_probe/probe*.py`）；② R 倍数口径落地（`/tmp/umar_probe/readout*.py`）；③ 12 月 C1 候选「跳空日开盘 30min 不入场」**否决**（`/tmp/umar_probe/power.py`、`attr.py`、`matrix.py`）。RFC-158 新增**附录 B**（只读分层口径「早·跳空」，不改 §3 判据 / §10 目标 / holdout 分配、不占 C1）。
+- **三个可复用的读数**：① 冲高失败做空 −10.4bps vs 无条件做空 −9.7bps，Δ<1bp 低于 MDE80 3.5bps ⇒ 机械可定义部分无增量；② 全窗 n=822/93 日簇 **ΣR=−4.37、R/笔 −0.0053**，中位 +0.027R、p10 −0.346R、单笔 max 仅 **+3.99R**（右尾截断）；③ C1 候选人群 n=298/71 日簇、笔均 −$10.71，但亏损=28 笔 `SL_INITIAL` + 8 笔隔夜跳空，**剔最差 8 笔后 −$2.37/笔≈0**，且需 144 日簇才可裁。
+- **凭据**：commit **6523ea776**（`git show --stat`：2 文件 / +446 行，新 `docs/analysis/2026-11-12-umar-method-borrowing.md` + `docs/decisions/RFC-158-entry-confirm-reopen-v2-preregistration.md` 附录B）；**本条 handoff 未随该 commit 提交**（handoff.md 含 285 行其他会话未提交条目 + 16 行已暂存删除，合并提交会扫入他人工作）。
+- **验证**：`./venv/bin/python /tmp/umar_probe/probe3.py`、`probe4.py`、`readout.py`、`readout2.py`、`readout3.py`、`power.py`、`attr.py`、`matrix.py`、`rfc158_appendix.py` —— 全部 sqlite `mode=ro` / 本地 `data/replay_bars_1m`、零网络、零写入。复现口径：A10 SSOT 谓词 + A9 exclusion 空 + `source_type LIKE 'PLAYBOOK%'` ⇒ n=822；entry_confirm cohort ⇒ n=38（CONFIRMED 23 / HOLDOUT 15）。
+- **未验证**：FOMC 周（仓内无本地会议日历）未测；**真实逐笔订单流**未测（无历史归档，OFI 基线 ~70 快照/票/日且时间戳不可信）；SPY/QQQ 指数臂未测（1m 缓存缺失，交易时段禁开 futu 抢 OpenD）；附录 B 现值 n=38 **远低于 §3.1 样本门**，且该格历史 −10.71/笔 vs 新 cohort +7.53/笔（n=15）**方向尚未复现**。
+- **下一步**：附录 B 等样本——treatment **n≥60 ∨ ≥10 交易日**、control **n≥20** 后才读；读数时先报样本门再报方向，禁据历史窗分层提前设门。若要动真实订单流轴，须先测 OFI 基线自身预测力（`docs/analysis/2026-09-21-shadow-collection-effectiveness.md:29` 已登记为开放问题），并按 RFC 立项建专用采集。**不据本批改任何门/影子/退出参数。**
+
+最后更新：2026-11-12（本条）
+
+## 2026-11-12 00:13 · SL/TP 展示收口 + GFL 出场 BOOKED：账实 9/9 零漂移
+
+- **落地**：HON/GFL `missing_tp_json` 用既有 backfill `--apply` 补齐 2 行；新增审计化 CAS 脚本对齐 LLY recovery 展示污染（1394.9614/1851.99 → 1352.35/1530.29），默认 dry-run、写前审计、未 trailing 才改。GFL 00:06:06 `SL_TRAIL_LOCK` → 00:06:42 BOOKED，净 -$3.70；BWXT 23:55 保本出场净 +$11.42 已 BOOKED。
+- **实测**：00:11:43 只读券商对账 broker=9/internal=9/drift=[]/external=[]；未平 trade_records=9；exit_intents=362 全 BOOKED；最新 Done 00:06:42 `Futu:9 | 主线内存:0 | playbook自管:9 | ✓`；资本心跳更新到 00:13:22；重启后 ERROR/CRITICAL/Traceback=0，无 legacy playbook skip。LLY 多轮 sync 后未回写，两个 SL/TP 脚本幂等 dry-run 0 行。
+- **凭据**：本批未提交；续办改动 4 文件（新 `scripts/align_playbook_recovery_display.py`、新 `tests/test_align_playbook_recovery_display.py`、DEB §9、handoff）+ 2 审计 JSONL（`open_position_sl_tp_20261111T160544Z.jsonl`、`playbook_recovery_display_20261111T160742Z.jsonl`）；`git status --short` 可核。HON/GFL 走既有 backfill 脚本，未改该脚本。
+- **验证**：`pytest -q tests/test_align_playbook_recovery_display.py tests/test_backfill_open_position_sl_tp.py tests/test_sync_summary_playbook_exclusion.py` = 12 passed；`py_compile` OK；`logs/ftseek_us.log`、`logs/exit_intent_reaper.log`、`logs/healthcheck.log`；只读 `live_reconcile_check._broker_positions()` 命令见 DEB §9/§5。
+- **未验证**：未跑全仓测试；未开启 DEBUG；sync recovery 竞态根因未修（行为变更需 RFC/影子）；00:07 业务心跳另报 2026-11-10 bridge `edge_gate_shadow` 写入=0（近10桥日覆盖 0.9），与退出/同步无关，未在本批修。
+- **下一步**：观察 Done/资本心跳持续 ✓；sync recovery 竞态另立 RFC/影子；`edge_gate_shadow` 断流转影子覆盖责任线；不据本批改交易门。
+
+最后更新：2026-11-12（本条）
+
+## 2026-11-11 23:59 · Done 汇总互斥计数已部署：PositionSync 转 ✓，BWXT 保本出场收口
+
+- **落地**：`position_sync.py` 新增 `_sync_done_counts()`，Done 汇总排除 Playbook 内存残留，标签 `主线DB`→`主线内存`；新增 4 例回归。23:58:02 统一重启 PID 2626019，启动冒烟 7/7；22:55 memory/trail 观测补丁与 22:28 TwelveData 429 补丁同窗生效。
+- **实测**：23:58:14 `Done | Futu:10 | 主线内存:0 | playbook自管:10 | ✓`；券商/内部 10/10 零漂移；exit_intents 361 全 BOOKED；启动段 0 ERROR/CRITICAL。BWXT 23:54:35 SL_BREAKEVEN → 23:55:13 BOOKED 净 +$11.42；短暂 release-blocked WARNING 38s 收口。
+- **凭据**：本批未提交；改动 2 代码/测试文件（position_sync.py、新 test_sync_summary_playbook_exclusion.py）+ 2 文档（DEB §8、handoff）；`git status --short` 可核。position_sync.py 叠加在他人 pending_sync/memory 排除 WIP 上，未触碰其块。
+- **验证**：聚焦 33 passed + 相邻 44 passed；`py_compile` OK；`git diff --check` OK；`logs/ftseek_us.log` 23:58 启动段、`scripts/startup_smoke_check.py --wait 90`、只读 `live_reconcile_check._broker_positions()` drift=[]。命令见 DEB §8。
+- **未验证**：未跑全仓测试；未 `--apply` HON/GFL missing_tp_json backfill；LLY open_positions SL/TP 显示污染未纠正（现有 backfill/RFC-195 helper 不覆盖已有错误 TP）；sync recovery 竞态根因未修；重启后循环观察至 00:01（Done ✓ 后按降噪转 DEBUG，capital_state_history 每 30s 持续更新）。
+- **下一步**：观察后续 Done 持续 ✓、legacy 不再 skip Playbook；LLY 展示值另立只读 CAS dry-run + 审计化对齐裁决；HON/GFL 可用既有脚本幂等补齐；不据本批改交易门。
+
+最后更新：2026-11-11（本条）
+
+## 2026-11-11 23:46 · 23:35 退出监控 / PositionSync 日志前后全级别只读核查
+
+- **结论**：用户给定 INFO 窗口无强平/漏管/账实漂移。账户级回撤 0.42–0.46% < 3% FLAT_ALL 阈值；legacy“跳过 2”= LLY/BWXT 内存残留，Playbook 快循环仍管 11 仓；`Done ⚠差异` 是 `position_store.count()+playbook_count` 重复计数。只读券商对账 11/11 零漂移，`exit_intents` 360 全 BOOKED。23:20–23:39 主日志 377 INFO / 22 WARNING / 0 ERROR / 0 CRITICAL，WARNING 全为 chase_cap。
+- **落地**：新增 `docs/debates/DEB-20261111-2335-exit-sync-log-interval-audit.md` + 本条；零代码/配置/DB 写/重启/下单/cron/推送变更；仅一次只读券商持仓查询。
+- **凭据**：本批未提交；改动 2 文档（新 DEB + handoff），`git status --short` 可核。
+- **验证**：`logs/ftseek_us.log` 23:20–23:46 全级别、`logs/exit_intent_reaper.log`、`logs/healthcheck.log`、`logs/error_alert.log`；只读 SQL `ftseek_us.db` / `playbook_exits.db`；`live_reconcile_check._broker_positions()` drift=[] external=[]；DB integrity ok。命令见 DEB §5。
+- **未验证**：DEBUG 未开启（进程 LOG_LEVEL=INFO）；22:55 观测补丁未重启生效；LLY/BWXT 历史 open_positions SL/TP 未纠正；sync recovery 竞态根因未修；未跑全仓测试。
+- **下一步**：统一重启窗口后观察详细一致性 WARNING 与 Done 汇总；若 Done 仍 ⚠，另立零交易行为汇总口径修复；LLY/BWXT 显示值走只读对齐/RFC-195，不手工 SQL；不据本批改交易门。
+
+最后更新：2026-11-11（本条）
+
+## 2026-11-11 22:55 · 两个非阻断观测问题零交易行为修复（memory 幽灵误报 + legacy trail 覆盖真值）
+
+- **落地**：
+  1. `app/core/position_sync.py::_verify_and_sync_capital`：Memory 侧与 broker 侧**对称排除**自管/playbook 仓（`mem_set_for_check`）。根因是 sync recovery 竞态把刚收养的 playbook 仓残留在 position_store，broker 侧已排除而 memory 侧未排除 ⇒ 每轮误报 `Memory 有幽灵仓`（AMZN/LLY）。只改告警口径。
+  2. `app/pipeline/position_monitor.py::_check_positions`：trail 回写循环对 playbook 自管仓跳过（`playbook_open_check` SSOT）。根因是 legacy 用 recovery 合成 SL/TP 调 `upsert_open_position(action=update_trail)` 覆盖 RFC-195 指令真值（LLY 1394.96/1851.99 vs 真值 1352.35/1530.29）。退出仍由 `monitor_playbook_sim_exits` 独占，不改退出。
+- **凭据**：本批未提交；改动 4 文件（position_sync.py、position_monitor.py、test_sync_consistency_memory_exclusion.py +2 例、新 test_playbook_trail_write_guard.py），`git status --short` 可核。position_monitor.py 此前无 WIP，position_sync.py 仅叠加不触碰他人 pending_sync 块。
+- **验证**：`./venv/bin/python -m pytest -q tests/test_sync_consistency_memory_exclusion.py tests/test_playbook_trail_write_guard.py tests/test_rfc195_open_position_stop_align.py tests/test_open_position_sl_tp_contract.py tests/test_position_sync_pending_status.py` = 29 passed；相邻 `tests/coordinator/test_position_sync_p0_fixes.py tests/test_position_sync_backfill_clock.py tests/test_backfill_open_position_sl_tp.py tests/test_pending_sync_staleness.py tests/test_last_sync_at_writer_scale.py` = 44 passed；`py_compile` OK；`git diff --check` OK。7 次生产库写入为已知存量豁免（pdt_guard 等），非本批新增。
+- **未验证**：未重启主服务（代码不热重载，待统一重启窗口生效）；未手工改 DB；LLY 当前 open_positions 历史合成值未即时纠正（停止覆盖后，下次重启恢复/reconcile 对齐即收口）；recovery 路径「不把 playbook 仓加入 position_store」的根因修法属行为变更，未做（需影子/RFC）；未跑全仓测试。
+- **下一步**：统一重启窗口生效后观察 PositionSync 一致性应转 ✓、LLY open_positions SL/TP 对齐真值；若需即时纠正历史显示值另走只读对齐脚本，不手工 SQL；不据本批改任何交易门。
+
+最后更新：2026-11-11（本条）
+
+## 2026-11-11 22:49 · 开盘后全链只读核查：交易/做空/退出闭环正常，两个观测面瑕疵
+
+- **结论**：22:30–22:49 CST（09:30–09:49 ET）主交易链路正常。`ftseek-us` active，启动冒烟 7/7；`ftseek_us.log` / `ext_entry.log` / `rsshub_us.log` 开盘后 0 ERROR/CRITICAL。RTH 新仓 7 笔（MRK/AMZN/TSLA/LLY/GFL/CAT/GS）全部 `BOOKED/FILLED_ALL`；TSLA `SELL_SHORT` 确认正股做空链。AMZN 被现役 early-tight SL 规则平仓，exit intent `BOOKED`、券商成交回报入账，净 -$51.75；NET/DDOG 盘前 EXT 仓开盘后退出也均 `BOOKED`。`exit_intents` 非 BOOKED=0，退出快循环在场。
+- **门禁/策略**：重复持仓守卫、EntryConfirm 反转放弃、slope/VWAP/chase/stale 拦截、risk_off  sizing regime=0.30 均按现役配置执行。组合方向偏斜 guardrail 为 F1 摘闸后的 record-only 影子（`portfolio_guardrail_enabled=false`），日志 `would-skip 不拦截` 是预期，不是硬闸失效。EXT 开盘后无新入场；QCOM 仍由 PLAYBOOK_SIM 退出链管理，W_WEEK 豁免走 SL/EOD/5日上限。
+- **观测面问题（非交易阻断）**：
+  1. PositionSync 持续 `一致性: ⚠差异`，具体为 `Memory 有幽灵仓`（AMZN/LLY）。券商/DB 持仓与数量匹配，退出账本干净；根因是一致性检查从 broker 侧排除 playbook 自管仓，但未从 memory 侧排除，收养后内存仓残留导致误报。`主线DB` 计数还把 EXT QCOM 与 playbook 自管口径重叠，展示易误读。
+  2. `US.LLY open_positions` 显示 SL=1394.9614 / TP=1851.99，而指令与 `trade_records.metadata` 真值 SL=1352.35 / TP=1530.29。出场链读 `trade_records`，实际退出真值未错；但看板/旧风控取值面被 sync recovery 合成值 + 一次 legacy `update_trail` 污染，RFC-195 对齐未在运行路径收口。
+- **其他**：event_stream 的 GOOGLE_NEWS_RSS 单次 ERROR 后续恢复 OK，属旁路发现源降级，未直接参与下单。TwelveData 429 根因修复与盘前预检展示纠偏已落代码，但主服务未重启，进程内旧代码待统一重启窗口；开盘后未再出现 429 ERROR。
+- **凭据**：本批未提交；本条只改 2 文档（DEB-20261111-da-ext-chain-diagnosis §12、handoff），零代码/配置/DB/cron/推送/交易行为变更，零重启。
+- **验证**：`./venv/bin/python scripts/startup_smoke_check.py` = 7/7；只读 SQL `data/ftseek_us.db`（playbook_instructions/trade_records/open_positions/order_tracking）与 `data/playbook_exits.db`（exit_intents 非 BOOKED=0）；`logs/ftseek_us.log` 22:30–22:49 成交/退出/PositionSync/EntryConfirm/guardrail 日志；`logs/ext_entry.log`、`logs/event_stream_ingest.log`、`logs/rsshub_us.log`。
+- **未验证**：未修 PositionSync memory 误报与 LLY open_positions 展示真值；未重启主服务，429/预检展示修复未在进程内生效；未跑全仓测试；未据单笔 AMZN 亏损改 early-tight SL 或任何交易门。
+- **下一步**：待 WIP 收口后做零交易行为观测修复（memory 一致性排除自管仓 + open_positions SL/TP 对齐指令真值 + 禁止 legacy update_trail 写 playbook 仓）；观察下一轮 UE scan 429；不恢复 UE 直注，不提前结算 RFC-149/RFC-155。
+
+最后更新：2026-11-11（本条）
+
+## 2026-11-11 22:28 · TwelveData 429 告警根因修复：HTTP 429 现在熔断并降为 WARNING
+
+- **落地**：`app/data/twelvedata_provider.py` 的 HTTPError 分支补 429：设置 `_rate_limited_until=now+600`、日志 WARNING；非 429 仍 ERROR。新增 2 条契约测试。根因是 HTTP 429 未进入既有熔断分支，导致预期限流刷 ERROR 且继续请求；告警源 `rsshub_us.log` 为共享 logger，实际调用方是 UE scan 的日 K fallback。
+- **凭据**：本批未提交；改动 4 文件（provider、test、DEB §9、handoff），`git status --short` 可核。
+- **验证**：`./venv/bin/python -m pytest -q tests/test_twelvedata_429_breaker.py tests/test_class_share_symbol_form.py` = 12 passed；`py_compile` OK；`git diff --check` OK；UE scan 22:10 仍完成浮现 7 标的，服务 active。
+- **未验证**：主服务未重启，进程内旧代码待重启窗口；下一轮 cron live 未观察；跨进程配额共享/日限额状态未改；未跑全仓测试。
+- **下一步**：观察下一轮 UE scan / error_alert；主服务生效需按重启前核 SQL + WIP 后统一重启，不单独为本报警重启。
+
+最后更新：2026-11-11（本条）
+
+## 2026-11-11 22:20 · 盘前指令推送只读核查：源头清楚 / 计划新鲜 / 准入有效 / 推理有弱点
+
+- **结论**：用户这条 `Playbook 交易指令` 来自 in-app 09:01 ET morning push（非 UE 直注）；DA 08:31 ET 完成 35 分析→27 指令（25 可执行+2 SKIP）。新鲜度到“盘前计划”层面成立，VIX/SPY 为昨收口径，per-dim as-of 契约仍缺。推理链完整但仅 META 2 模型一致；TMUS/GFL UE SHORT→DA BUY 翻转、GFL 证据缺口、TSM RR 0.94 是主要复核点。RIVN/HIMS SKIP 与 admission 一致；已持仓票执行时受重复开仓守卫约束。
+- **落地**：只新增 DEB-20261111-da-ext-chain-diagnosis §11 + 本条；零代码/配置/DB/cron/推送/交易行为变更，零重启。
+- **凭据**：本批未提交；改动 2 文档（DEB §11、handoff），`git status --short` 可核。
+- **验证**：`da_input_freshness_manifest.py --date 2026-11-11`、`ue_da_chain_health.py --date 2026-11-11 --json`、只读 SQL/bridge 探针、`MarketRegimeGate().assess()`；产物 `/tmp/ftseek_da_freshness_20261111.json`、`/tmp/ftseek_ue_da_health_20261111.json`；推送日志 `logs/ftseek_us.log` 22:01:45 与 `data/da_push_instruction_summary.jsonl` 22:12:15。
+- **未验证**：开盘后触发/成交未验证；`🎚` 标签吞掉质疑/弃权的展示修复未实施；未跑全仓测试；未重启主服务。
+- **下一步**：人工复核 TMUS/GFL/TSM；若修 `🎚` 标签另立零行为展示修复；不恢复 UE inject/fresh-event execute，不据本核查改交易门。
+
+最后更新：2026-11-11（本条）
+
+## 2026-11-11 21:55 · 盘前预检展示纠偏：UE 直注已停用 / 做空显示现役 Playbook 正股做空
+
+- **落地**：`scripts/pre_market_check.py` 不再展示 legacy 做空路由器与 `options_put` 死配置，改报 `stock_short（正股做空）| Playbook → DualBrokerAdapter | mode=futu_simulate`；当日指令统计改报 `UE 当日直注已停用`。新增 3 条展示契约测试。交易路由、UE cron、配置、Hermes prompt、主服务零改动。
+- **凭据**：本批未提交；改动 4 文件（`scripts/pre_market_check.py`、`tests/test_pre_market_check_report.py`、DEB-20260918 §6、handoff），`git status --short` 可核。
+- **验证**：`./venv/bin/python -m pytest -q tests/test_pre_market_check_report.py` = 3 passed；`./venv/bin/python -m py_compile scripts/pre_market_check.py tests/test_pre_market_check_report.py` OK；`git diff --check -- scripts/pre_market_check.py tests/test_pre_market_check_report.py` OK；真实配置探针输出 `做空执行策略 ... mode=futu_simulate` 与 `UE 当日直注已停用`。
+- **未验证**：未重跑完整 `pre_market_check.py`（避免额外推送/落报告）；下一次 Hermes 盘前预检才见新文案；未跑全仓测试；未重启主服务。
+- **下一步**：下次盘前预检核对新展示行；不恢复 UE inject/fresh-event execute，不据本展示修复改交易行为。
+
+最后更新：2026-11-11（本条）
+
+## 2026-11-11 20:37 · 日志链路 Batch B 批量报价反事实 record-only 已生效（用户裁「继续」）
+
+- **落地**：EXT `_snapshot_candidates` 解析批量 bid/ask/market_cap 为 `_batch_quote`；研究臂下游闸后只追加 `batch_quote_cf` 到既有 pretrade 拒绝台账/研究漏斗/细分计数。live 门控、严格臂、structure/VWAP、下单/出场阈值/票面/cron/推送/DB schema 零改动；不新增独立 shadow 产物/注册表实验项。
+- **live 证据**：20:32 tick 研究池 37，cf 33，batch 可用 33，`quote_unavailable=27`，`reject_would_advance=7`，`pass_would_block=0`，ordered=0；20:37 复核研究池 34，cf 30，`reject_would_advance=6`，`pass_would_block=0`，ordered=0，研究漏斗 30 行带 `batch_quote_cf` 可按票追溯；live quote 成功行与 batch quote mismatch=0；主服务 PID 2589190 未变，7 仓未平。
+- **凭据**：本批未提交；改动 4 文件（`scripts/extended_hours_entry_executor.py`、`tests/test_extended_hours_entry_executor.py`、DEB §8、handoff），`git status --short` 可核。
+- **验证**：聚焦合并 `pytest -q tests/test_extended_hours_entry_executor.py tests/test_ext_entry_research_arm.py tests/test_ext_entry_research_sources.py tests/test_rfc193_order_query_poll_cache.py tests/test_event_stream_ingest_cadence.py tests/test_backfill_yfinance_noise.py` = **95 passed**；`py_compile` OK；`git diff --check` OK；产物 `logs/ext_entry.log` 20:32 tick、`data/extended_hours_pretrade_gate_rejects.jsonl` 末行 `batch_quote_cf`。相邻 EXT 入口子集 93 passed / 2 failed（HEAD 已存在 short_arm stub 缺 `prior_move`，非本轮）。
+- **未验证**：批量报价 live 复用未毕业；财报 watchlist 迁 YAML / Hermes 预检修复未实施；未跑全仓测试；测试框架已知生产库写入豁免 5 次（存量）。
+- **下一步**：观察至 11-13 source 臂死线，按票-日-时段去重复核 `pass_would_block=0`/覆盖率/限流恢复率；任何 live 复用另立 RFC 并按 KR4 注册，不据本诊断直接改门。
+
+最后更新：2026-11-11（本条）
+
+## 2026-11-11 20:14 · 日志链路 Batch A cron 侧零行为修复已生效（用户裁「继续」）
+
+- **落地**：EXT `quote=None` 单列 `quote_unavailable` + 取数 ret/error 日志；事件流 cadence 改无网络交易日判定；backfill 窄过滤 yfinance 退市噪音。live EXT 20:12 tick 确认 Futu 限流 `ret=-1`，研究臂 `research_quote_unavailable=26`，原 `market_cap_missing` 误标已分离。
+- **部署**：独立 cron 脚本下轮自动生效；未重启主服务、未改下单/出场阈值/票面/cron/推送/DB schema。Hermes 预检 stderr 因 app/main 需重启且存在在途 WIP 暂缓。
+- **凭据**：本批未提交；改动 8 文件（3 scripts + 3 tests + DEB + handoff），`git status --short` 可核。
+- **验证**：聚焦测试 52 passed + 研究臂/源 24 passed；`py_compile` OK；`git diff --check` OK；事件流手动 `--cadence` skip 无 OpenD 连接；产物 `/tmp/event_cadence_probe.err`、`logs/ext_entry.log` 20:12 tick。
+- **未验证**：backfill 过滤待下一次 cron 实跑；Hermes 修复/退役未实施；EXT 批量快照复用与财报 watchlist 迁 YAML（Batch B）未动；未跑全仓测试；测试框架已知生产库写入豁免 5 次（存量）。
+- **下一步**：观察 EXT `quote_unavailable` 分布与限流频率；待裁 Batch B 批量快照复用 bid/ask/market_cap（行为相邻须影子）；Hermes 待重启窗口/六面零引用后处理。
+
+最后更新：2026-11-11（本条）
+
+## 2026-11-11 20:02 · 日志链路只读巡检：EXT 取数误标 / 财报加载器 / Hermes 启动器 / 事件流空跑
+
+- **结论**：交易守护面健康（冒烟 7/7、7 仓 synced、354 exit intent 全 BOOKED）。值得优化：① EXT 研究臂 833 次 `market_cap_missing` 全为 `quote=null`，疑似快照限流/取数失败被误标；② 财报 watchlist 加载器仍读已弃用 JSON，回退静态 36 票（YAML 56/44 enabled）；③ Hermes Worker 因启动器 `-I` 丢 venv 依赖持续预检失败，但工具调用零现役消费方；④ 事件流 148 次 cadence skip 仍连 OpenD。
+- **落地**：只新增 DEB + 本条；零代码/配置/DB/cron/推送/交易行为变更，零重启，零券商下单。
+- **凭据**：本批未提交；改动 2 文档（新 DEB + handoff），`git status --short` 可核。
+- **验证**：`startup_smoke_check.py` 7/7；只读 SQL 7 仓 synced / 354 BOOKED；`hermes_worker --once ping` rc=1 复现；TSLA 单票快照探针正常；EXT pretrade 台账聚合 quote 全 null；产物 `/tmp/hermes_worker_probe.err`、`/tmp/hermes_importtime.err`。
+- **未验证**：EXT 限流根因需补 ret/error 日志最终确认；财报 sector ATR 影响未量化；Hermes 修复/退役未实施；未跑全仓测试；未改任何交易行为。
+- **下一步**：待裁 Batch A 观测/效率零行为项（EXT quote_unavailable 单列、事件流无网络 cadence、Hermes stderr、backfill 噪音）；Batch B 数据供给须影子；不直接放宽 EXT 阈值。
+
+最后更新：2026-11-11（本条）
+
+## 2026-11-11 18:24 · UE 角色与增量贡献只读审计（用户问「UE 是否还有作用？继续」）
+
+- **结论**：UE 直写轨已关（`entry_enabled=false` / C18 / RFC-148）；现役作用 = DA `da_feed` 候选/事件供料 + confirm/score 观察。11 月 UE 独有分析 18、prompt 送达 18/18、真指令 5、可执行 2、executed 0、A9/A10 已平 0；重叠票 2 笔 +$17.38 不可归因 UE prompt。10 月 UE 独有已平 14 笔净 +$236.92/+29.76bps，但 n<30、日聚类 MDE80=$58.94，不可判 edge。
+- **落地**：`ue_da_chain_health` 增 `--date/--start/--end` 与 `ue_contribution`；分离独有/重叠/非 UE、排除 supply_placeholder、按 `_ic_decision_id`/`decision_id` 连接、A9 双口径 + A10 + 日聚类 MDE；8 个契约测试；新 DEB + 旧 DEB 补正。零 YAML/ENV/DB/cron/推送/交易行为变更；standalone 脚本无需重启。
+- **凭据**：本批未提交；改动 5 文件（`scripts/ue_da_chain_health.py`、`tests/test_ue_da_chain_health_analysis_coverage.py`、新 DEB、旧 DEB 补注、handoff），`git status --short` 可核。
+- **验证**：`pytest -q tests/test_ue_da_chain_health_analysis_coverage.py` = **8 passed**；`py_compile` OK；`git diff --check` OK；产物 `/tmp/ftseek_ue_contribution_20261101_20261110.json`、`/tmp/ftseek_ue_contribution_20261001_20261030.json`。
+- **未验证**：全仓测试未跑；DA skill/prompt 未改；历史 DB 未回补；未来 UE 独有成交样本未产生；未调用券商。
+- **下一步**：保留 UE→DA 供料观察，不恢复 inject/fresh-event execute；UE 独有 n≥30 前不下 edge 结论；可先只读 what-if「UE 供料预筛对齐 DA fee floor」，若改候选分布须 RFC/影子。11-13 RFC-149、11-27 RFC-155 死线不变。
+
+最后更新：2026-11-11（本条）
+
+## 2026-11-11 17:59 · 全链路准确度 Batch A 零行为项已部署（用户裁「按照建议执行」）
+
+- **落地**：EXT 成交 TCA 写方（slippage/entry_price_source）；`breakeven_at_pct: 0.5` 显式 SSOT（固化现行默认，非改阈值）；DA 输入新鲜度清单脚本；UE/DA health 增 analysis 覆盖诊断；session_attribution L 段；budget_p3/confidence_tier 改判 eval_on_demand，挂载告警清零。
+- **部署**：`systemctl restart ftseek-us` + 启动冒烟 7/7；PID 2589190；7 仓不变且全 synced；PositionSync 一致性 ✓。交易规则/下单/出场阈值/票面/cron/推送零变更。
+- **凭据**：本批未提交；改动 15 文件（4 scripts + shadow_registry + YAML + 3 docs + handoff + 6 tests），`git status --short` 可核。
+- **验证**：合并聚焦子集 `pytest -q ...` = **112 passed**（命令见 DEB §6 关联测试文件）；`py_compile` OK；`git diff --check` OK；产物 `/tmp/ftseek_da_freshness_manifest_20261110.json`、`/tmp/ftseek_ue_da_chain_health_batcha.json`、`/tmp/ftseek_session_attribution_20261110_batcha.json`。
+- **未验证**：UE 注入稀疏根因未修（prompt UE=0 / analysis UE=1）；EXT market_cap fallback / OTC 过滤未改（行为相邻）；历史 DB 未回补；stop_loss_price 写方未统一；全仓测试未跑；测试框架已知生产库写入豁免 7 次（存量）。
+- **下一步**：EXT TCA 覆盖随后续成交累积；market_cap 先只读根因审计；UE 注入契约另立 DEB；11-13 RFC-149 / 11-27 RFC-155 死线不变。
+
+最后更新：2026-11-11（本条）
+
+## 2026-11-11 17:40 · 全链路信息/数据/参数准确度只读巡检（用户裁「继续」）
+
+- **结论**：无新 P0 交易故障；四锁 sim / DB integrity ok / 7 仓 synced / exit_intents 354 全 BOOKED。P1 缺口：DA as-of 与 UE prompt 契约、TCA 滑点覆盖（11 月 A9/A10 n91 仅 31/91，EXT 0/28）、EXT research market_cap_missing29、`breakeven_at_pct` 缺键默认分叉、I4 MFE 重算×14 / W7 chg 分母×40。
+- **落地**：只新增 DEB + 本条；零代码/配置/DB 写、零重启、零券商调用、零 cron/推送。
+- **凭据**：本批未提交；改动 2 文档（新 DEB + handoff），`git status --short` 可核。
+- **验证**：`da_chain_health_report --date 2026-11-10`、`ue_da_chain_health --json --limit 30`、`shadow_field_cardinality --days 30 --json`、`session_attribution --date 2026-11-10 --json`、`startup_smoke_check.py`；产物 `/tmp/ftseek_da_chain_health_20261110.txt`、`/tmp/ftseek_ue_da_chain_health.json`、`/tmp/ftseek_field_cardinality.json`、`/tmp/ftseek_session_attribution_20261110_batch0.json`。
+- **未验证**：UE prompt 缺口是注入缺失还是探针漂移未定论；market_cap_missing 根因未修；未跑全仓测试；未改任何交易行为。
+- **下一步**：待裁 Batch A 测量/契约修复；Batch B 行为变更须 RFC/影子。11-13 RFC-149、11-27 RFC-155 死线不变。
+
+最后更新：2026-11-11（本条）
+
+## 2026-11-11 16:52 部署 / 17:04 复核 · DA/EXT Batch 0 测量/契约修复已部署（用户裁「按照建议核查确认做合理优化」）
+
+- **落地**：EXT 风险影子补注册（REGISTRY 106）；PositionSync 对 broker 已匹配的 `pending_sync` CAS 收口；`session_attribution` 新增 J 三层价格账 / K 输入新鲜度审计，G 段披露 EXT 退出契约（初始风险按 `initial_sl`，trailing 后不漂移）；RFC-149 旧臂/source 死线矛盾更正。
+- **部署**：`systemctl restart ftseek-us` + 启动冒烟 7/7；PID 2584070；7 仓不变；AMZN/NET 已 `pending_sync→synced`（日志 16:52:11）。交易规则/出场参数/票面/ cron 零变更。
+- **凭据**：本批未提交；改动 10 文件（app/core/position_sync.py、app/playbook/shadow_registry.py、scripts/session_attribution.py、RFC-149、脚本台账、本 DEB/handoff、3 个新测试），`git status --short` 可核。
+- **验证**：按本 DEB §10 的 14 文件命令复跑 = **101 passed**；重启后冒烟 7/7，延迟复核 `scripts/startup_smoke_check.py`（不带 `--wait`）= 7/7；`session_attribution --date 2026-11-10 --json` J=21/14/15、K=31×19/19+2×18/19；`git diff --check` 通过。产物 `/tmp/ftseek_session_attribution_20261110_batch0.json`。
+- **未验证**：全仓测试未跑；扩展 RFC-169 旧夹具有 7 个 VIX 网络边界 teardown 错误（存量，非本轮）；测试框架已知生产库写入豁免 7 次（存量）；DA 生成端 as-of 写入未改；EXT TP/风险平价行为未改；RFC-149 11-13 / RFC-155 11-27 最终结算未完成。
+- **下一步**：11-13 机械结算 EXT 研究源臂（全样本/剔最大/分 source）；11-27 结算 R2 open15；Batch 1 影子待裁，不提前改交易。
+
+最后更新：2026-11-11（本条）
+
+## 2026-11-11 15:46 · DA / EXT 全链只读诊断落档（待裁 Batch 0）
+
+- **结论**：11-10 无新 P0 交易故障；优先修测量/契约：EXT 风险影子未注册、AMZN/NET `pending_sync` 状态不收口（券商仓存在，PositionSync 同尺寸不翻状态）、DA 输入缺统一 as-of、EXT 无 TP 退出契约不透明。
+- **经济**：11 月 DA n63 +$254.54/+8.55bps，开盘 0–15 净 -$210.53；EXT n28 +$338.94，其中 research n23 +$389.64 / strict n5 -$50.70。EXT 不能当稳定 edge；RFC-149 研究源 11-13 到期须三行读数机械结算。
+- **建议**：Batch 0 零行为（影子注册 / sync 状态收口 / planned-effective-fill 三层账 / DA as-of manifest / EXT 退出契约 / RFC-149 预结算）；Batch 1 影子；Batch 2 行为须 RFC。不关 chase cap、不放宽 SL/BE、不抬票面、不新增 EXT 亏损止损、不复活 UE/RFC-160。
+- **落档**：`docs/debates/DEB-20261111-da-ext-chain-diagnosis.md`（链路/信息源/实证/优先级/复跑命令）。
+- **凭据**：本批未提交；改动 2 文件（新 DEB + 本条），`git status --short` 可核；未触碰 app/scripts/config/DB。
+- **验证**：`./venv/bin/python scripts/session_attribution.py --date 2026-11-10`（输出 `/tmp/ftseek_session_attribution_20261110_final.txt`）；registry 实载 105 / ext_risk_registered=False；只读 SQL 复算 EXT 分臂与研究源窗；`systemctl is-active ftseek-us`=active。
+- **未验证**：未实施修复、未跑全仓测试、未重启、未调用券商；AMZN/NET 下一轮 sync 未观测；RFC-149 11-13 最终结算与 RFC-155 R2 未来样本未完成。
+- **下一步**：待用户裁 Batch 0；11-13 按 RFC-149/RFC-167 结算研究源臂；11-27 按 RFC-155 §6 结算 R2，不提前改交易。
+
+最后更新：2026-11-11（本条）
+
+## 2026-11-11 10:54 · P0 盈亏分层 + R2 独立前瞻判分已落地（用户裁「继续」）
+
+- **P0 日报**：`session_attribution.py` 新增 I 段，月初入场 cohort 按 DA/EXT 展示笔均盈亏、打平胜率、净 bps、费毛比；
+  DA 入场 0–15/15–60/60+ 分钟与原始 SL/early-tight 分型单列。生产库复跑重现 DA 63 笔 +$254.54、开盘段 −$210.53。
+- **R2 预注册**：RFC-155 §6 冻结 2026-11-11→11-27、DA-only、open15 0.5×反事实；旧六臂只作展示。
+  新评估输出 `r2_open15_confirmation`，含 30/10 样本门、95% 结局覆盖、日聚类 CI+MDE、半窗和剔最佳日。
+- **功效诚实线**：旧窗剔最佳日约 +$5.73/日，10 日 MDE80≈$19.36/日；小效应短期只能不可分辨。
+  当前新窗 0/30、0/10、resolved 0/0，`TOO_EARLY`；评估器永远不自动改交易。
+- **凭据**：本批未提交；改动 8 文件（2 测量脚本 + 2 测试 + RFC/DEB/脚本台账/handoff），
+  `git diff --stat` 与 `git status --short` 可核；未触碰其他 agent 的 app/review WIP。
+- **验证**：`PYTHONPATH=. ./venv/bin/python -m pytest -q tests/test_session_attribution.py tests/test_risk_size_tier_forward_eval.py tests/test_risk_size_shadow.py tests/test_risk_size_tier_shadow.py` = 22 passed；
+  两脚本 `py_compile`；生产库只读 I 段与 R2 输出复跑；产物 `/tmp/session_attribution_20261110.json`、`/tmp/risk_size_tier_forward_latest_r2check.json`。
+- **未验证**：R2 新窗未来样本与任何生产 A/B 均未验证；未跑全仓测试（存在其他 agent WIP）。
+- **未做**：未改 app/YAML/ENV/DB、实际尺寸、入场/退出、cron、推送或注册项；未重启、未调用券商。
+- **下一步**：只按 RFC-155 §6 在 11-27 机械结算；此前每日可复跑评估器，但不因单日表现改判据或提前上线。
+
+最后更新：2026-11-11（本条）
+
+## 2026-11-11 10:16 · “赢小输大”只读诊断：主修开盘尾损，不先动止盈/SL
+
+- **当前账**：11 月 DA 已平 63 笔，胜率 84.1%、净 +$254.54/+8.55bps，但笔均盈利 +$17.98、笔均亏损 −$69.82；
+  7 笔 `SL_INITIAL` 净 −$696.47，其余 56 笔 +$951.01。DA n<120，不作稳定转正裁决。
+- **场景归因**：6/7 尾损在开盘 0–15 分钟，6/7 为 early-tight（交集 5 笔）；开盘段 35 笔净 −$210.53，
+  09:45 后 28 笔净 +$465.07。11 月 DA 无 `OVERNIGHT_GAP_STOP`，不得复活 RFC-160 同轴硬闸。
+- **处置**：首选复用 RFC-155 对 R2 open15 0.5×另起独立确认 cohort，不直接上线；R1 ATR≥5% 前瞻 Δ−$16.17 放弃。
+  R2 旧样本 Δ+$401.95 但前半窗为负、剔最佳日仅 +$74.46，只能作新假设。
+- **不做**：不放宽 early-tight/原始 SL，不抬 BE/固定 TP，不抬票面摊费，不调 `entry_confirm`，不碰 legacy ExitMonitor。
+- **落档**：`docs/debates/DEB-20261111-win-small-loss-large-diagnosis.md`（含分层数字、预注册建议、验收/停止线）。
+- **凭据**：本批未提交；改动 2 个文档（新 DEB + 本条），`git diff --stat -- docs/debates/DEB-20261111-win-small-loss-large-diagnosis.md handoff.md` 可核。
+- **验证**：只读复算 `data/ftseek_us.db` 11 月 A9/A10 cohort；`scripts/risk_size_tier_forward_eval.py` 只读 compute；
+  `data/shadow/entry_confirm_forward_latest.json`、`data/fee_gate_shadow_latest.json` 交叉核对。无代码测试可跑。
+- **未验证**：R2 新独立 cohort 未开始；未跑生产 A/B；未改代码/配置/DB、未重启、未调用券商。
+- **下一步**：待用户裁是否只实施 P0 报表分层 + R2-only 前瞻预注册；未批准前现役交易行为不变。
+
+最后更新：2026-11-11（本条）
+
 ## 2026-11-11 08:20 · Orca 编排调研收口：不引框架，只留交接单三字段（用户裁「按建议执行」）
 
 - **决策**：GitHub 三个同名 Orca 中只有 `stablyai/orca` 具备多 agent 编排能力，但形态是 Electron 桌面 + 云 + 手机、编排层官方标 Experimental、Hermes/qodercli 只能走 terminal-backed 的二等公民 ⇒ **不作编排主干**。逐层映射后真缺口只有两项：worktree 隔离、子代理上报契约；DAG/状态机/GUI/心跳总线我们或缺而无用、或已有等价物。
@@ -13,6 +402,58 @@
 - **skill 台账**：`multi-agent-project-collaboration` patch（新增「交接单三字段 + worktree 按需」）· ACCEPTED · 依据：用户裁「按建议执行」+ 实测全仓 `grep handoff.md` 无代码写入方（app/scripts/ops 仅注释引用）。
 - **未做（防误读）**：没建 worktree 脚本、没建状态机/JSON 工单板、没引 Orca、没改任何交易代码/配置、没下令任何服务重启。
 - **下一步**：无本批遗留；若日后真出现多写者并发，再按「worktree + 归属逐行核对」启用协议，不预先搭建。
+
+最后更新：2026-11-11（本条）
+
+## 2026-11-11 08:10 · 11-10 Obsidian 幻影成交统计已修复部署：14/20 + 已有持仓跳过 1
+
+- **修复**：`daily_review` 幻影判定查询补 `outcome/execution_price`，provenance 单列已有持仓跳过并移出其他闸门；
+  Obsidian 计数 >0 时展示新增分类。原始 `executed=1` 防重闩、下单与退出逻辑零改动。
+- **验证**：新增真实成交+GOOG already_held 契约例与渲染断言；聚焦 7 passed、相邻合并 21 passed、diff-check 过。
+  生产库只读复算 20 计划/14 成交/70%/3 确认放弃/1 已有持仓跳过/2 其他闸门。
+- **日报**：`refresh_postmarket('2026-11-10')` 无推送刷新，Obsidian 已显示 14/20 和已有持仓跳过 1；
+  当前快照 total=24/closed=19/net=+$187.19，盘后后续结算仍以新 as_of 为准。
+- **部署**：重启前 7 仓未平、0 在途出场，其他 app/scripts 修改均早于当前进程启动；
+  `systemctl restart ftseek-us` + 启动冒烟 7/7，PID=2557980，服务 active，7 仓不变。
+- **落档**：DEB-20261111-us-20261110-session-review §7；本批仅测量/展示，不改交易参数或交易记录。
+- **下一步**：无本批遗留；后续日报若再出现严格 decision_id 与 provenance 成交数不一致，直接按新增契约例扩查同族缺列。
+
+最后更新：2026-11-11（本条）
+
+## 2026-11-11 · 11-10 美股全链复核：仅 Obsidian 幻影成交统计建议修，交易规则不动
+
+- **落档**：`docs/debates/DEB-20261111-us-20261110-session-review.md`；复核时点 18:48 ET，盘后未终了。
+- **经济快照**：新 DA 14 入场/11 平仓净 +$32.59/3 未平；新 EXT 8/6 净 +$68.74/2 未平；
+  旧 cohort 出场 2 笔净 +$85.86，总 19 笔已平净 +$187.19，另 7 仓未平，不作最终日终。
+- **链路通过**：21/21 供给跳过、零 NameError/ERROR/CRITICAL；09:37 首执符合开盘 5 分钟禁入+轮询；
+  20 个 exit intent 全 BOOKED（最长约 59s），MRK 警告 17s 收口，无重复 decision/重复未平，账实一致。
+- **唯一明确修复**：GOOG `SKIPPED_EXISTING_POSITION` 被 Obsidian 算成第 15 笔成交，严格 decision_id 是 14/20。
+  根因是 `daily_review.detailed_rows` 调幻影判定时漏传 `outcome/execution_price`；建议补字段、单列已有持仓跳过、
+  加一致性契约测试。**不得改 executed=1 防重闩或重试下单**；该文件有在途 WIP，实施只打小补丁。
+- **交易参数不调**：BABA early-tight 净 -$54.86 已进 penetration，2 分钟恢复但部署后仅 3 笔/3 日，
+  远低于 n≥30/≥10 日，NO_DEPLOY 不变；费毛比 58.3% 与 MTM 只按既有 KR 观察。
+- **重排前序建议**：legacy C1/C5 无当日实害新增、C10 账本全收口，均不与本批捆绑；本轮只读零生产变更。
+- **下一步**：待用户裁是否只实施 Obsidian 测量修复；盘后按新 as_of 续结，不回写历史快照。
+
+最后更新：2026-11-11（本条）
+
+## 2026-11-11 · DEB-20261110 跨模型退出链共性点独立复核：范围纠偏，未实施代码修复
+
+- **结论**：原文若干代码现象成立，但混合了 legacy ExitMonitor、当前 Playbook 与观测口径，
+  **不建议按原 P0 队列直接修**。已按宪章把独立复核追加到
+  `docs/debates/DEB-20261110-cross-model-common-findings.md` §10，保留历史轮次不改写。
+- **关键边界**：`exit_policy.yaml:8-13` 明确不管辖 PLAYBOOK；只读 DB 查询当前 9 个未平仓全部
+  `PLAYBOOK_SIM`。C1–C9/C11 主要是 legacy 债，C10 才是 Playbook 共享账本问题。
+- **复核增量**：C6 的 adaptive pre-close 无生产调用方，故“双规则同时执行”不成立；
+  C7 实际另有多层 ATR floor，故“floor 保护不存在”不成立；C9 唯一生产调用方已先标准化 regime；
+  C8 把 Playbook `SL_*` 与 legacy YAML 词表对比属跨 SSOT 误读；D4 不影响现行 A9 干净 KR 口径。
+- **探针**：只读复现 C1 fallback 假绿、C5 LONG/SHORT disabled buffer 破帽、C9 纯函数别名、
+  X1 各利润档被 initial=2.0 地板钳平。X1 属待裁策略契约，不支持直接 `max→min`。
+- **建议顺序（待用户裁）**：A 只修 C5 enabled 门 → B 按 legacy scope 修 C1/C4 守卫 →
+  C 独立修 C10 初始化事务 → P2 清理/读侧量纲契约；C2/C3/X1 若启用一律另案影子。
+  cost-buffer hard-cap clamp、fallback 策略改参、WAL 均不与上述单变量捆绑。
+- **本轮动作**：仅文档追加 + 只读探针/SQL；**无代码/配置/DB 写、无服务重启、无券商调用**。
+- **下一步**：用户确认是否按修订后的 Batch A 开始；未批准前不实施退出行为变更。
 
 最后更新：2026-11-11（本条）
 
