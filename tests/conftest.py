@@ -288,6 +288,16 @@ _PRODUCTION_DATA_SEAMS = (
     #   登记为缝防测试写生产去重状态 (否则重推判据在测试与生产间互染)。
     ("app.playbook.pipeline_parts.tracking_flow", "_TRACK_PUSH_STATE", "path",
      "playbook_evening_tracking_push_state.json"),
+    # 2026-11-12 (RFC-200): 黑窗只读观测也是生产判据载体；auto_execute 全链
+    # 测试必须重定向，不能把 TEST 指令的 cycle/hit 写进正式样本。
+    ("app.playbook.pipeline_parts.auto_execute_flow", "_blackout_shadow_path", "callable",
+     "entry_blackout_shadow.jsonl"),
+    # EXT 风险影子：下单测试也会触发写方，必须落沙箱而非生产判据文件。
+    ("scripts.extended_hours_entry_executor", "SHADOW_DIR", "path", "shadow"),
+    # LLM 调用审计库：model_call/UE 契约测试会真实建表落行，须统一重定向。
+    ("app.llm.features.audit_db", "_get_db_path", "callable", "llm_audit.db"),
+    # Signal IC 快照库：盘后巡检会经 get_stats/get_ic_summary 建表写入。
+    ("app.analysis.signal_ic_tracker", "_get_db_path", "callable", "signal_snapshots.db"),
     # 2026-10-16 (巡检 P1-5): 看板推送 episode 去重状态 — shadow_board 推送侧读写。
     ("scripts.shadow_board", "_PUSH_STATE", "path",
      "shadow_board_push_state.json"),

@@ -192,7 +192,7 @@ ADJUDICATED: dict[str, dict] = {
         "note": "10/31 实跑 jsonl: 90 事件 / 19 交易日 (2026-10-01..10-28), 同 decision_id 持久多行 = 0, "
                 "全部 incoming_source=DA (BUY 54/SKIP 25/SELL_SHORT 11) ⇒ 判据①② 过。"
                 "判据③「checkpoint 扫描 = 落盘」**无结算器** (注册表 eval_script=None) ⇒ 转正前须先补 eval; "
-                "本登记不代表判据全过。",
+                "本登记不代表判据全过。回源: docs/debates/DEB-20261002-universe-and-direction-entry-error.md。",
     },
     "blocked_exit_opportunity": {
         "read_at": "2026-10-31", "recheck_after": "2027-01-31", "needs_user": False,
@@ -917,6 +917,7 @@ REGISTRY: list[ShadowItem] = [
                             "J1 笔均 > 基线 −$1.84 ∧ J2 费用率 ≤11.54bps ∧ J3 名义中位 ≥$5,500; "
                             "回滚 R1 连10日日均<3 / R2 笔均<−$1.84 / R3 热帽拒绝>60% / R4 在险超帽。",
         eval_script="scripts/budget_p3_eval.py",
+        eval_on_demand=True,
         created="2026-10-31",
         last_evaluated=None,
         notes="生产行为变更 (三道帽同时生效)。2026-10-31 同日修正: 热帽 2.5→4.0 —— 实测 2.5% 砍掉 87 笔、"
@@ -976,6 +977,7 @@ REGISTRY: list[ShadowItem] = [
                             "GATE_CANDIDATE (须另立 DEB 才可上硬门); T1∧T3 而 T2 不过 ⇒ KEEP_SHADOW; "
                             "其余 WEAK/作废。",
         eval_script="scripts/confidence_tier_eval.py",
+        eval_on_demand=True,
         created="2026-10-31",
         last_evaluated="2026-10-31",
         notes="只读影子, 零交易行为变更。**禁止**在 t 未达 2.0 前把它接成硬门 —— 那等于拿 57% 的笔数换一个"
@@ -2894,7 +2896,7 @@ REGISTRY: list[ShadowItem] = [
     ShadowItem(
         id="eod_mfe_gate_shadow",
         name="EOD「MFE<0.5% ∧ 水下」不过夜闸影子 (RFC-160, 2026-10-22 用户裁立项)",
-        status=ShadowStatus.OBSERVING,
+        status=ShadowStatus.KILLED,
         description="RFC-157 预注册重议触发 (近 11 日 OGS 4 笔均 −$324.05 ≤ −$250) 后立项: "
                     "与 B19 深度轨同载体同结算器 (eod_depth_gate_shadow.jsonl + "
                     "settle_eod_depth_gate_shadow.py, cron 30 6 * * 2-6), 触发谓词换判别器: "
@@ -2915,6 +2917,15 @@ REGISTRY: list[ShadowItem] = [
                             "/ EOD 豁免链行为。",
         eval_script="scripts/settle_eod_depth_gate_shadow.py",
         created="2026-10-22",
+        last_evaluated="2026-11-10",
+        verdict_history=[
+            {"date": "2026-11-10", "verdict": "GATE_NOT_WORTH (终态, settler 机械判定)",
+             "evidence": "2026-11-10 06:30 报告: mfe_track.n=12 (≥8), ΣΔ=+52.14 (>0), "
+                         "miskill=9 (>1) ⇒ 预注册三门只过两门, 转硬闸路径关闭。"
+                         "已结算误杀不会随新增样本减少, 不再是等待攒样/转硬闸事项。"
+                         "KILLED 只终结该判据; 共享 eod_depth_gate 打点与结算 record-only 续采, "
+                         "config/cron 不变, 实际 EOD 豁免与出场参数不变。"}
+        ],
         notes="⚠️ 与 eod_depth_gate (B19) 的关系: 同载体不同判别器 — B19 深度轨 10-14 已终裁 "
               "GATE_NOT_WORTH (「−2.5% 深度区分度不足」), 该终裁**只关闭深度轨转硬闸路径**, "
               "不约束 MFE 轨 (判别器不同: 深度=价格幅度, MFE=论点证实度); 两轨在同一报告 "
@@ -3662,7 +3673,8 @@ REGISTRY: list[ShadowItem] = [
                                       "轻量回归监测。回滚须新 RFC + 预注册判据, 复用本判据=阈值购物。"}],
         notes="补登 (2026-09-26 RFC-109②): 写方=exit_engine 检查点埋点 (相对路径陷阱已修, "
               "engineering-change-protocol 2026-09-21 实锤批)。settler cron 2 6 * * 2-6 (9/22 补挂)。"
-              "count_mode=where:settled=True — 判据 n 轴是**已结算命中**, 非总行数。",
+              "count_mode=where:settled=True — 判据 n 轴是**已结算命中**, 非总行数。"
+              "并列口径锚: A11 死单率只读落库 mfe_pct<0.3%；tick/gate 口径不用于达标判定。",
         count_mode="where:settled=True",
     ),
     ShadowItem(
@@ -4413,6 +4425,30 @@ REGISTRY: list[ShadowItem] = [
               "无代码消费方 (OKR-2026-10 面板 okr_2026_10_scoring 未落地, 权威读数=本块+人工)。",
     ),
     ShadowItem(
+        id="ext_entry_risk_shadow",
+        name="EXT 入场风险 / 跨臂方向 / 无 TP 隔夜 record-only 测量",
+        status=ShadowStatus.OBSERVING,
+        description="DEB-20261111-da-ext-chain-diagnosis Batch 0.1: EXT 成交后记录名义/初始 SL/最大亏损、"
+                    "无 TP 跨夜候选、当日 DA 卡可得率与方向冲突。写方 "
+                    "scripts/extended_hours_entry_executor.py::_ext_entry_risk_shadow，"
+                    "开关 EXT_ENTRY_RISK_SHADOW=false 真停写方。只读测量，不接交易门。",
+        data_path="data/shadow/ext_entry_risk_shadow.jsonl",
+        config_key="EXT_ENTRY_RISK_SHADOW",
+        min_n=30,
+        count_mode="lines",
+        graduation_criteria="DEB-20261111-da-ext-chain-diagnosis §6 Batch 0.1: record-only 测量项，不转生产门；"
+                            "n≥30 且 ≥10 ET 日后只读复核 DA 可得率、方向冲突经济学、无 TP 隔夜初始风险；"
+                            "任何 EXT TP/cert_lock/风险平价/跨臂约束行为变更须另立 RFC。",
+        eval_script="scripts/session_attribution.py",
+        eval_on_demand=True,
+        stale_expected=True,
+        no_adjudication_reason="PERMANENT_MEASURE: 只读测量项，无毕业转硬闸路径；样本门用于复核而非自动裁决。",
+        created="2026-11-11",
+        intent="ext_entry_risk_measurement",
+        notes="2026-11-11 补注册：此前在采未注册违反军规。仅 EXT 成交落行，无成交日不写属预期；"
+              "读数=session_attribution 段 H。OBSERVING 计数纳入 KR4 盘点，不新增交易实验。",
+    ),
+    ShadowItem(
         id="ext_entry_earnings_criterion_shadow",
         name="财报判据② 新旧口径对照台账 (日历 actual vs period 陈旧, RFC-097)",
         status=ShadowStatus.OBSERVING,
@@ -4649,6 +4685,68 @@ REGISTRY: list[ShadowItem] = [
               "依赖 mfe_gate_pct / mfe_tick_pct 两列 (DEB §D2 新增, 2026-11-04 迁移); "
               "列未迁移时人群仍可算 (peak 轴空), 深度轴读数不受影响。"
               "回滚: 摘 cron 行 + 删本条目 + 删脚本 (产物留档)。",
+    ),
+    ShadowItem(
+        id="entry_blackout_shadow",
+        name="RFC-200 开盘禁入窗 (0945) 黑窗内只读观测",
+        status=ShadowStatus.OBSERVING,
+        description="RFC-200 §6 (2026-11-12 用户裁 A: 只加观测, 不改判定) — "
+                    "`entry_open_blackout_hhmm` 0935→0945 后, 09:30-09:45 的逐条 "
+                    "trigger 一次都不跑, 该窗口零遥测 ⇒ 无法用前向数据回答「延后 10min "
+                    "切掉了什么」。写方 "
+                    "`auto_execute_flow.emit_blackout_shadow()` 在闸内 return 前纯 append: "
+                    "每轮一行 kind=cycle (n_inst/n_priced/n_would_trigger, 证明观测活着) + "
+                    "每条指令首次落入可触发带一行 kind=hit。只读: 不写 DB / 不改 "
+                    "skip_reason / 不做永久作废 / 不下单 / 不 reprice。"
+                    "读数由 scripts/entry_blackout_shadow_eval.py 按 ET 日汇总: cycle "
+                    "覆盖与首末时间 / 取价异常 (QUOTE_ALL_FAIL / INCOMPLETE) / hit 按 "
+                    "(date, inst_id) 最早 ts 去重 + duplicate_hit / decision_id 源分桶 "
+                    "(DA/MOM/OTHER)。",
+        data_path="data/entry_blackout_shadow.jsonl",
+        config_key="playbook.execution_parameters.entry_blackout_shadow_enabled",
+        min_n=30,
+        count_mode="distinct_where:kind=hit",
+        graduation_criteria="PERMANENT_MEASURE (只读观测, 无毕业转门路径): RFC-200 §6 "
+                            "预注册用途 = ①cycle 行证明观测自身活着 (取价面异常可见) "
+                            "②hit 台账量化被 0945 切掉的带内人群。`band_would_trigger` "
+                            "**只是带几何上限** — VWAP/低ATR/流动性/借券/thesis漂移/"
+                            "极端gap/admission 等后续门未观测, 不等于会成交; 本项也**不**"
+                            "计算收益/PnL。任何把观测转成硬门、改黑窗配置或改判定的动作 "
+                            "都须另立 RFC + 用户裁。",
+        eval_script="scripts/entry_blackout_shadow_eval.py",
+        eval_on_demand=True,
+        no_adjudication_reason="PERMANENT_MEASURE: 只读黑窗观测, 无毕业门; 读数用于回答"
+                               "「观测是否活着 + 黑窗切掉了什么」, 不自动裁决任何开关。",
+        created="2026-11-12",
+        notes="写方门控 = config playbook.execution_parameters."
+              "entry_blackout_shadow_enabled (true; false 真停写方)。evaluator 状态机: "
+              "OK / INCOMPLETE (部分轮次零取价) / QUOTE_ALL_FAIL / NO_CYCLES / NO_DATA / "
+              "READ_ERROR; 无 hit 仍为 OK, 无文件或无 cycle 非零。"
+              "停摆检查 = check_mounting 的产出缺失/超龄 (14d) 哨兵; eval_on_demand=True "
+              "表示评估器按需手跑、不要求 cron 挂载。R1 起每轮必写 cycle（含零候选/零报价），"
+              "周末/假日停在上一交易日属预期 (<14d)。"
+              "回滚: config 置 false (真停写方) + 删本条目/evaluator; 产物留档。",
+    ),
+    ShadowItem(
+        id="us_overnight_shadow",
+        name="US overnight 夜盘行情只读快照",
+        status=ShadowStatus.OBSERVING,
+        description="Futu SIM 硬拒夜盘下单，故本项只采集 overnight_* 快照，"
+                    "不下单、不写交易 DB、不产生成交或收益结论。周日至周四晚且下一日为"
+                    "交易日才采，跨午夜归入同一 session_date；12/6 交易所级夜盘前后不得混算。",
+        data_path="data/shadow/us_overnight",
+        config_key=None,
+        min_n=30,
+        graduation_criteria="PERMANENT_MEASURE: 只读行情测量，无毕业转门路径；任何交易用途"
+                            "须另立 RFC + 用户裁，并先验证 SIM 夜盘下单能力与流动性。",
+        eval_script="scripts/us_overnight_shadow_eval.py",
+        eval_on_demand=True,
+        no_adjudication_reason="PERMANENT_MEASURE: 夜盘 record-only 快照，不是策略 alpha 或毕业样本。",
+        created="2026-11-12",
+        notes="写方 scripts/us_overnight_shadow.py，环境开关 US_OVERNIGHT_SHADOW=false；"
+              "本批仅手动采集，未挂 cron。evaluator 只读汇总行数/标的数/首末 ts/坏行/"
+              "每 symbol 最新快照；无文件或无有效行返回 NO_DATA 非零。回滚=环境开关关闭"
+              "且不挂 cron；产物留档。",
     ),
 ]
 

@@ -58,8 +58,8 @@ def test_ext_open_trade_record_uses_null_exit_time(tmp_path, monkeypatch):
             "SELECT exit_time IS NULL, typeof(exit_time), exit_price "
             "FROM trade_records WHERE symbol='US.TESTX'"
         ).fetchone()
-        assert row == (1, "null", 0.0), (
-            "EXT 未平仓行必须 exit_time IS NULL；空串会让重启/运维查询漏仓"
+        assert row == (1, "null", None), (
+            "EXT 未平仓行必须 exit_time/exit_price 均为 NULL；空串/0 会漏仓或伪装已平仓"
         )
         assert conn.execute(
             "SELECT COUNT(*) FROM open_positions WHERE symbol='US.TESTX' AND size>0"

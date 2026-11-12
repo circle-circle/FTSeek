@@ -955,8 +955,18 @@ def _check_positions(scheduler):
             import hashlib as _hl
             # 系统仓位: 已有 trail 更新
             _all_trail = list(monitored_positions)
+            # [DEB-20261111 §13] playbook 自管仓的 open_positions 真值由 trade_records
+            #   驱动 (RFC-195)。legacy trail 回写会用 sync recovery 的合成 SL/TP 覆盖
+            #   指令真值 (11-11 LLY: 1394.96/1851.99 vs 真值 1352.35/1530.29)。
+            #   自管仓退出由 monitor_playbook_sim_exits 独占, 此处只跳过回写, 不改退出。
+            from app.playbook.pipeline import (
+                load_playbook_open_symbols as _load_pb_trail,
+                playbook_open_check as _pb_chk_trail,
+            )
+            _pb_syms_trail = _load_pb_trail()
             for pos in _all_trail:
                 if not pos.trail_state: continue
+                if _pb_chk_trail(pos.symbol, _pb_syms_trail): continue
                 _stable = {k: v for k, v in pos.trail_state.items() if k != "prev_scan_price"}
                 _stable["current_sl"] = getattr(pos, "current_sl", 0)
                 current_hash = _hl.md5(json.dumps(_stable, sort_keys=True).encode()).hexdigest()

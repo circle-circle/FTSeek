@@ -35,6 +35,28 @@ EXTERNAL_CLOSE_DUP_SQL = (
 )
 
 
+def _reconcile_pending_sync_status(cursor, symbol: str, db_info: Dict) -> bool:
+    """Broker 已匹配时收口 EXT 等路径留下的 pending_sync 状态。
+
+    只改 sync_status/last_sync_at/updated_at，不改 size/SL/TP/出场参数。
+    根因: EXT 写入时 size/direction 已正确，旧逻辑只在 size/direction 变化时 UPDATE，
+    pending_sync 永不翻 synced。CAS 限定 pending_sync，避免覆盖并发关闭状态。
+    """
+    if str(db_info.get("sync_status") or "") != "pending_sync":
+        return False
+    from app.utils.timezone import now_et
+    last_sync_at = now_et().isoformat()
+    updated_at = datetime.now().isoformat()  # updated_at 保持既有第五阶口径，不在本批扩改
+    cursor.execute(
+        "UPDATE open_positions SET sync_status='synced', last_sync_at=?, updated_at=? "
+        "WHERE symbol=? AND sync_status='pending_sync'",
+        (last_sync_at, updated_at, symbol),
+    )
+    if cursor.rowcount:
+        logger.info("[US Sync] %s pending_sync→synced (broker 持仓已匹配)", symbol)
+    return cursor.rowcount > 0
+
+
 def _align_open_position_stops(conn, symbol: str, sl: float, tp: float) -> int:
     """[RFC-195] 把 open_positions 的止损对齐到**指令真值** (仅限恢复路径合成的旧值).
 
@@ -1672,6 +1694,7 @@ class USPositionSync:
             if symbol in db_positions:
                 # Update existing
                 db_info = db_positions[symbol]
+                _reconcile_pending_sync_status(cursor, symbol, db_info)
                 size_changed = abs(db_info['size'] - info['qty']) > 0.1
                 # P0 修复 (2026-06-03): 方向翻转检测 — 原代码仅检查 size 变化
                 # 根因: XLF 从 SHORT -11202 翻转为 LONG +11202 时 abs size 不变，
@@ -1903,23 +1926,7 @@ class USPositionSync:
             self._sync_to_position_store(futu_positions)
 
         self._last_sync_time = datetime.now()
-        _db_count = self.position_store.count() if self.position_store else len(futu_positions)
-        # playbook 自管仓按设计不纳入 PositionStore (line ~1099 防旧管线劫持),
-        # 故 position_store.count() 只含主线内存仓。单独统计 playbook 开仓数,
-        # 避免 "Futu:N | DB:M" 因 playbook 仓存在而恒显不一致 (误报噪音)。
-        _pb_count = 0
-        try:
-            _pb_conn = safe_sqlite_connect(_get_db_path(), timeout=5)
-            _pb_row = _pb_conn.execute(
-                "SELECT COUNT(*) FROM trade_records "
-                "WHERE source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') "
-                "AND (exit_price = 0 OR exit_price IS NULL OR exit_time = '' OR exit_time IS NULL)"
-            ).fetchone()
-            _pb_count = int(_pb_row[0]) if _pb_row else 0
-            _pb_conn.close()
-        except Exception:
-            _pb_count = -1  # 取数失败标记, 不阻断
-        _futu_n = len(futu_positions)
+        _futu_n, _db_count, _pb_count = self._sync_done_counts(futu_positions)
         # 2026-07-28 降噪: 每轮心跳 (盘中 30s) 无变化仍打 INFO → 日志 12% 是同一句。
         #   状态指纹变化或不一致才 INFO, 否则 DEBUG (可观测性不降: 异常必现)。
         if _pb_count >= 0:
@@ -1929,14 +1936,37 @@ class USPositionSync:
                                       or _consistent != "✓") else logger.debug
             self._last_sync_fp = _sync_fp
             _log_fn(
-                "[US Sync] Done | Futu: %d | 主线DB: %d | playbook自管: %d | 一致性: %s",
+                "[US Sync] Done | Futu: %d | 主线内存: %d | playbook自管: %d | 一致性: %s",
                 _futu_n, _db_count, _pb_count, _consistent,
             )
         else:
-            logger.info("[US Sync] Done | Futu: %d | 主线DB: %d | playbook自管: n/a", _futu_n, _db_count)
+            logger.info("[US Sync] Done | Futu: %d | 主线内存: %d | playbook自管: n/a", _futu_n, _db_count)
 
         # P2 新增 (2026-04-29): 一致性校验 + 资本安全同步
         self._verify_and_sync_capital(futu_positions)
+
+    def _sync_done_counts(self, futu_positions: Dict):
+        _pb_count = 0
+        _pb_syms = set()
+        try:
+            _pb_conn = safe_sqlite_connect(_get_db_path(), timeout=5)
+            _pb_rows = _pb_conn.execute(
+                "SELECT symbol FROM trade_records "
+                "WHERE source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') "
+                "AND (exit_price = 0 OR exit_price IS NULL OR exit_time = '' OR exit_time IS NULL)"
+            ).fetchall()
+            _pb_count = len(_pb_rows)
+            _pb_syms = {row[0] for row in _pb_rows}
+            _pb_conn.close()
+        except Exception:
+            _pb_count = -1
+        _futu_n = len(futu_positions)
+        if self.position_store:
+            _db_count = sum(1 for position in self.position_store.all()
+                            if position.symbol not in _pb_syms)
+        else:
+            _db_count = _futu_n
+        return _futu_n, _db_count, _pb_count
 
     def _sync_to_position_store(self, futu_positions: Dict):
         """P0 修复 2026-04-25: 将 Futu Broker 持仓同步到 PositionStore 内存
@@ -2709,9 +2739,20 @@ class USPositionSync:
                 s for s in (futu_set - (_self_managed or set()))
                 if not playbook_open_check(s, _pb_open_syms_mem)
             }
-            if futu_set_for_mem != mem_set and self.position_store:
-                missing_mem = futu_set_for_mem - mem_set
-                missing_mem_ghost = mem_set - futu_set_for_mem
+            # [DEB-20261111 §13] Memory 侧同口径排除自管/playbook 仓。
+            #   根因: sync recovery 竞态先把新仓写入 position_store, 随后才补录
+            #   trade_record 收养为 playbook_sim; 下一轮 broker 侧已按 playbook_open_check
+            #   排除该仓, 但 memory 侧未排除 ⇒ 残留内存仓被永久误报 "Memory 有幽灵仓"
+            #   (11-11 实盘 AMZN/LLY 每轮刷屏)。两侧对称排除后残留自管仓不再误判。
+            #   只改告警口径, 不参与任何交易决策 (零交易行为)。
+            mem_set_for_check = {
+                s for s in mem_set
+                if s not in (_self_managed or set())
+                and not playbook_open_check(s, _pb_open_syms_mem)
+            }
+            if futu_set_for_mem != mem_set_for_check and self.position_store:
+                missing_mem = futu_set_for_mem - mem_set_for_check
+                missing_mem_ghost = mem_set_for_check - futu_set_for_mem
                 opt_symbols = self._get_option_position_symbols()
                 missing_mem_ghost = {s for s in missing_mem_ghost if s not in opt_symbols}
                 if missing_mem:

@@ -8,7 +8,7 @@ FTSeek-US 盘前预检 (Pre-Market Check)
 
 检查项 (2026-07-21 P0+P1 修订):
   1. 服务进程状态 (systemctl)
-  2. 做空策略路由器初始化
+  2. 做空执行策略 (Playbook 正股做空)
   3. 退出策略兜底配置 (注: playbook 指令逐条自带退出参数)
   5. 数据源连接 (AAPL 报价)
   5b. DA bridge 就绪 (opportunity_scan_{ET今日}.json 候选数/新鲜度)
@@ -48,6 +48,93 @@ logger = logging.getLogger("ftseek_us.premarket")
 
 # DA 主链 bridge 应产出时点 (ET HHMM)。历史实测 08:39–08:45 完成 ⇒ 08:45 为保守上限。
 DA_BRIDGE_READY_ET = 845
+
+
+_ALLOWED_EXECUTE_MODES = ("futu_simulate", "live")
+_DEPRECATED_EXECUTE_MODES = {"simulate": "futu_simulate"}
+
+
+def _short_execution_check() -> dict:
+    """轻量校验 Playbook 正股做空执行路由 (不做任何下单/连接).
+
+    2026-11-12: 旧实现无论 mode 取值一律 PASS, `execute_mode` 缺失/未知也报绿。
+    现至少校验: ① execute_mode 属于当前允许值; ② Playbook/DualBroker 关键类可导入;
+    ③ DualBrokerAdapter 可构造 (纯构造, 不 connect、不发单)。
+    """
+    from app.core.config_container import get_config
+
+    base_detail = "stock_short（正股做空）| Playbook → DualBrokerAdapter"
+    cfg = get_config()
+    execute_mode = str(cfg.get_dotted("playbook.execute_mode", "") or "").strip()
+    if not execute_mode:
+        return {
+            "name": "做空执行策略",
+            "status": "FAIL",
+            "detail": f"{base_detail} | execute_mode 未配置或为空",
+        }
+    if execute_mode in _DEPRECATED_EXECUTE_MODES:
+        return {
+            "name": "做空执行策略",
+            "status": "WARN",
+            "detail": (f"{base_detail} | mode={execute_mode} 已废弃, "
+                       f"PlaybookService 将强制降级为 {_DEPRECATED_EXECUTE_MODES[execute_mode]}"),
+        }
+    if execute_mode not in _ALLOWED_EXECUTE_MODES:
+        return {
+            "name": "做空执行策略",
+            "status": "FAIL",
+            "detail": (f"{base_detail} | mode={execute_mode} 不在允许值 "
+                       f"{'/'.join(_ALLOWED_EXECUTE_MODES)}"),
+        }
+
+    from app.execution.dual_broker import DualBrokerAdapter
+    from app.playbook.playbook_service import PlaybookService
+
+    if not callable(getattr(PlaybookService, "execute_instruction", None)):
+        return {
+            "name": "做空执行策略",
+            "status": "FAIL",
+            "detail": f"{base_detail} | PlaybookService.execute_instruction 缺失",
+        }
+    if not callable(getattr(DualBrokerAdapter, "submit_order", None)):
+        return {
+            "name": "做空执行策略",
+            "status": "FAIL",
+            "detail": f"{base_detail} | DualBrokerAdapter.submit_order 缺失",
+        }
+    try:
+        DualBrokerAdapter()  # 仅构造校验路由, 不 connect/不下单
+    except Exception as exc:
+        return {
+            "name": "做空执行策略",
+            "status": "FAIL",
+            "detail": f"{base_detail} | DualBrokerAdapter 构造失败: {exc}",
+        }
+    return {
+        "name": "做空执行策略",
+        "status": "PASS",
+        "detail": f"{base_detail} | mode={execute_mode}",
+    }
+
+
+def _record_short_execution_check(results: dict) -> None:
+    """Append the do-short check and escalate overall_status on FAIL (2026-11-12)."""
+    try:
+        check = _short_execution_check()
+        error_detail = f"做空执行策略异常: {check.get('detail')}"
+    except Exception as exc:
+        check = {"name": "做空执行策略", "status": "FAIL", "detail": str(exc)}
+        error_detail = f"做空策略异常: {exc}"
+    results["checks"].append(check)
+    if check.get("status") == "FAIL":
+        results["overall_status"] = "FAIL"
+        results["errors"].append(error_detail)
+    elif check.get("status") == "WARN":
+        results["warnings"].append(f"做空执行策略: {check.get('detail')}")
+
+
+def _instruction_source_detail(today_et: str, total: int, da_count: int, ue_count: int) -> str:
+    return f"{today_et}: 共{total}条 | DA={da_count} | UE={ue_count} (UE 当日直注已停用)"
 
 
 def _da_bridge_phase(now_et_dt):
@@ -102,28 +189,10 @@ def run_premarket_check() -> dict:
         results["overall_status"] = "FAIL"
         results["errors"].append(f"服务检查异常: {e}")
 
-    # ── 2. 做空策略路由器检查 ──
-    try:
-        from app.execution.short_strategy import load_short_config, get_short_strategy_router
-        cfg = load_short_config()
-        router = get_short_strategy_router(cfg)
-        strategy_count = len(router.strategies)
-        default_method = cfg.get("default_method", "unknown")  # 2026-07-21 修复键名漂移: 配置真实键=default_method, 此前读default_short_method永远显示unknown
-        sim_force = cfg.get("simulated_mode_force_options", False)
-        # 2026-10-08 显示修正: config default_method=options_put 是死配置 — ADR-003 移除期权
-        #   路径后 select_strategy 恒返回 stock_short, 该键全仓无消费方 (仅本显示读取)。
-        #   以路由器实际策略为主读数, 死值降为标注, 防"默认=options_put"误导为走期权。
-        _actual = sorted(s.method.value for s in router.strategies.values())
-        _dead_note = " (死配置: 期权路径已删, 无消费方, 不会被执行)" if default_method not in _actual else ""
-        results["checks"].append({
-            "name": "做空策略路由器",
-            "status": "PASS",
-            "detail": f"实际路由={'/'.join(_actual) or '?'} | 策略数={strategy_count} | "
-                      f"配置默认={default_method}{_dead_note} | 模拟盘强制期权={sim_force}"
-        })
-    except Exception as e:
-        results["checks"].append({"name": "做空策略路由器", "status": "FAIL", "detail": str(e)})
-        results["errors"].append(f"做空策略异常: {e}")
+    # ── 2. 做空执行策略检查 ──
+    #   异常/FAIL 必须把 overall_status 拉成 FAIL (旧实现只 append FAIL 行,
+    #   整体仍 PASS ⇒ 报告与推送都当没事发生)。
+    _record_short_execution_check(results)
 
     # ── 3. 退出策略检查 ──
     try:
@@ -213,7 +282,7 @@ def run_premarket_check() -> dict:
     except Exception as e:
         results["checks"].append({"name": "DA bridge 就绪", "status": "ERROR", "detail": str(e)})
 
-    # ── 5c. 当日指令统计 (decision_id 前缀归因; UE 21:10注入, 预检时点通常为0属正常) ──
+    # ── 5c. 当日指令统计 (decision_id 前缀归因) ──
     try:
         import sqlite3 as _sq
         from app.playbook.db import ROW_KIND_EXCLUDE_PLACEHOLDER_SQL as _RK
@@ -227,7 +296,7 @@ def run_premarket_check() -> dict:
             f"FROM playbook_instructions WHERE date=? AND {_RK}", (today_et,)).fetchone()
         _con.close()
         results["checks"].append({"name": "当日指令统计", "status": "PASS" if (_r[0] or 0) > 0 else "WARN",
-                                  "detail": f"{today_et}: 共{_r[0] or 0}条 | DA={_r[2] or 0} | UE={_r[1] or 0} (UE 21:10注入)"})
+                                  "detail": _instruction_source_detail(today_et, _r[0] or 0, _r[2] or 0, _r[1] or 0)})
     except Exception as e:
         results["checks"].append({"name": "当日指令统计", "status": "ERROR", "detail": str(e)})
 

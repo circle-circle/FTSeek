@@ -121,9 +121,9 @@ config 覆盖。任一方只改一处都会得到"改了没反应"的假象。
 **观测成本**: 黑窗 15min ≈ 5 轮 × 每指令 1 次 `get_full_market_context` (与正常轮次同量级);
 相对全天 ~120 轮 ≈ +4% 快照负载。
 
-**未做 (如实登记)**: 该台账**未注册进 `app/playbook/shadow_registry.py`** (那文件此刻有并行
-agent 在改)。⇒ 缺 `check_mounting` 停摆守卫: 若某天影子不再落行, 只能靠人看
-`n_priced>0` 的 cycle 行存在与否。补齐方式 = 建 evaluator 脚本后按 registry 格式登记。
+**追加批 A 当时的未做项 (R1 已补)**: 该台账最初未注册进 `app/playbook/shadow_registry.py`，
+缺 `check_mounting` 停摆守卫。R1 已新增 evaluator 并注册 `entry_blackout_shadow`
+（永久测量、按需评估）；无 cycle / QUOTE_ALL_FAIL 均非零，详见 §8。
 
 ## 7. entry_confirm (RFC-141) 与 0945 的关系 — 结论: **本批不动它**
 
@@ -147,3 +147,49 @@ agent 在改)。⇒ 缺 `check_mounting` 停摆守卫: 若某天影子不再落�
    落在豁免窗之外**, 必须真过量能门 (1.5)。历史上 09:35-09:44 的入场是"豁免窗内"的,
    所以这次改动不只是"晚 10 分钟", 还**多了一道量能确认**。方向上与用户意图一致 (更保守),
    但解释"今晚首单为什么这么少"时必须把这条并列, 别只归因黑窗。
+
+## 8. R1 可靠性优化（2026-11-12，用户裁「按照建议执行优化」）
+
+### 8.1 已落地
+
+- 新增 `app/playbook/open_blackout.py`：外层 `auto_execute` 与内层
+  `check_intraday_trigger` 共用配置解析、严格 `<` 边界和 09:35 非法值兜底。
+  内层不再把 `"09:45"` 的 `int()` 失败静默解释成整天放开；开关关闭仍保持内层
+  fail-open，外层 09:35 噪声底线不变。
+- 黑窗影子每轮必写 `cycle`，新增 `status / n_eligible / n_quote_error /
+  n_price_invalid / n_eval_error`；无路由、无候选、全量报价失败与部分失败可区分。
+  主上下文无价时补用与生产一致的 `get_quote(last/price)` 兜底。
+- `hit` 的进程内去重改为**写盘成功后提交**；append 失败下轮重试。重启或部分写入
+  造成的重复由 evaluator 按 `(date, inst_id)` 取最早 `ts`，不再以牺牲首 hit 为代价去重。
+- 新增 `scripts/entry_blackout_shadow_eval.py` 并注册 `entry_blackout_shadow`
+  （`PERMANENT_MEASURE / eval_on_demand`）：无文件、无 cycle、全量报价失败均非零；
+  无 hit 不是错误。输出 DA/MOM/OTHER 分桶和取价质量，明确不计算收益。
+- MOM 报价缺失/异常改为暂时性 `MOM_QUOTE_UNAVAILABLE`，下轮复检，不再误写
+  `MOM_FEE_SIZE_INFEASIBLE` 并把 direction 永久改成 SKIP。开关关闭和预算快照失败
+  也有按指令/日去重的审计及 skipped 计数，仍不终结指令。
+- 新影子路径同时登记 `tests/conftest.py` 生产写入缝与
+  `tests/playbook/offline_chain_driver.py` 私有改道清单，防止测试污染正式样本。
+
+### 8.2 可复跑历史口径
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 ./venv/bin/python \
+  scripts/entry_blackout_window_stats.py --from-date 2026-06-01 --json
+```
+
+脚本只读 `data/ftseek_us.db`，净盈亏固定为 `pnl_net` 优先、否则
+`realized_pnl-fees_est`；只统计已平仓且有净值的 PLAYBOOK 记录，未平仓单列。
+2026-11-12 复核得到 09:35–09:45 桶 **403 笔 / 79 个有成交日 / 净 -$2,601.71**，
+另有 3 笔未平仓排除。与 §2 原快照 405/78/-$2,648 的差异必须连同查询口径和快照日
+一起读，不能混算。日簇描述性均值 -$32.93，正态近似 95% 区间
+**[-$79.30, +$13.43]**，跨零；它不是政策收益的因果反事实。
+
+### 8.3 裁决纪律收紧
+
+- 任何非 force 的 09:30–09:45 实际新入场、配置实读不是 0945、黑窗影子整日无 cycle，
+  均属**工程验收失败**，当日核查，不等收益样本。
+- §5 原“连续 3 日占比明显上升”只保留为复查提示，不再作为模糊自动回滚线。
+  chase/出带比例必须报告分子、分母和逐日值；收益/误杀裁决使用日簇区间和预注册样本量，
+  不由单晚或三晚方向决定。
+- 本政策读数命名为 **“0945 黑窗 + 首笔真实量能确认”组合政策**；不把全部效果归因于
+  时间后移。RFC-141 从 0945 后新 arm 重新分桶，不与旧开窗人群混合结算。

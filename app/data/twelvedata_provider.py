@@ -286,6 +286,9 @@ class TwelveDataProvider:
             if _status == 404:
                 # 永久性错误: 当日负缓存, 只报一次 (不按次 ERROR)
                 self._mark_invalid_symbol(_sym, f"{endpoint} HTTP 404")
+            elif _status == 429:
+                self._rate_limited_until = _now + 600
+                logger.warning(f"[TwelveData] 429 限流(HTTP), 熔断10分钟")
             else:
                 logger.error(f"[TwelveData] 请求失败 {endpoint}: {type(e).__name__} HTTP {_status}")
             return None
@@ -357,7 +360,7 @@ class TwelveDataProvider:
                 logger.info(f"[TwelveData] {symbol} ${price:.2f} ({change_pct:+.2%})")
             return quote
         except Exception as e:
-            logger.error(f"[TwelveData] 解析报价失败 {symbol}: {e}")
+            logger.error(f"[TwelveData] 解析报价失败 {symbol}: {e}", exc_info=True)
             return None
 
     def get_daily_bars(self, symbol: str, count: int = 30) -> Optional[List[Dict[str, Any]]]:

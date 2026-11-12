@@ -1,0 +1,139 @@
+{
+  "schema": "da_postclose_review_v1",
+  "generated_at": "2026-11-10T09:51:12+08:00",
+  "market_date_et": "2026-11-09",
+  "production_write": false,
+  "funnel": {
+    "da_analysis": 36,
+    "actions": {"BUY": 27, "SELL_SHORT": 6, "SKIP": 3},
+    "regime": {"risk_off": 36},
+    "gate": {"PASS": 4, "WARN": 18, "BLOCK": 14},
+    "instruction_rows": 22,
+    "directional_instructions": 20,
+    "admission_skip_rows": 2,
+    "filled_by_decision_id": 8,
+    "new_da_closed": 5,
+    "new_da_open": 3
+  },
+  "realized": {
+    "regular_close_report": {"trades": 18, "net_usd": 287.82, "gross_usd": 363.83, "fees_usd": 76.01},
+    "afterhours_final": {"trades": 19, "net_usd": 312.55, "gross_usd": 392.83, "fees_usd": 80.28},
+    "late_qcom_net_usd": 24.73,
+    "regular_close_research_arm": {"trades": 12, "net_usd": 244.72},
+    "regular_close_core_including_prior_da": {"trades": 6, "net_usd": 43.10},
+    "new_da_cohort_closed": {"trades": 5, "gross_usd": 55.10, "fees_usd": 20.99, "net_usd": 34.11, "fee_to_gross_pct": 38.09},
+    "prior_da_goog_net_usd": 8.99
+  },
+  "new_da_open_mtm_regular_close": {
+    "rows": [
+      {"symbol": "US.BA", "direction": "LONG", "entry": 175.79, "close": 172.38, "quantity": 21, "gross_usd": -71.61, "effective_stop": 166.99},
+      {"symbol": "US.GOOG", "direction": "LONG", "entry": 292.22, "close": 286.01, "quantity": 13, "gross_usd": -80.73, "effective_stop": 277.52},
+      {"symbol": "US.CAT", "direction": "SHORT", "entry": 590.86, "close": 598.88, "quantity": 7, "gross_usd": -56.14, "effective_stop": 622.80}
+    ],
+    "gross_total_usd": -208.48,
+    "closed_net_plus_open_gross_usd": -174.37,
+    "caveat": "MTM is supplementary, not final PnL or OKR A9; open-position fees are not deducted in the combined figure."
+  },
+  "plan_attribution": {
+    "published_report": {"planned": 20, "executed": 9, "execution_rate": 0.45},
+    "decision_id_reconciled": {"planned": 20, "executed": 8, "execution_rate": 0.40},
+    "false_match": "US.APP EXT premarket trade was counted as execution of the unexecuted DA US.APP instruction because matching used symbol+direction.",
+    "secondary_false_signal": "US.TSLA EXT LONG vs unexecuted DA SELL_SHORT was presented like a plan direction mismatch without channel/decision separation."
+  },
+  "entry_reprice_examples": {
+    "US.GOOG": {"planned": 286.0, "chase_cap": 292.2, "fill": 292.22, "close": 286.01, "fill_vs_plan_pct": 2.17},
+    "US.LLY": {"planned": 1354.0, "fill": 1379.38, "closed_net_usd": 8.27},
+    "US.XOM": {"planned": 162.5, "fill": 164.29, "closed_net_usd": 5.45},
+    "caveat": "Full-day high/low is not proof of executable price at decision time; gate relaxation requires as-of intraday replay with fees."
+  },
+  "market": {
+    "spy_close": 752.69,
+    "spy_day_pct": 2.37,
+    "vix_yahoo_close": 19.92,
+    "vix_day_pct": -22.31,
+    "vix_source_caveat": "CBOE VIX_History.csv still ended at 2026-11-06 at review time; 19.92 is Yahoo ^VIX, pending CBOE spot-file confirmation.",
+    "vix9d_cboe_close": 19.88,
+    "vix3m_cboe_close": 20.85,
+    "da_prompt_proxy": 17.88,
+    "prior_vix_truth": 25.64,
+    "proxy_minus_prior_truth_points": -7.76,
+    "vix_estimate_at_review": 22.84,
+    "estimate_minus_yahoo_points": 2.92
+  },
+  "evidence_cards": {
+    "cards": 36,
+    "event_references": 500,
+    "claims": 176,
+    "exact_linked_claims": 0,
+    "unlinked_claims": 176,
+    "caveat": "News/outcome association is observational, not proof that a specific news item caused a recommendation or return."
+  },
+  "exit_path_da_closed": {
+    "US.LLY_after_exit_pct": 2.0564,
+    "US.MRK_after_exit_pct": 1.0701,
+    "US.XOM_after_exit_pct": 0.0121,
+    "US.UNH_after_exit_pct": 0.1309,
+    "US.PDD_after_exit_pct": -0.9962,
+    "prior_US.GOOG_after_exit_pct": -0.624,
+    "caveat": "Exit-to-close path is not a counterfactual exit-rule PnL and must not be pooled with EXT to change DA exits."
+  },
+  "implementation_2026_11_10": {
+    "status": "MEASUREMENT_FIX_DEPLOYED_TRADING_RULES_UNCHANGED",
+    "strict_attribution": {
+      "primary": "trade_records.metadata_json.playbook_instruction_id",
+      "fallback": "globally unique non-empty decision_id",
+      "symbol_direction_fallback": false,
+      "reconciled": {"planned": 20, "executed": 8, "execution_rate": 0.40, "unplanned_ext_trades": 10, "direction_mismatches": 0},
+      "consumers": ["bundle_builder", "daily_review", "PlanEffectivenessTracker"]
+    },
+    "post_exit_channel_split": {
+      "all": {"n": 18, "close_gap_mean_pp": 2.8584, "close_gap_median_pp": 3.0337, "miss_gt1_count": 11},
+      "da_exit_day_including_prior_cohort": {"n": 6, "close_gap_mean_pp": 0.2749, "close_gap_median_pp": 0.0715, "miss_gt1_count": 2},
+      "ext": {"n": 12, "close_gap_mean_pp": 4.1501, "close_gap_median_pp": 4.7683, "miss_gt1_count": 9},
+      "decision": "Do not relax DA exits from pooled EXT-dominated post-exit paths."
+    },
+    "low_mfe_underwater_overnight_observation": {
+      "existing_shadow": "RFC-160 eod_mfe_gate_shadow",
+      "superseded_by": "followup_2026_11_10.rfc160_terminal",
+      "rows": [
+        {"symbol": "US.BA", "mfe_gate_pct": 0.2190, "underwater_net_pct": -2.0476},
+        {"symbol": "US.GOOG", "mfe_gate_pct": 0.3525, "underwater_net_pct": -2.2342},
+        {"symbol": "US.CAT", "mfe_gate_pct": 0.3097, "underwater_net_pct": -1.4586}
+      ],
+      "decision": "Observe in existing shadow only; no new gate and no immediate forced exit."
+    },
+    "validation": {"broader_tests": "157 passed, 1 skipped", "render_retests": "16 passed", "startup_smoke": "7/7"},
+    "trading_behavior_changed": false,
+    "candidate_or_symbol_count_reduced": false
+  },
+  "followup_2026_11_10": {
+    "rfc160_terminal": {
+      "supersedes": "implementation_2026_11_10.low_mfe_underwater_overnight_observation.decision",
+      "report_generated_at": "2026-11-10T06:30:01",
+      "n": 12,
+      "sum_delta_usd": 52.14,
+      "miskill_n": 9,
+      "verdict": "GATE_NOT_WORTH",
+      "registry_status": "KILLED",
+      "shared_record_only_collection_retained": true,
+      "no_forced_exit": true
+    },
+    "goog_open_position_correction": {
+      "audit": "data/audits/goog_open_position_rfc195_cas_20261110T025855Z.json",
+      "initial_sl": 277.52,
+      "current_sl": 277.52,
+      "initial_tp": 314.04,
+      "actual_exit_parameters_changed": false,
+      "fixed_tp_swallowed_by_rr_gate": true
+    },
+    "minute_replay_and_reprice_cohort": "docs/analysis/2026-11-10-da-reprice-minute-replay.json",
+    "validation": {
+      "focused_tests": "71 passed; 1 pre-existing A11 registry-visibility failure",
+      "startup_smoke": "7/7",
+      "service_pid": 2454012,
+      "open_positions_unchanged": ["US.BA", "US.CAT", "US.CVS", "US.GOOG"]
+    },
+    "trading_rules_changed": false,
+    "candidate_or_symbol_count_reduced": false
+  }
+}

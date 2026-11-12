@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional
@@ -9,6 +10,24 @@ from typing import Any, Callable, Dict, List, Optional
 MOM_ETF_V1_PREFIX = "MOM-ETF-V1-"
 MOM_ETF_V1_ENTRIES_FLAG = "playbook.mom_etf_v1_entries_enabled"
 logger = logging.getLogger(__name__)
+
+# ── 纯本地美股日历 (2026-11-12 P0/P1 修复) ───────────────────────────────
+# 为什么不用 get_holiday_calendar(): 它的 is_trading_day() 在缓存 miss 时会连
+#   OpenD 拉 ~90 天日历。MOM 的 max_hold_deadline 在退出快循环里每 20s 调一次,
+#   非交易路径抢 OpenD 槽位 (见 memory「Futu-Free Trading Day Source」)。
+# 数据源: 2026 用 shadow_tracker.US_MARKET_HOLIDAYS_2026 (既定纯本地入口);
+#   2027/2028 用 holiday_calendar.US_HOLIDAYS 的续编段 (2026-08-26 已核)。
+#   ⚠️ 2026 刻意不取 US_HOLIDAYS: 该表把 2026-12-24 保守标为整休, 但 NYSE 当日
+#   实际开市 (13:00 提前收盘) — 若并入会让 42 个交易日周期的下一次调仓晚 4 天。
+_LOCAL_CALENDAR_YEARS = (2026, 2027, 2028)
+_LOCAL_HOLIDAYS_CACHE: Optional[Dict[int, frozenset]] = None
+
+# 21 交易日到期日缓存: 退出快循环每 20s 至少一次 (同一 entry_day 反复算)。
+# 只含极少数键 (≤ 在途仓数 + 历史仓), LRU/FIFO 上界防无界增长; 失败兜底也缓存,
+# 避免同一条坏 entry_day 每轮刷 ERROR (错误洪峰)。
+_MAX_HOLD_DEADLINE_CACHE: "OrderedDict[tuple[str, str, int], date]" = OrderedDict()
+_MAX_HOLD_DEADLINE_CACHE_MAX = 64
+_INVALID_ENTRY_TIME_LOGGED: set = set()  # {(entry_time, entry_price, initial_sl, ET date)}
 
 
 @dataclass(frozen=True)
@@ -112,51 +131,190 @@ def after_entry_cutoff(now_et_dt: datetime, policy: PilotPolicy = MOM_ETF_V1) ->
     return minutes >= _hhmm_to_minutes(policy.entry_cutoff_et)
 
 
-def is_rebalance_day(today: date, policy: PilotPolicy = MOM_ETF_V1) -> bool:
+@dataclass(frozen=True)
+class RebalanceDayStatus:
+    """调仓日判定的可观测结果 (纯函数产物, 不写日志/不发网络)。
+
+    2026-11-12: 旧 `is_rebalance_day` 把日历故障吞成 False, 调用方无法区分
+    「今天不是调仓日」与「日历坏了」。本结构把二者分开, 供调用方可选接入;
+    `is_rebalance_day()` 保持原 bool API (故障时 fail-close + ERROR 留痕)。
+
+    reason 取值:
+      - before_anchor       今天早于策略 anchor 日
+      - not_trading_day     今天不是交易日 (周末/假日)
+      - rebalance_day       今天在周期上 (index % interval == 0)
+      - off_cycle           今天是交易日但不在周期上
+      - calendar_unavailable 本地日历不可用 (error 字段带异常, fail-close)
+    """
+
+    is_rebalance_day: bool
+    reason: str
+    trading_day_index: Optional[int] = None
+    error: Optional[BaseException] = None
+
+
+def _load_local_holidays() -> Dict[int, frozenset]:
+    """纯本地美股假日表 (按年, 不连 Futu OpenD)。
+
+    2026 → shadow_tracker.US_MARKET_HOLIDAYS_2026 (既定本地入口);
+    2027/2028 → holiday_calendar.US_HOLIDAYS 续编段 (只取常量, 不调用其日历单例)。
+    覆盖年份外由 `_is_local_trading_day` 返回 None, 由调用方显式兜底。
+    """
+    global _LOCAL_HOLIDAYS_CACHE
+    if _LOCAL_HOLIDAYS_CACHE is not None:
+        return _LOCAL_HOLIDAYS_CACHE
+
+    from app.playbook.shadow_tracker import US_MARKET_HOLIDAYS_2026
+    from app.utils.holiday_calendar import US_HOLIDAYS
+
+    by_year: Dict[int, set] = {year: set() for year in _LOCAL_CALENDAR_YEARS}
+    for text in US_MARKET_HOLIDAYS_2026:
+        d = date.fromisoformat(str(text))
+        if d.year == 2026:
+            by_year[2026].add(d)
+    for d in US_HOLIDAYS:
+        # 2026 见模块头注: US_HOLIDAYS 的 2026-12-24 保守标注与 NYSE 实际不符。
+        if d.year in by_year and d.year != 2026:
+            by_year[d.year].add(d)
+    _LOCAL_HOLIDAYS_CACHE = {year: frozenset(days) for year, days in by_year.items()}
+    return _LOCAL_HOLIDAYS_CACHE
+
+
+def _is_local_trading_day(d: date) -> Optional[bool]:
+    """纯本地交易日判定. None = 该年份超出本地日历覆盖 (不可判)."""
+    holidays = _load_local_holidays().get(d.year)
+    if holidays is None:
+        return None
+    return d.weekday() < 5 and d not in holidays
+
+
+def _local_trading_days_in_range(start: date, end: date) -> List[date]:
+    """纯本地 [start, end] 交易日列表 (含两端). 覆盖外年份 → ValueError."""
+    days: List[date] = []
+    d = start
+    while d <= end:
+        trading = _is_local_trading_day(d)
+        if trading is None:
+            raise ValueError(
+                f"本地美股日历未覆盖 {d.isoformat()} (覆盖年份 {_LOCAL_CALENDAR_YEARS})")
+        if trading:
+            days.append(d)
+        d += timedelta(days=1)
+    return days
+
+
+def previous_local_trading_day(today: date, max_days: int = 21) -> date:
+    """返回纯本地上一交易日；覆盖外年份或异常窗口显式失败，不触 Futu。"""
+    candidate = today - timedelta(days=1)
+    for _ in range(max_days):
+        trading = _is_local_trading_day(candidate)
+        if trading is None:
+            raise ValueError(f"本地美股日历未覆盖 {candidate.isoformat()}")
+        if trading:
+            return candidate
+        candidate -= timedelta(days=1)
+    raise ValueError(f"上一交易日超出 {max_days} 自然日搜索窗: {today.isoformat()}")
+
+
+def rebalance_day_status(today: date, policy: PilotPolicy = MOM_ETF_V1) -> RebalanceDayStatus:
+    """调仓日判定 (纯函数: 不用网络、不写日志)。故障时返回 calendar_unavailable。"""
     anchor = date.fromisoformat(policy.anchor_date)
     if today < anchor:
-        return False
+        return RebalanceDayStatus(False, "before_anchor")
     try:
-        from app.utils.holiday_calendar import get_holiday_calendar
-        days = get_holiday_calendar().trading_days_in_range("US", anchor, today)
-    except Exception as exc:
-        logger.warning("[MOM-ETF-V1] 调仓日历不可用, 按非调仓日 fail-close: %s", exc)
-        return False
+        days = _local_trading_days_in_range(anchor, today)
+    except Exception as exc:  # 本地日历不可用 → 如实上报, 由调用方决定留痕/降级
+        return RebalanceDayStatus(False, "calendar_unavailable", error=exc)
     if not days or days[-1] != today:
-        return False
-    return (len(days) - 1) % policy.rebalance_interval_trading_days == 0
+        return RebalanceDayStatus(
+            False, "not_trading_day", len(days) - 1 if days else None)
+    index = len(days) - 1
+    interval = max(int(policy.rebalance_interval_trading_days), 1)
+    on_cycle = index % interval == 0
+    return RebalanceDayStatus(
+        on_cycle, "rebalance_day" if on_cycle else "off_cycle", index)
+
+
+def is_rebalance_day(today: date, policy: PilotPolicy = MOM_ETF_V1) -> bool:
+    """bool API (保持兼容): 故障时 fail-close 为 False, 但 ERROR 带栈可见。
+
+    需要区分「非调仓日」与「日历故障」的调用方 (如 scripts/mom_etf_v1_generate.py)
+    应改用 `rebalance_day_status()`, 读 reason/error 字段。
+    """
+    status = rebalance_day_status(today, policy)
+    if status.error is not None:
+        logger.error(
+            "[MOM-ETF-V1] 调仓日历不可用, 按非调仓日 fail-close "
+            "(today=%s, policy=%s, reason=%s): %s",
+            today.isoformat(), policy.policy_id, status.reason, status.error,
+            exc_info=status.error,
+        )
+    return status.is_rebalance_day
+
+
+def _compute_max_hold_deadline(entry_day: date, policy: PilotPolicy) -> date:
+    """纯本地计算第 N 个交易日 (entry_day 不计入)。覆盖外 → ValueError。"""
+    if policy.max_hold_trading_days <= 0:
+        return entry_day
+    max_days = policy.max_hold_trading_days * 3 + 15
+    current = entry_day
+    counted = 0
+    for _ in range(max_days):
+        current += timedelta(days=1)
+        trading = _is_local_trading_day(current)
+        if trading is None:
+            raise ValueError(
+                f"本地美股日历未覆盖 {current.isoformat()} "
+                f"(覆盖年份 {_LOCAL_CALENDAR_YEARS})")
+        if trading:
+            counted += 1
+            if counted >= policy.max_hold_trading_days:
+                return current
+    raise ValueError(
+        f"{max_days} 个自然日内未数满 {policy.max_hold_trading_days} 个交易日")
 
 
 def max_hold_deadline(entry_day: date, policy: PilotPolicy = MOM_ETF_V1) -> Optional[date]:
+    """21 交易日到期日 (纯本地日历 + 进程内有界缓存)。
+
+    20s 退出快循环高频调用: 命中缓存零成本; 首次计算不连 Futu OpenD。
+    失败 → 明确 ERROR (带栈) 并回落 entry_day+29 自然日 (约 20-21 交易日),
+    且失败结果同样入缓存 ⇒ 同一条坏 entry_day 不会每 20s 刷一次错误。
+    """
+    key = (entry_day.isoformat(), policy.policy_id, policy.max_hold_trading_days)
+    cached = _MAX_HOLD_DEADLINE_CACHE.get(key)
+    if cached is not None:
+        return cached
     try:
-        from app.utils.holiday_calendar import get_holiday_calendar
-        deadline = get_holiday_calendar().nth_trading_day_after(
-            "US", entry_day, policy.max_hold_trading_days,
-            max_days=policy.max_hold_trading_days * 3 + 15,
-        )
-        if deadline is not None:
-            return deadline
-        raise ValueError("holiday calendar returned no deadline")
+        deadline = _compute_max_hold_deadline(entry_day, policy)
     except Exception as exc:
-        fallback = entry_day + timedelta(days=29)
+        deadline = entry_day + timedelta(days=29)
         logger.error(
-            "[MOM-ETF-V1] 21 交易日到期日历不可用, 启用保守日历兜底 %s "
+            "[MOM-ETF-V1] %s 交易日到期日历不可用, 启用保守日历兜底 %s "
             "(entry=%s, policy=%s): %s",
-            fallback.isoformat(), entry_day.isoformat(), policy.policy_id, exc,
+            policy.max_hold_trading_days, deadline.isoformat(),
+            entry_day.isoformat(), policy.policy_id, exc,
+            exc_info=True,
         )
-        return fallback
+    _MAX_HOLD_DEADLINE_CACHE[key] = deadline
+    while len(_MAX_HOLD_DEADLINE_CACHE) > _MAX_HOLD_DEADLINE_CACHE_MAX:
+        _MAX_HOLD_DEADLINE_CACHE.popitem(last=False)
+    return deadline
 
 
-def _entry_date(entry_time_str: str, now_et_dt: datetime) -> Optional[date]:
+def _parse_entry_date(
+    entry_time_str: str, now_et_dt: datetime,
+) -> tuple[Optional[date], Optional[BaseException]]:
+    """entry_time → (entry_day, error). 失败时 error 带可留痕的异常上下文。"""
     if not entry_time_str:
-        return None
+        return None, ValueError("entry_time 为空")
     try:
-        entry_dt = datetime.fromisoformat(entry_time_str)
-        if entry_dt.tzinfo is not None and now_et_dt.tzinfo is not None:
-            return entry_dt.astimezone(now_et_dt.tzinfo).date()
-        return entry_dt.date()
-    except Exception:
-        return None
+        entry_dt = datetime.fromisoformat(str(entry_time_str))
+    except (TypeError, ValueError) as exc:
+        return None, exc
+    if entry_dt.tzinfo is not None and now_et_dt.tzinfo is not None:
+        return entry_dt.astimezone(now_et_dt.tzinfo).date(), None
+    return entry_dt.date(), None
 
 
 def check_mom_exit(
@@ -173,13 +331,24 @@ def check_mom_exit(
     stop_loss = float(initial_sl or 0)
     if stop_loss <= 0:
         stop_loss = entry_price * (1.0 - policy.initial_sl_pct / 100.0)
-    entry_day = _entry_date(entry_time_str, now_et_dt)
+
+    entry_day, entry_err = _parse_entry_date(entry_time_str, now_et_dt)
     if entry_day is None:
-        logger.error(
-            "[MOM-ETF-V1] entry_time 缺失/非法, 无法计算 21 交易日上限, "
-            "保守按 MAX_HOLD 退出 (entry_time=%r)", entry_time_str,
-        )
-        return "MAX_HOLD", current_price
+        # 2026-11-12 P0 修复: 旧实现 entry_time 缺失/非法直接伪造 MAX_HOLD → 立即错误平仓。
+        #   时间型退出 (MAX_HOLD) 与依赖 entry_day 的 OVERNIGHT_GAP_STOP 缺证据 → 本轮
+        #   不判定; 但价格型 SL_INITIAL 不依赖 entry_time, 必须继续保护。
+        log_key = (entry_time_str, entry_price, initial_sl, now_et_dt.date())
+        if log_key not in _INVALID_ENTRY_TIME_LOGGED:
+            logger.error(
+                "[MOM-ETF-V1] entry_time 缺失/非法 (%r), 无法判定时间型退出 — "
+                "本轮不判 MAX_HOLD/OVERNIGHT_GAP_STOP, 价格型 SL_INITIAL 仍生效: %s",
+                entry_time_str, entry_err, exc_info=entry_err,
+            )
+            _INVALID_ENTRY_TIME_LOGGED.add(log_key)
+        if current_price <= stop_loss:
+            return "SL_INITIAL", current_price
+        return "", 0.0
+
     if entry_day < now_et_dt.date():
         profit_pct = (current_price - entry_price) / entry_price * 100.0
         if profit_pct <= -policy.overnight_gap_stop_pct:

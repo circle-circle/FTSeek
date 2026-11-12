@@ -41,7 +41,8 @@ def main() -> int:
 
     config = get_config()
     entries_enabled = bool(config.get_dotted("playbook.mom_etf_v1_entries_enabled", False))
-    overnight_hold_enabled = bool(config.get_dotted("playbook.overnight_hold_enabled", False))
+    overnight_hold_enabled = bool(config.get_dotted(
+        "playbook.execution_parameters.overnight_hold_enabled", False))
     pid = subprocess.check_output(
         ["systemctl", "show", "ftseek-us", "-p", "MainPID", "--value"], text=True).strip()
     active_enter = subprocess.check_output(

@@ -18,29 +18,29 @@ def _connection():
     con.execute(
         "CREATE TABLE playbook_instructions ("
         "id INTEGER PRIMARY KEY, date TEXT, symbol TEXT, direction TEXT, skip_reason TEXT, "
-        "entry_price REAL, raw_instruction_json TEXT)"
+        "entry_price REAL, raw_instruction_json TEXT, decision_id TEXT)"
     )
     con.execute(
         "CREATE TABLE trade_records ("
         "id INTEGER PRIMARY KEY, trade_date TEXT, symbol TEXT, direction TEXT, "
-        "source_type TEXT, exit_reason TEXT)"
+        "source_type TEXT, exit_reason TEXT, decision_id TEXT, metadata_json TEXT)"
     )
     con.executemany(
         "INSERT INTO playbook_instructions (id, date, symbol, direction, skip_reason, "
-        "entry_price, raw_instruction_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "entry_price, raw_instruction_json, decision_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         [
             (1, "2026-10-19", "US.EXEC", "BUY", None, 100.0,
-             '{"entry_archetype": "PULLBACK_LIMIT", "confirmation": {"price_level": 102.0}}'),
-            (2, "2026-10-19", "US.ABANDONED", "SKIP", "entry_confirm_reversed", 100.0, "{}"),
-            (3, "2026-10-19", "US.OTHER_SKIP", "SKIP", "other_gate", 100.0, None),
+             '{"entry_archetype": "PULLBACK_LIMIT", "confirmation": {"price_level": 102.0}}', "DA-EXEC"),
+            (2, "2026-10-19", "US.ABANDONED", "SKIP", "entry_confirm_reversed", 100.0, "{}", "DA-ABANDONED"),
+            (3, "2026-10-19", "US.OTHER_SKIP", "SKIP", "other_gate", 100.0, None, "DA-OTHER"),
         ],
     )
     con.executemany(
-        "INSERT INTO trade_records (id, trade_date, symbol, direction, source_type, exit_reason) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO trade_records (id, trade_date, symbol, direction, source_type, exit_reason, decision_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
         [
-            (1, "2026-10-19", "US.EXEC", "LONG", "PLAYBOOK_SIM", "SL_BREAKEVEN"),
-            (2, "2026-10-19", "US.UNPLANNED", "LONG", "PLAYBOOK_SIM", "SL_BREAKEVEN"),
+            (1, "2026-10-19", "US.EXEC", "LONG", "PLAYBOOK_SIM", "SL_BREAKEVEN", "DA-EXEC"),
+            (2, "2026-10-19", "US.UNPLANNED", "LONG", "PLAYBOOK_SIM", "SL_BREAKEVEN", "EXT-UNPLANNED"),
         ],
     )
     return con

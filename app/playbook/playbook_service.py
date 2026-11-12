@@ -267,7 +267,7 @@ def _extract_atr_with_basis(inst: Dict[str, Any]) -> tuple:
             else:
                 return _val, "real"
         except (ValueError, IndexError):
-            pass
+            logger.warning("ATR source 解析失败，回退 SL 隐含 ATR: %r", src, exc_info=True)
     
     # 3. 2026-07-16: atr_source 缺失 → 从 SL 距离反算隐含 ATR%
     #   vol_bucket: sl_pct = max(sl_floor, min(sl_ceil, atr_pct * 100 * sl_multiplier))

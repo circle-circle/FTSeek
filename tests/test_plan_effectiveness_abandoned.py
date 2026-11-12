@@ -17,13 +17,15 @@ def _build_db(path):
     conn.execute(
         "CREATE TABLE playbook_instructions ("
         " id INTEGER PRIMARY KEY, date TEXT, symbol TEXT, direction TEXT,"
+        " decision_id TEXT,"
         " entry_price REAL, stop_loss REAL, take_profit REAL, confidence INTEGER,"
         " triggered INTEGER, executed INTEGER, skip_reason TEXT)"
     )
     conn.execute(
         "CREATE TABLE trade_records ("
         " trade_date TEXT, symbol TEXT, direction TEXT, entry_price REAL,"
-        " realized_pnl REAL, pnl REAL)"
+        " realized_pnl REAL, pnl REAL, pnl_net REAL, decision_id TEXT,"
+        " metadata_json TEXT, source_type TEXT, exit_reason TEXT)"
     )
     rows = [
         ("US.UNH", "BUY", 404.0),
@@ -36,21 +38,22 @@ def _build_db(path):
     ]
     for i, (sym, direction, px) in enumerate(rows, start=1):
         conn.execute(
-            "INSERT INTO playbook_instructions (id,date,symbol,direction,entry_price,"
+            "INSERT INTO playbook_instructions (id,date,symbol,direction,decision_id,entry_price,"
             " stop_loss,take_profit,confidence,triggered,executed,skip_reason)"
-            " VALUES (?, '2026-10-19', ?, ?, ?, 0, 0, 50, 1, 1, '')",
-            (i, sym, direction, px),
+            " VALUES (?, '2026-10-19', ?, ?, ?, ?, 0, 0, 50, 1, 1, '')",
+            (i, sym, direction, f"DA-{sym}", px),
         )
         conn.execute(
             "INSERT INTO trade_records (trade_date,symbol,direction,entry_price,"
-            " realized_pnl,pnl) VALUES ('2026-10-19', ?, ?, ?, 1.0, 1.0)",
-            (sym, direction, px),
+            " realized_pnl,pnl,pnl_net,decision_id,source_type,exit_reason)"
+            " VALUES ('2026-10-19', ?, ?, ?, 1.0, 1.0, 0.8, ?, 'PLAYBOOK_SIM', 'TEST')",
+            (sym, direction, px, f"DA-{sym}"),
         )
     # 2 分钟门放弃: 方向已改 SKIP, 但 triggered=1
     conn.execute(
-        "INSERT INTO playbook_instructions (id,date,symbol,direction,entry_price,"
+        "INSERT INTO playbook_instructions (id,date,symbol,direction,decision_id,entry_price,"
         " stop_loss,take_profit,confidence,triggered,executed,skip_reason)"
-        " VALUES (8, '2026-10-19', 'US.AVGO', 'SKIP', 336.19, 0, 0, 70, 1, 0,"
+        " VALUES (8, '2026-10-19', 'US.AVGO', 'SKIP', 'DA-AVGO', 336.19, 0, 0, 70, 1, 0,"
         " 'entry_confirm_reversed')"
     )
     conn.commit()
@@ -99,3 +102,75 @@ def test_no_abandoned_targets_keeps_full_rate(tmp_path):
     assert report["planned_count"] == 7
     assert report["abandoned_count"] == 0
     assert report["traded_rate"] == 1.0
+
+
+def test_cross_channel_same_symbol_fills_do_not_execute_da_targets(tmp_path):
+    db = tmp_path / "trades.db"
+    _build_db(db)
+    conn = sqlite3.connect(str(db))
+    conn.executemany(
+        "INSERT INTO playbook_instructions (id,date,symbol,direction,decision_id,entry_price,"
+        " stop_loss,take_profit,confidence,triggered,executed,skip_reason)"
+        " VALUES (?, '2026-10-19', ?, ?, ?, 100, 0, 0, 50, 1, 0, '')",
+        [
+            (9, "US.APP", "BUY", "DA-APP"),
+            (10, "US.TSLA", "SELL_SHORT", "DA-TSLA"),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO trade_records (trade_date,symbol,direction,entry_price,realized_pnl,"
+        " pnl,pnl_net,decision_id,source_type,exit_reason)"
+        " VALUES ('2026-10-19', ?, ?, 100, 5, 5, 4, ?, 'PLAYBOOK_SIM', 'TEST')",
+        [
+            ("US.APP", "LONG", "EXT-APP"),
+            ("US.TSLA", "LONG", "EXT-TSLA"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    report = PlanEffectivenessTracker(
+        db_path=str(db), output_dir=str(tmp_path / "out")
+    ).evaluate_daily_plan("2026-10-19")
+
+    targets = {row["symbol"]: row for row in report["targets"]}
+    assert targets["US.APP"]["traded"] is False
+    assert targets["US.TSLA"]["traded"] is False
+    assert targets["US.TSLA"]["actual_directions"] == []
+    assert report["traded_planned_count"] == 7
+    assert report["unplanned_trade_count"] == 2
+
+
+def test_cross_day_duplicate_decision_id_uses_trade_context(tmp_path):
+    db = tmp_path / "trades.db"
+    _build_db(db)
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        "INSERT INTO playbook_instructions (id,date,symbol,direction,decision_id,entry_price,"
+        " stop_loss,take_profit,confidence,triggered,executed,skip_reason)"
+        " VALUES (9, '2026-10-18', 'US.UNH', 'BUY', 'DA-US.UNH', 400, 0, 0, 50, 1, 1, '')")
+    conn.commit()
+    conn.close()
+    report = PlanEffectivenessTracker(
+        db_path=str(db), output_dir=str(tmp_path / "out")
+    ).evaluate_daily_plan("2026-10-19")
+    assert report["attribution_ambiguous_count"] == 0
+    assert report["unplanned_trade_count"] == 0
+    assert next(t for t in report["targets"] if t["symbol"] == "US.UNH")["traded"] is True
+
+
+def test_same_day_duplicate_is_ambiguous_not_unplanned(tmp_path):
+    db = tmp_path / "trades.db"
+    _build_db(db)
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        "INSERT INTO playbook_instructions (id,date,symbol,direction,decision_id,entry_price,"
+        " stop_loss,take_profit,confidence,triggered,executed,skip_reason)"
+        " VALUES (9, '2026-10-19', 'US.UNH', 'BUY', 'DA-US.UNH', 400, 0, 0, 50, 1, 0, '')")
+    conn.commit()
+    conn.close()
+    report = PlanEffectivenessTracker(
+        db_path=str(db), output_dir=str(tmp_path / "out")
+    ).evaluate_daily_plan("2026-10-19")
+    assert report["attribution_ambiguous_count"] == 1
+    assert report["unplanned_trade_count"] == 0

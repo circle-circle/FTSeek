@@ -265,6 +265,10 @@ def env(tmp_path, monkeypatch):
          "app/playbook/pipeline_parts/risk_gates.py")
     load("app.playbook.pipeline_parts.intraday_indicators",
          "app/playbook/pipeline_parts/intraday_indicators.py")
+    # RFC-199/200 新增的纯策略/时间模块同样需显式纳入隔离白名单；
+    # 否则 overnight_cleanup / trigger_flow 的懒 import 在空 __path__ 下消失。
+    load("app.playbook.pilot_policy", "app/playbook/pilot_policy.py")
+    load("app.playbook.open_blackout", "app/playbook/open_blackout.py")
     pipeline = load("app.playbook.pipeline", "app/playbook/pipeline.py")
     monkeypatch.setattr(pipeline, "_now_et", lambda: timezone.utc)
     monkeypatch.setattr(pipeline, "_today_et_str", lambda: "2026-09-10")

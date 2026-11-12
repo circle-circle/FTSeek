@@ -114,9 +114,9 @@ def test_term_structure_requires_matching_observation_dates(monkeypatch):
 
 def test_dynamic_economic_calendar_renders_source_and_failure_truthfully(monkeypatch):
     from app.data import premarket_enrichment as pm
-    from scripts import macro_calendar_shadow_collect as calendar
+    from app.data import economic_calendar as calendar
 
-    monkeypatch.setattr(calendar, "_fetch_futu_event_schedule", lambda now: {
+    monkeypatch.setattr(calendar, "fetch_us_event_schedule", lambda now: {
         "status": "ok",
         "events": [{"title": "CPI", "ts_et": "2026-11-10 08:30", "star": "HIGH"}],
     })
@@ -126,7 +126,7 @@ def test_dynamic_economic_calendar_renders_source_and_failure_truthfully(monkeyp
     assert "star=HIGH" in text
     assert "source=Futu/get_economic_calendar" in text
 
-    monkeypatch.setattr(calendar, "_fetch_futu_event_schedule", lambda now: {"status": "error: timeout"})
+    monkeypatch.setattr(calendar, "fetch_us_event_schedule", lambda now: {"status": "error: timeout"})
     text = pm._get_economic_calendar()
     assert "Economic calendar unavailable" in text
     assert "No major scheduled events" not in text

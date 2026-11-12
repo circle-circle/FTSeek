@@ -3,10 +3,10 @@ type: "symbol"
 symbol: "US.MPWR"
 name: "Monolithic Power Systems"
 industry: "Semiconductors"
-latest_date: "2026-10-05"
+latest_date: "2026-11-10"
 latest_direction: "BUY"
 latest_score: 8.0
-latest_rating: "看多"
+latest_rating: "强烈看多"
 total_trades: 1
 win_rate: 1.0
 tags: [symbol, US]
@@ -116,4 +116,53 @@ GF长期制造协议落地 → 保障MPS专有工艺产能扩张 → 支撑未�
 - [[US_CRDO]]
 - [[US_INTC]]
 - [[US_LRCX]]
+---
+
+## 2026-11-10 | 强烈看多 | 信心中 | BUY
+<!-- id:2026-11-10-8310 -->
+
+> Q4营收指引$13.2-13.9亿远超预期且AI企业数据激增164.6%，盘前缩量微调-2%提供回踩低吸机会，计划在$1320附近首批建仓，上看$1550。
+
+- **标的**: Monolithic Power Systems (US.MPWR) | 现价: 1360.125 | 评分: 8.0/10
+- **IC ID**: `DA-20261110211157-US.MPWR-8310`
+- **数据质量**: 数据源 19/19 (100%)
+
+### 看多论据
+  1. [HIGH][IC=+0.01n=1151] Q4营收指引大幅超预期，AI企业级数据需求爆发驱动基本面强劲增长。 (fundamental)
+  2. [HIGH][IC=-0.02n=1699] 分析师高度共识且最新目标价大幅上调，长期上行空间充足。 (news)
+
+### 看空论据
+  1. [MEDIUM][IC=+0.01n=1277] 估值显著高于同行，且内部人与ETF呈现净卖出态势。 (fundamental)
+  2. [MEDIUM][IC=+0.01n=959] 短期技术面超买且空头燃料激增，面临获利盘与对冲压力。 (technical)
+
+### 交易计划
+- 入场: 首批在$1320.00附近低吸，若盘前/开盘后回踩该位置且量能萎缩则建仓，禁止在$1390以上追高。
+- 止损: 1250.0
+- 止盈: 1550.0
+- 支撑: 1320.0, 1276.33, 1233.03 | 阻力: 1388.05, 1600.0, 1708.95
+
+### 风险
+  - 短期超买与空头挤压风险：昨日暴涨13%后RSI超买，且卖空比例激增至298.58%，若大盘走弱易引发多杀多。
+  - 估值透支风险：动态PE高达107.9倍，若AI资本开支增速放缓，高估值将面临剧烈杀跌。
+  - 板块背离风险：半导体行业5日-1.9%，MPWR 5日+11.6%，若板块补跌将拖累个股。
+  - [挑战者] 来源不明数字: $12.2亿（FactSet预估）与$13.2亿-$13.9亿（Q4营收指引）出现于 bull_case 第1条及 tripwire“Q4实际营收低于$13.2亿”，输入数
+  - [挑战者] 法律风险未定价：Finnhub 11-06 报道摘要明确写“the recent pullback and fresh legal headlines”，分析师的 risks/bear_c
+
+### 因果链
+AI企业级数据需求爆发(宏观) → MPWR Q4指引超预期且Enterprise Data激增164.6%(基本面) → 分析师集体上调目标价至$1900+打开估值空间(估值) → 盘前缩量微调-2%提供回踩低吸机会(价格)
+
+### 论据IC验证
+- 基于2846条历史信号alpha IC验证 (overall_t1=-0.0057)
+
+## 同行业 (Semiconductors)
+- [[US_ALAB]]
+- [[US_AMAT]]
+- [[US_AMD]]
+- [[US_ARM]]
+- [[US_ASML]]
+- [[US_ASX]]
+- [[US_AVGO]]
+- [[US_AXTI]]
+- [[US_CRDO]]
+- [[US_ENPH]]
 ---

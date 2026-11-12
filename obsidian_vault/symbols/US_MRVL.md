@@ -2,12 +2,12 @@
 type: "symbol"
 symbol: "US.MRVL"
 name: ""
-latest_date: "2026-10-29"
-latest_direction: "SELL_SHORT"
-latest_score: 6.0
-latest_rating: "看空"
-total_trades: 1
-win_rate: 0
+latest_date: "2026-11-11"
+latest_direction: "SKIP"
+latest_score: 3.0
+latest_rating: "观望"
+total_trades: 2
+win_rate: 0.5
 tags: [symbol, backfill]
 industry: "Semiconductors"
 ---
@@ -322,6 +322,55 @@ MRVL拟收购Lumentum(事件) → 市场担忧高估值(PE 83.3)下的股权稀�
 
 ### 论据IC验证
 - 基于2586条历史信号alpha IC验证 (overall_t1=-0.0014)
+
+## 同行业 (Semiconductors)
+- [[US_ALAB]]
+- [[US_AMAT]]
+- [[US_AMD]]
+- [[US_ARM]]
+- [[US_ASML]]
+- [[US_ASX]]
+- [[US_AVGO]]
+- [[US_AXTI]]
+- [[US_CRDO]]
+- [[US_ENPH]]
+---
+
+## 2026-11-11 | 观望 | 信心中高 | SKIP
+<!-- id:2026-11-11-d92e -->
+
+> 盘前大涨+9.13%已透支光通信板块共振利好，1150亿收购Lumentum成功率仅五成且PE 51.12高于行业40.66，无增量edge，SKIP观望等回踩。
+
+- **标的**: 迈威尔科技 (US.MRVL) | 现价: 168.48 | 评分: 3.0/10
+- **IC ID**: `DA-20261111213138-US.MRVL-d92e`
+- **数据质量**: 数据源 19/19 (100%)
+
+### 看多论据
+  1. [MEDIUM][IC=+0.02n=1170] ETF资金逢低吸纳，基本面增长强劲 (fundamental)
+  2. [MEDIUM][IC=+0.23✅n=104] 光通信板块共振带动超跌反弹 (news)
+
+### 看空论据
+  1. [HIGH][IC=+0.01n=1292] 估值溢价且内部人持续净卖出 (fundamental)
+  2. [HIGH][IC=-0.01n=1730] 巨额收购悬而未决，主力资金流出 (news)
+
+### 交易计划
+- 入场: SKIP观望，若回踩154.39昨收价企稳可考虑右侧低吸
+- 止损: 148.0
+- 止盈: 175.0
+- 支撑: 154.39, 148.71, 133.55 | 阻力: 175.33, 205.96, 232.0
+
+### 风险
+  - 1150亿美元收购Lumentum交易若失败，将引发估值重估与进一步暴跌
+  - PE 51.12显著高于行业中枢40.66，若大盘或半导体板块回调，高估值股杀跌风险大
+  - 盘前大涨+9.13%已透支短期利好，追高极易在MA10(175.33)附近被套
+  - [挑战者] 止损与失效阈值冲突：execution_plan.stop_loss=148.0 低于 invalidation_triggers 的收盘价<148.71(MA5)，同一计划内两套离场口径
+  - [挑战者] 4.1%止损对Beta 2.31（beta=2.3146985）的标的偏紧：11-05单日振幅为O=151.41/H=152.15/L=132.54/C=133.55（日内跌幅达12%量级
+
+### 因果链
+光通信板块盘前集体大涨 → 迈威尔超跌反弹+9.13%突破MA5 → 但1150亿收购Lumentum成功率仅五成且PE 51.12高于行业 → 追高面临MA10强阻力且无增量edge → 盈亏比不佳导致观望
+
+### 论据IC验证
+- 基于2882条历史信号alpha IC验证 (overall_t1=-0.0007)
 
 ## 同行业 (Semiconductors)
 - [[US_ALAB]]

@@ -9,21 +9,29 @@ import statistics
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping
+from zoneinfo import ZoneInfo
 
 from app.review.actionability_diagnostics import build_actionability_diagnostics
 from app.review.bundle_schema import Bundle, Evidence, Metric
 from app.review.decision_diagnostics import build_decision_diagnostics
 from app.review.stage_stats import load_trades, stage_breakdown
+from app.playbook.instruction_attribution import (
+    AMBIGUOUS,
+    canonical_plan_direction,
+    resolve_trade_instruction_ids,
+)
 from app.utils.timezone import to_et
 
 logger = logging.getLogger(__name__)
 
-_DIRECTION_TO_PLAN = {"LONG": "BUY", "SHORT": "SELL_SHORT"}
 _PULLBACK_SHADOW = (
     Path(__file__).resolve().parents[2] / "data" / "shadow" / "pullback_limit_shadow.jsonl"
 )
 _POST_EXIT_SHADOW = (
     Path(__file__).resolve().parents[2] / "data" / "shadow" / "post_exit_path.jsonl"
+)
+_DAILY_KLINE_CACHE = (
+    Path(__file__).resolve().parents[2] / "data" / "cache" / "daily_kline_v1.json"
 )
 
 _log = logging.getLogger(__name__)
@@ -130,14 +138,24 @@ def build_slices(
 def build_plan_vs_actual(
     connection: sqlite3.Connection, report_date: str
 ) -> Dict[str, Metric]:
-    """Compare playbook instruction pairs with actual playbook trades.
+    """Compare playbook instructions with strictly attributed playbook trades.
 
     2026-10-20 P0: 2 分钟门放弃 (`skip_reason='entry_confirm_reversed'`) 必须进
     planned 分母。该行 direction 已被改成 SKIP, 旧查询只看 BUY/SELL_SHORT ⇒ 目标
     从分母消失, 执行率虚高 (10-19 实跑 7/7=100%, 正确口径 7/8=87.5%)。
+
+    口径 (2026-11-12 去重回归修复):
+      - `planned_count` / `executed_count` / `missed_count` / `execution_rate` 是
+        **计划单元 = 去重后的 (symbol, 计划方向)** 口径, 与 HEAD 一致; 同一标的同向
+        多轮指令 (RFC-066 reentry) 只占一个分母, 否则执行率会被轮次稀释。
+      - `instruction_count` / `executed_instruction_count` 显式给出**指令行级**读数,
+        reentry 轮次由此可见, 两种口径不混用同一个名字。
+      - 归属仍严格走 instruction/decision_id (metadata.playbook_instruction_id 优先,
+        唯一 decision_id 次之, 不做 symbol 兜底); 归属歧义既不判 executed 也不判
+        unplanned, 单列 `attribution_ambiguous_*`。
     """
-    instructions = connection.execute(
-        "select symbol, direction, skip_reason, entry_price, "
+    instructions = [dict(row) for row in connection.execute(
+        "select id, symbol, direction, decision_id, skip_reason, entry_price, "
         "       coalesce("
         "         json_extract(raw_instruction_json, '$.confirmation_gap_pct'), "
         "         case when json_extract(raw_instruction_json, '$.confirmation.price_level') is not null "
@@ -150,110 +168,141 @@ def build_plan_vs_actual(
         "where date = ? and (direction in ('BUY', 'SELL_SHORT') "
         "or skip_reason = 'entry_confirm_reversed') order by id",
         (report_date,),
-    ).fetchall()
-    trades = connection.execute(
-        "select symbol, direction from trade_records "
+    ).fetchall()]
+    instruction_identities = [dict(row) for row in connection.execute(
+        "select id, date, symbol, direction, decision_id from playbook_instructions"
+    ).fetchall()]
+    trades = [dict(row) for row in connection.execute(
+        "select id, symbol, direction, trade_date, decision_id, metadata_json from trade_records "
         "where trade_date = ? and source_type in ('PLAYBOOK_SIM', 'PLAYBOOK_LIVE') "
         "and (exit_reason is null or exit_reason != 'PHANTOM_RECONCILE_VOID') "
         "order by id",
         (report_date,),
-    ).fetchall()
+    ).fetchall()]
 
-    planned_pairs = list(
-        dict.fromkeys((row["symbol"], row["direction"]) for row in instructions)
-    )
-    abandoned_pairs = list(
-        dict.fromkeys(
-            (row["symbol"], row["direction"])
-            for row in instructions
-            if (row["skip_reason"] or "") == "entry_confirm_reversed"
-        )
-    )
-    abandoned_lookup = set(abandoned_pairs)
-    plan_gap_pairs = list(
-        dict.fromkeys(
-            (row["symbol"], row["direction"])
-            for row in instructions
-            if row["gap_pct"] is not None
-            and abs(float(row["gap_pct"])) > 1.0
-            and str(row["archetype"] or "").upper() in ("PULLBACK_LIMIT", "FADE_SHORT")
-        )
-    )
-    actual_pairs = list(
-        dict.fromkeys(
-            (
-                row["symbol"],
-                _DIRECTION_TO_PLAN.get(row["direction"], row["direction"]),
+    planned_by_id = {int(row["id"]): row for row in instructions}
+    planned_ids = [int(row["id"]) for row in instructions]
+    # 计划单元: (symbol, 规范方向) 首次出现顺序; 同单元的多行是 reentry 轮次。
+    unit_keys: List[tuple] = []
+    unit_by_instruction_id: Dict[int, tuple] = {}
+    seen_keys = set()
+    for row in instructions:
+        instruction_id = int(row["id"])
+        key = (row["symbol"], canonical_plan_direction(row["direction"]))
+        if key not in seen_keys:
+            seen_keys.add(key)
+            unit_keys.append(key)
+        unit_by_instruction_id[instruction_id] = key
+    abandoned_ids = {
+        int(row["id"]) for row in instructions
+        if (row["skip_reason"] or "") == "entry_confirm_reversed"
+    }
+    abandoned_keys = {
+        unit_by_instruction_id[instruction_id] for instruction_id in abandoned_ids
+    }
+    plan_gap_ids = [
+        int(row["id"]) for row in instructions
+        if row["gap_pct"] is not None
+        and abs(float(row["gap_pct"])) > 1.0
+        and str(row["archetype"] or "").upper() in ("PULLBACK_LIMIT", "FADE_SHORT")
+    ]
+    plan_gap_keys = []
+    for instruction_id in plan_gap_ids:
+        key = unit_by_instruction_id[instruction_id]
+        if key not in plan_gap_keys:
+            plan_gap_keys.append(key)
+
+    resolved_ids = resolve_trade_instruction_ids(trades, instruction_identities)
+    executed_ids = set()
+    executed_keys = set()
+    unplanned_trades = []
+    ambiguous_trades = []
+    direction_mismatch = set()
+    for trade, instruction_id in zip(trades, resolved_ids):
+        if instruction_id is AMBIGUOUS:
+            ambiguous_trades.append(trade)
+            continue
+        planned = planned_by_id.get(instruction_id)
+        actual_direction = canonical_plan_direction(trade.get("direction"))
+        if planned is not None:
+            planned_direction = canonical_plan_direction(planned.get("direction"))
+            if planned_direction == actual_direction:
+                executed_ids.add(instruction_id)
+                executed_keys.add(unit_by_instruction_id[instruction_id])
+                continue
+            direction_mismatch.add(
+                f"{trade['symbol']}({planned_direction}/{actual_direction})"
             )
-            for row in trades
-        )
-    )
-    planned_lookup = {pair: index for index, pair in enumerate(planned_pairs)}
-    actual_lookup = {pair: index for index, pair in enumerate(actual_pairs)}
-    executed_pairs = sorted(
-        (pair for pair in planned_lookup if pair in actual_lookup),
-        key=lambda pair: planned_lookup[pair],
-    )
-    missed_pairs = sorted(
-        (pair for pair in planned_lookup
-         if pair not in actual_lookup and pair not in abandoned_lookup),
-        key=lambda pair: planned_lookup[pair],
-    )
-    unplanned_pairs = sorted(
-        (pair for pair in actual_lookup if pair not in planned_lookup),
-        key=lambda pair: actual_lookup[pair],
-    )
-    direction_mismatch = []
-    actual_by_symbol: Dict[str, str] = {}
-    for symbol, direction in actual_pairs:
-        actual_by_symbol.setdefault(symbol, direction)
-    for symbol, planned_direction in planned_pairs:
-        actual_direction = actual_by_symbol.get(symbol)
-        if actual_direction is not None and actual_direction != planned_direction:
-            direction_mismatch.append(f"{symbol}({planned_direction}/{actual_direction})")
+        unplanned_trades.append(trade)
 
-    sample_n = len(planned_pairs)
+    missed_keys = [
+        key for key in unit_keys
+        if key not in executed_keys and key not in abandoned_keys
+    ]
+    unplanned_symbols = list(dict.fromkeys(row["symbol"] for row in unplanned_trades))
+    ambiguous_symbols = list(dict.fromkeys(row["symbol"] for row in ambiguous_trades))
+    sample_n = len(unit_keys)
     evidence = _derived_evidence(
-        "playbook_instructions and trade_records pair comparison",
+        "playbook_instructions and trade_records strict instruction attribution",
         report_date,
         sample_n,
         universe="db:playbook_instructions+db:trade_records",
-        note="both full-day queries have no LIMIT; pair coverage is built from both sources",
+        note="plan unit=(symbol,canonical direction) deduped; instruction_count keeps RFC-066 reentry rows; "
+             "metadata.playbook_instruction_id first; unique decision_id fallback; no symbol fallback",
     )
-    executed_count = len(executed_pairs)
+    executed_count = len(executed_keys)
     execution_rate = round(executed_count / sample_n, 6) if sample_n else 0.0
     return {
         "plan_available": _metric(
-            "plan_available", bool(planned_pairs), sample_n, "bool", evidence
+            "plan_available", bool(unit_keys), sample_n, "bool", evidence
         ),
         "planned_count": _metric("planned_count", sample_n, sample_n, "count", evidence),
+        "instruction_count": _metric(
+            "instruction_count", len(planned_ids), sample_n, "count", evidence
+        ),
         "executed_count": _metric(
             "executed_count", executed_count, sample_n, "count", evidence
         ),
-        "missed_count": _metric("missed_count", len(missed_pairs), sample_n, "count", evidence),
+        "executed_instruction_count": _metric(
+            "executed_instruction_count", len(executed_ids), sample_n, "count", evidence
+        ),
+        "missed_count": _metric("missed_count", len(missed_keys), sample_n, "count", evidence),
         "abandoned_count": _metric(
-            "abandoned_count", len(abandoned_pairs), sample_n, "count", evidence
+            "abandoned_count", len(abandoned_keys), sample_n, "count", evidence
         ),
         "abandoned_symbols": _metric(
-            "abandoned_symbols", [pair[0] for pair in abandoned_pairs], sample_n, "text", evidence
+            "abandoned_symbols",
+            list(dict.fromkeys(
+                planned_by_id[row_id]["symbol"] for row_id in planned_ids
+                if row_id in abandoned_ids
+            )),
+            sample_n, "text", evidence
         ),
         "plan_gap_count": _metric(
-            "plan_gap_count", len(plan_gap_pairs), sample_n, "count", evidence
+            "plan_gap_count", len(plan_gap_keys), sample_n, "count", evidence
         ),
         "plan_gap_symbols": _metric(
-            "plan_gap_symbols", [pair[0] for pair in plan_gap_pairs], sample_n, "text", evidence
+            "plan_gap_symbols",
+            list(dict.fromkeys(key[0] for key in plan_gap_keys)),
+            sample_n, "text", evidence
         ),
         "unplanned_count": _metric(
-            "unplanned_count", len(unplanned_pairs), sample_n, "count", evidence
+            "unplanned_count", len(unplanned_trades), sample_n, "count", evidence
+        ),
+        "attribution_ambiguous_count": _metric(
+            "attribution_ambiguous_count", len(ambiguous_trades), sample_n, "count", evidence
+        ),
+        "attribution_ambiguous_symbols": _metric(
+            "attribution_ambiguous_symbols", ambiguous_symbols, sample_n, "text", evidence
         ),
         "execution_rate": _metric(
             "execution_rate", execution_rate, sample_n, "ratio", evidence
         ),
         "direction_mismatch": _metric(
-            "direction_mismatch", direction_mismatch, sample_n, "text", evidence
+            "direction_mismatch", sorted(direction_mismatch), sample_n, "text", evidence
         ),
         "unplanned_symbols": _metric(
-            "unplanned_symbols", [pair[0] for pair in unplanned_pairs], sample_n, "text", evidence
+            "unplanned_symbols", unplanned_symbols, sample_n, "text", evidence
         ),
     }
 
@@ -266,6 +315,175 @@ def _parse_metadata(raw: Any) -> Dict[str, Any]:
     except (TypeError, ValueError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def _regular_close_et(report_date: str) -> datetime:
+    return datetime.fromisoformat(f"{report_date}T16:00:00").replace(
+        tzinfo=ZoneInfo("America/New_York")
+    )
+
+
+def _exit_at_or_before_regular_close(raw_exit_time: Any, close_dt: datetime) -> bool:
+    if not raw_exit_time:
+        return False
+    try:
+        parsed = datetime.fromisoformat(str(raw_exit_time).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=close_dt.tzinfo)
+    return parsed.astimezone(close_dt.tzinfo) <= close_dt
+
+
+def _exact_daily_closes(path: Path, report_date: str) -> Dict[str, float]:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, TypeError, ValueError):
+        return {}
+    closes = {}
+    for symbol, symbol_payload in (payload.get("symbols") or {}).items():
+        bars = symbol_payload.get("bars") or []
+        exact = next((bar for bar in reversed(bars) if bar.get("time") == report_date), None)
+        try:
+            close = float(exact.get("close")) if exact else 0.0
+        except (TypeError, ValueError):
+            close = 0.0
+        if close > 0:
+            closes[symbol] = close
+    return closes
+
+
+def build_da_cohort_risk(
+    connection: sqlite3.Connection,
+    report_date: str,
+    daily_kline_path: Path | None = None,
+) -> Dict[str, Any]:
+    """Separate new-DA realized PnL from regular-close open MTM; never mix into A9."""
+    rows = [dict(row) for row in connection.execute(
+        "select id, symbol, direction, decision_id, entry_price, exit_time, quantity, "
+        "realized_pnl, pnl_net, fees_est, metadata_json from trade_records "
+        "where trade_date = ? and decision_id like 'DA-%' "
+        "and source_type in ('PLAYBOOK_SIM', 'PLAYBOOK_LIVE') "
+        "and (exit_reason is null or exit_reason != 'PHANTOM_RECONCILE_VOID') "
+        "and coalesce(data_quality, '') <> 'duplicate_external_close' order by id",
+        (report_date,),
+    ).fetchall()]
+    close_dt = _regular_close_et(report_date)
+    closed = []
+    open_at_close = []
+    for row in rows:
+        if _exit_at_or_before_regular_close(row.get("exit_time"), close_dt):
+            closed.append(row)
+        else:
+            open_at_close.append(row)
+
+    realized_values = [row.get("pnl_net") for row in closed]
+    realized_complete = all(value is not None for value in realized_values)
+    realized_net = (
+        round(math.fsum(float(value) for value in realized_values), 2)
+        if realized_complete else None
+    )
+    gross_values = [row.get("realized_pnl") for row in closed]
+    fee_values = [row.get("fees_est") for row in closed]
+    gross_complete = all(value is not None for value in gross_values)
+    fees_complete = all(value is not None for value in fee_values)
+    realized_gross = (
+        round(math.fsum(float(value) for value in gross_values), 2)
+        if gross_complete else None
+    )
+    realized_fees = (
+        round(math.fsum(float(value) for value in fee_values), 2)
+        if fees_complete else None
+    )
+    fee_to_gross = (
+        round(realized_fees / abs(realized_gross), 6)
+        if realized_fees is not None and realized_gross else None
+    )
+    closes = _exact_daily_closes(
+        daily_kline_path or _DAILY_KLINE_CACHE, report_date
+    ) if open_at_close else {}
+    position_rows = []
+    open_gross_values = []
+    missing_symbols = []
+    for row in open_at_close:
+        metadata = _parse_metadata(row.get("metadata_json"))
+        symbol = row["symbol"]
+        close = closes.get(symbol)
+        try:
+            entry = float(row.get("entry_price") or 0.0)
+            quantity = float(row.get("quantity") or 0.0)
+        except (TypeError, ValueError):
+            entry = quantity = 0.0
+        gross_mtm = None
+        if close is not None and entry > 0 and quantity > 0:
+            sign = 1.0 if canonical_plan_direction(row.get("direction")) == "BUY" else -1.0
+            gross_mtm = round(sign * (close - entry) * quantity, 2)
+            open_gross_values.append(gross_mtm)
+        else:
+            missing_symbols.append(symbol)
+        observed_stop = metadata.get("_effective_sl_observed")
+        initial_stop = metadata.get("stop_loss")
+        effective_stop = observed_stop if isinstance(observed_stop, (int, float)) else initial_stop
+        position_rows.append({
+            "symbol": symbol,
+            "direction": row.get("direction"),
+            "decision_id": row.get("decision_id"),
+            "entry_price": entry or None,
+            "close_price": close,
+            "quantity": quantity or None,
+            "gross_mtm": gross_mtm,
+            "effective_stop": effective_stop,
+            "effective_stop_source": (
+                "observed" if isinstance(observed_stop, (int, float)) else "initial"
+            ),
+        })
+    open_complete = not missing_symbols
+    open_gross_mtm = round(math.fsum(open_gross_values), 2) if open_complete else None
+    evidence = _derived_evidence(
+        "trade_records new-DA cohort + exact-date daily_kline_v1 regular close",
+        report_date,
+        len(rows),
+        universe="db:trade_records+artifact:daily_kline_v1",
+        note="realized=exits at/before 16:00 ET with pnl_net; open MTM=gross, excludes fees, never OKR A9",
+    )
+    return {
+        "cohort": _metric("cohort", "new_da_trade_date", len(rows), "text", evidence),
+        "realized_trade_count": _metric(
+            "realized_trade_count", len(closed), len(rows), "count", evidence
+        ),
+        "realized_net_pnl": _metric(
+            "realized_net_pnl", realized_net, len(rows), "usd", evidence
+        ),
+        "realized_net_complete": _metric(
+            "realized_net_complete", realized_complete, len(rows), "bool", evidence
+        ),
+        "realized_gross_pnl": _metric(
+            "realized_gross_pnl", realized_gross, len(rows), "usd", evidence
+        ),
+        "realized_fees": _metric(
+            "realized_fees", realized_fees, len(rows), "usd", evidence
+        ),
+        "realized_fee_to_gross": _metric(
+            "realized_fee_to_gross", fee_to_gross, len(rows), "ratio", evidence
+        ),
+        "open_trade_count": _metric(
+            "open_trade_count", len(open_at_close), len(rows), "count", evidence
+        ),
+        "open_gross_mtm": _metric(
+            "open_gross_mtm", open_gross_mtm, len(rows), "usd", evidence
+        ),
+        "open_mtm_complete": _metric(
+            "open_mtm_complete", open_complete, len(rows), "bool", evidence
+        ),
+        "open_mtm_missing_symbols": _metric(
+            "open_mtm_missing_symbols", missing_symbols, len(rows), "text", evidence
+        ),
+        "mtm_as_of": _metric(
+            "mtm_as_of", close_dt.isoformat(), len(rows), "text", evidence
+        ),
+        "positions": position_rows,
+    }
 
 
 def build_research_arm_split(
@@ -406,7 +624,8 @@ def build_shadow_paths(
     report_date: str,
     pullback_path: Path | None = None,
     post_exit_path: Path | None = None,
-) -> Dict[str, Metric]:
+    connection: sqlite3.Connection | None = None,
+) -> Dict[str, Any]:
     """Expose entry path and post-exit giveback from existing shadow artifacts.
 
     2026-10-20 P0: 日报三问的 "0 chase" 只按 plan/chase cap 判定, 看不到 DA
@@ -427,6 +646,7 @@ def build_shadow_paths(
     ]
     gaps = []
     miss_symbols = []
+    valid_post_rows = []
     for row in _load_jsonl(post_exit_path or _POST_EXIT_SHADOW):
         if row.get("date") != report_date:
             continue
@@ -437,6 +657,7 @@ def build_shadow_paths(
                            row.get("symbol"), error, exc_info=True)
             continue
         gaps.append(gap)
+        valid_post_rows.append((row, gap))
         if gap > 1.0:
             miss_symbols.append(str(row.get("symbol") or "?"))
 
@@ -456,6 +677,58 @@ def build_shadow_paths(
         universe="artifact:shadow",
         note="close_gap_pct > 0 means holding to close would have been better than the exit",
     )
+
+    channel_rows = {"DA": [], "EXT": []}
+    if connection is not None and valid_post_rows:
+        trade_ids = [row.get("trade_id") for row, _ in valid_post_rows if row.get("trade_id") is not None]
+        if trade_ids:
+            placeholders = ",".join("?" for _ in trade_ids)
+            decisions = {
+                int(row["id"]): str(row["decision_id"] or "")
+                for row in connection.execute(
+                    f"select id, decision_id from trade_records where id in ({placeholders})",
+                    trade_ids,
+                ).fetchall()
+            }
+            for row, gap in valid_post_rows:
+                decision_id = decisions.get(int(row.get("trade_id") or 0), "")
+                channel = "DA" if decision_id.startswith("DA-") else (
+                    "EXT" if decision_id.startswith("EXT-") else ""
+                )
+                if channel:
+                    channel_rows[channel].append((row, gap))
+
+    def _channel_section(channel: str) -> Dict[str, Metric]:
+        rows = channel_rows[channel]
+        channel_gaps = [gap for _, gap in rows]
+        symbols = [str(row.get("symbol") or "?") for row, gap in rows if gap > 1.0]
+        evidence = _derived_evidence(
+            "post_exit_path joined to trade_records.decision_id",
+            report_date,
+            len(rows),
+            universe=f"artifact:shadow+db:trade_records;channel={channel}",
+            note="observed post-exit path only; not counterfactual exit-rule PnL",
+        )
+        return {
+            "n": _metric(f"{channel.lower()}_post_exit_n", len(rows), len(rows), "count", evidence),
+            "close_gap_mean": _metric(
+                f"{channel.lower()}_post_exit_close_gap_mean",
+                round(math.fsum(channel_gaps) / len(channel_gaps), 4) if channel_gaps else 0.0,
+                len(rows), "pp", evidence,
+            ),
+            "close_gap_median": _metric(
+                f"{channel.lower()}_post_exit_close_gap_median",
+                round(statistics.median(channel_gaps), 4) if channel_gaps else 0.0,
+                len(rows), "pp", evidence,
+            ),
+            "miss_gt1_count": _metric(
+                f"{channel.lower()}_post_exit_miss_gt1_count", len(symbols), len(rows), "count", evidence
+            ),
+            "miss_symbols": _metric(
+                f"{channel.lower()}_post_exit_miss_symbols", symbols, len(rows), "text", evidence
+            ),
+        }
+
     return {
         "entry_trigger_count": _metric(
             "entry_trigger_count", entry_n, entry_n, "count", entry_evidence
@@ -491,6 +764,8 @@ def build_shadow_paths(
         "post_exit_miss_symbols": _metric(
             "post_exit_miss_symbols", miss_symbols, post_n, "text", post_evidence
         ),
+        "da_post_exit": _channel_section("DA"),
+        "ext_post_exit": _channel_section("EXT"),
     }
 
 
@@ -550,8 +825,9 @@ def build(connection: sqlite3.Connection, report_date: str) -> Bundle:
         sections={
             "slices": build_slices(connection, report_date),
             "plan_vs_actual": build_plan_vs_actual(connection, report_date),
+            "da_cohort_risk": build_da_cohort_risk(connection, report_date),
             "research_arm": build_research_arm_split(connection, report_date),
-            "shadow_paths": build_shadow_paths(report_date),
+            "shadow_paths": build_shadow_paths(report_date, connection=connection),
             "decision_diagnostics": build_decision_diagnostics(connection, report_date),
             "actionability": build_actionability_diagnostics(connection, report_date),
         },

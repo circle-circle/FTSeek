@@ -917,6 +917,10 @@ class ObsidianWriter:
                     f"{direction_provenance.get('original_direction_unknown', 0)} "
                     f"({', '.join(direction_provenance.get('original_direction_unknown_symbols') or [])})"
                 )
+            if direction_provenance.get('existing_position_skipped'):
+                direction_lines.append(
+                    f"- **已有持仓跳过**: {direction_provenance['existing_position_skipped']}"
+                )
         direction_block = (
             "\n\n## 方向产出与执行状态\n" + "\n".join(direction_lines)
             if direction_lines else ""

@@ -79,3 +79,14 @@
 落档须三件 (改的是哪条读数 / 切线日期 / 哪条后验指标能证伪), 且会造成历史 IC 对比断层。
 本批**未动**。另: 昨日 3 行 `pnl_net IS NULL` (external_close) 使净额合计对这几笔回退毛额,
 属既有口径残留 (P3 登记)。
+
+## 6. 2026-11-11 复核：UE 直注文案与做空执行策略展示
+
+- **触发**: 用户贴 2026-11-11 21:46 CST 盘前预检，指出 `UE=0 (UE 21:10注入)` 过时，并要求做空策略展示正确、不要废话。
+- **核实**:
+  - RFC-148 已于 2026-10-18 停用 UE 09:10 fresh-event 当日写库；现役 crontab 的 21:10/22:10 仅为 `llm_universe_scan.py scan`，无 `inject` / `da_fresh_event_batch.py --execute`。当日指令实测 `DA=27 / UE=0`。
+  - 现役做空执行链为 Playbook `SELL_SHORT` → `Direction.SHORT` → `DualBrokerAdapter` → Futu `TrdSide.SELL`；最近空头成交 `source_type=PLAYBOOK_SIM`。
+  - 旧预检读取 legacy `ShortStrategyRouter`。该路由器只含 `stock_short`，但 `run_llm_strategy_scan` 全仓零调用；`options.short_strategy.default_method=options_put` 为死配置。把 legacy 路由器和死配置放在盘前头条会误导现役策略。
+- **落地**: `scripts/pre_market_check.py` 改为展示 `做空执行策略: stock_short（正股做空）| Playbook → DualBrokerAdapter | mode=<playbook.execute_mode>`；指令统计改为 `UE=0 (UE 当日直注已停用)`。新增 `tests/test_pre_market_check_report.py` 锁住两处文案与渲染。
+- **验证**: `./venv/bin/python -m pytest -q tests/test_pre_market_check_report.py` = **3 passed**；`py_compile` 通过；`git diff --check` 通过；真实配置探针输出 `mode=futu_simulate`。
+- **未做**: 未改交易路由、UE cron、`options.short_strategy` 配置或 Hermes prompt；未退役 legacy 路由器本体；未重启主服务；未重跑完整 `pre_market_check.py` 以避免额外推送。

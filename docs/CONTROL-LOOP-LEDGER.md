@@ -346,3 +346,15 @@ cohort 窗 — 全窗已不可逆有 4 个哈希, 按全窗字面判必 BROKEN; 
    同源单一真源) —— 旧 .sh 的 `/ERROR|CRITICAL/` 是级别盲匹配 (INFO 正文含 ERROR 即计入),
    且只读 `logs/ftseek_us.log` ⇒ `logs/invariant_check.log` 里的违反从未推送过。
    本条规则的现行含义: 新写探测器要对齐的是 `error_alert.py::LEVEL_MARKERS`, 不再是 awk 模式。
+
+---
+
+## 7. 2026-11-12 载体补登记（只补台账，不改调度/prompt）
+
+| 载体 | 层级/角色 | 给定值与失效模式 |
+|---|---|---|
+| `crontab-mom-etf-v1` → `scripts/mom_etf_v1_generate.py` | 中环·MOM-ETF-V1 SIM 指令写入方 | 前一交易日 asof + 本地交易日历 + 四 ETF 完整性 + QQQ MA200 现金门；日历/数据失败 fail-closed 非零退出，不补跑、不放宽；入口开关与 09:50–14:00 ET 窗口见 RFC-199。 |
+| `crontab-premarket-index-snapshot` → `scripts/premarket_index_snapshot.py` | 中环·盘前指数快照 | 存量采集环，供盘前上下文；数据缺失须显式降级，不得伪造实时快照。本行只补既有载体登记。 |
+| `crontab-stop-invalidation-audit` → `scripts/stop_invalidation_audit.py` | 元环·止损失效审计 | 存量只读审计环；失效时应产生可见错误，不以空结果冒充零异常。本行只补既有载体登记。 |
+| `fcec2b6482b6` (`gap-rank-attribution-daily`) | Hermes 中环·跳空排名归因 | enabled job 补登记；输出只作研究/复盘，不直接改交易参数。 |
+| `68cc76b16ebd` (`NVDA-RTH-10AM-checkpoint`) | Hermes 快环·NVDA RTH 10:00 检查点 | enabled job 补登记；属于单标的观察/检查点，不是自动下单授权。其 prompt 内嵌 SQL 守卫红另列，不在本批改线上 prompt。 |

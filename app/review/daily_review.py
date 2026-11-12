@@ -26,6 +26,11 @@ from typing import Dict, List, Any, Optional
 
 from app.core.paths import get_trade_records_db, get_decisions_db, get_rejections_db, get_reviews_dir
 from app.review.source_attribution import aggregate_source_direction, playbook_source_sql
+from app.playbook.instruction_attribution import (
+    AMBIGUOUS,
+    canonical_plan_direction,
+    resolve_trade_instruction_ids,
+)
 from app.core.trade_identity import summarize_trade_identity
 from pathlib import Path
 import json
@@ -831,7 +836,8 @@ class DailyReviewGenerator:
         2026-08-01 改基准: 当日"计划" = playbook 指令集 (BUY/SELL_SHORT)。
         旧 battle plan 已退役 (标的多与 playbook 宇宙零交集 → "已执行0/计划外12"
         系口径化石, 执行质量维度被系统性打零)。新口径下:
-          已执行 = 有成交的指令 | 错过 = 未成交指令 (门拦/未触发) | 计划外 = 无指令成交 (应恒0, >0 即链路 bug)
+          已执行 = 有成交的指令 | 错过 = 未成交指令 (门拦/未触发) | 计划外 = 无指令归属成交
+          (EXT 研究臂也在这里单列, 不直接判为链路 bug)
         """
         result = {
             'plan_available': False,
@@ -845,7 +851,7 @@ class DailyReviewGenerator:
 
         try:
             instructions = self._query(
-                "SELECT symbol, direction FROM playbook_instructions "
+                "SELECT id, symbol, direction, decision_id FROM playbook_instructions "
                 "WHERE date = ? AND (direction IN ('BUY','SELL_SHORT') "
                 "OR skip_reason = 'entry_confirm_reversed')",
                 (date,)
@@ -864,45 +870,80 @@ class DailyReviewGenerator:
             # DEB-20260904 #209: 补 PHANTOM_RECONCILE_VOID 排除 (同主查询,
             #   NULL 保留式 — 未平仓单仍计为已执行; 原缺 → 幽灵对账冲销行
             #   被当作真实成交, 可把未执行指令误判为"已执行"/制造假 unplanned)
+            instruction_identities = self._query(
+                "SELECT id, date, symbol, direction, decision_id FROM playbook_instructions"
+            )
             trades = self._query(
-                "SELECT symbol, direction FROM trade_records WHERE trade_date = ? "
+                "SELECT id, symbol, direction, trade_date, decision_id, metadata_json "
+                "FROM trade_records WHERE trade_date = ? "
                 "AND source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') "
                 "AND (exit_reason IS NULL OR exit_reason != 'PHANTOM_RECONCILE_VOID')",
                 (date,)
             )
-            # DEB-20260903 #129: 按 (symbol, direction) 匹配 — 原仅按 symbol 集合交集,
-            # 计划 BUY 而实际 SELL_SHORT 同标的会被误判为已执行 (方向错误无法检出)
-            _dir_to_plan = {"LONG": "BUY", "SHORT": "SELL_SHORT"}
-            planned_pairs = {(r['symbol'], r['direction']) for r in instructions}
-            actual_pairs = {(t.get('symbol', ''),
-                             _dir_to_plan.get(t.get('direction', ''), t.get('direction', '')))
-                            for t in trades}
-            actual_symbols = {s for s, _ in actual_pairs}
-
-            executed_pairs = planned_pairs & actual_pairs
-            # 方向错配检测 (同 symbol 但方向不一致)
-            _mismatch = sorted(
-                f"{s}(计划{pd}/实际{ad})"
-                for (s, pd) in planned_pairs for (s2, ad) in actual_pairs
-                if s == s2 and pd != ad
-            )
+            planned_by_id = {int(row['id']): row for row in instructions}
+            resolved_ids = resolve_trade_instruction_ids(trades, instruction_identities)
+            executed_ids = set()
+            unplanned_trades = []
+            ambiguous_trades = []
+            mismatches = set()
+            for trade, instruction_id in zip(trades, resolved_ids):
+                if instruction_id is AMBIGUOUS:
+                    ambiguous_trades.append(trade)
+                    continue
+                planned = planned_by_id.get(instruction_id)
+                actual_direction = canonical_plan_direction(trade.get('direction'))
+                if planned is not None:
+                    planned_direction = canonical_plan_direction(planned.get('direction'))
+                    if planned_direction == actual_direction:
+                        executed_ids.add(instruction_id)
+                        continue
+                    mismatches.add(
+                        f"{trade['symbol']}(计划{planned_direction}/实际{actual_direction})"
+                    )
+                unplanned_trades.append(trade)
+            _mismatch = sorted(mismatches)
             if _mismatch:
                 result['direction_mismatch'] = _mismatch
 
-            # 已执行的计划内交易 (方向一致)
-            result['executed_targets'] = sorted({s for s, _ in executed_pairs})
-            # 错过的计划内交易 (计划方向未执行)
-            result['missed_opportunities'] = sorted({s for s, _ in planned_pairs - executed_pairs})
-            # 计划外交易
-            result['unplanned_trades'] = sorted(actual_symbols - set(planned_symbols))
+            # 去重口径 (2026-11-12 回归修复): 分母/错过/执行率沿用 HEAD 的
+            #   "标的级"口径 — 同标的同方向的多轮指令 (RFC-066 reentry) 不重复计数,
+            #   否则执行率被轮次稀释。指令行级读数单列 planned_instruction_count。
+            result['executed_targets'] = sorted({
+                planned_by_id[row_id]['symbol'] for row_id in executed_ids
+            })
+            # 错过 = 计划 (symbol, direction) 对未执行; 同标的同向多轮指令只算一次,
+            #   避免未执行的第 2 轮把已执行标的重新标成 missed。
+            _planned_pairs = {
+                (row['symbol'], canonical_plan_direction(row['direction']))
+                for row in instructions
+            }
+            _executed_pairs = {
+                (planned_by_id[row_id]['symbol'],
+                 canonical_plan_direction(planned_by_id[row_id]['direction']))
+                for row_id in executed_ids
+            }
+            result['missed_opportunities'] = sorted({
+                symbol for symbol, _direction in (_planned_pairs - _executed_pairs)
+            })
+            result['unplanned_trades'] = sorted({row['symbol'] for row in unplanned_trades})
 
-            # 执行率
-            result['execution_rate'] = round(len(result['executed_targets']) / len(planned_symbols), 4)
+            result['planned_count'] = len(planned_symbols)
+            result['executed_count'] = len(result['executed_targets'])
+            result['unplanned_count'] = len(unplanned_trades)
+            result['planned_instruction_count'] = len(instructions)
+            result['attribution_ambiguous_count'] = len(ambiguous_trades)
+            result['attribution_ambiguous_symbols'] = sorted({
+                row['symbol'] for row in ambiguous_trades
+            })
+            result['execution_rate'] = round(
+                len(result['executed_targets']) / len(planned_symbols), 4
+            )
 
             confirm_rows = self._load_entry_confirm_directions(date)
             detailed_rows = self._query(
-                "SELECT id, symbol, direction, executed, execution_state, skip_reason, "
-                "decision_id, raw_instruction_json FROM playbook_instructions "
+                "SELECT id, symbol, direction, executed, execution_state, outcome, "
+                "execution_price, skip_reason, decision_id, raw_instruction_json "
+                "FROM playbook_instructions "
                 "WHERE date = ? AND (direction IN ('BUY','SELL_SHORT') "
                 "OR skip_reason = 'entry_confirm_reversed') ORDER BY id",
                 (date,)
@@ -991,9 +1032,14 @@ class DailyReviewGenerator:
                     1 for row in result['planned_details']
                     if row['gate_reason'] == 'entry_confirm_reversed'
                 ),
+                'existing_position_skipped': sum(
+                    1 for row in result['planned_details']
+                    if row['final_state'] == 'SKIPPED_EXISTING_POSITION'
+                ),
                 'other_blocked': sum(
                     1 for row in result['planned_details']
                     if row['final_state'] != 'EXECUTED'
+                    and row['final_state'] != 'SKIPPED_EXISTING_POSITION'
                     and row['gate_reason'] != 'entry_confirm_reversed'
                 ),
                 'ue_da_reverse_challenger_abstain': len(reverse_abstain_symbols),

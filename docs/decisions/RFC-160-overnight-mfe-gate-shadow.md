@@ -1,7 +1,7 @@
 # RFC-160: EOD「MFE<0.5% ∧ 水下」不过夜闸影子 (RFC-157 重议触发立项)
 
 - 日期: 2026-10-22
-- 状态: 影子立项 (record-only, 零交易行为变更)
+- 状态: 已终裁 GATE_NOT_WORTH / KILLED (2026-11-10；共享 record-only 采集保留)
 - 触发: 用户「按建议执行」(全链路复查 P1-1) — RFC-157 §6 预注册重议条件已命中
 - 回滚: `playbook.eod_depth_gate_shadow_enabled=false` + 重启 (打点停; 结算 cron 已有);
   或 `git revert` 本批; 数据保留不删
@@ -74,3 +74,25 @@ MFE 轨触发组去重结算 **n≥8 ∧ ΣΔ>0 ∧ 误杀赢家 (Δ<−$5 费�
 - §5 引用的约 +$1,436 对应 `depth≤−1.5%`，并非本 RFC 的 `depth<0`。原尸检 §3 对任何水下人群报告 13 行、+$2,199、误杀 10；行数与前瞻去重仓数、误杀口径仍须对齐，不据此裁前瞻成败，也不得把窄人群节省额归给本轨。
 - 决策输入必须来自 arm 时刻已知数据，不能用最终整笔持仓 MFE 回填；持仓累计峰值与单日峰值的区别必须显式披露。
 - 本次仅修正证据解释：0.5% / `depth_net_pct<0` / n≥8 / 误杀≤1 均不变，不启用硬闸、不重算历史裁决；阈值变更仍须重新预注册及用户批准。
+
+## 8. 2026-11-10 前瞻结算：正式关闭转硬闸路径
+
+`data/shadow/eod_depth_gate_report_latest.json`（06:30 生成）给出 MFE 轨去重结算
+**n=12、ΣΔ=+$52.14、误杀=9**。按 §4 预注册三门，样本门与总 Δ 通过，但误杀 9>1，
+settler 机械 verdict=`GATE_NOT_WORTH`。已结算误杀不会随新增样本减少，因此本项不再是
+“等 n≥8 后裁决”或“继续观察等待转硬闸”的候选；注册表转 `KILLED`，转硬闸路径正式关闭。
+
+这不是“所有低 MFE 水下仓都应立即平仓”的证据，也不授权新造同轴门、改 0.5% 切点或强平
+BA/GOOG/CAT。`KILLED` 只终结本判据的毕业路径；为保留反证与共享 B19/财报夜读数，
+`playbook.eod_depth_gate_shadow_enabled`、既有 arm 打点和 06:30 结算 cron 均保持不变，
+继续 record-only。实际 EOD 豁免、持仓和退出参数零变更。
+
+复现：
+
+```bash
+PYTHONPATH=. ./venv/bin/python - <<'PY'
+import json
+r=json.load(open('data/shadow/eod_depth_gate_report_latest.json'))
+print(r['generated_at'], r['mfe_track'])
+PY
+```

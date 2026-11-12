@@ -96,7 +96,8 @@ def _stub(mod, monkeypatch, tmp_path, ctx, *, short_allow=False, opened=None):
 
     def _fake_write_open_position(symbol, qty, entry_px, decision_px, session, earn, chg, vol,
                                  buy_order_id="", position_usd=None, grade="B", structure=None,
-                                 gate_mode="strict", side="LONG", decision_id="", admission_meta=None):
+                                 gate_mode="strict", side="LONG", decision_id="", admission_meta=None,
+                                 prior_move=None):
         # RFC-126 (2026-10-08): 新增 decision_id + admission_meta 参数 (归因收口, record-only)。
         if opened is not None:
             opened.append({"symbol": symbol, "side": side, "qty": qty, "entry_px": entry_px})

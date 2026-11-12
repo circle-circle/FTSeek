@@ -99,6 +99,7 @@ def render_md(bundle: Bundle, escalated: Optional[Dict[str, Any]] = None) -> Tup
     diagnostics = payload["sections"]["decision_diagnostics"]
     actionability = payload["sections"]["actionability"]
     research_arm = payload["sections"].get("research_arm", {})
+    da_cohort_risk = payload["sections"].get("da_cohort_risk", {})
     shadow_paths = payload["sections"].get("shadow_paths", {})
     questions = diagnostics["three_questions"]
     stage_direction_reason = diagnostics["stage_direction_reason"]
@@ -344,7 +345,7 @@ def render_md(bundle: Bundle, escalated: Optional[Dict[str, Any]] = None) -> Tup
                 if plan.get('plan_gap_symbols', {}).get('value')
                 else ""
             ),
-            f"- 计划外交易：{plan['unplanned_count']['value']}"
+            f"- 计划外交易（含 EXT 未归属）：{plan['unplanned_count']['value']}"
             + (
                 f"（{', '.join(plan['unplanned_symbols']['value'])}）"
                 if plan["unplanned_symbols"]["value"]
@@ -377,6 +378,44 @@ def render_md(bundle: Bundle, escalated: Optional[Dict[str, Any]] = None) -> Tup
                 "",
             ]
         )
+    if da_cohort_risk and (
+        da_cohort_risk["realized_trade_count"]["value"]
+        or da_cohort_risk["open_trade_count"]["value"]
+    ):
+        realized_value = da_cohort_risk["realized_net_pnl"]["value"]
+        open_value = da_cohort_risk["open_gross_mtm"]["value"]
+        fees_value = da_cohort_risk["realized_fees"]["value"]
+        realized_text = _money(realized_value) if realized_value is not None else "N/A"
+        open_text = _money(open_value) if open_value is not None else "N/A"
+        fees_text = f"${fees_value:.2f}" if fees_value is not None else "N/A"
+        lines.extend([
+            "## 新 DA cohort 常规收盘风险（非 A9）",
+            "",
+            f"- 16:00 ET 前已平仓：{da_cohort_risk['realized_trade_count']['value']} 笔 / "
+            f"费后净 {realized_text}",
+            f"- 已平仓毛额 / 费用 / 费毛比："
+            f"{_money(da_cohort_risk['realized_gross_pnl']['value']) if da_cohort_risk['realized_gross_pnl']['value'] is not None else 'N/A'} / "
+            f"{fees_text} / "
+            f"{_ratio(da_cohort_risk['realized_fee_to_gross']['value']) if da_cohort_risk['realized_fee_to_gross']['value'] is not None else 'N/A'}",
+            f"- 常规收盘未平：{da_cohort_risk['open_trade_count']['value']} 笔 / "
+            f"毛 MTM {open_text}（未扣持仓费用，不与已实现净额合并判分）",
+            f"- MTM 时点：{da_cohort_risk['mtm_as_of']['value']}",
+        ])
+        missing = da_cohort_risk["open_mtm_missing_symbols"]["value"]
+        if missing:
+            lines.append(f"- MTM 缺精确日 K：{', '.join(missing)}；总额保持 N/A")
+        positions = da_cohort_risk.get("positions") or []
+        if positions:
+            lines.extend(["", "| 标的 | 方向 | 入场 | 收盘 | 数量 | 毛 MTM | 有效止损 |", "|---|---|---:|---:|---:|---:|---:|"])
+            for row in positions:
+                stop = row.get("effective_stop")
+                lines.append(
+                    f"| {row['symbol']} | {row['direction']} | {row.get('entry_price') or 'N/A'} | "
+                    f"{row.get('close_price') or 'N/A'} | {row.get('quantity') or 'N/A'} | "
+                    f"{_money(row['gross_mtm']) if row.get('gross_mtm') is not None else 'N/A'} | "
+                    f"{stop if stop is not None else 'N/A'} |"
+                )
+        lines.append("")
     if shadow_paths and (
         shadow_paths["entry_trigger_count"]["value"]
         or shadow_paths["post_exit_n"]["value"]
@@ -398,7 +437,7 @@ def render_md(bundle: Bundle, escalated: Optional[Dict[str, Any]] = None) -> Tup
                     if shadow_paths['entry_pullback_symbols']['value']
                     else ""
                 ),
-                f"- 出场后到收盘：n={shadow_paths['post_exit_n']['value']}，"
+                f"- 全通道出场后到收盘（混合总览）：n={shadow_paths['post_exit_n']['value']}，"
                 f"均值 {shadow_paths['post_exit_close_gap_mean']['value']:+.2f}% / "
                 f"中位 {shadow_paths['post_exit_close_gap_median']['value']:+.2f}%；"
                 f">1% {shadow_paths['post_exit_miss_gt1_count']['value']} 笔"
@@ -410,6 +449,21 @@ def render_md(bundle: Bundle, escalated: Optional[Dict[str, Any]] = None) -> Tup
                 "",
             ]
         )
+    for channel_key, channel_label in (("da_post_exit", "DA"), ("ext_post_exit", "EXT")):
+        channel = shadow_paths.get(channel_key, {}) if shadow_paths else {}
+        if not channel or not channel["n"]["value"]:
+            continue
+        lines.extend([
+            f"- {channel_label} 出场后到收盘：n={channel['n']['value']}，"
+            f"均值 {channel['close_gap_mean']['value']:+.2f}% / "
+            f"中位 {channel['close_gap_median']['value']:+.2f}%；"
+            f">1% {channel['miss_gt1_count']['value']} 笔"
+            + (f"（{', '.join(channel['miss_symbols']['value'])}）" if channel["miss_symbols"]["value"] else ""),
+            "  分通道观察值，不是持有到收盘的反事实净 PnL；n<30 不据此调退出参数。",
+        ])
+    if shadow_paths and (shadow_paths.get("da_post_exit", {}).get("n", {}).get("value", 0)
+                         or shadow_paths.get("ext_post_exit", {}).get("n", {}).get("value", 0)):
+        lines.append("")
     lines.extend(["## 待裁决", ""])
     if pending:
         for row in pending:

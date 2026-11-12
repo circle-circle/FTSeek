@@ -159,3 +159,37 @@ def test_check_exception_is_not_silent(monkeypatch):
     lines = [w for w in rec.warnings if "校验异常" in w]
     assert lines, f"整段校验异常必须 WARNING 暴露, 实际 warnings={rec.warnings}"
     assert "db locked" in lines[0]
+
+
+# ── DEB-20261111 §13: Memory 侧同口径排除 (残留自管仓不得误报幽灵) ──────────
+
+def test_residual_playbook_position_in_memory_not_reported_as_ghost(monkeypatch):
+    """sync recovery 竞态把 playbook 仓残留在 position_store ⇒ 不得报 "Memory 有幽灵仓".
+
+    11-11 实盘: AMZN/LLY 被收养为 playbook_sim 后内存残留, broker 侧已排除而
+    memory 侧未排除 ⇒ 每轮误报。两侧对称排除后应静默。
+    """
+    broker = {"US.LLY", "US.MSFT"}
+    sync, rec = _make_sync(monkeypatch, broker, mem_syms={"US.LLY", "US.MSFT"})
+    monkeypatch.setattr(
+        "app.playbook.pipeline.load_playbook_open_symbols", lambda: {"US.LLY"}
+    )
+    sync._verify_and_sync_capital(_futu(broker))
+    assert not _consistency_lines(rec), (
+        f"残留 playbook 自管仓不应报幽灵, 实际: {_consistency_lines(rec)}"
+    )
+
+
+def test_residual_non_playbook_position_in_memory_still_reported(monkeypatch):
+    """非 playbook 的内存残留仓仍必须报幽灵 (修对称排除不得静默真幽灵)."""
+    broker = {"US.MSFT"}
+    sync, rec = _make_sync(monkeypatch, broker, mem_syms={"US.MSFT", "US.OLD"})
+    monkeypatch.setattr(
+        "app.playbook.pipeline.load_playbook_open_symbols", lambda: set()
+    )
+    sync._verify_and_sync_capital(_futu(broker))
+    lines = _consistency_lines(rec)
+    assert len(lines) == 1, lines
+    assert "Memory 有幽灵仓" in lines[0]
+    assert "US.OLD" in lines[0]
+    assert "US.MSFT" not in lines[0]

@@ -13,12 +13,12 @@ def test_plan_vs_actual_tags_ue_da_reverse_with_challenger_abstain(monkeypatch):
     generator = DailyReviewGenerator()
 
     actionable_rows = [
-        {"symbol": "US.CAT", "direction": "BUY"},
-        {"symbol": "US.TMUS", "direction": "SELL_SHORT"},
+        {"id": 1, "symbol": "US.CAT", "direction": "BUY", "decision_id": "DA-CAT"},
+        {"id": 2, "symbol": "US.TMUS", "direction": "SELL_SHORT", "decision_id": "DA-TMUS"},
     ]
     trade_rows = [
-        {"symbol": "US.CAT", "direction": "LONG"},
-        {"symbol": "US.TMUS", "direction": "SHORT"},
+        {"symbol": "US.CAT", "direction": "LONG", "decision_id": "DA-CAT"},
+        {"symbol": "US.TMUS", "direction": "SHORT", "decision_id": "DA-TMUS"},
     ]
     detailed_rows = [
         {
@@ -135,8 +135,10 @@ def test_entry_confirm_direction_mapping_normalizes_legacy_values(tmp_path):
 def test_plan_vs_actual_survives_when_all_plans_entry_confirm_abandoned(monkeypatch):
     generator = DailyReviewGenerator()
     skip_row = {
+        "id": 1,
         "symbol": "US.TEST",
         "direction": "SKIP",
+        "decision_id": "DA-TEST",
     }
     detailed_row = {
         "id": 1,
@@ -174,11 +176,75 @@ def test_plan_vs_actual_survives_when_all_plans_entry_confirm_abandoned(monkeypa
     assert provenance["original_direction_unknown"] == 0
 
 
+def test_direction_provenance_excludes_existing_position_from_execution(monkeypatch):
+    generator = DailyReviewGenerator()
+    instruction_rows = [
+        {"id": 1, "symbol": "US.AMD", "direction": "BUY", "decision_id": "DA-AMD"},
+        {"id": 2, "symbol": "US.GOOG", "direction": "BUY", "decision_id": "DA-GOOG"},
+    ]
+    detailed_rows = [
+        {
+            "id": 1,
+            "symbol": "US.AMD",
+            "direction": "BUY",
+            "executed": 1,
+            "execution_state": "BOOKED",
+            "outcome": "filled",
+            "execution_price": 250.0,
+            "skip_reason": "",
+            "decision_id": "DA-AMD",
+            "raw_instruction_json": json.dumps({"source": "deep_analysis"}),
+        },
+        {
+            "id": 2,
+            "symbol": "US.GOOG",
+            "direction": "BUY",
+            "executed": 1,
+            "execution_state": "SKIPPED_EXISTING_POSITION",
+            "outcome": "already_held",
+            "execution_price": 0.0,
+            "skip_reason": "",
+            "decision_id": "DA-GOOG",
+            "raw_instruction_json": json.dumps({"source": "deep_analysis"}),
+        },
+    ]
+
+    def fake_query(sql, params=(), db_path=None):
+        if "raw_instruction_json" in sql:
+            assert "outcome" in sql
+            assert "execution_price" in sql
+            return detailed_rows
+        if "FROM trade_records" in sql:
+            return [{
+                "id": 10,
+                "symbol": "US.AMD",
+                "direction": "LONG",
+                "decision_id": "DA-AMD",
+                "metadata_json": "{}",
+            }]
+        if "FROM playbook_instructions" in sql:
+            return instruction_rows
+        return []
+
+    monkeypatch.setattr(generator, "_query", fake_query)
+    monkeypatch.setattr(generator, "_load_entry_confirm_directions", lambda date: {})
+
+    result = generator._get_plan_vs_actual("2026-11-10")
+    provenance = result["direction_provenance"]
+    goog = next(row for row in result["planned_details"] if row["symbol"] == "US.GOOG")
+
+    assert result["executed_count"] == 1
+    assert provenance["executed"] == result["executed_count"]
+    assert provenance["existing_position_skipped"] == 1
+    assert provenance["other_blocked"] == 0
+    assert goog["final_state"] == "SKIPPED_EXISTING_POSITION"
+
+
 def test_direction_provenance_reports_unknown_when_ledger_is_missing(monkeypatch):
     generator = DailyReviewGenerator()
     instruction_rows = [
-        {"symbol": "US.EXEC", "direction": "BUY"},
-        {"symbol": "US.SKIP", "direction": "SKIP"},
+        {"id": 1, "symbol": "US.EXEC", "direction": "BUY", "decision_id": "DA-EXEC"},
+        {"id": 2, "symbol": "US.SKIP", "direction": "SKIP", "decision_id": "DA-SKIP"},
     ]
     detailed_rows = [
         {
@@ -240,6 +306,7 @@ def test_postmarket_renders_direction_and_overnight_sections(tmp_path):
             "original_sell_short": 5,
             "executed": 5,
             "entry_confirm_abandoned": 8,
+            "existing_position_skipped": 1,
             "other_blocked": 3,
             "original_direction_unknown": 1,
             "original_direction_unknown_symbols": ["US.ORCL"],
@@ -260,9 +327,106 @@ def test_postmarket_renders_direction_and_overnight_sections(tmp_path):
     assert "## 方向产出与执行状态" in text
     assert "BUY 11 | SELL_SHORT 5" in text
     assert "入场确认放弃 8" in text
+    assert "**已有持仓跳过**: 1" in text
     assert "**原始方向缺失**: 1 (US.ORCL)" in text
     assert "**UE-DA 反向且挑战者弃权**: 1" in text
     assert "(US.TMUS)" in text
     assert "## 隔夜遗留仓风险" in text
     assert "**OVERNIGHT_GAP_STOP**: 1 笔" in text
     assert "US.AMD" in text
+
+
+def _fake_plan_query(generator, monkeypatch, *, instructions, identity_rows, trades):
+    def fake_query(sql, params=(), db_path=None):
+        if "raw_instruction_json" in sql:
+            return []
+        if "FROM trade_records" in sql:
+            return trades
+        if "WHERE date = ?" in sql:
+            return instructions
+        if "FROM playbook_instructions" in sql:
+            return identity_rows
+        return []
+
+    monkeypatch.setattr(generator, "_query", fake_query)
+    monkeypatch.setattr(generator, "_load_entry_confirm_directions", lambda date: {})
+
+
+def test_plan_vs_actual_dedupes_same_symbol_direction_reentry_rows(monkeypatch):
+    """同 (date,symbol,direction) 多轮指令不得重复进分母/漏执数 (2026-11-12 回归)。"""
+    generator = DailyReviewGenerator()
+    instructions = [
+        {"id": 1, "symbol": "US.APP", "direction": "BUY", "decision_id": "DA-APP-1"},
+        {"id": 2, "symbol": "US.APP", "direction": "BUY", "decision_id": "DA-APP-2"},
+    ]
+    trades = [{
+        "id": 10, "symbol": "US.APP", "direction": "LONG",
+        "trade_date": "2026-11-10", "decision_id": "DA-APP-1", "metadata_json": None,
+    }]
+    _fake_plan_query(
+        generator, monkeypatch,
+        instructions=instructions,
+        identity_rows=[{**row, "date": "2026-11-10"} for row in instructions],
+        trades=trades,
+    )
+
+    result = generator._get_plan_vs_actual("2026-11-10")
+
+    assert result["planned_count"] == 1
+    assert result["planned_instruction_count"] == 2
+    assert result["executed_count"] == 1
+    assert result["executed_targets"] == ["US.APP"]
+    assert result["missed_opportunities"] == []
+    assert result["unplanned_trades"] == []
+    assert result["execution_rate"] == 1.0
+
+
+def test_plan_vs_actual_ambiguous_decision_id_is_not_unplanned(monkeypatch):
+    generator = DailyReviewGenerator()
+    instructions = [
+        {"id": 1, "symbol": "US.APP", "direction": "BUY", "decision_id": "SHARED"},
+        {"id": 2, "symbol": "US.APP", "direction": "BUY", "decision_id": "SHARED"},
+    ]
+    trades = [{
+        "id": 10, "symbol": "US.APP", "direction": "LONG",
+        "trade_date": "2026-11-10", "decision_id": "SHARED", "metadata_json": None,
+    }]
+    _fake_plan_query(
+        generator, monkeypatch,
+        instructions=instructions,
+        identity_rows=[{**row, "date": "2026-11-10"} for row in instructions],
+        trades=trades,
+    )
+
+    result = generator._get_plan_vs_actual("2026-11-10")
+
+    assert result["attribution_ambiguous_count"] == 1
+    assert result["attribution_ambiguous_symbols"] == ["US.APP"]
+    assert result["unplanned_trades"] == []
+
+
+def test_plan_vs_actual_resolves_cross_day_duplicate_decision_id(monkeypatch):
+    generator = DailyReviewGenerator()
+    instructions = [
+        {"id": 2, "symbol": "US.APP", "direction": "BUY", "decision_id": "DA-REUSED"},
+    ]
+    identity_rows = [
+        {"id": 1, "date": "2026-11-09", "symbol": "US.APP", "direction": "BUY",
+         "decision_id": "DA-REUSED"},
+        {"id": 2, "date": "2026-11-10", "symbol": "US.APP", "direction": "BUY",
+         "decision_id": "DA-REUSED"},
+    ]
+    trades = [{
+        "id": 10, "symbol": "US.APP", "direction": "LONG",
+        "trade_date": "2026-11-10", "decision_id": "DA-REUSED", "metadata_json": None,
+    }]
+    _fake_plan_query(
+        generator, monkeypatch,
+        instructions=instructions, identity_rows=identity_rows, trades=trades,
+    )
+
+    result = generator._get_plan_vs_actual("2026-11-10")
+
+    assert result["executed_targets"] == ["US.APP"]
+    assert result["unplanned_trades"] == []
+    assert result["attribution_ambiguous_count"] == 0

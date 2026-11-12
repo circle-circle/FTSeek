@@ -305,27 +305,19 @@ def check_intraday_trigger(
         except Exception:
             pass  # 时间获取异常 → fail-open (与既有异常处理一致, 不拦)
 
-    # ── 2026-08-08 (DEB-20260807 复盘): 开盘禁触窗 — ET<10:00 不新触发 ──
-    #   数据依据: 9点档(开盘首小时)入场 7月 120笔 净-$931 (93%亏损) / 8月 35笔 净-$250,
-    #   10点档 7月 42笔 +$132 / 8月 7笔 +$42 — 开盘噪声期入场期望为负;
-    #   MFE_STALL 12/12 全部 9:35-9:53 入场 (温床). 与既有 14:00 cutoff 对称.
-    #   回滚: entry_open_blackout_enabled 改 false.
+    # ── 2026-08-08 (DEB-20260807 复盘): 开盘禁触窗 ──
+    #   2026-11-12: 与 auto_execute 外层早退闸共用 open_blackout 的解析/边界/兜底，
+    #   避免 "09:45" 等合法格式在外层生效、内层却因 int() 失败而静默放开。
+    #   回滚: entry_open_blackout_enabled 改 false；外层仍保留既有 09:35 噪声底线。
     try:
-        _oob_enabled = bool(pb_cfg.get("entry_open_blackout_enabled", False))
-        _oob_hhmm = int(pb_cfg.get("entry_open_blackout_hhmm", 1000))
+        from datetime import datetime as _dt2
+        from app.playbook.open_blackout import is_open_blackout as _is_open_blackout
+        _now_oob = _dt2.now(_now_et())
+        if _is_open_blackout(_now_oob, logger=logger):
+            _emit_trigger_miss("before_open_blackout", current_price)
+            return False
     except Exception:
-        _oob_enabled, _oob_hhmm = False, 1000
-    if _oob_enabled:
-        try:
-            from datetime import datetime as _dt2
-            _now_oob = _dt2.now(_now_et())
-            if _now_oob.hour * 100 + _now_oob.minute < _oob_hhmm:
-                # 2026-11-12: 原来传 None ⇒ 落盘 current_price=0/gap_pct=0, 一旦有人把
-                #   auto_execute 的 floor 调得比本键更早, 这行仍然读不出任何东西。改传实时价。
-                _emit_trigger_miss("before_open_blackout", current_price)
-                return False
-        except Exception:
-            pass  # 时间获取异常 → fail-open (不拦)
+        pass  # 时间获取异常 → fail-open (不拦)
 
     # ── 2026-07-19 (DEB-round3 #2): 财报禁建门 — 触发时距财报<24h 不入场 ──
     #   bridge 盘前写入时距财报可能>1天, 盘中进入禁建窗后 thesis 面临事件风险重估.

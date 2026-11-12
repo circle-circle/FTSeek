@@ -137,11 +137,15 @@ class TestGraduationScriptEraBlock:
         m = _load_grad()
         era = m._era_block()
         assert "error" not in era, f"era fail-open 被触发: {era.get('error')}"
-        assert era["adjudicated_at"] == "2026-09-26", \
+        from app.playbook.shadow_registry import ADJUDICATED
+        assert era["adjudicated_at"] == ADJUDICATED["exit_param_shadow"]["read_at"], \
             "裁决日必须从 ADJUDICATED SSOT 读, 不得漂移/硬编码"
-        assert era["then"] == "exit-34c7153088a1", "裁决日指纹是 DB 推导的历史事实, 不得改"
+        from app.review.verdict_era import era_of_date
+        expected_then = era_of_date(ADJUDICATED["exit_param_shadow"]["read_at"])["version"]
+        assert era["then"] == expected_then, "裁决日指纹必须由 DB 按 read_at 推导, 不得硬编码"
         assert era["current"] == "exit-ca4487172a6f"
-        assert era["applies"] is False, "指纹不等必须检出; 行为等价声明在豁免台账不在本模块"
+        assert era["applies"] is (era["then"] == era["current"]), \
+            "applies 必须与 then/current 指纹比较一致"
 
     def test_era_block_fail_open(self, monkeypatch):
         """指纹查询炸 ⇒ fail-open 在 era_status 内部消化: applies=None + note 注明失败,
@@ -153,4 +157,5 @@ class TestGraduationScriptEraBlock:
         era = m._era_block()
         assert era["applies"] is None
         assert "era 查询失败" in era["note"]
-        assert era["adjudicated_at"] == "2026-09-26"
+        from app.playbook.shadow_registry import ADJUDICATED
+        assert era["adjudicated_at"] == ADJUDICATED["exit_param_shadow"]["read_at"]

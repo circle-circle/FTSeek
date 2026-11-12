@@ -331,3 +331,120 @@ def test_classify_trigger_guards_bad_prices():
     from app.playbook.entry_band import classify_trigger
     assert classify_trigger(False, 0, 100, 0.03, 0.05, True) == (False, "out_of_band")
     assert classify_trigger(False, 100, 0, 0.03, 0.05, True) == (False, "out_of_band")
+
+
+# ── 6. 黑窗观测故障路径 + MOM 暂时性拦截 ────────────────────────────
+def test_blackout_shadow_writes_liveness_when_all_quotes_fail(monkeypatch, frozen, tmp_path):
+    rows = [_inst(1, "US.AAA", "BUY", 100.0)]
+    _wire_shadow(monkeypatch, tmp_path, rows, {})
+    frozen(2026, 11, 12, 9, 40)
+
+    class _Sched:
+        data_router = _FakeRouter({})
+
+    aef.emit_blackout_shadow(_Sched(), "2026-11-12", frozen.now_dt, LOG, set(), 945)
+    got = _shadow_rows(tmp_path)
+    assert len(got) == 1
+    cycle = got[0]
+    assert cycle["kind"] == "cycle" and cycle["status"] == "QUOTE_UNAVAILABLE"
+    assert cycle["n_eligible"] == 1 and cycle["n_priced"] == 0
+    assert cycle["n_quote_error"] >= 1 and cycle["n_price_invalid"] == 1
+
+
+def test_blackout_shadow_writes_no_router_heartbeat(monkeypatch, frozen, tmp_path):
+    rows = [_inst(1, "US.AAA", "BUY", 100.0)]
+    _wire_shadow(monkeypatch, tmp_path, rows, {})
+    frozen(2026, 11, 12, 9, 40)
+    aef.emit_blackout_shadow(object(), "2026-11-12", frozen.now_dt, LOG, set(), 945)
+    got = _shadow_rows(tmp_path)
+    assert len(got) == 1 and got[0]["status"] == "NO_ROUTER"
+    assert got[0]["n_inst"] == 1 and got[0]["n_priced"] == 0
+
+
+def test_blackout_shadow_uses_production_quote_fallback(monkeypatch, frozen, tmp_path):
+    rows = [_inst(1, "US.AAA", "BUY", 100.0)]
+    _wire_shadow(monkeypatch, tmp_path, rows, {})
+    frozen(2026, 11, 12, 9, 40)
+
+    class _FallbackRouter:
+        def get_full_market_context(self, symbol):
+            raise RuntimeError("context unavailable")
+
+        def get_quote(self, symbol):
+            return {"last": 99.5}
+
+    class _Sched:
+        data_router = _FallbackRouter()
+
+    aef.emit_blackout_shadow(_Sched(), "2026-11-12", frozen.now_dt, LOG, set(), 945)
+    got = _shadow_rows(tmp_path)
+    hits = [r for r in got if r["kind"] == "hit"]
+    assert len(hits) == 1 and hits[0]["quote_source"] == "quote_fallback"
+
+
+def test_blackout_shadow_retries_hit_after_write_failure(monkeypatch, frozen, tmp_path):
+    rows = [_inst(1, "US.AAA", "BUY", 100.0)]
+    px = {"US.AAA": 99.5}
+    _wire_shadow(monkeypatch, tmp_path, rows, px)
+    frozen(2026, 11, 12, 9, 40)
+
+    class _Sched:
+        data_router = _FakeRouter(px)
+
+    import builtins
+    real_open = builtins.open
+    target = tmp_path / "entry_blackout_shadow.jsonl"
+    fail = {"enabled": True}
+
+    def _flaky_open(file, *args, **kwargs):
+        if str(file) == str(target) and fail["enabled"]:
+            raise OSError("injected append failure")
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", _flaky_open)
+    aef.emit_blackout_shadow(_Sched(), "2026-11-12", frozen.now_dt, LOG, set(), 945)
+    assert _shadow_rows(tmp_path) == []
+    assert aef._BLACKOUT_SHADOW_SEEN == set()
+
+    fail["enabled"] = False
+    aef.emit_blackout_shadow(_Sched(), "2026-11-12", frozen.now_dt, LOG, set(), 945)
+    got = _shadow_rows(tmp_path)
+    assert len([r for r in got if r["kind"] == "cycle"]) == 1
+    assert len([r for r in got if r["kind"] == "hit"]) == 1
+    assert ("2026-11-12", 1) in aef._BLACKOUT_SHADOW_SEEN
+
+
+@pytest.mark.parametrize("ctx,expected", [
+    (None, 0.0),
+    ({}, 0.0),
+    ({"lv3_ask": "bad", "ask": 101.25}, 101.25),
+    ({"lv3_ask": float("nan"), "price": 102.5}, 102.5),
+    ({"last": 103.75}, 103.75),
+    ({"lv3_ask": -1, "ask": 0, "price": None}, 0.0),
+])
+def test_mom_quote_price_rejects_missing_and_malformed(ctx, expected):
+    assert aef._mom_quote_price(ctx) == expected
+
+
+def test_mom_defer_is_audited_once_and_never_terminal(monkeypatch):
+    monkeypatch.setattr(aef, "_MOM_DEFER_AUDIT_SEEN", set())
+    class _DB:
+        def __init__(self):
+            self.updates = []
+
+        def update_instruction_tracking(self, iid, patch):
+            self.updates.append((iid, patch))
+
+    db = _DB()
+    inst = _inst(1, "US.QQQ", "BUY", 100.0)
+    audits = []
+    for _ in range(2):
+        aef._record_mom_defer(
+            db, inst, "2026-11-13", "MOM_QUOTE_UNAVAILABLE(test)",
+            action="skipped_mom_quote_unavailable", gate="mom_quote_available",
+            why="test", logger=LOG,
+            emit_exec_gate_audit=lambda row, **kw: audits.append((row, kw)))
+        inst["skip_reason"] = "MOM_QUOTE_UNAVAILABLE(test)"
+    assert inst["direction"] == "BUY"
+    assert db.updates == [(1, {"skip_reason": "MOM_QUOTE_UNAVAILABLE(test)"})]
+    assert len(audits) == 1 and audits[0][1]["extra"]["transient"] is True

@@ -30,7 +30,7 @@ def _now_et() -> datetime:
 def _is_us_trading_day(day) -> bool:
     try:
         from app.utils.holiday_calendar import get_holiday_calendar
-        return bool(get_holiday_calendar().is_trading_day("US", day))
+        return not bool(get_holiday_calendar().is_us_holiday(day))
     except Exception:
         return day.weekday() < 5
 

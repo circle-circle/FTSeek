@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import date, timedelta
 
 import scripts.risk_size_tier_forward_eval as ev
 
@@ -96,3 +97,93 @@ def test_sample_gate_uses_affected_not_total(tmp_path):
     assert report["gate"]["sample_affected_n"] == 0   # 受影响 = 0 ⇒ 判据不成立
     assert report["gate"]["sample_total_n_only_printed"] == n
     assert report["gate"]["pass"] is False
+
+
+def _r2_row(day, pnl):
+    return {
+        "id": 1, "symbol": "US.AAPL", "trade_date": day, "source": "DA",
+        "atr_pct": 1.0, "session_min": 5, "pnl": float(pnl), "notional": 10000.0,
+        "left_tail": pnl < 0,
+    }
+
+
+def _r2_days(n=10):
+    start = date(2026, 11, 11)
+    return [(start + timedelta(days=offset)).isoformat() for offset in range(n)]
+
+
+def test_r2_confirmation_excludes_history_and_requires_all_frozen_gates():
+    rows = [_r2_row(day, -10.0) for day in _r2_days() for _ in range(3)]
+    rows.extend(_r2_row("2026-11-10", -10000.0) for _ in range(20))
+    report = ev.compute_r2_open15_confirmation(rows, resolution_coverage=1.0)
+    assert report["affected_n"] == 30
+    assert report["sample"]["distinct_days"] == 10
+    assert report["actual_net"] == -300.0
+    assert report["cf_net"] == -150.0
+    assert report["delta_net"] == 150.0
+    assert report["delta_excluding_best_day"] == 135.0
+    assert report["day_cluster"]["ci80"] == [15.0, 15.0]
+    assert report["day_cluster"]["mde80"] == 0.0
+    assert all(report["criteria"].values())
+    assert report["verdict"] == "R2_PROMOTE_CANDIDATE_REQUIRES_RFC_AND_USER_APPROVAL"
+    assert report["automatic_trading_change"] is False
+
+
+def test_r2_confirmation_rejects_single_best_day_dependency():
+    rows = []
+    for day in _r2_days()[:9]:
+        rows.extend([_r2_row(day, 20.0), _r2_row(day, -10.0), _r2_row(day, 0.0)])
+    rows.extend(_r2_row(_r2_days()[9], -100.0) for _ in range(3))
+    report = ev.compute_r2_open15_confirmation(rows, resolution_coverage=1.0)
+    assert report["affected_n"] == 30
+    assert report["delta_net"] == 105.0
+    assert report["delta_excluding_best_day"] == -45.0
+    assert report["criteria"]["excluding_best_day>0"] is False
+    assert report["verdict"] == "NO_DEPLOY"
+
+
+def test_r2_confirmation_stays_too_early_before_affected_sample_gate():
+    rows = [_r2_row(day, -10.0) for day in _r2_days(9) for _ in range(3)]
+    rows.extend(_r2_row(_r2_days()[9], -10.0) for _ in range(2))
+    report = ev.compute_r2_open15_confirmation(rows, resolution_coverage=1.0)
+    assert report["affected_n"] == 29
+    assert report["sample"]["distinct_days"] == 10
+    assert report["criteria"]["sample_affected_n>=30"] is False
+    assert report["verdict"] == "TOO_EARLY"
+
+
+def test_r2_confirmation_rejects_unresolved_survivor_bias():
+    rows = [_r2_row(day, -10.0) for day in _r2_days() for _ in range(3)]
+    report = ev.compute_r2_open15_confirmation(rows, resolution_coverage=0.94)
+    assert report["criteria"]["resolution_coverage>=0.95"] is False
+    assert report["verdict"] == "NO_DEPLOY"
+
+
+def test_r2_resolution_coverage_counts_pending_and_excludes_old_rows():
+    forward = [
+        _forward_row(decision_id="new1", date="2026-11-11"),
+        _forward_row(decision_id="new2", date="2026-11-11"),
+        _forward_row(decision_id="pending", date="2026-11-12"),
+        _forward_row(decision_id="old", date="2026-11-10"),
+        _forward_row(decision_id="ext", date="2026-11-11", source="EXT"),
+    ]
+    outcomes = {
+        "new1": {"trade_date": "2026-11-11", "pnl": 1.0},
+        "new2": {"trade_date": "2026-11-11", "pnl": 1.0},
+        "old": {"trade_date": "2026-11-10", "pnl": -100.0},
+    }
+    report = ev._r2_resolution_coverage(forward, outcomes)
+    assert report["eligible_n"] == 3
+    assert report["resolved_n"] == 2
+    assert report["pending_n"] == 1
+    assert report["pending_decision_ids"] == ["pending"]
+    assert report["rate"] == 0.6667
+
+
+def test_r2_confirmation_excludes_non_da_sources():
+    rows = [_r2_row(day, -10.0) for day in _r2_days() for _ in range(3)]
+    ext_rows = [dict(_r2_row(day, -1000.0), source="EXT") for day in _r2_days()]
+    report = ev.compute_r2_open15_confirmation(rows + ext_rows, resolution_coverage=1.0)
+    assert report["source"] == "DA"
+    assert report["sample"]["n"] == 30
+    assert report["actual_net"] == -300.0

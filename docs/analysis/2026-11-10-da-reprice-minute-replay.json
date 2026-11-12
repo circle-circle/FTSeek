@@ -1,0 +1,96 @@
+{
+  "schema": "da_postclose_followup_v1",
+  "generated_date": "2026-11-10",
+  "regular_session": "2026-11-09",
+  "trading_behavior_changed": false,
+  "candidate_or_symbol_count_reduced": false,
+  "rfc160_terminal": {
+    "report": "data/shadow/eod_depth_gate_report_latest.json",
+    "generated_at": "2026-11-10T06:30:01",
+    "n": 12,
+    "sum_delta_usd": 52.14,
+    "miskill_n": 9,
+    "verdict": "GATE_NOT_WORTH",
+    "registry_status": "KILLED",
+    "shared_record_only_collection_retained": true
+  },
+  "goog_open_position_correction": {
+    "trade_id": 1826,
+    "playbook_instruction_id": 5470,
+    "before": {"initial_sl": 286.3756, "current_sl": 286.3756, "initial_tp": 382.70},
+    "after": {"initial_sl": 277.52, "current_sl": 277.52, "initial_tp": 314.04},
+    "actual_exit_parameters_changed": false,
+    "effective_stop_at_regular_close": 277.52,
+    "early_tight_stop": 288.545,
+    "early_tight_scope": "Entry-time window only; it was not the regular-close effective stop.",
+    "fixed_tp_swallowed_by_rr_gate": true,
+    "fill_risk_reward": 1.484354,
+    "backup_db": "data/audits/ftseek_us_before_goog_rfc195_cas_20261110T025855Z.db",
+    "audit": "data/audits/goog_open_position_rfc195_cas_20261110T025855Z.json"
+  },
+  "goog_minute_replay": {
+    "bar_file": "data/replay_bars/US_GOOG_2026-11-09.json",
+    "bar_sha256": "b3d634709bdc58aa9663296df2f8ca5ed7ebe27954335f78ca2e29b835490b6f",
+    "bar_count": 390,
+    "bar_timezone": "ET",
+    "raw_plan": {
+      "entry": 286.0,
+      "stop_loss": 278.5,
+      "take_profit": 305.0,
+      "planned_risk_reward": 2.5333,
+      "confirmation": {"price_level": 288.0, "side": "below", "ttl_min": 120},
+      "chase_cap": 292.2
+    },
+    "actual": {
+      "decision_entry": 292.13,
+      "stop_loss": 277.52,
+      "take_profit": 314.04,
+      "effective_risk_reward": 1.4997,
+      "fill": 292.22,
+      "fill_time": "2026-11-09T10:01:48-05:00",
+      "fill_risk_reward": 1.484354,
+      "decision_price_within_chase_cap": true,
+      "fill_minus_chase_cap": 0.02,
+      "fixed_tp_swallowed_by_rr_gate": true
+    },
+    "as_of_observations": {
+      "first_low_at_or_below_288": "2026-11-09 13:18:00",
+      "first_1m_close_below_288": "2026-11-09 13:18:00",
+      "first_5m_close_below_288": "2026-11-09 13:20:00",
+      "first_low_at_or_below_286": "2026-11-09 16:00:00",
+      "first_1m_close_at_or_below_286": null,
+      "regular_close": 286.01,
+      "final_1m_bar": ["2026-11-09 16:00:00", 286.3, 286.32, 285.94, 286.01]
+    },
+    "forced_close_fee_sensitivity_not_realized_pnl": {
+      "fees_source": "est",
+      "quantity": 13,
+      "actual_fill_gross_usd": -80.73,
+      "actual_fill_round_trip_fee_usd": 4.1446,
+      "actual_fill_net_sensitivity_usd": -84.8746,
+      "ideal_286_fill_gross_usd": 0.13,
+      "ideal_286_fill_round_trip_fee_usd": 4.1446,
+      "ideal_286_fill_net_sensitivity_usd": -4.0146,
+      "caveat": "Both sides assume liquidation at the 16:00 close for fee sensitivity only. The actual GOOG position remained open; a bar low touching 286 does not prove a confirmed fill."
+    },
+    "conclusion": "The original 286 plan was not shown to be executable in the morning. No chase-cap, routing, sizing, or exit change is justified by this single replay."
+  },
+  "reprice_cohort": {
+    "n": 8,
+    "risk_reward_down_n": 6,
+    "risk_reward_up_n": 2,
+    "closed_n": 5,
+    "closed_fee_adjusted_positive_n": 5,
+    "sample_caveat": "One session, n=8; descriptive measurement only, no gate decision and no day-cluster effectiveness claim.",
+    "rows": [
+      {"symbol": "US.CAT", "planned_rr": 3.1176, "effective_rr": 1.4998, "fill_rr": 1.5413, "fill": 590.86, "chase_cap": 560.0, "fill_cap_breach": false, "status": "OPEN", "regular_close_gross_mtm_usd": -56.14},
+      {"symbol": "US.LLY", "planned_rr": 2.8235, "effective_rr": 1.4999, "fill_rr": 1.5430, "fill": 1379.38, "chase_cap": 1395.0, "fill_cap_breach": false, "status": "CLOSED", "gross_usd": 12.36, "fees_est_usd": 4.09, "net_usd": 8.27},
+      {"symbol": "US.GOOG", "planned_rr": 2.5333, "effective_rr": 1.4997, "fill_rr": 1.484354, "fill": 292.22, "chase_cap": 292.2, "fill_cap_breach": true, "fill_minus_cap_usd": 0.02, "status": "OPEN", "regular_close_gross_mtm_usd": -80.73},
+      {"symbol": "US.PDD", "planned_rr": 2.8, "effective_rr": 1.7973, "fill_rr": 1.7996, "fill": 81.017, "chase_cap": 82.5, "fill_cap_breach": false, "status": "CLOSED", "gross_usd": 13.77, "fees_est_usd": 4.35, "net_usd": 9.42},
+      {"symbol": "US.BA", "planned_rr": 1.3396, "effective_rr": 1.4994, "fill_rr": 1.496591, "fill": 175.79, "chase_cap": 176.5, "fill_cap_breach": false, "status": "OPEN", "regular_close_gross_mtm_usd": -71.61},
+      {"symbol": "US.UNH", "planned_rr": 1.7778, "effective_rr": 1.7999, "fill_rr": 1.8559, "fill": 396.08, "chase_cap": 398.0, "fill_cap_breach": false, "status": "CLOSED", "gross_usd": 9.18, "fees_est_usd": 4.12, "net_usd": 5.06},
+      {"symbol": "US.XOM", "planned_rr": 1.9, "effective_rr": 1.7986, "fill_rr": 1.8177, "fill": 164.29, "chase_cap": 166.5, "fill_cap_breach": false, "status": "CLOSED", "gross_usd": 9.66, "fees_est_usd": 4.21, "net_usd": 5.45},
+      {"symbol": "US.MRK", "planned_rr": 2.1389, "effective_rr": 1.4993, "fill_rr": 1.5656, "fill": 146.78, "chase_cap": 149.5, "fill_cap_breach": false, "status": "CLOSED", "gross_usd": 10.13, "fees_est_usd": 4.22, "net_usd": 5.91}
+    ]
+  }
+}

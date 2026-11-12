@@ -386,3 +386,24 @@ R 分布：中位 **+0.027R**、p10 **−0.346R**、p90 +0.257R、max **+3.99R**
 - 未取得一手英文来源；未核实任何业绩数字。
 - 未对 `OFI 自身预测力` 做新测量（该问题在 `docs/analysis/2026-09-21-shadow-collection-effectiveness.md:29` 已登记为开放问题）。
 - 未测 FOMC 周（无本地会议日历）；未测真实逐笔订单流（无历史归档）；未测 SPY/QQQ 指数臂（1m 缓存缺，且交易时段禁开 futu）。
+
+## 12. 独立复核与外部策略补充（2026-11-12 01:24 追加）
+
+详见 `docs/debates/DEB-20261112-umar-review-external-strategies.md`。本节只登记修正与新增证据，不改写 §0–§11 历史轮次。
+
+1. **DA-only 复算修正 §10 混源**：DA=`decision_id LIKE 'DA-%'`，n=603/88 日，净 −$537.00/−1.85bps，毛 +7.84bps、费 9.69bps；`ΣR_net=−8.41`（毛 R +5.78、费 R 14.19），DA `max R=+1.556`，不是全 Playbook 的 +3.99。原文“ΣR≈费用级别”低估 DA 费用拖累；p10/p90 不是平均赢/亏。
+2. **尾损更集中**：DA `SL_INITIAL` 34 笔 −$4,817.56（early-tight 18 / 原始 16），`OVERNIGHT_GAP_STOP` 11 笔 −$3,616.05；open15 n=327 净 −10.10bps，15–60min +6.24bps，60min+ +10.48bps。10-23→10-31 DA 毛 bps 已 −51.81，11 月回到 +16.21；不得混窗。
+3. **B1 补测为负**：`_capital_flow_divergence` 读日级聚合资金流，不是分钟主动买盘背离；OFI 基线 29,248 个因果观测/37 票/57 日，L1 imbalance/microprice/稀疏 OFI proxy 对 1/5/15min 前向收益 IC≈0，日聚类 |t|≤1.78，三分位差 <2bps。当前稀疏 L1 基线不可用；真实逐笔订单流仍未测。
+4. **B2 补测但仍不可裁**：原文 inside day 是前视；事前“前一日 inside”DA n=61 净 +24.59bps，MDE80=50.91bps。FOMC 周一至周三 DA n=49/9 日净 −27.33bps，MDE80=37.94bps。两者均只作描述，不立项。
+5. **外部策略本地探测**：指数日内动量（Gao et al.）在 45 只个股最后半小时净 −10.73bps，无转移价值；20d→5d 时间序列动量多头侧净 +30.97bps 但 MDE80=67.83bps、幸存者偏差，非 DA 证据。可借鉴原则是波动率/风险尺寸管理（Moreira/Muir、Barroso/Santa-Clara），映射到既有 RFC-155 R2，不新增 sizing 轴。
+6. **建议顺序不变但更聚焦**：P0 DA-only R/费/MFE 捕获率度量；P1 RFC-158 继续攒样；P2 RFC-155 R2 open15 0.5× 继续前瞻；P3 费用第二变量、不抬票面摊费；P4 12 月按 OKR 三选一，不默认加门。
+
+## 13. 跳出 DA 单策略：外部策略研究沙盒（2026-11-12 02:02 追加）
+
+详见 `docs/debates/DEB-20261112-beyond-da-strategy-research.md`。本节只登记新增研究指针，不改写 §0–§12 历史轮次。
+
+1. **研究边界扩大**：不再把 DA 当系统边界；预注册 6 个外部机制家族（5d 反转、12-1 动量、overnight/intraday 分解、Donchian 趋势、30min ORB、经济替代配对），固定参数/成本/判据后只读探测。
+2. **本轮淘汰**：个股 30min ORB 净 −8.91bps（t=−3.84）；3 对配对净 −13.08bps（t=−0.94）；无条件每日隔夜/日内搬运扣费后均负；H1/H2 多空 primary 的日簇 t<1。空头腿在 H1/H2 均负，不支持照搬市场中性。
+3. **值得继续研究的不是新门，而是结构**：长-only 12-1 动量 raw +357bps/21d、skew +2.57、maxDD −22.2%、费/毛 2.7%；长-only 5d 反转 alpha vs QQQ +45bps/5d（t=2.51）；两者利润主要集中 overnight。DA 费/毛 123.6%，结构性问题是毛利太小/费用太高/左尾太肥。
+4. **仍不可上线**：票池非 PIT、幸存者偏差、无真实借券/bid-ask；H2 alpha vs QQQ t=2.24 未达 2.802。12 月若 pivot，优先长-only 中期动量/dual momentum 预注册影子，其次流动性冲击版短期反转、ETF 趋势；先补 PIT 数据 mart 与成本/benchmark 强制列。
+5. **零行为变更**：未新建生产影子/门/sizing/频率，未改代码/配置/DB/cron/推送，未重启，未下单。

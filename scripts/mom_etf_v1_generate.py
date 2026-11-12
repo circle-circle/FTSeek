@@ -14,7 +14,8 @@ sys.path.insert(0, str(REPO))
 from app.playbook.pilot_policy import (  # noqa: E402
     MOM_ETF_V1,
     compute_mom_candidates,
-    is_rebalance_day,
+    previous_local_trading_day,
+    rebalance_day_status,
     mom_etf_v1_decision_id,
     size_mom_order,
 )
@@ -84,18 +85,24 @@ def main() -> int:
 
     now_et_dt = now_et()
     trade_date = now_et_dt.date().isoformat()
-    if not args.force and not is_rebalance_day(now_et_dt.date()):
-        print(json.dumps({"status": "no_op", "reason": "not_rebalance_day", "date": trade_date}))
-        return 0
+    if not args.force:
+        rebalance = rebalance_day_status(now_et_dt.date())
+        if rebalance.reason == "calendar_unavailable":
+            print(json.dumps({"status": "fail_closed", "reason": "calendar_unavailable",
+                              "date": trade_date, "error": str(rebalance.error)}))
+            return 1
+        if not rebalance.is_rebalance_day:
+            print(json.dumps({"status": "no_op", "reason": rebalance.reason,
+                              "date": trade_date,
+                              "trading_day_index": rebalance.trading_day_index}))
+            return 0
 
-    from app.utils.holiday_calendar import get_holiday_calendar
-
-    expected_asof = get_holiday_calendar().prev_trading_day("US", now_et_dt.date())
-    if expected_asof is None:
+    try:
+        expected_asof_date = previous_local_trading_day(now_et_dt.date()).isoformat()
+    except Exception as exc:
         print(json.dumps({"status": "fail_closed", "reason": "previous_trading_day_unavailable",
-                          "date": trade_date}))
+                          "date": trade_date, "error": str(exc)}))
         return 1
-    expected_asof_date = expected_asof.isoformat()
 
     bars_by_symbol = load_bars()
     asof_date = str(bars_by_symbol["US.QQQ"][-1][0])[:10]

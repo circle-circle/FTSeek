@@ -278,6 +278,13 @@ def install_isolation(workdir: Path, violations: list, db_path: Path):
 
     def connect_guarded(database, *a, **kw):
         name = os.fspath(database)
+        if name.startswith("file:"):
+            target, separator, query = name[5:].partition("?")
+            if target in (PRODUCTION_DB, LIVE_DB):
+                name = f"file:{db_path}{separator}{query}"
+            elif not in_tmp(target):
+                guard(target, "sqlite3.connect")
+            return raw_connect(name, *a, **kw)
         if name in (PRODUCTION_DB, LIVE_DB):
             return raw_connect(str(db_path), *a, **kw)      # 显式改道 (不改语义)
         if name != ":memory:" and not in_tmp(name):
@@ -337,7 +344,23 @@ def run(workdir: Path, db_path: Path) -> dict:
              # [RFC-125] 写库边界冲突影子 (conftest 缝表已登记, 本驱动清单独立维护
              #   — 漏改道 = 链内 save_instruction 触发冲突时直写生产 jsonl)。
              patch("app.playbook.conflict_shadow._CONFLICT_SHADOW_PATH",
-                   workdir / "data" / "shadow" / "instruction_conflict.jsonl")]
+                   workdir / "data" / "shadow" / "instruction_conflict.jsonl"),
+             # [RFC-200] 黑窗影子与 conftest 缝表双登记；本驱动不读缝表。
+             patch("app.playbook.pipeline_parts.auto_execute_flow._blackout_shadow_path",
+                   lambda: workdir / "data" / "entry_blackout_shadow.jsonl"),
+             # EXT 风险影子同样双登记，防止下单全链写生产。
+             patch("scripts.extended_hours_entry_executor.SHADOW_DIR",
+                   workdir / "data" / "shadow"),
+             # LLM 审计库与 conftest 缝表双登记，避免模型调用测试写生产。
+             patch("app.llm.features.audit_db._get_db_path",
+                   lambda: str(workdir / "data" / "llm_audit.db")),
+             # portfolio_heat 走 db_utils.get_main_db，不能只改 _DB_PATH 常量；
+             # 否则 admission 在离线链中仍直读生产 open_positions。
+             patch("app.playbook.portfolio_heat._db_path",
+                   lambda: workdir / "chain.sqlite"),
+             # Signal IC 快照库同样双登记，避免盘后巡检写生产。
+             patch("app.analysis.signal_ic_tracker._get_db_path",
+                   lambda: str(workdir / "data" / "signal_snapshots.db"))]
     daily_active_pool_module._active_pool_instance = None
     original_pool_init = daily_active_pool_module.DailyActivePool.__init__
 

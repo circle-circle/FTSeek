@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -94,7 +94,9 @@ def _patch_writer(monkeypatch, db, asof="2026-11-12"):
     monkeypatch.setattr("sys.argv", ["mom_etf_v1_generate.py"])
     bars = {symbol: [[asof, 0, 0, 0, 100.0]] for symbol in pilot_policy.MOM_ETF_V1.universe}
     monkeypatch.setattr(writer, "load_bars", lambda: bars)
-    monkeypatch.setattr(writer, "is_rebalance_day", lambda today: True)
+    monkeypatch.setattr(writer, "rebalance_day_status", lambda today: pilot_policy.RebalanceDayStatus(
+        True, "rebalance_day", 0))
+    monkeypatch.setattr(writer, "previous_local_trading_day", lambda today: date(2026, 11, 12))
     monkeypatch.setattr(writer, "compute_mom_candidates", lambda bars, asof: [
         {"symbol": "US.QQQ", "close": 100.0, "momentum_12_1": 0.1, "asof_date": asof},
     ])
@@ -102,12 +104,6 @@ def _patch_writer(monkeypatch, db, asof="2026-11-12"):
     monkeypatch.setattr("app.utils.timezone.now_et", lambda: datetime(
         2026, 11, 13, 9, 0, tzinfo=timezone(timedelta(hours=-5))))
 
-    class Calendar:
-        def prev_trading_day(self, market, today, max_days=14):
-            from datetime import date
-            return date(2026, 11, 12)
-
-    monkeypatch.setattr("app.utils.holiday_calendar.get_holiday_calendar", lambda: Calendar())
     monkeypatch.setattr("app.playbook.db.route_playbook_db", lambda arm: db)
     return writer
 
@@ -149,6 +145,18 @@ def test_writer_rejects_da_overwrite_and_stale_bars(monkeypatch, capsys):
     assert payload["reason"] == "bars_not_previous_trading_day"
 
 
+def test_writer_calendar_failure_is_fail_closed_not_no_op(monkeypatch, capsys):
+    writer = _patch_writer(monkeypatch, object())
+    monkeypatch.setattr(writer, "rebalance_day_status", lambda today: (
+        pilot_policy.RebalanceDayStatus(
+            False, "calendar_unavailable", error=RuntimeError("calendar down"))))
+    assert writer.main() == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "fail_closed"
+    assert payload["reason"] == "calendar_unavailable"
+    assert "calendar down" in payload["error"]
+
+
 class _FakePBConfig:
     def get_horizon_params(self, horizon):
         return {}
@@ -157,7 +165,8 @@ class _FakePBConfig:
         return default
 
 
-def _run_auto_execute(monkeypatch, instruction, now_et_dt, now_sequence=None):
+def _run_auto_execute(monkeypatch, instruction, now_et_dt, now_sequence=None,
+                      quote_ctx="default", quote_error=None):
     from app.playbook.pipeline_parts import auto_execute_flow as aef
     import datetime as datetime_module
 
@@ -196,6 +205,10 @@ def _run_auto_execute(monkeypatch, instruction, now_et_dt, now_sequence=None):
 
     class FakeRouter:
         def get_full_market_context(self, symbol):
+            if quote_error is not None:
+                raise quote_error
+            if quote_ctx != "default":
+                return quote_ctx
             return {"price": 100.0, "last": 100.0, "lv3_bid": 99.9,
                     "lv3_ask": 100.0, "lv3_quote_age_ms": 100}
 
@@ -227,7 +240,8 @@ def _run_auto_execute(monkeypatch, instruction, now_et_dt, now_sequence=None):
     monkeypatch.setattr("app.execution.dual_broker.get_dual_broker", lambda: FakeBroker())
     monkeypatch.setattr(aef, "progress_ping", lambda: None)
     monkeypatch.setattr(pilot_policy, "entries_enabled", lambda: True)
-    monkeypatch.setattr(pilot_policy, "is_rebalance_day", lambda today, policy=None: True)
+    monkeypatch.setattr(pilot_policy, "rebalance_day_status", lambda today, policy=None: (
+        pilot_policy.RebalanceDayStatus(True, "rebalance_day", 0)))
     monkeypatch.setattr(pilot_policy, "mom_budget_snapshot", lambda now, policy=None: (0, 0.0))
     monkeypatch.setattr("app.execution.fee_model.estimate_round_trip",
                         lambda quantity, entry, exit_price, direction, date: {"total": 4.0})
@@ -298,6 +312,28 @@ def test_auto_execute_mom_uses_shared_loop_and_v1_geometry(monkeypatch):
     assert params["position_size"] == 49
 
 
+@pytest.mark.parametrize("quote_kwargs", [
+    {"quote_ctx": {}},
+    {"quote_error": RuntimeError("quote feed down")},
+])
+def test_auto_execute_mom_quote_failure_is_transient_not_fee_skip(monkeypatch, quote_kwargs):
+    now = datetime(2026, 11, 13, 10, 0, tzinfo=timezone(timedelta(hours=-5)))
+    instruction = {
+        "id": 1,
+        "decision_id": "MOM-ETF-V1-20261113-US.XLE",
+        "symbol": "US.XLE", "direction": "BUY", "entry_price": 95.0,
+        "stop_loss": 92.0, "executed": 0, "triggered": 1,
+        "raw_instruction_json": {"source": "mom_etf_v1"},
+    }
+    result, executed, updated = _run_auto_execute(
+        monkeypatch, instruction, now, **quote_kwargs)
+    assert result["executed"] == 0 and result["skipped"] == 1
+    assert executed == []
+    assert updated["direction"] == "BUY", "报价故障不得终结当日指令"
+    assert updated["skip_reason"].startswith("MOM_QUOTE_UNAVAILABLE")
+    assert "MOM_FEE_SIZE_INFEASIBLE" not in updated["skip_reason"]
+
+
 def test_auto_execute_mom_expires_after_cutoff(monkeypatch):
     now = datetime(2026, 11, 13, 14, 1, tzinfo=timezone(timedelta(hours=-5)))
     instruction = {
@@ -337,3 +373,165 @@ def test_auto_execute_mom_rechecks_cutoff_before_order(monkeypatch):
     assert result["executed"] == 0
     assert executed == []
     assert updated["skip_reason"] == "MOM_SAME_DAY_EXPIRED"
+
+
+# ── MOM 出场监控 metadata 写入收敛 (2026-11-12) ──────────────────────────────
+# 病灶: MOM 分支在 20s 快循环里每轮无条件 `UPDATE trade_records SET metadata_json`
+#   + commit (每仓 ~1200 次/日), 字段多数轮次不变 = 纯噪声 WAL/CPU 开销。
+# 修法: 仅峰值/谷值/MFE/MAE/policy_id 实际变化才写; 首次初始化仍写; 退出行为不变
+#   (退出判定不依赖本次写入)。
+
+_MOM_EXIT_SCHEMA = """
+CREATE TABLE trade_records (
+    id INTEGER PRIMARY KEY, trade_date TEXT, symbol TEXT, direction TEXT,
+    entry_time TEXT, exit_time TEXT, entry_price REAL, exit_price REAL,
+    quantity INTEGER, exit_reason TEXT, futu_order_id TEXT, source_type TEXT,
+    metadata_json TEXT, decision_id TEXT, trade_mode TEXT);
+"""
+
+_MOM_DECISION_ID = "MOM-ETF-V1-20261113-US.QQQ"
+
+
+def _seed_mom_exit_row(db_path, metadata, entry_price=100.0, stop_loss=97.0):
+    meta = {"stop_loss": stop_loss, **metadata}
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript(_MOM_EXIT_SCHEMA)
+    conn.execute(
+        "INSERT INTO trade_records (id, trade_date, symbol, direction, entry_price,"
+        " entry_time, quantity, source_type, metadata_json, futu_order_id, decision_id,"
+        " trade_mode) VALUES (1,'2026-11-13','US.QQQ','LONG',?,'2026-11-13T10:00:00-05:00',"
+        " 10,'PLAYBOOK_SIM',?,'','%s','simulate')" % _MOM_DECISION_ID,
+        (entry_price, json.dumps(meta)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _run_mom_exit_monitor(monkeypatch, db_path, price):
+    """跑一轮 monitor_playbook_exits, 返回 (exited, metadata UPDATE 语句列表, fake dual)。"""
+    import types
+
+    from app.playbook import pipeline as pb
+    import app.core.scheduler_triggers as trig
+    import app.execution.dual_broker as dual_broker
+
+    statements = []
+    real_connect = sqlite3.connect
+
+    def traced_connect(*args, **kwargs):
+        conn = real_connect(*args, **kwargs)
+        conn.set_trace_callback(statements.append)
+        return conn
+
+    monkeypatch.setattr(sqlite3, "connect", traced_connect)
+    monkeypatch.setattr("app.core.paths.get_trade_records_db_for_arm", lambda arm: str(db_path))
+    monkeypatch.setattr(trig, "ET", timezone.utc)
+    monkeypatch.setattr(trig, "get_market_phase", lambda: trig.MarketPhase.TRADING)
+
+    # 冻结时钟: 否则真实日期推过 2026-12-15 后 MAX_HOLD 会先触发, 测试变成时间炸弹。
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            fixed = datetime(2026, 11, 13, 15, 0, tzinfo=timezone.utc)
+            return fixed.astimezone(tz) if tz else fixed
+
+    monkeypatch.setattr(pb, "datetime", FrozenDateTime)
+    monkeypatch.setattr(pb, "_resume_playbook_exits", lambda **kw: (0, set(), True))
+    monkeypatch.setattr(pb, "_portfolio_backstop_evaluate", lambda rows, quotes, cfg: None)
+    monkeypatch.setattr(pb, "_playbook_exit_owner", lambda db_path, row, meta: {"kind": "direct"})
+    monkeypatch.setattr(pb, "_playbook_exit_decision",
+                        lambda reason, px, meta, hours=0.0: {"exit_reason": reason})
+    monkeypatch.setattr(pb, "_book_playbook_exit_result", lambda dual, result, conn=None: 1)
+    monkeypatch.setattr(pb, "_alert_close_failure", lambda *a, **k: None)
+    # 防线: MOM 分支必须在共享规则链之前接管; 若它没接住, 共享路径会调这两者 → 测试必红
+    #   (否则「零 metadata 写」可能只是没走到行/没进 MOM 分支的假绿)。
+    monkeypatch.setattr(pb, "_check_playbook_exit_rules",
+                        lambda *a, **k: pytest.fail("MOM 行误入共享退出规则链"))
+    monkeypatch.setattr(pb, "_track_bar_peak_trough",
+                        lambda *a, **k: pytest.fail("MOM 行误入共享 peak/trough 跟踪"))
+
+    class FakeDual:
+        def __init__(self):
+            self.closed = []
+
+        def close_position(self, symbol, qty, direction, **kwargs):
+            self.closed.append((symbol, qty, direction, kwargs))
+            return {"success": True}
+
+    fake_dual = FakeDual()
+    monkeypatch.setattr(dual_broker, "get_dual_broker", lambda: fake_dual)
+
+    class Router:
+        def get_batch_quotes(self, symbols):
+            return {s: {"last": price, "price": price} for s in symbols}
+
+        def get_quote(self, symbol):
+            return {"last": price, "price": price}
+
+    exited = pb.monitor_playbook_exits(types.SimpleNamespace(data_router=Router()))
+    assert any("metadata_json" in s and s.lstrip().upper().startswith("SELECT")
+               for s in statements), "未加载到持仓行 (测试前置失败, 非绿)"
+    updates = [s for s in statements if "UPDATE trade_records SET metadata_json" in s]
+    return exited, updates, fake_dual
+
+
+def _read_mom_metadata(db_path):
+    conn = sqlite3.connect(str(db_path))
+    try:
+        raw = conn.execute("SELECT metadata_json FROM trade_records WHERE id = 1").fetchone()[0]
+    finally:
+        conn.close()
+    return json.loads(raw)
+
+
+def test_mom_exit_skips_metadata_write_when_fields_unchanged(monkeypatch, tmp_path):
+    db_path = tmp_path / "trades.db"
+    _seed_mom_exit_row(db_path, {
+        "peak_price": 100.0, "trough_price": 100.0,
+        "mfe_pct": 0.0, "mae_pct": 0.0, "policy_id": "mom_etf_v1",
+    })
+    exited, updates, fake_dual = _run_mom_exit_monitor(monkeypatch, db_path, price=100.0)
+    assert exited == 0 and fake_dual.closed == []
+    assert updates == [], "字段无变化的 20s 轮次不得再写 metadata (原每轮无条件 UPDATE)"
+
+
+def test_mom_exit_initializes_metadata_on_first_round(monkeypatch, tmp_path):
+    db_path = tmp_path / "trades.db"
+    _seed_mom_exit_row(db_path, {})  # 首次: 无 peak/trough/mfe/mae/policy_id
+    _, updates, _ = _run_mom_exit_monitor(monkeypatch, db_path, price=100.0)
+    assert len(updates) == 1, "首次字段初始化必须落库"
+    meta = _read_mom_metadata(db_path)
+    assert meta["peak_price"] == 100.0
+    assert meta["trough_price"] == 100.0
+    assert meta["mfe_pct"] == 0.0
+    assert meta["mae_pct"] == 0.0
+    assert meta["policy_id"] == "mom_etf_v1"
+
+
+def test_mom_exit_writes_when_peak_or_trough_changes(monkeypatch, tmp_path):
+    db_path = tmp_path / "trades.db"
+    _seed_mom_exit_row(db_path, {
+        "peak_price": 90.0, "trough_price": 100.0,
+        "mfe_pct": 0.0, "mae_pct": 0.0, "policy_id": "mom_etf_v1",
+    })
+    _, updates, _ = _run_mom_exit_monitor(monkeypatch, db_path, price=101.0)
+    assert len(updates) == 1, "peak 创新高必须落库"
+    meta = _read_mom_metadata(db_path)
+    assert meta["peak_price"] == 101.0
+    assert meta["mfe_pct"] == pytest.approx(1.0)
+
+
+def test_mom_exit_still_exits_when_metadata_unchanged(monkeypatch, tmp_path):
+    """写入收敛不得改变退出行为: 字段无变化时 SL 仍要触发平仓。"""
+    db_path = tmp_path / "trades.db"
+    # price=96, 与 SL=97 触发; peak/trough/mfe/mae 已与 96 对齐 ⇒ metadata 无变化
+    _seed_mom_exit_row(db_path, {
+        "peak_price": 100.0, "trough_price": 96.0,
+        "mfe_pct": 0.0, "mae_pct": 4.0, "policy_id": "mom_etf_v1",
+    })
+    exited, updates, fake_dual = _run_mom_exit_monitor(monkeypatch, db_path, price=96.0)
+    assert updates == [], "字段无变化不应写库"
+    assert exited == 1
+    assert len(fake_dual.closed) == 1
+    assert fake_dual.closed[0][0] == "US.QQQ"
+    assert fake_dual.closed[0][3]["exit_decision"]["exit_reason"] == "SL_INITIAL"

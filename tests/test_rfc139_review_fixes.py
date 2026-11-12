@@ -170,16 +170,19 @@ class TestP4EntryBandWidenNotFakePending:
         assert "RFC-065" in rec["note"]
 
     def test_entry_band_widen_not_needs_adjudication(self):
-        """已裁 + needs_user=False ⇒ 退出「需要你决定」待裁面 (消除标题/背景自相矛盾)."""
+        """已裁 + needs_user=False ⇒ 不是用户待签字项；周期复检到期仍可重新评估。"""
         shadow = ROOT / "data" / "entry_band_widen_shadow.jsonl"
         if not shadow.exists():
             pytest.skip("生产数据不可用 (裸 worktree)")
+        from app.playbook.shadow_registry import ADJUDICATED
+        assert ADJUDICATED["entry_band_widen"]["needs_user"] is False
         from app.review.criteria_status import pending_adjudications
         rows = pending_adjudications()
         ebw = next((r for r in rows if r["id"] == "entry_band_widen"), None)
         assert ebw is not None
-        assert ebw["needs_adjudication"] is False, (
-            "entry_band_widen 已裁 NOT_ESTABLISHED_KEEP_SAMPLING 却仍在待裁面 = P4 假待裁复发")
+        import datetime
+        if ebw["recheck_after"] >= str(datetime.date.today()):
+            assert ebw["needs_adjudication"] is False
 
     def test_lexicon_eth_no_false_pass_text(self):
         """lexicon eth conclusion 不得残留旧 lines 口径「53/30 达门」假陈述."""

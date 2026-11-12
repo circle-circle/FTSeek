@@ -1569,6 +1569,7 @@ playbook:
     #   = 变相硬 TP (破几何潜伏缺陷, 一次 fee-aware 故障即激活)。0.15 ≈ fee-aware 实弹
     #   均值 0.147%, 回退垫 0.15+0.2=0.35 < 0.4 几何安全。注意: 本键在 config 版本哈希内,
     #   值变更 → KR2 判分开新窗口 (不改变实现 PnL, 窗口分裂属保守可接受)。
+    breakeven_at_pct: 0.4  # 显式代码兜底；与 config/playbook_horizon.yaml 现行 default/因子规则 0.4 对齐，非新阈值
     breakeven_fee_cushion_pct: 0.15
     breakeven_fee_aware_enabled: true
     # 2026-08-20 (方案A, 用户裁"同意先方案A"): 保本触发线滑点垫 + 限价超时缩短.

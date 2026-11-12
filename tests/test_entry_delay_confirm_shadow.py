@@ -182,7 +182,7 @@ class TestMainIntegration:
     def test_rows_and_summary_math(self, tmp_path, monkeypatch):
         self._setup(tmp_path, monkeypatch)
         n_new = edc.main(only_date="2026-09-08", allow_fetch=False)
-        assert n_new == 4                     # 2 trades × 2 delays
+        assert n_new == 8                     # 2 trades × 4 delays (2/5/10/15min)
         rows = [json.loads(l) for l in edc.OUT.read_text(encoding="utf-8").splitlines()]
         by_key = {(r["trade_id"], r["delay_min"]): r for r in rows}
         r12 = by_key[(1, 2)]
@@ -220,7 +220,7 @@ class TestMainIntegration:
         edc.main(only_date="2026-09-08", allow_fetch=False)
         n2 = edc.main(only_date="2026-09-08", allow_fetch=False)
         assert n2 == 0
-        assert len(edc.OUT.read_text(encoding="utf-8").splitlines()) == 4
+        assert len(edc.OUT.read_text(encoding="utf-8").splitlines()) == 8
 
 
 class TestReadOnlyDiscipline:

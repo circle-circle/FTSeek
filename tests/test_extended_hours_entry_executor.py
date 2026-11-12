@@ -1,6 +1,7 @@
 import contextlib
 import fcntl
 import json
+import logging
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -68,6 +69,11 @@ def _snapshot_frame(symbols):
         "pre_price": 102.0,
         "last_price": 101.0,
         "pre_volume": 20000,
+        "bid_price": 101.99,
+        "ask_price": 102.01,
+        "bid_vol": 1_000,
+        "ask_vol": 1_000,
+        "total_market_val": 5_000_000_000,
     } for symbol in symbols])
 
 
@@ -122,6 +128,29 @@ def test_snapshot_candidates_exception_does_not_bisect(capsys):
     assert executor._snapshot_candidates("premarket", qctx, ["US.AAPL", "US.MSFT"]) == []
     assert qctx.calls == 1
     assert "TimeoutError" in capsys.readouterr().out
+
+
+def test_snapshot_candidates_attaches_batch_quote_without_extra_request():
+    class QuoteContext:
+        def __init__(self):
+            self.calls = 0
+
+        def get_market_snapshot(self, symbols):
+            self.calls += 1
+            return 0, _snapshot_frame(symbols)
+
+    qctx = QuoteContext()
+    rows = executor._snapshot_candidates("premarket", qctx, ["US.AAPL"])
+
+    assert qctx.calls == 1
+    assert rows[0]["_batch_quote"] == {
+        "bid": 101.99,
+        "ask": 102.01,
+        "bid_volume": 1_000.0,
+        "ask_volume": 1_000.0,
+        "market_cap": 5_000_000_000.0,
+        "spread_pct": 0.0196,
+    }
 
 
 @pytest.fixture()
@@ -323,6 +352,226 @@ def test_entry_grade_requires_market_cap_and_turnover_then_scales_position():
     assert executor._entry_grade(10.0, 2_000_000, 0) == (None, "market_cap_missing")
     assert executor._entry_grade(10.0, 2_000_000, 500_000_000) == (None, "market_cap_too_low")
     assert executor._entry_grade(10.0, 900_000, 5_000_000_000) == (None, "turnover_too_low")
+
+
+def test_grade_from_quote_separates_unavailable_from_missing():
+    assert executor._grade_from_quote(10.0, 2_000_000, None) == (None, "quote_unavailable")
+    assert executor._grade_from_quote(10.0, 2_000_000, {"market_cap": 0}) == (None, "market_cap_missing")
+    assert executor._grade_from_quote(10.0, 2_000_000, {"market_cap": 5_000_000_000}) == ("A", None)
+
+
+def test_liquidity_quote_logs_ret_error(caplog):
+    class FailingQuoteContext:
+        def get_market_snapshot(self, symbols):
+            return -1, "获取市场快照频率太高"
+
+    with caplog.at_level(logging.WARNING):
+        assert executor._liquidity_quote(FailingQuoteContext(), "US.TSLA") is None
+    assert "liquidity quote failed" in caplog.text
+    assert "US.TSLA" in caplog.text
+
+
+def test_research_downstream_marks_quote_unavailable(monkeypatch):
+    monkeypatch.setattr(executor, "_liquidity_quote", lambda qctx, symbol: None)
+    counts = {}
+    rejects = []
+    item = {
+        "symbol": "US.TSLA",
+        "px": 380.0,
+        "chg": 3.0,
+        "vol": 1_000_000,
+        "_source": "research_watchlist",
+    }
+
+    result = executor._research_downstream_gates(
+        item, "premarket", "2026-11-11", None, counts, rejects
+    )
+
+    assert result is None
+    assert counts["research_quote_unavailable"] == 1
+    assert rejects[0]["reason"] == "quote_unavailable"
+    assert rejects[0]["quote"] is None
+
+
+def _batch_quote_item(batch_quote):
+    return {
+        "symbol": "US.TSLA",
+        "px": 10.0,
+        "chg": 3.0,
+        "vol": 2_000_000,
+        "_source": "research_watchlist",
+        "_batch_quote": batch_quote,
+    }
+
+
+def _liquid_quote():
+    return {
+        "bid": 9.99,
+        "ask": 10.01,
+        "bid_volume": 1_000,
+        "ask_volume": 1_000,
+        "market_cap": 5_000_000_000,
+        "spread_pct": 0.2,
+    }
+
+
+def test_batch_quote_counterfactual_records_recovery_without_live_change(monkeypatch):
+    monkeypatch.setattr(executor, "_liquidity_quote", lambda qctx, symbol: None)
+    monkeypatch.setattr(executor, "_entry_window_reason", lambda session, grade: None)
+    monkeypatch.setattr(
+        executor, "_entry_structure_gate",
+        lambda *args, **kwargs: pytest.fail("shadow must not call structure gate"),
+    )
+    counts = {}
+    rejects = []
+
+    result = executor._research_downstream_gates(
+        _batch_quote_item(_liquid_quote()), "premarket", "2026-11-11",
+        None, counts, rejects,
+    )
+
+    assert result is None
+    assert counts["research_quote_unavailable"] == 1
+    assert counts["research_batch_quote_seen"] == 1
+    assert counts["research_batch_quote_available"] == 1
+    assert counts["research_batch_quote_reject_would_advance"] == 1
+    assert counts["research_batch_quote_would_change"] == 1
+    assert rejects[0]["reason"] == "quote_unavailable"
+    assert rejects[0]["batch_quote_cf"]["batch_pretrade_passed"] is True
+    assert rejects[0]["batch_quote_cf"]["would_change"] is True
+
+
+def test_batch_quote_counterfactual_does_not_block_live_pass(monkeypatch):
+    monkeypatch.setattr(executor, "_liquidity_quote", lambda qctx, symbol: _liquid_quote())
+    monkeypatch.setattr(executor, "_entry_window_reason", lambda session, grade: None)
+    monkeypatch.setattr(
+        executor, "_entry_structure_gate",
+        lambda qctx, symbol, session, price: ({"vwap": 9.0}, None, {"vwap": 9.0}),
+    )
+    counts = {}
+    rejects = []
+
+    result = executor._research_downstream_gates(
+        _batch_quote_item(_liquid_quote()), "premarket", "2026-11-11",
+        None, counts, rejects,
+    )
+
+    assert result is not None
+    assert rejects == []
+    assert counts["research_batch_quote_seen"] == 1
+    assert counts.get("research_batch_quote_would_change", 0) == 0
+    assert counts.get("research_batch_quote_pass_would_block", 0) == 0
+
+
+def test_batch_quote_counterfactual_none_quote_is_not_a_block(monkeypatch):
+    monkeypatch.setattr(executor, "_liquidity_quote", lambda qctx, symbol: _liquid_quote())
+    monkeypatch.setattr(executor, "_entry_window_reason", lambda session, grade: None)
+    monkeypatch.setattr(
+        executor, "_entry_structure_gate",
+        lambda qctx, symbol, session, price: ({"vwap": 9.0}, None, {"vwap": 9.0}),
+    )
+    counts = {}
+    rejects = []
+    item = _batch_quote_item(None)
+
+    result = executor._research_downstream_gates(
+        item, "premarket", "2026-11-11", None, counts, rejects,
+    )
+
+    assert result is not None and rejects == []
+    assert item["_batch_quote_cf"]["batch_quote_available"] is False
+    assert item["_batch_quote_cf"]["would_change"] is None
+    assert counts["research_batch_quote_seen"] == 1
+    assert counts.get("research_batch_quote_available", 0) == 0
+    assert counts.get("research_batch_quote_pass_would_block", 0) == 0
+    assert counts.get("research_batch_quote_would_change", 0) == 0
+
+
+def test_batch_quote_counterfactual_flags_pass_would_block_without_live_change(monkeypatch):
+    wide_batch_quote = dict(_liquid_quote(), bid=9.0, ask=11.0, spread_pct=20.0)
+    monkeypatch.setattr(executor, "_liquidity_quote", lambda qctx, symbol: _liquid_quote())
+    monkeypatch.setattr(executor, "_entry_window_reason", lambda session, grade: None)
+    monkeypatch.setattr(
+        executor, "_entry_structure_gate",
+        lambda qctx, symbol, session, price: ({"vwap": 9.0}, None, {"vwap": 9.0}),
+    )
+    counts = {}
+    rejects = []
+
+    result = executor._research_downstream_gates(
+        _batch_quote_item(wide_batch_quote), "premarket", "2026-11-11",
+        None, counts, rejects,
+    )
+
+    assert result is not None
+    assert rejects == []
+    assert counts["research_batch_quote_pass_would_block"] == 1
+    assert counts["research_batch_quote_would_change"] == 1
+
+
+def test_batch_quote_counterfactual_is_traceable_in_research_funnel(monkeypatch, tmp_path):
+    wide_batch_quote = dict(_liquid_quote(), bid=9.0, ask=11.0, spread_pct=20.0)
+    monkeypatch.setattr(executor, "_liquidity_quote", lambda qctx, symbol: _liquid_quote())
+    monkeypatch.setattr(executor, "_entry_window_reason", lambda session, grade: None)
+    monkeypatch.setattr(
+        executor, "_entry_structure_gate",
+        lambda qctx, symbol, session, price: ({"vwap": 9.0}, None, {"vwap": 9.0}),
+    )
+    monkeypatch.setattr(executor, "RESEARCH_SOURCES_ON", True)
+    funnel_path = tmp_path / "funnel.jsonl"
+    monkeypatch.setattr(executor, "RESEARCH_FUNNEL", funnel_path)
+    item = _batch_quote_item(wide_batch_quote)
+
+    result = executor._research_downstream_gates(
+        item, "premarket", "2026-11-11", None, {}, []
+    )
+    executor._record_research_funnel("premarket", "2026-11-11", item, "ordered")
+
+    assert result is not None
+    row = json.loads(funnel_path.read_text().strip())
+    assert row["symbol"] == "US.TSLA"
+    assert row["batch_quote_cf"]["would_change"] is True
+    assert row["batch_quote_cf"]["batch_reason"] == "spread_too_wide"
+
+
+def test_batch_quote_counterfactual_failure_is_harmless(monkeypatch):
+    monkeypatch.setattr(executor, "_liquidity_quote", lambda qctx, symbol: None)
+    monkeypatch.setattr(
+        executor, "_batch_quote_counterfactual",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("shadow boom")),
+    )
+    counts = {}
+    rejects = []
+
+    result = executor._research_downstream_gates(
+        _batch_quote_item(_liquid_quote()), "premarket", "2026-11-11",
+        None, counts, rejects,
+    )
+
+    assert result is None
+    assert counts["research_quote_unavailable"] == 1
+    assert "research_batch_quote_seen" not in counts
+    assert rejects[0]["reason"] == "quote_unavailable"
+    assert "batch_quote_cf" not in rejects[0]
+
+
+def test_batch_quote_counterfactual_skips_candidates_without_batch_snapshot(monkeypatch):
+    monkeypatch.setattr(executor, "_liquidity_quote", lambda qctx, symbol: None)
+    counts = {}
+    rejects = []
+    item = {
+        "symbol": "US.TSLA", "px": 10.0, "chg": 3.0, "vol": 2_000_000,
+        "_source": "rank",
+    }
+
+    result = executor._research_downstream_gates(
+        item, "premarket", "2026-11-11", None, counts, rejects
+    )
+
+    assert result is None
+    assert counts["research_quote_unavailable"] == 1
+    assert "research_batch_quote_seen" not in counts
+    assert "batch_quote_cf" not in rejects[0]
 
 
 def test_entry_window_reason_uses_grade_maturity(monkeypatch):
@@ -1117,6 +1366,7 @@ def test_live_path_prints_gate_counts_and_reserves_attempt(isolated_state, monke
     monkeypatch.setattr(executor, "_is_trading_day", lambda: True)
     monkeypatch.setattr(executor, "_in_session_window", lambda session: True)
     monkeypatch.setattr(executor, "_held_symbols", lambda: set())
+    monkeypatch.setattr(executor, "_open_exposure_gate", lambda: None)
     today = executor._today_et()
     _seed_earnings_calendar(monkeypatch, [
         {"symbol": "AFTER", "reportDate": today, "timeOfTheDay": "post-market"},

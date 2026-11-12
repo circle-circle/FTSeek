@@ -39,7 +39,15 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%H:%M:%S",
 )
-logger = logging.getLogger("backfill_ic")
+logger = logging.getLogger("ftseek.replay.backfill_forward_returns")
+
+
+class _YFinanceDelistedNoiseFilter(logging.Filter):
+    def filter(self, record):
+        return "possibly delisted; no price data found" not in record.getMessage()
+
+
+logging.getLogger("yfinance").addFilter(_YFinanceDelistedNoiseFilter())
 
 
 # 加载 .env.us → 环境变量 (MarketDataRouter / FutuLV3 / TwelveDataProvider 都从 env 读 key)

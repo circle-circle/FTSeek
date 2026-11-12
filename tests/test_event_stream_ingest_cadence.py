@@ -1,8 +1,9 @@
 """EventStream 分时采频 (2026-10-18): 关键窗 5m / 盘中 15m / 其余 20m."""
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from scripts.event_stream_ingest import (
+    _is_us_trading_day,
     _read_last_success,
     _write_last_success,
     cadence_minutes,
@@ -47,3 +48,27 @@ def test_state_roundtrip_and_corrupt_fails_open(tmp_path):
     assert _read_last_success(path) == now
     path.write_text("{not-json", encoding="utf-8")
     assert _read_last_success(path) is None
+
+
+def test_is_us_trading_day_uses_no_network_holiday_check(monkeypatch):
+    class Calendar:
+        def __init__(self, holiday):
+            self._holiday = holiday
+
+        def is_us_holiday(self, day):
+            return self._holiday
+
+        def is_trading_day(self, *args, **kwargs):
+            raise AssertionError("cadence must not call network trading-day API")
+
+    monkeypatch.setattr(
+        "app.utils.holiday_calendar.get_holiday_calendar",
+        lambda: Calendar(False),
+    )
+    assert _is_us_trading_day(date(2026, 11, 11)) is True
+
+    monkeypatch.setattr(
+        "app.utils.holiday_calendar.get_holiday_calendar",
+        lambda: Calendar(True),
+    )
+    assert _is_us_trading_day(date(2026, 11, 26)) is False

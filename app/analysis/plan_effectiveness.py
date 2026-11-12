@@ -32,6 +32,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from app.playbook.instruction_attribution import (
+    AMBIGUOUS,
+    canonical_plan_direction,
+    resolve_trade_instruction_ids,
+)
+
 logger = logging.getLogger("ftseek.analysis.plan_effectiveness")
 
 
@@ -112,12 +118,14 @@ class PlanEffectivenessTracker:
             "traded_rate": 0.0,
             "avg_pnl_of_planned": 0.0,
             "unplanned_trade_count": 0,
+            "attribution_ambiguous_count": 0,
             "planned_count": 0,
             "abandoned_count": 0,
             "abandoned_symbols": [],
             "execution_rate": 0.0,
             "execution_rate_basis": (
-                "traded / (non-SKIP targets + entry_confirm_reversed abandoned)"
+                "strict instruction attribution; traded / "
+                "(non-SKIP targets + entry_confirm_reversed abandoned)"
             ),
         }
 
@@ -148,8 +156,6 @@ class PlanEffectivenessTracker:
 
         targets = plan.get("targets", []) or []
         target_evals: List[Dict[str, Any]] = []
-        planned_symbols = set()
-
         for t in targets:
             try:
                 ev = self._evaluate_target(t, trades)
@@ -157,9 +163,6 @@ class PlanEffectivenessTracker:
                 logger.debug(f"[PlanEffectiveness] 评估 target 失败: {e}")
                 continue
             target_evals.append(ev)
-            sym = _norm_symbol(t.get("symbol", ""))
-            if sym:
-                planned_symbols.add(sym)
 
         # 汇总指标
         hit_count = sum(1 for ev in target_evals if ev.get("entry_zone_hit"))
@@ -171,12 +174,14 @@ class PlanEffectivenessTracker:
         ]
         avg_pnl = (sum(pnls_of_planned) / len(pnls_of_planned)) if pnls_of_planned else 0.0
 
-        # 计划外交易: trades 中 underlying ticker 不在 planned_symbols
-        unplanned = 0
-        for tr in trades:
-            sym = _norm_symbol(tr.get("symbol", ""))
-            if sym and sym not in planned_symbols:
-                unplanned += 1
+        planned_trade_indexes = set()
+        for ev in target_evals:
+            planned_trade_indexes.update(ev.pop("_matched_trade_indexes", []))
+        ambiguous_trade_indexes = {
+            idx for idx, trade in enumerate(trades)
+            if trade.get("_resolved_instruction_id") is AMBIGUOUS
+        }
+        unplanned = len(trades) - len(planned_trade_indexes) - len(ambiguous_trade_indexes)
 
         planned_count = len(target_evals)
         abandoned = [
@@ -194,6 +199,7 @@ class PlanEffectivenessTracker:
         report["abandoned_symbols"] = [ev.get("symbol") for ev in abandoned]
         report["avg_pnl_of_planned"] = avg_pnl
         report["unplanned_trade_count"] = unplanned
+        report["attribution_ambiguous_count"] = len(ambiguous_trade_indexes)
 
         try:
             self._save_report(report, date)
@@ -204,7 +210,8 @@ class PlanEffectivenessTracker:
             f"[PlanEffectiveness] {date} | planned={planned_count} | "
             f"traded={traded_count} | abandoned={len(abandoned)} | "
             f"hit_rate={report['hit_rate']:.2%} | traded_rate={report['traded_rate']:.2%} | "
-            f"unplanned={unplanned} | basis={report['execution_rate_basis']}"
+            f"unplanned={unplanned} | ambiguous={len(ambiguous_trade_indexes)} | "
+            f"basis={report['execution_rate_basis']}"
         )
         return report
 
@@ -229,7 +236,7 @@ class PlanEffectivenessTracker:
             conn.row_factory = sqlite3.Row
             try:
                 rows = conn.execute(
-                    "SELECT id, symbol, direction, entry_price, stop_loss, take_profit, "
+                    "SELECT id, symbol, direction, decision_id, entry_price, stop_loss, take_profit, "
                     "confidence, triggered, executed, skip_reason "
                     "FROM playbook_instructions "
                     "WHERE date = ? AND ("
@@ -267,6 +274,7 @@ class PlanEffectivenessTracker:
                     "executed" if r["executed"] else "")
             targets.append({
                 "instruction_id": r["id"],
+                "decision_id": r["decision_id"],
                 "symbol": r["symbol"],
                 "direction": direction,
                 "entry_zone": zone,
@@ -287,10 +295,20 @@ class PlanEffectivenessTracker:
             conn.row_factory = sqlite3.Row
             try:
                 rows = conn.execute(
-                    "SELECT * FROM trade_records WHERE trade_date = ?",
+                    "SELECT * FROM trade_records WHERE trade_date = ? "
+                    "AND source_type IN ('PLAYBOOK_SIM','PLAYBOOK_LIVE') "
+                    "AND (exit_reason IS NULL OR exit_reason != 'PHANTOM_RECONCILE_VOID')",
                     (date,),
                 ).fetchall()
-                return [dict(r) for r in rows]
+                instruction_rows = conn.execute(
+                    "SELECT id, decision_id, date, symbol, direction FROM playbook_instructions"
+                ).fetchall()
+                trades = [dict(r) for r in rows]
+                identities = [dict(r) for r in instruction_rows]
+                resolved_ids = resolve_trade_instruction_ids(trades, identities)
+                for trade, instruction_id in zip(trades, resolved_ids):
+                    trade["_resolved_instruction_id"] = instruction_id
+                return trades
             finally:
                 conn.close()
         except sqlite3.Error as e:
@@ -301,9 +319,8 @@ class PlanEffectivenessTracker:
         """评估单个计划目标: 是否交易、入场区间命中、方向一致、PnL 贡献。"""
         plan_symbol = target.get("symbol", "")
         plan_direction = str(target.get("direction", "")).upper()
+        canonical_direction = canonical_plan_direction(plan_direction)
         entry_zone = target.get("entry_zone") or []
-
-        norm_plan = _norm_symbol(plan_symbol)
 
         ev: Dict[str, Any] = {
             "symbol": plan_symbol,
@@ -333,14 +350,20 @@ class PlanEffectivenessTracker:
             except (TypeError, ValueError):
                 zone_low = zone_high = None
 
-        # 匹配交易
         matched: List[Dict[str, Any]] = []
-        for tr in trades:
-            tr_sym = _norm_symbol(tr.get("symbol", ""))
-            if not tr_sym or not norm_plan:
+        matched_indexes: List[int] = []
+        for index, tr in enumerate(trades):
+            if tr.get("_resolved_instruction_id") != target.get("instruction_id"):
                 continue
-            if tr_sym == norm_plan:
-                matched.append(tr)
+            tr_dir = canonical_plan_direction(tr.get("direction"))
+            if tr_dir:
+                ev["actual_directions"].append(str(tr.get("direction", "")).upper())
+            if canonical_direction not in ("", "ANY") and tr_dir != canonical_direction:
+                continue
+            matched.append(tr)
+            matched_indexes.append(index)
+
+        ev["_matched_trade_indexes"] = matched_indexes
 
         if not matched:
             return ev
@@ -353,8 +376,9 @@ class PlanEffectivenessTracker:
         any_direction_match = False
 
         for tr in matched:
-            # PnL: 优先 realized_pnl, 退回 pnl
-            pnl = tr.get("realized_pnl")
+            pnl = tr.get("pnl_net")
+            if pnl is None:
+                pnl = tr.get("realized_pnl")
             if pnl is None:
                 pnl = tr.get("pnl")
             try:
@@ -376,10 +400,9 @@ class PlanEffectivenessTracker:
                         any_zone_hit = True
 
             # direction
-            tr_dir = str(tr.get("direction", "")).upper()
+            tr_dir = canonical_plan_direction(tr.get("direction"))
             if tr_dir:
-                ev["actual_directions"].append(tr_dir)
-                if plan_direction in ("", "ANY") or tr_dir == plan_direction:
+                if canonical_direction in ("", "ANY") or tr_dir == canonical_direction:
                     any_direction_match = True
 
         ev["pnl_contribution"] = total_pnl

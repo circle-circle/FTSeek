@@ -564,6 +564,8 @@ def _record_research_funnel(session, today, item, stage, reason=""):
             "volume": item.get("vol"),
             "gate_mode": RESEARCH_GATE_MODE,
         }
+        if "_batch_quote_cf" in item:
+            row["batch_quote_cf"] = item["_batch_quote_cf"]
         RESEARCH_FUNNEL.parent.mkdir(parents=True, exist_ok=True)
         with RESEARCH_FUNNEL.open("a") as handle:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -730,6 +732,12 @@ def _entry_grade(price, volume, market_cap):
     if turnover >= A_GRADE_TURNOVER_USD or volume >= 20_000_000:
         return "A", None
     return "B", None
+
+
+def _grade_from_quote(price, volume, quote):
+    if quote is None:
+        return None, "quote_unavailable"
+    return _entry_grade(price, volume, quote.get("market_cap"))
 
 
 def _is_trading_day():
@@ -1251,15 +1259,7 @@ def _snapshot_number(row, key):
         return 0.0
 
 
-def _liquidity_quote(qctx, symbol):
-    from futu import RET_OK
-    try:
-        ret, snapshot = qctx.get_market_snapshot([symbol])
-    except Exception:
-        return None
-    if ret != RET_OK or snapshot is None or not hasattr(snapshot, "iloc") or snapshot.empty:
-        return None
-    row = snapshot.iloc[0]
+def _quote_from_snapshot_row(row):
     bid = _snapshot_number(row, "bid_price")
     ask = _snapshot_number(row, "ask_price")
     bid_volume = _snapshot_number(row, "bid_vol")
@@ -1276,6 +1276,30 @@ def _liquidity_quote(qctx, symbol):
         "market_cap": market_cap,
         "spread_pct": round(spread_pct, 4),
     }
+
+
+def _liquidity_quote(qctx, symbol):
+    from futu import RET_OK
+    try:
+        ret, snapshot = qctx.get_market_snapshot([symbol])
+    except Exception as exc:
+        _log.warning("[ext_entry] liquidity quote exception symbol=%s error=%s",
+                     symbol, exc, exc_info=True)
+        return None
+    if ret != RET_OK:
+        _log.warning("[ext_entry] liquidity quote failed symbol=%s ret=%s error=%s",
+                     symbol, ret, str(snapshot)[:200])
+        return None
+    if snapshot is None or not hasattr(snapshot, "iloc") or snapshot.empty:
+        _log.warning("[ext_entry] liquidity quote empty symbol=%s", symbol)
+        return None
+    row = snapshot.iloc[0]
+    quote = _quote_from_snapshot_row(row)
+    if quote is None:
+        _log.debug("[ext_entry] liquidity quote invalid book symbol=%s bid=%s ask=%s",
+                   symbol, _snapshot_number(row, "bid_price"),
+                   _snapshot_number(row, "ask_price"))
+    return quote
 
 
 def _rounded_order_price(price):
@@ -1579,7 +1603,112 @@ def _record_earnings_near_misses(session, trade_date, candidates):
         _log.warning("earnings near miss file I/O failed", exc_info=True)
 
 
+_QUOTE_GATE_REASONS = {
+    "quote_unavailable", "quote_missing", "market_cap_missing", "market_cap_too_low",
+    "turnover_too_low", "entry_window_not_mature", "spread_too_wide",
+    "price_drift_too_high", "insufficient_ask_depth", "insufficient_bid_depth",
+    "round_trip_fee_too_high",
+}
+
+
+def _batch_quote_counterfactual(item, session, today, live_passed, live_reason):
+    if "_batch_quote" not in item:
+        return None
+    batch_quote = item.get("_batch_quote")
+    batch_quote_available = batch_quote is not None
+    price = float(item.get("px") or 0)
+    volume = float(item.get("vol") or 0)
+    batch_grade, batch_reason = _grade_from_quote(price, volume, batch_quote)
+    batch_passed = False
+    if batch_grade is not None:
+        window_reason = _entry_window_reason(session, batch_grade)
+        if window_reason:
+            batch_reason = window_reason
+        else:
+            position_usd = POSITION_USD if batch_grade == "A" else POSITION_B_USD
+            qty = int(position_usd / price) if price > 0 else 0
+            spread_limit = MAX_SPREAD_PCT_A if batch_grade == "A" else MAX_SPREAD_PCT
+            depth_ratio = MIN_ASK_DEPTH_RATIO_A if batch_grade == "A" else MIN_ASK_DEPTH_RATIO
+            batch_gate, batch_reject_reason = _pretrade_gate(
+                price, qty, batch_quote, today,
+                max_spread_pct=spread_limit,
+                min_ask_depth_ratio=depth_ratio,
+                side="LONG",
+            )
+            batch_passed = batch_gate is not None
+            if not batch_passed:
+                batch_reason = batch_reject_reason
+    if not batch_quote_available:
+        # 无 batch quote 是“不可评估”，不是“batch 会拦截”；否则会把
+        # live_passed=True 全部误计入 pass_would_block，污染 source-arm 裁决。
+        would_change = None
+    elif live_passed:
+        would_change = not batch_passed
+    else:
+        would_change = bool(batch_passed and live_reason in _QUOTE_GATE_REASONS)
+    return {
+        "scope": "grade_window_pretrade",
+        "batch_quote_available": batch_quote_available,
+        "batch_quote": batch_quote,
+        "batch_grade": batch_grade,
+        "batch_reason": batch_reason,
+        "batch_pretrade_passed": batch_passed,
+        "live_passed": live_passed,
+        "live_reason": live_reason,
+        "would_change": would_change,
+    }
+
+
 def _research_downstream_gates(item, session, today, qctx, counts, pretrade_rejects):
+    before = len(pretrade_rejects)
+    result = _research_downstream_gates_live(
+        item, session, today, qctx, counts, pretrade_rejects
+    )
+    try:
+        live_reason = None
+        if result is None:
+            live_reason = (
+                pretrade_rejects[-1].get("reason")
+                if len(pretrade_rejects) > before else "position_too_small"
+            )
+        counterfactual = _batch_quote_counterfactual(
+            item, session, today, result is not None, live_reason
+        )
+        if counterfactual is not None:
+            item["_batch_quote_cf"] = counterfactual
+            counts["research_batch_quote_seen"] = (
+                counts.get("research_batch_quote_seen", 0) + 1
+            )
+            if counterfactual["batch_quote_available"]:
+                counts["research_batch_quote_available"] = (
+                    counts.get("research_batch_quote_available", 0) + 1
+                )
+            if counterfactual["would_change"]:
+                counts["research_batch_quote_would_change"] = (
+                    counts.get("research_batch_quote_would_change", 0) + 1
+                )
+            if (counterfactual["batch_quote_available"]
+                    and counterfactual["live_passed"]
+                    and not counterfactual["batch_pretrade_passed"]):
+                counts["research_batch_quote_pass_would_block"] = (
+                    counts.get("research_batch_quote_pass_would_block", 0) + 1
+                )
+            if (
+                not counterfactual["live_passed"]
+                and counterfactual["batch_pretrade_passed"]
+                and counterfactual["live_reason"] in _QUOTE_GATE_REASONS
+            ):
+                counts["research_batch_quote_reject_would_advance"] = (
+                    counts.get("research_batch_quote_reject_would_advance", 0) + 1
+                )
+            if len(pretrade_rejects) > before:
+                pretrade_rejects[-1]["batch_quote_cf"] = counterfactual
+    except Exception:
+        _log.warning("batch quote counterfactual failed", exc_info=True)
+    return result
+
+
+def _research_downstream_gates_live(item, session, today, qctx, counts, pretrade_rejects):
     """SIM 研究臂: earnings 闸之后的全部下游闸 (与严格臂内联管线**同构同阈值**)。
 
     2026-09-22 用户裁「SIM 研究臂」(DEB-20260920 §12)。本函数是严格臂内联管线的
@@ -1592,7 +1721,7 @@ def _research_downstream_gates(item, session, today, qctx, counts, pretrade_reje
     symbol, price, change_pct, volume = item["symbol"], item["px"], item["chg"], item["vol"]
     source = str(item.get("_source") or "")
     quote = _liquidity_quote(qctx, symbol)
-    grade, grade_reason = _entry_grade(price, volume, quote.get("market_cap") if quote else 0)
+    grade, grade_reason = _grade_from_quote(price, volume, quote)
     if grade is None:
         counts[f"research_{grade_reason}"] = counts.get(f"research_{grade_reason}", 0) + 1
         pretrade_rejects.append({
@@ -1944,7 +2073,8 @@ def _snapshot_candidates(session, qctx, symbols):
                     vol = float(r.get("after_volume", 0) or 0)
                 chg = ((px / prev - 1) * 100) if (px > 0 and prev > 0) else 0.0
                 parsed.append({"symbol": sec, "name": str(r.get("name", "")), "px": px,
-                               "chg": chg, "vol": vol, "prev_close": prev})
+                               "chg": chg, "vol": vol, "prev_close": prev,
+                               "_batch_quote": _quote_from_snapshot_row(r)})
             except Exception:
                 _log.warning("snapshot row parse failed for %s", sec, exc_info=True)
         return parsed
@@ -2773,6 +2903,8 @@ def _print_gate_counts(session, total, counts):
         )
         body = " ".join(f"{k}={int(counts.get(k, 0))}" for k in keys)
         print(f"[ext_entry] 闸计数[{session}] 候选={total} {body}")
+        if counts.get("quote_unavailable"):
+            print(f"[ext_entry] 取数异常[{session}] quote_unavailable={int(counts['quote_unavailable'])}")
         # 事件源可见性 (2026-09-23 用户令「先可见」): 独立一行, 不进主行 (主行是既有解析契约)。
         #   union 模式下的 finnhub 计数 = "靠回落源才认出来的票" ⇒ 直接反映并源到底多放了多少。
         if EARNINGS_EVENT_SOURCE != "calendar":
@@ -2937,7 +3069,7 @@ def collect(session, dry=False):
                             _record_research_funnel(session, today, item, "selected")
                     continue
                 quote = _liquidity_quote(qctx, symbol)
-                grade, grade_reason = _entry_grade(price, volume, quote.get("market_cap") if quote else 0)
+                grade, grade_reason = _grade_from_quote(price, volume, quote)
                 if grade is None:
                     counts[grade_reason] = counts.get(grade_reason, 0) + 1
                     pretrade_rejects.append({
@@ -3232,7 +3364,7 @@ def collect(session, dry=False):
                     continue
 
                 quote = _liquidity_quote(qctx, symbol)
-                grade, grade_reason = _entry_grade(price, volume, quote.get("market_cap") if quote else 0)
+                grade, grade_reason = _grade_from_quote(price, volume, quote)
                 if grade is None:
                     counts[grade_reason] = counts.get(grade_reason, 0) + 1
                     pretrade_rejects.append({
@@ -3464,6 +3596,15 @@ def _write_open_position(
         pos_id = f"EXT-{uuid.uuid4().hex[:12]}"
         # 空头 SL 在**上方** (STOP_PCT<0 ⇒ 取反), 否则盘中兜底会把空头当多头扫掉。
         init_sl = round(entry_px * (1 + STOP_PCT / 100 * (1 if side == "LONG" else -1)), 2)
+        execution_meta = {
+            "arrival_price": float(decision_px) if decision_px else None,
+            "fill_price": float(entry_px) if entry_px else None,
+            "slippage_bps": None,
+            "entry_price_source": "ext_broker_deal_confirm",
+        }
+        if decision_px and entry_px and float(decision_px) > 0 and float(entry_px) > 0:
+            raw_bps = (float(entry_px) - float(decision_px)) / float(decision_px) * 10000.0
+            execution_meta["slippage_bps"] = round(-raw_bps if side == "SHORT" else raw_bps, 2)
         meta = json.dumps({"session": session, "decision_px": decision_px,
                            "position_id": pos_id, "entry_order_id": buy_order_id,
                            "direction": side,
@@ -3493,6 +3634,8 @@ def _write_open_position(
                            # 此处成交时补算一遍, 使 EXT 与主链同口径可审计。
                            "decision_id": decision_id or None,
                            **(admission_meta or {}),
+                           "entry_price_source": execution_meta["entry_price_source"],
+                           "execution": execution_meta,
                            }, ensure_ascii=False)
         conn.execute("BEGIN IMMEDIATE")
         existing_order = None

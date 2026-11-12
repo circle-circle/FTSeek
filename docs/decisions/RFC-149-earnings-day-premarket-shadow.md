@@ -40,7 +40,8 @@
   - 结果/attempt/earnings stub 带 `research_source`；计数键
     `research_src_<source>_pool|ordered` 由既有研究臂日志输出。
 - `.env.us`: `EXT_ENTRY_RESEARCH_SOURCES=true`、独立带/价/上限；
-  `EXT_RESEARCH_ARM_UNTIL` 10-31 → 11-30（覆盖 20 个交易日窗口）。
+  旧臂 `EXT_RESEARCH_ARM_UNTIL` 保持 10-31；新 source 专用 `EXT_RESEARCH_SOURCE_UNTIL=2026-11-13`
+  （10/19 起 20 个交易日）。本行与顶部修正/§3/实际 env 对齐，禁止把旧臂一起延长。
 - 严格臂源开关、`EXT_ENTRY_CHG_BAND=0.5,2.0`、价格/量/财报/流动性/结构闸全部不动。
 
 ## 3. 观察与判据

@@ -167,7 +167,7 @@ def test_entry_full_fill_writes_position_and_trade_record(
     ).fetchone()
     connection.close()
     assert position[1:] == (100, 10.0, 9.5)
-    assert trade == (100, 10.0, "900001", 0, "v2", "premarket")
+    assert trade == (100, 10.0, "900001", None, "v2", "premarket")
 
 
 def test_entry_grade_controls_certainty_lock_metadata(

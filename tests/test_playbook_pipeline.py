@@ -793,7 +793,8 @@ class TestEntryOpenBlackoutGate:
       2. 翻转点跟随配置 hhmm (改配置边界同步移动) → 排除"别的门恰好返回 False"
          造成的假阳性 (这是本类的变异杀伤主力);
       3. 遥测 reason=before_open_blackout 且 ts/date 走 ET 尺 (R-8a);
-      4. 开关关闭 / 配置畸形 / 取时异常 → 一律 fail-open 不拦 (回滚路径可验)。
+      4. 开关关闭 / 取时异常 → fail-open 不拦；配置畸形与外层 auto_execute
+         一致回落 09:35（2026-11-12 open_blackout SSOT）。
     """
 
     # 与 TestCheckIntradayTrigger.SEALED_CFG 同值 (该类已实证可触发), 仅把禁触窗打开。
@@ -907,14 +908,14 @@ class TestEntryOpenBlackoutGate:
         scheduler = self._make_scheduler(price=101.0, day_high=102.0, day_low=99.0)
         assert _check_intraday_trigger(scheduler, self._triggering()) is expected
 
-    def test_missing_hhmm_falls_back_to_1000(self, monkeypatch):
-        """键缺失 → 代码默认 1000 (不是 yaml 的 0935) — 钉住默认值本身."""
+    def test_missing_hhmm_uses_shared_0935_fallback(self, monkeypatch):
+        """键缺失 → 与外层 auto_execute 一致回落 0935，不再另设 1000 默认值。"""
         cfg = {k: v for k, v in self.CFG.items() if k != "entry_open_blackout_hhmm"}
         monkeypatch.setattr("app.playbook.config.get_playbook_config", lambda: dict(cfg))
         scheduler = self._make_scheduler(price=101.0, day_high=102.0, day_low=99.0)
-        self._freeze(monkeypatch, 9, 59)
+        self._freeze(monkeypatch, 9, 34)
         assert _check_intraday_trigger(scheduler, self._triggering()) is False
-        self._freeze(monkeypatch, 10, 0)
+        self._freeze(monkeypatch, 9, 35)
         assert _check_intraday_trigger(scheduler, self._triggering()) is True
 
     # ── 3. 遥测口径 ──
@@ -961,14 +962,16 @@ class TestEntryOpenBlackoutGate:
         scheduler = self._make_scheduler(price=101.0, day_high=102.0, day_low=99.0)
         assert _check_intraday_trigger(scheduler, self._triggering()) is True
 
-    def test_malformed_config_fails_open(self, monkeypatch):
-        """hhmm 畸形 (int() 抛) → except 把 enabled 一并置 False, 不拦也不炸扫描线程."""
+    def test_colon_config_uses_shared_parser(self, monkeypatch):
+        """“09:35”是外层早已接受的合法格式，内层不得再因 int() 失败静默放开。"""
         monkeypatch.setattr(
             "app.playbook.config.get_playbook_config",
             lambda: {**self.CFG, "entry_open_blackout_hhmm": "09:35"},
         )
         self._freeze(monkeypatch, 9, 34)
         scheduler = self._make_scheduler(price=101.0, day_high=102.0, day_low=99.0)
+        assert _check_intraday_trigger(scheduler, self._triggering()) is False
+        self._freeze(monkeypatch, 9, 35)
         assert _check_intraday_trigger(scheduler, self._triggering()) is True
 
     def test_clock_exception_fails_open(self, monkeypatch):

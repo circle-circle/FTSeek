@@ -86,41 +86,47 @@ def _reprice_quote_age_gate(
     return True
 
 
+def _mom_quote_price(ctx: Optional[Dict[str, Any]]) -> float:
+    """提取 MOM 实际用于 reprice 的卖一价；缺失/非有限值一律视为无报价。"""
+    if not isinstance(ctx, dict):
+        return 0.0
+    import math
+    for key in ("lv3_ask", "ask", "price", "last"):
+        try:
+            value = float(ctx.get(key) or 0)
+        except (TypeError, ValueError, OverflowError):
+            value = 0.0
+        if math.isfinite(value) and value > 0:
+            return value
+    return 0.0
+
+
+_MOM_DEFER_AUDIT_SEEN: set = set()  # {(trade_date, instruction_id, reason)}
+
+
+def _record_mom_defer(db: Any, inst: Dict[str, Any], today: str, reason: str,
+                      action: str, gate: str, why: str, logger: Any,
+                      emit_exec_gate_audit: Callable) -> None:
+    """记录暂时性 MOM 拦截；不改 direction=SKIP，审计按指令/日/原因去重。"""
+    if (inst.get("skip_reason") or "") != reason:
+        db.update_instruction_tracking(inst["id"], {"skip_reason": reason})
+    key = (today, inst.get("id"), reason)
+    if key in _MOM_DEFER_AUDIT_SEEN:
+        return
+    emit_exec_gate_audit(
+        inst, action=action,
+        entry=float(inst.get("entry_price") or 0),
+        size=float(inst.get("position_size") or 0),
+        notional=0.0,
+        extra={"gate": gate, "why": why, "transient": True})
+    logger.warning(f"[MOM-ETF-V1] {inst.get('symbol')} {reason} (下轮复检)")
+    _MOM_DEFER_AUDIT_SEEN.add(key)
+
+
 def open_floor_minutes(logger: Any = None):
-    """开盘后禁入窗的分钟数 floor —— **唯一真源 = playbook 配置** (0875 语义)。
-
-    2026-11-12 (用户令「开盘后延后15分钟」): 本闸原为硬编码 `9*60+30 + 5` (=09:35),
-    与 `entry_open_blackout_hhmm` (check_intraday_trigger 的开盘禁触窗) 是**同一语义的
-    两处真源**。两处同时存在时谁 binding 取决于谁更晚 ⇒ 0945 生效后硬编码那行成为
-    死码, 且任何人只改一处都会得到"改了没反应/提前放开"的假象。故统一到这里。
-
-    返回 (floor_min, floor_hhmm)。语义:
-      - enabled=true 且 hhmm 合法 ⇒ 用配置值 (0945 → 585)
-      - enabled=false / 键不可读 / 非法值 ⇒ 回落 935 (= 旧硬编码 +5)
-        ⇒ **关闸不会放开成 09:30 裸执行**, 旧的 5 分钟噪声底线保留。
-    取值必须走 PlaybookConfig (它拍平 playbook.execution_parameters); 用
-    `_playbook_cfg('entry_open_blackout_hhmm')` 会查 playbook.<键> 顶层, 恒返回默认值
-    = 静默空操作 (实测该键只在 execution_parameters 内)。
-    """
-    _legacy = 9 * 60 + 35
-    try:
-        from app.playbook.config import get_playbook_config
-        _pb = get_playbook_config()
-        if not bool(_pb.get("entry_open_blackout_enabled", False)):
-            return _legacy, 935
-        _hhmm = int(str(_pb.get("entry_open_blackout_hhmm", 935)).strip()
-                    .replace(":", "") or 0)
-        if not (0 < _hhmm <= 2359 and _hhmm % 100 < 60):
-            if logger is not None:
-                logger.warning(
-                    f"[playbook] entry_open_blackout_hhmm={_hhmm!r} 非法 (需 HHMM, 分<60) "
-                    f"→ 回落 09:35")
-            return _legacy, 935
-        return (_hhmm // 100) * 60 + (_hhmm % 100), _hhmm
-    except Exception as _e:
-        if logger is not None:
-            logger.warning(f"[playbook] 开盘禁入窗配置不可读 (回落 09:35): {_e}")
-        return _legacy, 935
+    """兼容既有调用方；时间口径实现见 ``app.playbook.open_blackout``。"""
+    from app.playbook.open_blackout import open_floor_minutes as _open_floor
+    return _open_floor(logger=logger)
 
 
 def _blackout_shadow_path() -> Path:
@@ -156,19 +162,25 @@ def emit_blackout_shadow(scheduler, today: str, now_dt, logger: Any,
     _pb = get_playbook_config()
     if not bool(_pb.get("entry_blackout_shadow_enabled", True)):
         return
-    _dr = (getattr(scheduler, "data_router", None)
-           or getattr(scheduler, "market_data", None))
-    if _dr is None:
-        return
-    from app.playbook.db import route_playbook_db
-    _insts = route_playbook_db("sim").get_instructions_by_date(today) or []
     from app.playbook.entry_band import (CHASE_ZONE_PCT, KNIFE_FLOOR_PCT,
                                          classify_trigger, vol_widen_band_pct)
     _widen = bool(_pb.get("entry_band_vol_widen_enabled", False))
     _grace = float(_pb.get("intraday_vol_gate_grace_min", 15))
+    _dr = (getattr(scheduler, "data_router", None)
+           or getattr(scheduler, "market_data", None))
+    _insts = []
+    _status = "NO_ROUTER" if _dr is None else "OK"
+    try:
+        from app.playbook.db import route_playbook_db
+        _insts = route_playbook_db("sim").get_instructions_by_date(today) or []
+    except Exception as _db_err:
+        _status = "DB_ERROR"
+        logger.warning(f"[blackout-shadow] 指令读取失败: {_db_err}", exc_info=True)
     _rows = []
-    _n_priced = _n_would = 0
-    for inst in _insts:
+    _pending_seen = set()
+    _n_eligible = _n_priced = _n_would = 0
+    _n_quote_error = _n_price_invalid = _n_eval_error = 0
+    for inst in _insts if _dr is not None else []:
         try:
             _d = str(inst.get("direction") or "").upper()
             if _d in ("", "SKIP"):
@@ -184,14 +196,28 @@ def emit_blackout_shadow(scheduler, today: str, now_dt, logger: Any,
             _e = float(inst.get("entry_price") or 0)
             if _e <= 0:
                 continue
+            _n_eligible += 1
             _px = 0.0
+            _quote_source = None
             try:
                 _ctx = _dr.get_full_market_context(_sym)
                 if isinstance(_ctx, dict):
                     _px = float(_ctx.get("price") or 0)
-            except Exception as _px_err:
-                logger.debug(f"[blackout-shadow] {_sym} 取价异常: {_px_err}")
+                    _quote_source = "full_market_context" if _px > 0 else None
+            except Exception:
+                _n_quote_error += 1
+            # 与生产 check_intraday_trigger 一致：主上下文无价时用 quote 兜底，
+            # 否则会把行情字段缺失误判为“黑窗没有机会”。
             if _px <= 0:
+                try:
+                    _quote = _dr.get_quote(_sym)
+                    if isinstance(_quote, dict):
+                        _px = float(_quote.get("last", 0) or _quote.get("price", 0) or 0)
+                        _quote_source = "quote_fallback" if _px > 0 else None
+                except Exception:
+                    _n_quote_error += 1
+            if _px <= 0:
+                _n_price_invalid += 1
                 continue
             _n_priced += 1
             if _widen:
@@ -203,9 +229,11 @@ def emit_blackout_shadow(scheduler, today: str, now_dt, logger: Any,
                 continue
             _n_would += 1
             _key = (today, inst.get("id"))
-            if _key in _BLACKOUT_SHADOW_SEEN:
+            if _key in _BLACKOUT_SHADOW_SEEN or _key in _pending_seen:
                 continue
-            _BLACKOUT_SHADOW_SEEN.add(_key)
+            # 不能在写盘前提交去重状态：append 失败时下一轮必须重试，
+            # 重启产生的重复行由 evaluator 取最早 ts 消除。
+            _pending_seen.add(_key)
             _rows.append({
                 "kind": "hit",
                 "ts": now_dt.isoformat(timespec="seconds"),
@@ -224,29 +252,44 @@ def emit_blackout_shadow(scheduler, today: str, now_dt, logger: Any,
                 "vol_assumed_ok": True, "vol_grace_min": _grace,
                 "atr_pct": inst.get("atr_pct"),
                 "confidence": inst.get("confidence"),
+                "quote_source": _quote_source,
                 "blackout_hhmm": floor_hhmm,
                 "caveat": "band geometry only; later gates unobserved",
             })
         except Exception as _one_err:
-            logger.warning(f"[blackout-shadow] 单条评估失败 (不阻断): {_one_err}")
-    if not _rows and _n_priced == 0:
-        return
+            _n_eval_error += 1
+            logger.warning(f"[blackout-shadow] 单条评估失败 (不阻断): {_one_err}",
+                           exc_info=True)
+    if _status == "OK":
+        if _n_eval_error:
+            _status = "EVAL_PARTIAL"
+        elif _n_eligible == 0:
+            _status = "NO_CANDIDATES"
+        elif _n_priced == 0:
+            _status = "QUOTE_UNAVAILABLE"
+        elif _n_quote_error or _n_price_invalid:
+            _status = "PARTIAL_QUOTE"
     try:
         _p = _blackout_shadow_path()
         _p.parent.mkdir(parents=True, exist_ok=True)
         _sum = {
             "kind": "cycle", "ts": now_dt.isoformat(timespec="seconds"),
             "date": today, "et_min": now_dt.hour * 60 + now_dt.minute,
-            "n_inst": len(_insts), "n_priced": _n_priced,
+            "status": _status,
+            "n_inst": len(_insts), "n_eligible": _n_eligible,
+            "n_priced": _n_priced, "n_quote_error": _n_quote_error,
+            "n_price_invalid": _n_price_invalid, "n_eval_error": _n_eval_error,
             "n_would_trigger": _n_would, "n_new_hits": len(_rows),
             "blackout_hhmm": floor_hhmm,
+            "caveat": "band geometry only; later gates unobserved",
         }
         with open(_p, "a", encoding="utf-8") as _f:
             _f.write(_json.dumps(_sum, ensure_ascii=False) + "\n")
             for _r in _rows:
                 _f.write(_json.dumps(_r, ensure_ascii=False) + "\n")
+        _BLACKOUT_SHADOW_SEEN.update(_pending_seen)
     except Exception as _w_err:
-        logger.warning(f"[blackout-shadow] 写盘失败 (不阻断交易): {_w_err}")
+        logger.warning(f"[blackout-shadow] 写盘失败 (不阻断交易): {_w_err}", exc_info=True)
 
 
 def run_playbook_auto_execute(
@@ -331,7 +374,7 @@ def run_playbook_auto_execute(
                 emit_blackout_shadow(scheduler, today, _now_et_dt, logger,
                                      INVALIDATED_SKIP_REASONS, _open_floor_hhmm)
             except Exception as _bs_err:
-                logger.warning(f"[playbook] 黑窗观测异常 (不阻断): {_bs_err}")
+                logger.warning(f"[playbook] 黑窗观测异常 (不阻断): {_bs_err}", exc_info=True)
             return None
 
         # 2026-07-19 (DEB-round3 #1): bridge 三态告警 — auto_execute 每30min入口,
@@ -419,7 +462,7 @@ def run_playbook_auto_execute(
             after_entry_cutoff,
             entries_enabled,
             in_entry_window,
-            is_rebalance_day,
+            rebalance_day_status,
             mom_budget_reject_reason,
             mom_budget_snapshot,
             mom_reprice_params,
@@ -433,7 +476,8 @@ def run_playbook_auto_execute(
                 _mom_open_count, _mom_today_notional = mom_budget_snapshot(_now_et_dt)
             except Exception as _mom_budget_err:
                 _mom_budget_ok = False
-                logger.error(f"[MOM-ETF-V1] 子帽预算查询失败 fail-close: {_mom_budget_err}")
+                logger.error(f"[MOM-ETF-V1] 子帽预算查询失败 fail-close: {_mom_budget_err}",
+                             exc_info=True)
         for inst in instructions:
             # 2026-11-03 (冻结长轮次): 主线程每处理一条指令打一次"进度"心跳 (5s 节流)。
             #   与出场快循环的 /run/ftseek-heartbeat 分开 (语义=有进展, 非"活着"),
@@ -453,11 +497,32 @@ def run_playbook_auto_execute(
             _mom_policy = policy_for(inst.get("decision_id"))
             if _mom_policy is not None:
                 if not entries_enabled():
-                    continue
-                if not _mom_budget_ok:
+                    _record_mom_defer(
+                        db, inst, today, "MOM_ENTRIES_DISABLED",
+                        action="skipped_mom_entries_disabled",
+                        gate="mom_entries_enabled", why="entries_disabled_or_config_error",
+                        logger=logger, emit_exec_gate_audit=_emit_exec_gate_audit)
                     skipped_count += 1
                     continue
-                if not is_rebalance_day(_now_et_dt.date(), _mom_policy):
+                if not _mom_budget_ok:
+                    _record_mom_defer(
+                        db, inst, today, "MOM_BUDGET_UNAVAILABLE",
+                        action="skipped_mom_budget_unavailable",
+                        gate="mom_budget", why="budget_snapshot_failed",
+                        logger=logger, emit_exec_gate_audit=_emit_exec_gate_audit)
+                    skipped_count += 1
+                    continue
+                _rebalance = rebalance_day_status(_now_et_dt.date(), _mom_policy)
+                if _rebalance.reason == "calendar_unavailable":
+                    _record_mom_defer(
+                        db, inst, today, "MOM_CALENDAR_UNAVAILABLE",
+                        action="skipped_mom_calendar_unavailable",
+                        gate="mom_rebalance_calendar",
+                        why=str(_rebalance.error)[:160],
+                        logger=logger, emit_exec_gate_audit=_emit_exec_gate_audit)
+                    skipped_count += 1
+                    continue
+                if not _rebalance.is_rebalance_day:
                     db.mark_instruction_guardrail_skip(inst["id"], "MOM_NOT_REBALANCE_DAY")
                     skipped_count += 1
                     continue
@@ -1176,19 +1241,41 @@ def run_playbook_auto_execute(
                 logger.debug(f"[playbook] re-price 失败: {_rp_err}")
 
             if _mom_policy is not None:
+                _mom_quote_why = ""
                 try:
                     _dr_mom = (getattr(scheduler, "data_router", None)
                                or getattr(scheduler, "market_data", None))
                     _ctx = (_dr_mom.get_full_market_context(inst["symbol"])
                             if _dr_mom is not None else None)
+                    if _dr_mom is None:
+                        _mom_quote_why = "router_missing"
                 except Exception as _mom_ctx_err:
-                    logger.warning(f"[MOM-ETF-V1] {inst.get('symbol')} 报价获取失败: {_mom_ctx_err}")
+                    logger.warning(f"[MOM-ETF-V1] {inst.get('symbol')} 报价获取失败: {_mom_ctx_err}",
+                                   exc_info=True)
                     _ctx = None
+                    _mom_quote_why = f"fetch_error:{_mom_ctx_err}"
+                _mom_quote_px = _mom_quote_price(_ctx)
+                if _mom_quote_px <= 0:
+                    # 报价故障是暂时态，不能落成 MOM_FEE_SIZE_INFEASIBLE：
+                    # guardrail_skip 会把 direction 改成 SKIP，永久错失当日调仓。
+                    _mom_quote_why = (_mom_quote_why or "no_valid_ask_or_price")[:160]
+                    _mom_skip_reason = f"MOM_QUOTE_UNAVAILABLE({_mom_quote_why})"
+                    _record_mom_defer(
+                        db, inst, today, _mom_skip_reason,
+                        action="skipped_mom_quote_unavailable",
+                        gate="mom_quote_available", why=_mom_quote_why,
+                        logger=logger, emit_exec_gate_audit=_emit_exec_gate_audit)
+                    skipped_count += 1
+                    continue
                 if not _reprice_quote_age_gate(
                         inst, _ctx, pb_cfg, db, logger, _emit_exec_gate_audit):
                     skipped_count += 1
                     continue
-                _reprice_params = mom_reprice_params(inst, _ctx, today, _mom_policy)
+                # mom_reprice_params 的字段优先级与本提取器一致；用已验证价格
+                # 规范化 lv3_ask，避免畸形高优先级字段在下游再次 float() 爆炸。
+                _mom_ctx = dict(_ctx)
+                _mom_ctx["lv3_ask"] = _mom_quote_px
+                _reprice_params = mom_reprice_params(inst, _mom_ctx, today, _mom_policy)
                 if _reprice_params is None:
                     db.mark_instruction_guardrail_skip(inst["id"], "MOM_FEE_SIZE_INFEASIBLE")
                     _emit_exec_gate_audit(

@@ -93,7 +93,8 @@ def _read_jsonl(path: Path, day: Optional[str] = None) -> List[Dict[str, Any]]:
             continue
         try:
             j = json.loads(line)
-        except ValueError:
+        except ValueError as exc:
+            print(f"[gate_interception] 跳过坏 JSON 行 path={path}: {exc}", file=sys.stderr)
             continue
         if day and str(j.get("date") or "")[:10] != day:
             continue
@@ -109,10 +110,8 @@ def _parse_skip(reason: Optional[str]) -> Dict[str, Any]:
     head = raw.split("(")[0].strip()
     params: Dict[str, float] = {}
     for m in re.finditer(r"([a-zA-Z_]+)=(-?\d+(?:\.\d+)?)", raw):
-        try:
-            params[m.group(1)] = float(m.group(2))
-        except ValueError:
-            pass
+        # 正则已限定合法 float 形态，无需静默 except。
+        params[m.group(1)] = float(m.group(2))
     return {"gate": head, "params": params, "raw": raw}
 
 

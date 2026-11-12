@@ -412,16 +412,25 @@ def monitor_playbook_exits(
                         _mom_trough = max(_mom_trough, current_price)
                         _mom_mfe = max(0.0, (entry_price - _mom_peak) / entry_price * 100.0)
                         _mom_mae = max(0.0, (_mom_trough - entry_price) / entry_price * 100.0)
+                    # 2026-11-12 写入收敛: 原每 20s 无条件 UPDATE+commit (每仓 ~1200 次/日,
+                    #   字段多数轮次无变化 = 纯噪声 WAL/CPU 开销)。仅相关字段实际变化才落库;
+                    #   首次字段初始化、peak/trough/MFE/MAE 更新、policy_id 首次写入仍写。
+                    #   退出判定在下方独立进行, 不依赖本次写入 ⇒ 退出行为不变。
+                    _mom_prev = {
+                        _k: meta.get(_k)
+                        for _k in ("peak_price", "trough_price", "mfe_pct", "mae_pct", "policy_id")
+                    }
                     meta["peak_price"] = _mom_peak
                     meta["trough_price"] = _mom_trough
                     meta["mfe_pct"] = max(float(meta.get("mfe_pct", 0) or 0), round(_mom_mfe, 4))
                     meta["mae_pct"] = max(float(meta.get("mae_pct", 0) or 0), round(_mom_mae, 4))
                     meta["policy_id"] = _mom_policy.policy_id
-                    conn.execute(
-                        "UPDATE trade_records SET metadata_json = ? WHERE id = ?",
-                        (_json.dumps(meta), r["id"]),
-                    )
-                    conn.commit()
+                    if any(meta.get(_k) != _v for _k, _v in _mom_prev.items()):
+                        conn.execute(
+                            "UPDATE trade_records SET metadata_json = ? WHERE id = ?",
+                            (_json.dumps(meta), r["id"]),
+                        )
+                        conn.commit()
                     if not exit_reason:
                         continue
                     from app.execution.dual_broker import get_dual_broker
