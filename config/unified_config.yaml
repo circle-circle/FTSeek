@@ -1310,9 +1310,10 @@ playbook:
     early_tight_sl_atr_mult: 0.5
     early_tight_sl_pct_max: 2.5
     entry_open_blackout_enabled: true
-    entry_open_blackout_hhmm: 0935    # 2026-08-15 (用户三问Q2, DEB§33): 1015→0935 — 与实盘标准看齐.
+    entry_open_blackout_hhmm: 0945    # 2026-08-15 (三问Q2,DEB§33)1015→0935 → 2026-11-12 用户令「开盘后5→15分钟避开盘波动,今晚观察」0935→0945. 回滚=改回0935(热载~60s). 注: auto_execute 早退闸已与本键**同源**(原硬编码 9:30+5 于 2026-11-12 删除, 现读本键; 关闸/非法值回落 0935) ⇒ 本键是唯一真源, 不存在第二处 09:35 floor.
     #   用户裁: sim核心是打磨链路和基建, 交易时间对齐实盘(开盘后5min), 不再延后.
-    #   auto_execute 本已内置开盘5min延迟(9:30+5=9:35), 本值收口触发门同刻.
+    #   2026-11-12 改注: 「auto_execute 内置 5min 延迟(9:35) = 本值同刻」已过期 —— 硬编码
+    #   已删, auto_execute 改读本键; 两处不再有「谁更晚谁 binding」的隐藏规则.
     # ── RFC-141 入场延迟确认门 (D2' forward, 2026-10-10 用户裁「同意执行」) ──
     #   触发后让子弹飞 delay_sec 秒: 价格仍站执行锚同侧→放行, 反转→放弃.
     #   判据/对照臂/裁决线预注册于 docs/decisions/RFC-141-entry-confirm-forward-live.md.

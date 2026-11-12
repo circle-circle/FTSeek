@@ -86,6 +86,43 @@ def _reprice_quote_age_gate(
     return True
 
 
+def open_floor_minutes(logger: Any = None):
+    """开盘后禁入窗的分钟数 floor —— **唯一真源 = playbook 配置** (0875 语义)。
+
+    2026-11-12 (用户令「开盘后延后15分钟」): 本闸原为硬编码 `9*60+30 + 5` (=09:35),
+    与 `entry_open_blackout_hhmm` (check_intraday_trigger 的开盘禁触窗) 是**同一语义的
+    两处真源**。两处同时存在时谁 binding 取决于谁更晚 ⇒ 0945 生效后硬编码那行成为
+    死码, 且任何人只改一处都会得到"改了没反应/提前放开"的假象。故统一到这里。
+
+    返回 (floor_min, floor_hhmm)。语义:
+      - enabled=true 且 hhmm 合法 ⇒ 用配置值 (0945 → 585)
+      - enabled=false / 键不可读 / 非法值 ⇒ 回落 935 (= 旧硬编码 +5)
+        ⇒ **关闸不会放开成 09:30 裸执行**, 旧的 5 分钟噪声底线保留。
+    取值必须走 PlaybookConfig (它拍平 playbook.execution_parameters); 用
+    `_playbook_cfg('entry_open_blackout_hhmm')` 会查 playbook.<键> 顶层, 恒返回默认值
+    = 静默空操作 (实测该键只在 execution_parameters 内)。
+    """
+    _legacy = 9 * 60 + 35
+    try:
+        from app.playbook.config import get_playbook_config
+        _pb = get_playbook_config()
+        if not bool(_pb.get("entry_open_blackout_enabled", False)):
+            return _legacy, 935
+        _hhmm = int(str(_pb.get("entry_open_blackout_hhmm", 935)).strip()
+                    .replace(":", "") or 0)
+        if not (0 < _hhmm <= 2359 and _hhmm % 100 < 60):
+            if logger is not None:
+                logger.warning(
+                    f"[playbook] entry_open_blackout_hhmm={_hhmm!r} 非法 (需 HHMM, 分<60) "
+                    f"→ 回落 09:35")
+            return _legacy, 935
+        return (_hhmm // 100) * 60 + (_hhmm % 100), _hhmm
+    except Exception as _e:
+        if logger is not None:
+            logger.warning(f"[playbook] 开盘禁入窗配置不可读 (回落 09:35): {_e}")
+        return _legacy, 935
+
+
 def run_playbook_auto_execute(
     scheduler,
     *,
@@ -142,16 +179,25 @@ def run_playbook_auto_execute(
             logger.info(f"[playbook] {today} 非交易日, 跳过自动执行")
             return None
 
-        # 2026-06-24: 开盘后5分钟内不执行 — 避开开盘最大噪声 (gap fill + 做市商调仓)
+        # 2026-06-24: 开盘后不立即执行 — 避开开盘最大噪声 (gap fill + 做市商调仓)
         # 数据依据: 6/23 shadow 22笔中21笔在 9:31:14 批量执行, 2笔瞬间止损 (78ms/473ms)
-        # 延迟5min → 入场价更稳定, SL不被秒杀
+        # 2026-11-12 (用户令「开盘后延后15分钟」): 本闸原是硬编码 `+5` (=09:35),
+        #   与 config 的 entry_open_blackout_hhmm 是**同一语义的两处真源** — 改一处
+        #   另一处仍是旧值, 谁真正 binding 取决于谁更晚 (0945 vs 0935 时本闸形同死码)。
+        #   故删掉硬编码, 统一读同一键 (与 check_intraday_trigger 的开盘禁触窗同源同值)。
+        #   语义: hhmm=0945 ⇒ 09:30-09:45 零入场, 首单 ≥09:45 ET;
+        #         改回 0935 ⇒ 与本闸旧 `+5` 行为逐字等价 (回滚路径)。
+        #   关闸 (entry_open_blackout_enabled=false) 或键不可解析 ⇒ 仍保底 0935
+        #   (旧的 5 分钟噪声底线不随开关消失, 不会放开成 09:30 裸执行)。
         from datetime import datetime as _dt
         _et_tz = _now_et()
         _now_et_dt = _dt.now(_et_tz)
-        _market_open_min = 9 * 60 + 30  # 9:30 ET
         _now_min = _now_et_dt.hour * 60 + _now_et_dt.minute
-        if not force and _now_min < _market_open_min + 5:
-            logger.info(f"[playbook] 开盘5分钟内不执行 (now={_now_et_dt.strftime('%H:%M')} ET)")
+        _open_floor_min, _open_floor_hhmm = open_floor_minutes(logger=logger)
+        if not force and _now_min < _open_floor_min:
+            logger.info(
+                f"[playbook] 开盘禁入窗内不执行 (now={_now_et_dt.strftime('%H:%M')} ET "
+                f"< {_open_floor_hhmm // 100:02d}:{_open_floor_hhmm % 100:02d} ET)")
             return None
 
         # 2026-07-19 (DEB-round3 #1): bridge 三态告警 — auto_execute 每30min入口,
