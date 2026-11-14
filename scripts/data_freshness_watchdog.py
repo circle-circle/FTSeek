@@ -118,7 +118,12 @@ def _age_hours(path: Path) -> float:
 
 
 def _is_weekend() -> bool:
-    return datetime.now().weekday() >= 5  # 5=周六 6=周日
+    """周末按 ET 判定, 与 {today} 占位符同口径 (_now_et 2026-08-26 审计修复).
+
+    host CST 周六 06:25 = ET 周五 17:25, 盘后源刚写完仍属工作日;
+    按 host 判周末会把周五盘后的停更盲区化 (2026-11-14 edge shadow 复核实锤)。
+    """
+    return _now_et().weekday() >= 5  # 5=周六 6=周日
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -419,7 +424,7 @@ def _check_hermes_jobs(baseline: dict, _now: datetime = None):
                       "action": "调度对账失明"}]
                      if not baseline.get("D2:hermes_missing") else []), 0, 0
         jobs = json.loads(HERMES_JOBS_JSON.read_text()).get("jobs", [])
-        now = _now or datetime.now()  # 服务器本地 = Hermes 调度时区 (CST, 无 DST)
+        now = _now or datetime.now()  # 默认服务器本地; 作业级 timezone 字段优先 (2026-11-14 D2 修复)
         local_tz = now.astimezone().tzinfo
         conn = sqlite3.connect(f"file:{HERMES_EXEC_DB}?mode=ro", uri=True)
         try:
@@ -450,7 +455,15 @@ def _check_hermes_jobs(baseline: dict, _now: datetime = None):
             if not j.get("enabled"):
                 continue
             expr = (j.get("schedule") or {}).get("expr") or j.get("schedule_display") or ""
-            slots = _cron_due_slots(expr, now)
+            job_tz = local_tz
+            tz_name = str(j.get("timezone") or "").strip()
+            if tz_name:
+                try:
+                    from zoneinfo import ZoneInfo
+                    job_tz = ZoneInfo(tz_name)
+                except Exception:
+                    job_tz = local_tz
+            slots = _cron_due_slots(expr, now.astimezone(job_tz).replace(tzinfo=None))
             created = _aware(j.get("created_at"), local_tz)
             le = _aware(last.get(j.get("id")), local_tz) if last.get(j.get("id")) else None
             missed = 0
@@ -459,7 +472,7 @@ def _check_hermes_jobs(baseline: dict, _now: datetime = None):
                 # 槽位是本地挂钟 naive, created_at/claimed_at 是带 +08:00 的 aware —
                 # 直接比较会 TypeError 并被外层 except 吞掉 (2026-08-28 回归测试实锤:
                 # 整个 D2 因此恒报"全健康", 检测器自己静默失明)。统一转 aware 再比。
-                sa = s.replace(tzinfo=local_tz)
+                sa = s.replace(tzinfo=job_tz)
                 if created and sa < created:
                     break  # 作业当时尚未创建 → 不属漏跑
                 if le and le >= sa - timedelta(minutes=3):
@@ -476,7 +489,7 @@ def _check_hermes_jobs(baseline: dict, _now: datetime = None):
                 continue
             name = str(j.get("name") or j.get("id"))[:36]
             detail = (f"连续 {missed} 槽未跑 (最近应跑 {slots[0]:%m-%d %H:%M}, "
-                      f"expr={expr}, 实跑至 {le:%m-%d %H:%M} )" if le else
+                      f"expr={expr}, 实跑至 {le.astimezone(job_tz):%m-%d %H:%M} )" if le else
                       f"连续 {missed} 槽未跑 (最近应跑 {slots[0]:%m-%d %H:%M}, expr={expr}, 从无实跑)")
             key = f"D2:{j.get('id')}"
             if key in baseline:

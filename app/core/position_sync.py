@@ -15,7 +15,7 @@ import os
 import re
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Mapping, Optional
 
 from app.core.db_utils import safe_sqlite_connect
 
@@ -259,15 +259,20 @@ def _pick_order_ts(order: Dict) -> Optional[str]:
             return text
     return None
 
-def _record_recovered_queue_candidate(*, instruction: Dict, order_snapshot: Dict,
+def _record_recovered_queue_candidate(*, instruction: Mapping, order_snapshot: Dict,
                                       now_et_value, shadow_path=None) -> bool:
     """RFC-203：PositionSync 补录成交也纳入确认后排队观测（record-only）。
 
     主执行线程只在 execute_instruction success 分支打点；SUBMITTED 后由本模块
     补录的成交也必须覆盖。执行时间只取券商订单 updated/create_time，禁止用
     reconcile/补录时刻冒充真实成交，缺失时宁可少一条样本。
+
+    调用方按 row_factory=sqlite3.Row 传行，入口先归一为 dict；异常分支取 id
+    同样不得二次 AttributeError（2026-11-14 复查实锤恢复路径丢样本）。
     """
     try:
+        if not isinstance(instruction, dict):
+            instruction = dict(instruction)
         metadata = instruction.get("metadata_json") or {}
         if isinstance(metadata, str):
             metadata = json.loads(metadata or "{}")
@@ -296,7 +301,8 @@ def _record_recovered_queue_candidate(*, instruction: Dict, order_snapshot: Dict
     except Exception:
         logger.warning(
             "[US Sync] early-risk queue 影子记录异常（不影响补录） instruction=%s",
-            instruction.get("id"), exc_info=True)
+            instruction.get("id") if isinstance(instruction, dict) else None,
+            exc_info=True)
         return False
 
 
@@ -555,6 +561,92 @@ DB_PATH = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__
 class USPositionSync:
     """美股持仓同步器"""
 
+    def _resolve_backfill_regime(self, instruction_id, db_path):
+        """RFC-210 B1: 补录 regime 继承关联指令真值 (开关默认关; fail-safe 不阻断补录)。
+
+        开关 playbook.backfill_inherit_instruction_regime 关 → 维持 'RANGE' (旧行为, 行为中性);
+        开 → 读指令 market_regime: 有真值用真值 (source=instruction), 缺失/异常落 'UNKNOWN'
+        (不再假 RANGE)。regime 是研究标注 (review/research 消费, 非交易决策), 改它不改交易行为。
+        返回 (regime, regime_source)。任何异常 fail-safe, 绝不阻断孤儿仓接管。
+        """
+        try:
+            from app.playbook.config import get_playbook_config
+            enabled = bool(get_playbook_config().get("backfill_inherit_instruction_regime", False))
+        except Exception:
+            enabled = False
+        if not enabled:
+            return "RANGE", "hardcoded_range"
+        try:
+            regime = None
+            if instruction_id:
+                conn = safe_sqlite_connect(db_path, timeout=5)
+                try:
+                    row = conn.execute(
+                        "SELECT market_regime FROM playbook_instructions WHERE id=?",
+                        (int(instruction_id),)).fetchone()
+                    if row is not None:
+                        regime = row[0]
+                finally:
+                    conn.close()
+            if regime:
+                return str(regime), "instruction"
+            return "UNKNOWN", "unknown_fallback"
+        except Exception:
+            logger.warning("[US Sync·P3] backfill regime inherit fail-safe UNKNOWN inst=%s", instruction_id)
+            return "UNKNOWN", "unknown_failsafe"
+
+    def _replay_pending_booking_intent(self, instruction_id, db_path, broker_env, futu_order_id, symbol):
+        """A1 (RFC-211): 恢复时按 outbox 全量意图干净重放 save_trade (真 regime/ATR/因子)。
+
+        开关 off / 无 PENDING 意图 / 任何异常 → False (fail-safe 退回降级补录, 绝不阻断孤儿接管)。
+        幂等: trade_records 已有同 futu_order_id 记录 → 仅消费意图, 不重复记账。
+        """
+        if not instruction_id:
+            return False
+        try:
+            from app.playbook.config import get_playbook_config
+            if not bool(get_playbook_config().get("entry_booking_outbox_enabled", False)):
+                return False
+        except Exception:
+            return False
+        try:
+            from app.playbook.db import route_playbook_db
+            pdb = route_playbook_db(broker_env)
+            intent_row = pdb.get_pending_booking_intent(int(instruction_id))
+            if not intent_row:
+                return False
+            intent = json.loads(intent_row["intent_json"])
+            record = intent.get("record")
+            if not record:
+                return False
+            voting_data = intent.get("voting_data")
+            attempt = int(intent_row["attempt"])
+            _source = "PLAYBOOK_LIVE" if broker_env == "real" else "PLAYBOOK_SIM"
+            conn = safe_sqlite_connect(db_path, timeout=5)
+            try:
+                existing = conn.execute(
+                    "SELECT 1 FROM trade_records WHERE futu_order_id=? AND source_type=? LIMIT 1",
+                    (str(futu_order_id), _source)).fetchone()
+            finally:
+                conn.close()
+            if existing:
+                pdb.consume_booking_intent(int(instruction_id), attempt)
+                return True
+            meta = json.loads(record.get("metadata_json") or "{}")
+            meta["booking_outbox_replay"] = True
+            record["metadata_json"] = json.dumps(meta, ensure_ascii=False)
+            from app.storage.trade_store import TradeStore
+            TradeStore(db_path).save_trade(record, voting_data=voting_data)
+            pdb.consume_booking_intent(int(instruction_id), attempt)
+            logger.info(
+                "[US Sync·A1] %s 按 outbox 全量意图干净重放 trade_record (instruction=%s attempt=%s)",
+                symbol, instruction_id, attempt)
+            return True
+        except Exception as exc:
+            logger.warning(
+                "[US Sync·A1] %s outbox 干净重放失败 (fail-safe 退回降级补录): %s", symbol, exc)
+            return False
+
     def _backfill_playbook_trade_record(self, symbol: str, direction: str, qty: int,
                                         entry: float, sl: float, tp: float,
                                         trace_id: str, futu_order_id: str = "",
@@ -668,6 +760,8 @@ class USPositionSync:
                 logger.warning('[US Sync] terminal entry has no consistent broker position %s order=%s',
                                symbol, futu_order_id)
                 return False
+            if self._replay_pending_booking_intent(instruction_id, db_path, broker_env, futu_order_id, symbol):
+                return True
             # 时钟病灶变种4拆弹 (2026-09-20): 原 datetime.now().astimezone() = 服务器 CST,
             # 导致 trade_records.entry_time 混入 +08:00 (id 1320/1511/1513/1536, 更早的
             # naive 形态 id 1092/1094/1095 且 trade_date 跨日错位)。下游约定 entry_time
@@ -697,6 +791,7 @@ class USPositionSync:
             #   metadata.entry_vix_at_adoption 留痕, 研究侧可按
             #   entry_price_source='sync_recovery_backfill' 过滤或单独分层。
             _entry_vix_p3 = _fetch_entry_vix_for_backfill()
+            _regime_p3, _regime_source_p3 = self._resolve_backfill_regime(instruction_id, db_path)
             _meta_p3 = {
                 "stop_loss": sl,
                 "take_profit": tp,
@@ -706,6 +801,7 @@ class USPositionSync:
                 "entry_price_source": "sync_recovery_backfill",
                 "adopted": True,
                 "adopt_origin": "position_sync",
+                "regime_source": _regime_source_p3,
             }
             # [RFC-169] 链路回填 (2026-10-26 实锤): 缺 playbook_instruction_id ⇒ 平仓时
             #   exit_monitor_flow 的 inst_id 为空 ⇒ close_flow 跳过 instruction outcome 结算,
@@ -738,7 +834,7 @@ class USPositionSync:
                 "entry_reason": "sync_recovery_backfill",
                 "owner_strategy": "playbook_live" if broker_env == "real" else "playbook_sim",
                 "strategy_id": "playbook_live" if broker_env == "real" else "playbook_sim",
-                "market_regime": "RANGE",
+                "market_regime": _regime_p3,
                 "mode": "normal",
                 "trade_mode": "live" if broker_env == "real" else "simulate",
                 "signal_id": trace_id,

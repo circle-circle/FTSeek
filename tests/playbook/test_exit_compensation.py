@@ -42,6 +42,8 @@ def compensation_case(monkeypatch, tmp_path):
     import futu
     monkeypatch.setattr(futu, "OpenSecTradeContext", forbidden)
     monkeypatch.setattr(futu, "OpenQuoteContext", forbidden)
+    from app.core import position_sync as _position_sync
+    monkeypatch.setattr(_position_sync, "_fetch_entry_vix_for_backfill", lambda: None)
     from app.playbook import market_regime
     from app.risk import data_health_guard  # Load real quote validator before risk stubs.
 

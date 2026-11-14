@@ -375,9 +375,8 @@ def run_playbook_auto_execute(
         #         改回 0935 ⇒ 与本闸旧 `+5` 行为逐字等价 (回滚路径)。
         #   关闸 (entry_open_blackout_enabled=false) 或键不可解析 ⇒ 仍保底 0935
         #   (旧的 5 分钟噪声底线不随开关消失, 不会放开成 09:30 裸执行)。
-        from datetime import datetime as _dt
         _et_tz = _now_et()
-        _now_et_dt = _dt.now(_et_tz)
+        _now_et_dt = datetime_cls.now(_et_tz)
         _now_min = _now_et_dt.hour * 60 + _now_et_dt.minute
         _open_floor_min, _open_floor_hhmm = open_floor_minutes(logger=logger)
         if not force and _now_min < _open_floor_min:
@@ -1489,7 +1488,6 @@ def run_playbook_auto_execute(
                             f"(维持原 cap 判定): {_ccn_err}")
                 if _cc_violated(_dir, _new_entry, _cc_f):
                     from pathlib import Path as _Pcc
-                    from datetime import datetime as _dtcc
                     _cc_path = _Pcc(module_file).resolve().parents[2] / "data" / "shadow" / "pullback_limit_shadow.jsonl"
                     # DEB-20260903 议题一 (方案A, 用户裁"按建议执行"): warning 移出去重门 —
                     #   每次违例 reprice 都打 (9/2 DELL 二次更糟违例 464.41→474.27 被
@@ -1512,7 +1510,7 @@ def run_playbook_auto_execute(
                         _cc_claim = _shadow_dedup_claim(_cc_path, inst.get("id"), f"chase_cap_violation:{round(_new_entry, 2)}")
                         if _cc_claim is not None:
                             _row_cc = {
-                                "ts": _dtcc.now(_now_et()).isoformat(timespec="seconds"),
+                                "ts": datetime_cls.now(_now_et()).isoformat(timespec="seconds"),
                                 "date": _today_et_str(), "schema": "v1",
                                 "type": "chase_cap_violation",
                                 "inst_id": inst.get("id"),

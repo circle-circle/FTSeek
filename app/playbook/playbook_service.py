@@ -2278,7 +2278,7 @@ class PlaybookService:
                     if _vp_conn is not None:
                         _vp_conn.close()
 
-            _ts.save_trade({
+            _booking_intent = {
                 "trace_id": _trace_id,
                 "trade_date": _now_iso[:10],
                 "symbol": symbol,
@@ -2364,7 +2364,24 @@ class PlaybookService:
                     "take_profit": float(take_profit) if take_profit else 0,
                     "futu_order_id": _futu_id,
                 }),
-            }, voting_data=_voting_data)
+            }
+            _outbox_enabled = False
+            try:
+                from app.playbook.config import get_playbook_config as _gpc_ob
+                _outbox_enabled = bool(_gpc_ob().get("entry_booking_outbox_enabled", False))
+            except Exception:
+                _outbox_enabled = False
+            if _outbox_enabled:
+                try:
+                    self.db.persist_booking_intent(
+                        instruction_id, _attempt,
+                        _json.dumps({"record": _booking_intent, "voting_data": _voting_data}),
+                        _futu_id or _order_id, target_env, symbol)
+                except Exception as _obe:
+                    logger.warning(
+                        f"[playbook] {_mode_label} {symbol} booking intent 持久化失败 "
+                        f"(fail-safe 退回现行路径): {_obe}")
+            _ts.save_trade(_booking_intent, voting_data=_voting_data)
             logger.info(f"[playbook] {_mode_label} trade_record 已写入: {symbol} @ {_fill} futu_id={_futu_id}")
 
             # 2026-07-02: open_positions SSOT — playbook下单后立即写open_positions
@@ -2483,6 +2500,12 @@ class PlaybookService:
                 f"instruction={instruction_id} fill={_fill} qty={_effective_qty} "
                 f"futu_id={_futu_id} err={_bk_err} — 需 position_sync/人工补账"
             )
+
+        if _outbox_enabled and _bk_failed is None:
+            try:
+                self.db.consume_booking_intent(instruction_id, _attempt)
+            except Exception:
+                pass
 
         _env_desc = "实盘真实成交" if _is_live else "模拟盘真实成交"
         logger.info(f"Playbook {_mode_label} executed: {symbol} {direction} @ ${_fill} ({_env_desc}, futu_id={_futu_id})")

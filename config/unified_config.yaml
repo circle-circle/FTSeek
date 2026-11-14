@@ -1434,6 +1434,22 @@ playbook:
     #   零行为变更 (只写 data/shadow/winner_overnight_shadow.jsonl).
     #   回滚: 改 false (无需重启, 每轮读取).
     winner_overnight_shadow_enabled: true
+    # ── RFC-210 B1 (2026-11-14, 用户「同意」方案B 影子先行): 补录 regime 继承指令真值 ──
+    #   position_sync 补录回收孤儿仓时, market_regime 取关联指令真值 (替硬编码 RANGE);
+    #   指令缺失/异常 fail-safe 落 UNKNOWN, 绝不阻断补录。regime 是研究标注 (review/research
+    #   消费, 非交易决策; 出场用 MarketRegimeGate 实时值) ⇒ 修尺子, 零交易行为变更。
+    #   事前证据: backfill_fidelity_probe.py (regime 保真度 3.1% → 指令真值 100% 可得)。
+    #   前瞻验证: 新补录 regime_source=instruction 保真度 100% + 零回归 (RFC-210 §3)。
+    #   回滚: 改 false + 重启 (恢复硬编码 RANGE 旧行为)。B2 (ATR/SL 行为面) 另裁。
+    backfill_inherit_instruction_regime: true
+    # 2026-11-14 (RFC-211 方案A A1, 用户「继续」): 入场记账 Outbox — 成交瞬间把富 record 意图
+    #   持久化到 entry_booking_outbox (与指令同库), save_trade 投递, BOOKED 后消费; 重启后
+    #   position_sync 按全量意图干净重放 (真 regime/ATR/因子), 而非降级补录。镜像在仓 exit_intents。
+    #   default false = 现行写路径+降级补录+B1, 行为完全不变 (inert)。fail-safe: 任何 outbox 异常
+    #   退回现行路径, 绝不阻断孤儿接管。启用 (A2) 须前瞻 n≥30 + 结局守卫 + 用户裁 (RFC-211 §5)。
+    #   回滚: 改 false + 重启 (恢复现行路径)。
+    #   A2 启用: 2026-11-14 用户「启用」批准 sim 前瞻观察 (RFC-211 §5/§15); 攒 n≥30 重放事件验保真+零双簿+结局守卫。
+    entry_booking_outbox_enabled: true
     # 2026-08-13 (DEB-20260813 §十六/§18.3, 用户裁"跳过影子直接 sim 观察"): 耐心出场 —
     #   DEAD_SIGNAL_EXIT 触发且信号时刻浅水下 (水下 ≤1.0%) 时不立即市价卖, 转为轮询
     #   等待价格站回入场价再卖 (fill, 保本); 等待期水下加深至 stop_pct → 立即卖 (stop);

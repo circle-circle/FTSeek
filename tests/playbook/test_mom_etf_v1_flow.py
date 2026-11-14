@@ -204,6 +204,11 @@ class _FakePBConfig:
 
 def _run_auto_execute(monkeypatch, instruction, now_et_dt, now_sequence=None,
                       quote_ctx="default", quote_error=None, mom_snapshot=None):
+    """时钟经 aef 的 datetime_cls 注入冻结, 不 patch 全局 datetime.datetime。
+
+    全局 patch 会在冻结窗口内被懒加载模块 (data_health_guard 等) 捕获为模块级
+    datetime, monkeypatch 还原后仍永久冻结 → 跨文件污染 (2026-11-14 根治)。
+    """
     from app.playbook.pipeline_parts import auto_execute_flow as aef
     import datetime as datetime_module
 
@@ -215,8 +220,6 @@ def _run_auto_execute(monkeypatch, instruction, now_et_dt, now_sequence=None,
             if times:
                 return times.pop(0) if len(times) > 1 else times[0]
             return now_et_dt
-
-    monkeypatch.setattr(datetime_module, "datetime", FrozenDateTime)
 
     et = timezone(timedelta(hours=-5))
     executed = []

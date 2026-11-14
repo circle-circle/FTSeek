@@ -16,7 +16,7 @@ import logging
 import json
 import sqlite3
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -352,6 +352,43 @@ def test_baseline_suppresses_known_dead_job(d2):
     assert len(findings) == 1
     suppressed, known, _ = d2(jobs, execs, baseline={findings[0]["key"]: "已知停摆"})
     assert suppressed == [] and known == 1
+
+
+def test_et_pinned_evening_job_not_alarmed_before_real_slot_due(d2):
+    """job.timezone=ET 的晚班作业: host CST 幻影槽不得抢跑假阳性 (2026-11-14 D2 修复)。
+
+    now = 2026-11-17 06:25 CST = 11-16 17:25 ET; expr 21:00 ET 周一至周五。
+    真实 ET 最近已到期槽 = 周五 11-13 21:00 ET (缺), 周四 11-12 21:00 ET 已跑。
+    旧口径按 CST 幻影槽把周一 21:00 CST (真实 ET 槽尚未到期) 计为缺席 → 假阳性。
+    """
+    now = datetime(2026, 11, 17, 6, 25, tzinfo=timezone(timedelta(hours=8)))
+    job = _job("jet", "evening-et", "0 21 * * 1-5", "2026-10-01T00:00:00")
+    job["timezone"] = "America/New_York"
+    execs = [("jet", "2026-11-13T10:00:00+08:00")]
+    findings, _, judged = d2([job], execs, now=now)
+    assert findings == []
+    assert judged == 1
+
+
+def test_et_pinned_job_missed_slots_alarm_displayed_in_et(d2):
+    """连续缺真实 ET 槽 → 告警, 且「最近应跑」按 ET 挂钟显示而非 host CST。"""
+    now = datetime(2026, 11, 17, 6, 25, tzinfo=timezone(timedelta(hours=8)))
+    job = _job("jet", "evening-et", "0 21 * * 1-5", "2026-10-01T00:00:00")
+    job["timezone"] = "America/New_York"
+    execs = [("jet", "2026-11-12T10:00:00+08:00")]
+    findings, _, judged = d2([job], execs, now=now)
+    assert judged == 1 and len(findings) == 1
+    assert "11-13 21:00" in findings[0]["detail"]
+
+
+def test_et_pinned_morning_job_healthy_on_et_slot(d2):
+    """DA main carrier 同型: 08:00 ET 准点跑 → 健康 (周六 CST 晨 = ET 周五盘后)。"""
+    now = datetime(2026, 11, 14, 6, 25, tzinfo=timezone(timedelta(hours=8)))
+    job = _job("jda", "da-main-et", "0 8 * * 1-5", "2026-10-01T00:00:00")
+    job["timezone"] = "America/New_York"
+    execs = [("jda", "2026-11-13T21:00:00+08:00")]
+    findings, _, judged = d2([job], execs, now=now)
+    assert findings == [] and judged == 1
 
 
 def test_unreadable_hermes_face_is_reported_once(tmp_path, monkeypatch):

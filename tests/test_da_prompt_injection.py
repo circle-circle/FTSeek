@@ -377,6 +377,31 @@ def test_previous_day_brief_is_rejected_even_within_26_hours(tmp_path):
     assert out.section == ""
 
 
+def test_same_et_day_after_close_is_expired(tmp_path):
+    after_close = datetime(2026, 11, 14, 3, 0, tzinfo=timezone.utc)
+    path = _write_latest(tmp_path, _latest_doc(as_of="2026-11-13T13:00:00+00:00"))
+    out = injection.build_event_context_injection(
+        COLLECTED, now=after_close, latest_path=path, environ=ENV_ON,
+    )
+    assert out.injected is False
+    assert out.reason == "brief_expired"
+    assert out.valid_until == VALID_UNTIL
+    assert out.section == ""
+    assert out.event_ids == []
+    assert out.injection_hash
+
+
+def test_same_et_day_at_close_boundary_still_injects(tmp_path):
+    at_close = datetime(2026, 11, 13, 21, 0, tzinfo=timezone.utc)
+    path = _write_latest(tmp_path, _latest_doc(as_of="2026-11-13T13:00:00+00:00"))
+    out = injection.build_event_context_injection(
+        COLLECTED, now=at_close, latest_path=path, environ=ENV_ON,
+    )
+    assert out.injected is True
+    assert out.reason == "injected"
+    assert out.valid_until == VALID_UNTIL
+
+
 def test_writer_status_flip_does_not_change_injection_identity(tmp_path):
     as_of = "2026-11-13T13:00:00+00:00"
     ok_path = _write_latest(tmp_path, _latest_doc(as_of=as_of, status="OK"))

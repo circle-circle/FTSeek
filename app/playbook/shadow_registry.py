@@ -4544,6 +4544,91 @@ REGISTRY: list[ShadowItem] = [
               "回滚: 删本条目 (写方与产物不动)。",
     ),
     ShadowItem(
+        id="da_frequency_cap_pivot_shadow",
+        name="DA 降频 Pivot 前瞻确认影子 (RFC-209, 2026-11-14 用户「按照建议执行」)",
+        status=ShadowStatus.OBSERVING,
+        description="record-only 反事实: 每日按 entry_time 取前 N∈{2,3} 笔 vs 不限频, 比笔均净 bps "
+                    "(含费), 按日聚类 80% CI + MDE80。回答 OKR-2026-11 §6 Pivot「降频保留正期望子集」"
+                    "是否成立。结算 scripts/settle_da_frequency_cap_pivot.py (只读 mode=ro, 复用 "
+                    "pnl_expectancy_pivot_analysis), 产物 data/shadow/da_frequency_cap_pivot_latest.json。"
+                    "零交易行为变更: 不设生产频帽、不改任何生产闸。",
+        data_path="data/shadow/da_frequency_cap_pivot_latest.json",
+        config_key=None,
+        min_n=30,
+        count_mode="json_key:uncapped.days",
+        graduation_criteria="RFC-209 §3 预注册 (窗内冻结, 改=重裁): 前瞻 cohort 2026-11-16 起 "
+                            "n≥30 交易日; 任一 N∈{2,3} 的 capped−uncapped 笔均净 bps 日聚类 80% CI "
+                            "下界>0 ∧ mean>MDE80 → 提请设生产频帽 (另立 DEB+用户裁, 影子不自动生效); "
+                            "两 N CI 含 0 → 不可分辨; 效应<MDE → 不可分辨非证伪。到期 (约 2026-12-28) "
+                            "无结论自动 KILLED。N/cohort/阈值窗内禁改。",
+        eval_script="scripts/settle_da_frequency_cap_pivot.py",
+        eval_on_demand=True,
+        created="2026-11-14",
+        stale_expected=True,
+        intent="da_frequency_cap_pivot",
+        notes="KR4 ≤5 净期望名额之一 (前置=KR4 盘点腾名额, 见 DEB-20261114-KR4-consolidation)。"
+              "非 C1 新入场假设 (时间/频率轴, 不属 C8/C9/C12/C16/C14/C15/C17 已闭轴)。"
+              "stale_expected: 前瞻攒样按需重算, n<30 只观察。探索窗 (10-06→11-13) t=0.93~1.58<2 "
+              "未证, 本影子前瞻确认防过拟合。回滚: 删本条目+产物 (写方脚本留档)。",
+    ),
+    ShadowItem(
+        id="backfill_fidelity_probe",
+        name="孤儿仓补录保真度探针 (RFC-210 方案B 事前证据, 2026-11-14 用户「同意」)",
+        status=ShadowStatus.OBSERVING,
+        description="record-only 量化补录回收 trade_record 现值 vs 关联指令真值 (regime/ATR) 的保真度缺口: "
+                    "position_sync 补录硬编码 market_regime='RANGE'+代理 ATR, 而关联指令保有入场决策真 "
+                    "regime/ATR。探针 scripts/backfill_fidelity_probe.py (只读 mode=ro, join "
+                    "metadata.playbook_instruction_id), 产物 data/shadow/backfill_fidelity_latest.json。"
+                    "证明方案B (补录继承指令真值) 事前价值。零交易行为变更: 不改 position_sync、不下单。",
+        data_path="data/shadow/backfill_fidelity_latest.json",
+        config_key=None,
+        min_n=30,
+        count_mode="json_key:n_joined_instruction",
+        graduation_criteria="无毕业门 — 纯保真度测量尺 (PERMANENT_MEASURE)。方案B 修复 (position_sync 补录继承指令真 "
+                            "regime/ATR) 属 behavior-touching, 其上线验证走 RFC-210 预注册另立 DEB+用户裁, "
+                            "不在本测量项内自动生效。",
+        no_adjudication_reason="PERMANENT_MEASURE: 补录回收保真度测量, 无毕业门; 修复行为面验证走 RFC-210 另裁",
+        eval_script="scripts/backfill_fidelity_probe.py",
+        eval_on_demand=True,
+        created="2026-11-14",
+        stale_expected=True,
+        intent="backfill_fidelity",
+        notes="事前读数 (10-01+): n=65 joined=65, regime 保真度仅 3.1%, 指令真 regime/ATR 100% 可得, "
+              "方案B 可修正 63 笔 regime, 代理 ATR vs 真 ATR 中位绝对差 4.34。流程成熟度修复 (非 KR4 净期望实验, "
+              "不占 ≤5 名额; 类比 DEB-20260727 entry-fill 修尺子+行为修复)。根因见 "
+              "DEB-20261114-da-kpi-backfill-stratification §6 (成交→写台账间被重启打断→降级补录)。"
+              "回滚: 删本条目+产物 (探针脚本留档)。",
+    ),
+    ShadowItem(
+        id="entry_outbox_intent_probe",
+        name="入场记账 Outbox 意图可得性探针 (RFC-211 方案A A0 事前证据, 2026-11-14 用户「做」)",
+        status=ShadowStatus.OBSERVING,
+        description="record-only 量化方案A(入场记账 Outbox)事前可行性: 历史补录行经 "
+                    "metadata.playbook_instruction_id join 指令, 核心意图分量(真成交价/regime/真ATR/止损)可得率 "
+                    "+ 孤儿暴露窗口(created_at-entry_time, 时区归一) + 可干净重放占比。探针 "
+                    "scripts/entry_outbox_intent_probe.py (只读 mode=ro), 产物 "
+                    "data/shadow/entry_outbox_intent_probe_latest.json。证「成交瞬间意图可完整捕获+干净重放可行」。"
+                    "零交易行为变更: 不改写路径、不建 outbox 表、不下单。",
+        data_path="data/shadow/entry_outbox_intent_probe_latest.json",
+        config_key=None,
+        min_n=30,
+        count_mode="json_key:n_joined_instruction",
+        graduation_criteria="无毕业门 — 纯意图可得性测量尺 (PERMANENT_MEASURE)。方案A 修复 (入场记账 Outbox: "
+                            "成交意图与状态同事务持久化+恢复干净重放) 属 behavior-touching, 其上线验证走 RFC-211 "
+                            "预注册另立 DEB+用户裁, 不在本测量项内自动生效。",
+        no_adjudication_reason="PERMANENT_MEASURE: 入场记账意图可得性测量, 无毕业门; 修复行为面验证走 RFC-211 另裁",
+        eval_script="scripts/entry_outbox_intent_probe.py",
+        eval_on_demand=True,
+        created="2026-11-14",
+        stale_expected=True,
+        intent="entry_outbox_intent",
+        notes="事前读数 (10-01+): n=65 joined=65, 核心意图(真价/regime/真ATR/止损)100% 可得, 全意图96.9%, "
+              "可干净重放100%, 真ATR 可修正代理ATR 63 笔(中位绝对差4.34), 孤儿暴露窗口 p50=35.7s/p90=83.1s/"
+              "max=8.9h(>60s 13 笔)。voting DA 不同源(DA- vs DEC-)恒0, 不计核心。流程成熟度/工程根治 "
+              "(非 KR4 净期望实验, 不占 ≤5 名额; 镜像在仓 exit_intents 成熟先例)。根因见 "
+              "DEB-20261114-da-kpi-backfill-stratification §6 + RFC-211。回滚: 删本条目+产物 (探针脚本留档)。",
+    ),
+    ShadowItem(
         id="stop_invalidation_audit",
         name="止损 vs 失效触发器一致性审计 (2026-10-22 指令复查批)",
         status=ShadowStatus.OBSERVING,

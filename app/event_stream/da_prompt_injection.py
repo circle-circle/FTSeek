@@ -12,7 +12,7 @@ Safety contract
 ---------------
 * Default off => this module returns an ``enabled=False`` record without reading
   the brief.  DA behaves byte-identically (prompt / hash / checkpoint policy).
-* Any missing/invalid/stale brief => ``injected=False`` plus an explicit
+* Any missing/invalid/stale/expired brief => ``injected=False`` plus an explicit
   ``reason``.  Callers must treat failures as "no injection", never as a DA
   blocker.
 * Consumers are the raw checkpoint and the DA quality evaluator only.  Gate /
@@ -309,6 +309,9 @@ def load_event_context(
         return _load_error("brief_as_of_future", path, enabled=True, valid_until=expiry)
     if age > timedelta(hours=max_age_hours):
         return _load_error("brief_stale", path, enabled=True, valid_until=expiry)
+    expiry_dt = _parse_aware(expiry)
+    if expiry_dt is not None and current.astimezone(timezone.utc) > expiry_dt:
+        return _load_error("brief_expired", path, enabled=True, valid_until=expiry)
 
     load = EventContextLoad(
         enabled=True,

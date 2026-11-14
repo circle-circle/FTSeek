@@ -1343,6 +1343,42 @@ class PlaybookDB:
         conn.commit()
         return cur.rowcount == 1
 
+    def persist_booking_intent(self, instruction_id: int, attempt: int, intent_json: str,
+                               futu_order_id: str, target_env: str, symbol: str) -> None:
+        """A1 (RFC-211): 原子持久化入场记账意图 (PENDING)。幂等: 同 (instruction_id,attempt) 不覆盖。"""
+        conn = self._conn()
+        now = now_utc().isoformat()
+        intent_id = f"{instruction_id}:{attempt}"
+        conn.execute(
+            "INSERT OR IGNORE INTO entry_booking_outbox "
+            "(intent_id, instruction_id, attempt, target_env, symbol, futu_order_id, "
+            "intent_json, state, version, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,'PENDING',0,?,?)",
+            (intent_id, int(instruction_id), int(attempt), str(target_env), str(symbol),
+             str(futu_order_id), intent_json, now, now),
+        )
+        conn.commit()
+
+    def consume_booking_intent(self, instruction_id: int, attempt: int) -> None:
+        """A1 (RFC-211): 投递完成后消费意图 (PENDING→BOOKED)。"""
+        conn = self._conn()
+        conn.execute(
+            "UPDATE entry_booking_outbox SET state='BOOKED', version=version+1, updated_at=? "
+            "WHERE instruction_id=? AND attempt=? AND state='PENDING'",
+            (now_utc().isoformat(), int(instruction_id), int(attempt)),
+        )
+        conn.commit()
+
+    def get_pending_booking_intent(self, instruction_id: int) -> Optional[Dict[str, Any]]:
+        """A1 (RFC-211): 取该指令最新 PENDING 意图 (恢复干净重放用)。无则 None。"""
+        conn = self._conn()
+        row = conn.execute(
+            "SELECT intent_json, attempt, futu_order_id FROM entry_booking_outbox "
+            "WHERE instruction_id=? AND state='PENDING' ORDER BY attempt DESC LIMIT 1",
+            (int(instruction_id),),
+        ).fetchone()
+        return dict(row) if row else None
+
     def unlock_execution_if_zero_fill_terminal(self, instruction_id: int, attempt: int,
                                                broker_order_status: str,
                                                dealt_qty: Optional[float] = None) -> bool:
@@ -2188,6 +2224,21 @@ CREATE TABLE IF NOT EXISTS playbook_instructions (
     --   (date, symbol) 每轮一行 (各自独立 decision_id), 覆盖仲裁下沉到
     --   save_instruction Python 层, "已执行/已终态行永不覆盖"为硬规则。
     --   存量表迁移见 ensure_tables → _migrate_drop_date_symbol_unique。
+);
+
+CREATE TABLE IF NOT EXISTS entry_booking_outbox (
+    intent_id TEXT PRIMARY KEY,
+    instruction_id INTEGER NOT NULL,
+    attempt INTEGER NOT NULL,
+    target_env TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    futu_order_id TEXT NOT NULL,
+    intent_json TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'PENDING',
+    version INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT,
+    updated_at TEXT,
+    UNIQUE(instruction_id, attempt)
 );
 
 CREATE TABLE IF NOT EXISTS playbook_factor_stats (
