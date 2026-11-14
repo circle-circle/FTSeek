@@ -2,6 +2,19 @@
 
 > **写入约定（2026-11-11 起）**：每条交接必须带三件可核凭据 —— `**凭据**`（commit sha / 改动文件数，`git show --stat` 可核）、`**验证**`（可复跑命令 + 日志路径，不写“已通过”）、`**未验证**`（显式列出没验的部分，无则写“无”）。自述≠事实，这三行是给下一个人核的。
 
+## 2026-11-14 10:28 CST · 其他会话 EventContext WIP 复核、生产缺陷修复与提交前验收
+
+- **审查结论**：RFC-205~208 代码/测试/文档有提交价值，无必须整文件排除项；`docs/debeate` 软链继续排除。发现并修复两项生产缺陷：注入只按26h年龄可接受昨日简报、injection_hash 混 writer status 导致同内容缓存误作废/误报 REVIEW。
+- **同步修正**：简报必须 as_of=当前ET日；哈希不含 writer status，OK↔ALREADY_CURRENT 内容身份稳定；EventContext cron 经用户明确授权改全年 06:30 ET，备份 `data/crontab.backup.20261114T020642Z_event_context_dst.txt`。preexecute 主开关统一 `DA_EVENT_PREEXECUTE_SHADOW`，旧名保留 alias，ALREADY_CURRENT 不再虚报 paid_calls；仓外 Hermes 测试补 skip 保护。
+- **生产证据**：EventContext latest=OK、preexecute=OK，repo/live carrier SHA256 一致；生产消费者 llm_synth=88e29ca6…、pipeline=68981f39…、config=f0f91e8d… 已写入 RFC-208。重启 MainPID=2934331，启动冒烟7/7，9仓不变、非BOOKED=0。
+- **文档纠偏**：修 handoff 遥测路径/首夜归因与cron时态、RFC-205 后续状态、DEB §66 时态、entry-confirm resolved assignment；控制环补3条 cron 台账并重建 debate index。Obsidian 11-13 review 的“无P0”只可能指 DA/core，**不含 MOM XLE/QQQ 两笔补偿单**，Vault 仅作模型原文归档，不作治理证据。
+- **凭据**：本批含 `app/event_stream/da_prompt_injection.py`、`market_brief.py`、ops/hermes/da_main_carrier.py、RFC-205~208 全部脚本/测试/DEB/RFC、obsidian_vault 原始产物与 handoff；不含 `.env.us`、crontab、data 产物和 `docs/debeate` 软链。
+- **验证**：EventContext+治理 **238 passed**；`check_undefined_names`、py_compile、diff-check exit 0；启动冒烟7/7。其他基线红仍为另外5个 DB 直连脚本、archive 文案和线上3个旧运维脚本，未宣称全仓全绿。
+- **未验证**：EventContext 新 06:30 ET 首轮尚未自然发生；付费 edge/收益未证明，WARN 证据质量与重复控制不归因翻向；preexecute 仍无 cron，自动 REVISE/INVALIDATE 未实现且未授权。
+- **下一步**：观察新调度首轮及同ET日守卫、缓存身份稳定性；vault 单独按原始产物归档并注明 DA/core 与 MOM 口径差异，不把模型原文中的未验证 CEO/KDJ 说法当事实。
+
+最后更新：2026-11-14（本条）
+
 ## 2026-11-14 09:12 CST · MOM 生命周期工程加固已部署（设计评审 + DST/隔离/退出）
 
 - **设计结论**：12-1/asof/QQQ MA200/top2 等名义、reprice 费用/预算、3% SL、5% 隔夜线、21 日退出与 V1 allowlist 符合设计；收益仍未证明，R14 非 PIT/选池前视/调仓日簇限制不改。MOM/DA 优先级、chase cap、VWAP/VIX/飞刀/风险缩放、预算与任何经济参数均冻结待裁。
@@ -41,6 +54,124 @@
 - **下一步**：优先裁暂停 MOM 新仓并修两处 thesis 空值切片+真实service首单测试；设计XLE/QQQ幂等补账/排除及补偿后同步和解；补PositionSync queue影子；另做EXT 429调用方归因与edge_gate覆盖哨兵。MOM/DA预算优先级如需改变另裁，不为攒样本放宽PORTFOLIO_HEAT。
 
 最后更新：2026-11-13（本条）
+
+## 2026-11-13 · 观测与证据链补强完成：遥测/论据质量/重复控制/执行前新鲜度
+
+- **遥测**：`data/shadow/da_main_schedule.jsonl` 持续存在且完整（591行/29日，今日 running→25 heartbeat+first_checkpoint→complete）。此前“被删除”是观察路径混淆，已修正；carrier 增加原子 append+fsync、失败显式留痕、缺文件自愈、terminal-last 与 fallback。live/repo 同步。
+- **论据质量**：`da_event_inject_report` 新增 unsupported indicator / valuation contradiction / factual precision 校验。实际32卡中27标的存在至少一项问题，`status=WARN`、`evidence_quality_pass=false`；NVDA“KDJ低位金叉”无实现，PE(TTM)=21.01 vs dynamic=33.916/normalized=34.87、可用peer=4，故结构通过≠论据可靠。
+- **重复控制**：NVDA 三次 treatment=2 SKIP/1 SHORT/0 BUY，CSCO control/treatment 均2 SHORT/1 BUY；重复样本含 ungrounded ID，valid_cards=0。首夜翻向不得归因 EventContext，详见 `docs/debates/DEB-20261113-event-context-repeatability.md`。
+- **执行前新鲜度**：新增 `da_event_preexecute_shadow.py` + evaluator + registry PERMANENT_MEASURE；当前注入简报与生产版本一致，`NO_CHANGE`，无自动改单/撤单/退出。cron 尚未安装，待用户明确批准。
+- **凭据**：本批新增/修改 `ops/hermes/da_main_carrier.py`、`scripts/da_event_inject_report.py`、`da_event_preexecute_shadow.py(+eval)`、registry与测试；`data/shadow/da_event_prompt_canary/latest.json`、`data/shadow/da_event_preexecute/latest.json`。未提交。
+- **验证**：联合套件 **367 passed**；完整棘轮+offline full-chain **59 passed**；`check_undefined_names`、repo/live diff check exit 0。registry重启 MainPID=2873323，启动冒烟7/7，三仓不变、非BOOKED=0。
+- **未验证**：没有费后收益/净alpha证据；重复控制NVDA BUY未复现，证据质量告警尚未治理完成；preexecute cron未安装，自动REVISE/INVALIDATE未实现且未授权。
+- **下一步**：优先处理 unsupported indicators 与估值口径告警，保留重复控制；若安装执行前检查，先获用户明确 cron 授权。生产 Gate/模型/仓位/退出/KDJ 均不变，回滚=对应环境键置0。
+
+最后更新：2026-11-13（本条）
+
+## 2026-11-13 · RFC-208 EventContext 直接注入 DA：结构验收通过，证据质量 WARN/归因未证实
+
+- **落地**：EventContext 每日简报后续经用户另裁为全年 06:30 ET（无当日checkpoint时仅watchlist+EventStore），`llm_synth` 新增独立 `DA_EVENT_CONTEXT_INJECT` 注入口；原始19维/模型/Gate/Playbook不变。简报 as_of 必须是当前 ET 日，无效/过期/缺失回退原行为并留原因；injection_hash 不含 writer status，OK↔ALREADY_CURRENT 不再误作废缓存，元数据 `advisory_only=true / gate_visible=false`。新增 C1 canary registry 与 `da_event_inject_report.py` 验收器。
+- **实跑 smoke**：最新有效简报 `f23c760ecea071d25112` = 1122 events/48 facts/3 transmissions/errors=0；NVDA 原始输入生产同构注入成功，Prompt含今日brief_id与生产文案，契约零违规，未写生产DB/订单。registry重启 MainPID=2851003，启动冒烟7/7。
+- **凭据**：RFC-208 + Hermes llm_synth/pipeline + app/event_stream/da_prompt_injection.py + 评估器/测试；生产消费者 SHA256 见 RFC-208 §2（llm_synth=88e29ca6…、pipeline=68981f39…、config=f0f91e8d…）；cron备份 `data/crontab.backup.20261113_rfc208_pre.txt`、`data/crontab.backup.20261114T020642Z_event_context_dst.txt`。联合回归 **281 passed**、棘轮+offline full-chain 59 passed；`check_undefined_names` 与 diff 检查通过。
+- **验证**：真实主批32卡注入完成、bridge=19条且无重复symbol；treatment vs 同raw control 的 valid/research=32/32、geometry=100%、ungrounded=0，canary_pass=true（仅结构判据）。方向一致26/32，NVDA（PRIMARY）与CSCO（CONTRARY）引用了共享事件，但重复控制后翻向不可归因；NVDA BUY仍被原Gate BLOCK，CSCO SHORT保留。评估器 `--eval`=OK，无新增Traceback/CRITICAL，三仓不变、非BOOKED=0。产物 `data/shadow/da_event_prompt_canary/latest.json` 与 `data/shadow/da_control_20261113_all32_v1.jsonl`。
+- **未验证**：首夜只有质量/运行安全，无完整出场与费后收益；不据此转常态生产。**补测后证据质量未通过**：27/32 标的存在 unsupported indicator/估值/小样本问题（`status=WARN`）；NVDA 三次 treatment=2 SKIP/1 SHORT/0 BUY，CSCO 双臂均2 SHORT/1 BUY，翻向不可归因，详见 `docs/debates/DEB-20261113-event-context-repeatability.md`。执行复核 `docs/debates/DEB-20261113-entry-confirm-indicators-review.md` 已确认 entry_confirm 仍 INSUFFICIENT，KDJ 负增量不接，后续仅离线评估计划锚/VWAP/时间确认。
+- **下一步**：保留 `DA_EVENT_CONTEXT_INJECT=1` 继续 C1 前瞻样本，>=30 position-event pairs/>=10 ET 日且费后评估前不转常态；若出现 ungrounded ID、重复订单/绕门、有效卡或研究完整率下降>5pp，立即置0。entry_confirm 维持现役，不加KDJ；VWAP侧仅离线预注册。
+
+最后更新：2026-11-13（本条）
+
+## 2026-11-13 · RFC-207 三项只读接入与常驻调度已生效
+
+- **落地**：EventContext 每日共享简报、EXT 持仓事件 NO_CHANGE/REVIEW、DA 指令质量报告均已实现并注册 `PERMANENT_MEASURE`。独立环境开关默认 false 后已置 true、隔离 latest+不可变证据、同输入幂等、registry/evaluator/回放台账齐套；无真实 direction/Gate/仓位/退出变化。
+- **实跑**：EventContext 11-12/21:00Z=1059 events/96 facts/34 symbols/4 transmissions/errors=0；同输入第二次 `ALREADY_CURRENT` 且无新增 LLM。EXT 当前 ASML=NO_CHANGE/errors=0。质量报告34卡 valid/research=34、consistency=0.7941、geometry=1.0、7张SKIP不一致。修复 Hermes config 遮蔽与事件 ID 误写（Prompt v2 逐字复制，未放宽 grounding）。
+- **凭据**：本批21个代码/测试/文档/环境文件（未提交），RFC-207；开关与调度回滚见 `.env.us` 三键。注册计数 EventContext=96 / EXT=1 / quality=34；状态产物 `data/shadow/rfc207_live_status.json`。重启 MainPID=2844986，BA/HON/ASML 三仓不变、非 BOOKED=0，启动冒烟 **7/7**。
+- **验证**：联合离线+只读套件 **242 passed**；棘轮+offline full-chain **59 passed**；`check_undefined_names.py` 与 `git diff --check` exit 0。`ftseek_us.db` 哈希不变；`event_stream.db` 同时刻由既有 ingestion 写入，不冒充全库静止。已知无关红仍为 db_chokepoint 其他5脚本 + ops_sync 其他3线上脚本。
+- **未验证**：单日/单事件、无费后收益、无多日期供给验证；EventContext supplemental 当前只覆盖已登记8个 NVDA 关联标的，其余候选进 target_universe 但不补跨股证据；无生产交易行为验证需求（本批只读）。
+- **下一步**：用户已明确批准三条常驻 cron（含每日 EventContext 付费调用），已安装；后续 EventContext 调度经用户另裁改为全年 06:30 ET（America/New_York），quality=22:20、EXT 每15分钟；备份 `data/crontab.backup.20261113_rfc207_pre.txt`、`data/crontab.backup.20261114T020642Z_event_context_dst.txt`。**首轮 EXT 自动刷新已实证** `2026-11-13T10:45:01Z`：evaluated=1、NO_CHANGE、errors=0、production_write=false。继续观察每日 EventContext/quality 首轮与 latest 新鲜度；任何接真实 Prompt/Gate/订单/退出另裁。
+
+最后更新：2026-11-13（本条）
+
+## 2026-11-13 · DA 指令质量优化批已落地（离线回放/影子，生产行为未变）
+
+- **落地**：模型回放器 v2（生产预算/冻结样本/重复控制/完整卡片/几何与一致性/成本覆盖）+ NVDA EventContext 冻结与118条跨股证据 + SKIP 独立契约 + EXT 在途事件三态影子。新增 RFC-205/RFC-206，DEB §66 与回放台账已收口；无生产 Prompt/模型/DB/config/cron/订单变更，无需重启。
+- **核心读数**：qwen/pro 重复控制不支持直接换模型；Kimi 32k 两例有效但374–500s/股，Claude 两模型网关均404。SKIP 契约 consistency 13/20→20/20，但可达率3/20→0/20，故仅 OFFLINE_PASS+WARNING。EventContext R2 三例翻向，R3 可交易供给6→2（SNDK BUY/NBIS SHORT），NBIS 翻转 event_role=NONE 不归因简报。EXT NVDA 在20:44ET产出 REVIEW，未虚构避损。
+- **凭据**：本批18个代码/测试/文档文件（未提交）+ 隔离产物总索引 `data/shadow/da_optimization_20261113_summary.json`；付费回放均 `production_write=false`，未写 playbook_instructions。
+- **验证**：联合离线套件 **176 passed**；棘轮家族 **41 passed**；offline full-chain **18 passed**；`check_undefined_names.py`、`git diff --check` exit 0。`test_db_connection_chokepoint.py`（其他5脚本）与 `test_ops_scripts_sync.py`（其他3线上脚本）为已知无关基线红。
+- **未验证**：单日/单事件，无费后经济反事实、无多日期供给/可达性验证、无生产 shadow、无 Claude 可用模型；未跑全仓测试。Kimi 成本缺价格表记 n/a，非零。
+- **下一步**：多日期 SKIP 契约对照与 EventContext 重复控制/经济评估；任何生产 Prompt/模型/影子 registry/cron 接线另裁，不将本批离线结果直接上线。
+
+最后更新：2026-11-13（本条）
+
+## 2026-11-13 · NVDA 事件链只读复核：先共享 EventContext/在途再评估，换模型另行 A/B
+
+- **结论**：11-12 DA 已看到 NVDA CEO 风波、盘前 -8.43% 与盘前量，NVDA 给 SKIP；AMD/AVGO/TSM/MU/SNDK/ARM 等也有部分关联方向，但缺少统一事件事实、传导边与组合裁决。11-11 盘后 NVDA 净 -$686.88 是 EXT research_momentum 单，不是 DA；其 16:32 入场早于本次 EventStore 检索到的明确 oust 记录 20:44，需补持仓期新事件再评估。
+- **落地**：仅将证据与建议追加 `docs/debates/DEB-20261106-market-risk-switch-review.md` §65；复用既有 Event Intelligence v1 离线原型，不新建生产管线、不改模型/Prompt/阈值/订单。
+- **凭据**：本批 2 个文档（本 DEB + handoff），未提交；生产证据为 11-11/11-12 DA raw checkpoint、gate JSONL、EventStore、Playbook 指令与 trade_records。NVDA reasoning=4630/8192 且 finish=stop，非思考撞顶；挑战者现行代码实际开思考，旧注释已漂移。
+- **验证**：只读交叉核查上述产物；`git diff --check -- docs/debates/DEB-20261106-market-risk-switch-review.md handoff.md`。未跑测试（零代码变更）。
+- **未验证**：未调用付费模型、未跑 NVDA Event Intelligence 新回放、未做费后反事实、未验证报道真伪；不声称任何模型或 EventContext 已改善 edge。既有模型 A/B 仅 n=12/臂，且回放器 qwen 默认 3000 与当前生产不符，正式复测前必须对齐。
+- **下一步**：若用户批准，先做隔离冻结案例与重复控制；A=原 Prompt 只换模型，B=同模型只加 EventContext，分开裁决。EXT 在途事件 `NO_CHANGE/REVIEW/INVALIDATE` 另立 record-only RFC，不能与 DA 模型/Prompt 同批上线。
+
+最后更新：2026-11-13（本条）
+
+## 2026-11-13 11:25 · RFC-204 确认后与黑窗到点提前派发已部署（完整守卫不变）
+
+- **落地**：`TradingScheduler._maybe_auto_execute` 新增确认代际与黑窗跨点识别：entry_confirm 确认后主线程下一轮提前执行，执行期间新确认不丢；`last < entry_open_blackout_hhmm <= now` 时到点下一轮立即执行，消除额外180s量化误差。仍走原 auto_execute 全部报价/reprice/chase/admission/费用/预算/重复仓/幂等，非快线程下单。开关 `entry_confirm_fast_dispatch_enabled` 与 `open_floor_immediate_dispatch_enabled` 均 true，可 false+重启回滚。RFC-204 文档与7契约测试已入库。
+- **凭据**：重启前3仓（BA/HON/ASML），非 BOOKED=0；重启后 MainPID=2820961，3仓不变、非 BOOKED=0，两个开关实读均 true。RFC-202 ATR proxy 修复与 RFC-203 只读影子同批已部署。
+- **验证**：调度/entry_confirm/pipeline/offline/ratchet 合并 **222 passed**；`check_undefined_names` 与 `git diff --check` exit 0；`systemctl restart ftseek-us` + `startup_smoke_check.py --wait 90` = **7/7**。
+- **未验证**：尚未观察真实确认后 queue 延迟和 0945 首轮时间，不能提前宣称收益改善；锚带/宽限期/质量分仍只读，未启用新交易阈值。截至本条写作时未提交。
+- **下一步**：下一个交易窗口比较 RFC-203 `queue_candidate` 延迟与净结果，目标是把确认后等待从约112s降到主线程下一轮；黑窗首轮目标接近09:45而非09:47:59。若调度改善后出现重复单或绕门，立即 false+重启回滚。
+
+最后更新：2026-11-13（本条）
+
+## 2026-11-13 10:40 · RFC-203 早期风险影子 + 收养仓 ATR 修复已部署（候选不拦截）
+
+- **落地**：`position_sync._proxy_atr_from_stop()` 与 Playbook proxy 统一为完整 |entry-SL|，不再减半；RFC-203 常驻 record-only 钩子已上线：extreme 宽限期 2% 灾难候选、计划锚漂移 3% 候选、确认后排队候选。所有候选只 append `data/early_risk_shadow.jsonl`，不提前退出、不拒单、不改尺寸/派发；新增 evaluator + PERMANENT_MEASURE 注册 + 双重测试隔离 + replay ledger。
+- **凭据**：重启前 3 个未平仓（BA/HON/ASML），非 BOOKED=0；`git status --porcelain -- app/ scripts/` 仅本批文件。重启后 MainPID=2818974，3 仓不变、非 BOOKED=0；early evaluator=`NO_DATA`（尚无新候选，正常基线）。
+- **验证**：`tests/test_position_sync_atr_proxy.py` 3 passed；PositionSync 相邻 34 passed；early shadow + offline + registry + ratchet 最终 **111 passed**；agent 自报 early 18、auto/exit 165、entry/shadow 155、registry 128、ratchet 41、补充 83 passed；`check_undefined_names` 与 `git diff --check` exit 0；`systemctl restart ftseek-us` + `startup_smoke_check.py --wait 90` = **7/7**。
+- **未验证**：尚无重启后真实 grace/anchor/queue 样本；不能宣称已解决赢小输大或提前止损一定改善净额。候选阈值不是生产规则，实际提前退出/锚带拒单/立即派发未启用。截至本条写作时未提交。
+- **下一步**：按 RFC-203 攒 n≥30 且 ≥10 ET 日，比较避损与误杀；任何候选转生产须另起行为 RFC + 用户裁。若提前止损实施，需同时保留灾难硬兜底和跳空不可成交披露。
+
+最后更新：2026-11-13（本条）
+
+## 2026-11-13 00:05 · RFC-202 入场几何/派发/恢复口径只读分析器（生产行为未变）
+
+- **落地**：新增 `scripts/entry_geometry_review.py` + 契约测试 + `docs/decisions/RFC-202-entry-geometry-dispatch-recovery-review.md` + replay ledger。只读原始锚→reprice→fill、确认后排队、宽限期 MAE、收养仓 ATR/MFE；无新生产影子/cron/DB写/订单/参数变更，无需重启。
+- **凭据**：原始锚优先 `raw_instruction_json.planned_entry`，缺 reprice_audit 时 effective 回退指令当前 reprice，避免 DPC 33.00 被覆盖。候选 2% 锚带标出 GS +2.1824%、DPC +3.5152%，UBER +0.9712% 不误伤；treatment 总延迟中位 233.4s、确认后排队 112.4s，holdout 直接执行中位 7s；收养仓 ATR/SL 距离中位 0.5。产物 `/tmp/entry_geometry_20261112.json`。
+- **验证**：`pytest -q tests/test_entry_geometry_review.py tests/test_except_pass_ratchet.py tests/test_w456_log_hygiene_ratchet.py` = **19 passed**；另 naive/UTC-4/pipeline size 通过（合批共 33 passed 时 except 红已修）；`check_undefined_names.py scripts/entry_geometry_review.py` 与 `git diff --check` 均 exit 0。分析器实跑 `scripts/entry_geometry_review.py --date 2026-11-12 --out /tmp/entry_geometry_20261112.json` 成功。
+- **未验证**：候选锚带/立即派发/宽限期调整均未进入生产影子或实盘，不声称改善收益；完整分钟 bar 未落盘，不计算反事实 PnL。截至本条写作时未提交。
+- **下一步**：按 RFC-202 S1–S4 攒样；任何锚带拒单、立即派发、宽限期或恢复口径行为修改须另起行为 RFC + 用户批准。本条未提交。
+
+最后更新：2026-11-13（本条）
+
+## 2026-11-12 23:45 · 当日亏损溯源：隔夜尾损 + reprice/派发 + 宽限期，非 0945 单因
+
+- **结论（截至约10:37 ET）**：按平仓日 13 笔/7 胜/净 -$1,112.08，其中 NVDA+PDD 两笔隔夜止损 -$864.19（77.7%）；按今日新入场 8 笔/4 胜/净 -$300.64，DA-only 7 笔/3 胜/净 -$319.32。3 笔 early-tight SL_INITIAL 合计 -$335.75，其余 5 笔 +$35.11；DPC 单笔 -$190.49 占新入场亏损 63%。费用约 9bps、exec→fill 滑点约 -4.56bps，均非主因。
+- **关键根因**：①NVDA 174.14→149.76 隔夜跳空净 -$686.88，手工 SL 165.43→156 及穿越进一步放大，不能算到 0945。②DPC 计划 33.00 低吸→reprice 34.01→34.55→34.16 成交，计划锚被抛离；确认后约 84s 再派发且出场低于紧 SL 约 2.14%。③TTEK/UBER/DPC 的 MFE≤0.21%，入场后基本无正向偏移，early-tight 实际比原始宽 SL 少亏，不支持直接关闭。④确认后派发慢：treatment 触发→成交中位约281s vs holdout 39s；0945→首轮 auto_execute=09:47:59，政策外另有轮询量化误差。⑤宽限期 5min 内只有 4% 灾难兜底，DPC -3.31% 位移发生于该窗，结束后才武装紧 SL。⑥收养仓 atr=SL距离/2 与正常路径全距离不一致，且 peak/MFE 重置，属数据口径 bug。
+- **反事实边界**：09:35→实际成交的点位差整体约 -35bps（等待有利），不支持回滚 0945；但主要由 DPC/ARM 贡献，不能换算成反事实 PnL。今日 1m bars 未落盘，不能声称若 0935 会多赚/少亏。量能豁免对齐仅 BWXT 一只受影响，不是共因。entry_confirm 4 个放弃中 3 个继续逆向，暂无误杀大赢家证据。
+- **优化候选（先影子/修尺子，不直接改交易参数）**：A. 确认后立即派发 + 黑窗到点立即评估，减少确认后整轮等待；B. reprice 锚带约束，禁止把 DA 低吸锚上移后自称 pullback，优先 skip/真限价 TTL；C. 宽限期 extreme 桶灾难线与紧 SL 武装时点 shadow；D. 修收养仓 ATR/peak/MFE 口径及 open_positions 与 trade_record SL 分裂；E. 隔夜 EXT 事件风险与尺寸审查，不通过放宽 SL 解决；F. quality_score/regime 先做 IC 和 sizing 影子，不直接硬门；G. DA 目标价与 vol bucket 合成 TP 分开裁决，低结构 RR 应拒单而非抬目标。
+- **不做**：不回滚 0945、不关 early-tight、不重开 C15/factor_neg_edge、不翻空偏好、不抬票面摊费、不调 chase_cap/BE/TP。R2 open15 仍 TOO_EARLY（affected=2/30, days=2/10），0945 后样本增长更慢。历史 acceptance 120s 为负，不重提该方案。
+- **验证**：`session_attribution.py --date 2026-11-12 --json`、`execution_tca_report.py`、`playbook_fee_gate_audit.py --from 2026-11-12 --to 2026-11-12 --source DA --json`、`risk_size_tier_forward_eval.py`；逐笔 trade_records、entry_blackout_shadow、entry_confirm_forward、exec_gate_audit、DA checkpoint 和主日志交叉复核。未改代码/配置/DB/订单。本条未提交。
+
+最后更新：2026-11-12（本条）
+
+## 2026-11-12 23:20 · 开盘全链只读核查：0945/entry_confirm/退出/账实符合设计，早盘亏损另列
+
+- **落地**：只读核查盘前输入→黑窗→确认→成交→退出→对账。09:30–09:45 DA 新入场=0，首笔 RTH 成交=09:48:15（TTEK），首次 auto_execute=09:47；EXT 09:36 退出不受影响。黑窗 evaluator=`OK`：5 轮 cycle 覆盖 09:31–09:44，n_inst=27、每轮 n_priced=25、报价错误=0，25 个去重 hit（21 chase/3 pullback/1 near-miss），不等于会成交。entry_confirm=14 arm：5 CONFIRMED、4 ABANDONED、5 holdout，全部 session_min≥15；TTEK/MRK/CRM/LLY/COIN 走 holdout，UBER/ARM/GS/ORCL/DPC treatment 确认后成交。
+- **凭据**：服务 active（PID 2736054，18:01 启动）；单次 `startup_smoke_check.py` 7/7；`data/entry_blackout_shadow.jsonl` + evaluator 输出；10:16 券商只读对账 broker=9/internal=9、drift=[]/external=[]；随后 COIN 保本退出，最新 Done=8/8，非 BOOKED=0。日志 `logs/ftseek_us.log` 主链 0 Traceback/CRITICAL。
+- **验证**：`scripts/entry_blackout_shadow_eval.py --date 2026-11-12 --json --no-write`；`scripts/live_reconcile_check._internal_open/_broker_positions/_diff`；`scripts/da_input_freshness_manifest.py --date 2026-11-12` = raw34、parse_error=0、quality 19/19；`startup_smoke_check.py`（不带 --wait）=7/7。
+- **未验证/风险**：截至 10:20 ET 已平仓净 -$299.55，3 笔分钟级 SL_INITIAL 净 -$335.75（TTEK/DPC/UBER），触发既有“批量止损熔断 shadow”HIGH 提示，**只告警不阻断**；单日不能据此裁 0945 回滚。DA market_context 全部 prev_close 回退、MRK 新闻 1 条降级；UE event/borrow basis 缺失是现役展示缺口，不是执行断链。MOM 锚点 11-13 未到，MOM 订单=0。`--wait 1` 健康检查被脚本自身防假阳性拒绝，未据此重启；不带 wait 单次检查通过。
+- **下一步**：继续观察至收盘及后续 2 个交易日，分开评估“链路正确”与“策略净收益”；不据首日结果改 0945、entry_confirm 或退出参数。本条未提交。
+
+最后更新：2026-11-12（本条）
+
+## 2026-11-12 17:07 · 统一重启部署：启动冒烟 7/7
+
+- **落地**：按用户令执行 `systemctl restart ftseek-us`，部署主提交 `10694b619` + handoff 提交 `3743d6430` 中全部代码。
+- **凭据**：重启前 9 个未平仓（BA/GOOG/PDD/HON/EOG/NVDA/ASML/CAT/AAPL），`playbook_exits.exit_intents` 369 条全 BOOKED、非 BOOKED=0；`git status --porcelain -- app/ scripts/` 仅本地排除的手工 NVDA 脚本未跟踪，无未提交代码。重启后 MainPID=2728263，ActiveEnter=2026-11-12 17:06:55 CST，9 仓不变、非 BOOKED=0。
+- **验证**：`PYTHONPATH=. ./venv/bin/python scripts/startup_smoke_check.py --wait 90` = **7/7**（ConfigValidator/漂移检测/热重载/SSOT 0 BLOCKING/双臂安全/退出快循环/零 Traceback+CRITICAL）；`systemctl is-active ftseek-us`=active；`open_floor_minutes()=(585,945)`。
+- **未验证**：真实盘中黑窗 hit/首单、MOM SIM 订单/持夜/21 日退出未发生；未做富途 App UI 目检；截至本条写作时未提交。
+- **下一步**：今晚黑窗后跑 `scripts/entry_blackout_shadow_eval.py --date 2026-11-12 --json --no-write`；NVDA stop_loss_price 与 metadata 分歧仍待裁，不在重启中改库。
+
+最后更新：2026-11-12（本条）
 
 ## 2026-11-12 15:20 · 多会话调整统一复核、全量验证与提交（主提交 10694b619）
 

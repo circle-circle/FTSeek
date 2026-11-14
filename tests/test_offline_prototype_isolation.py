@@ -22,6 +22,12 @@ ROOT = Path(__file__).resolve().parents[1]
 PKG = ROOT / "app" / "event_stream"
 OFFLINE_MODULES = ("intelligence", "market_brief", "instructions")
 
+# RFC-208 用户批准的唯一生产消费面；仍由 DA_EVENT_CONTEXT_INJECT 缺省关闭隔离。
+# 其它 app 模块继续零消费者，防止离线原型被静默加载。
+APPROVED_PRODUCTION_CONSUMERS = {
+    "app/event_stream/da_prompt_injection.py": "DA_EVENT_CONTEXT_INJECT",
+}
+
 # 生产代码面上"引用离线原型"的形态 (import / from-import / 字符串动态导入)
 _IMPORT_PATTERNS = tuple(
     re.compile(p)
@@ -66,13 +72,22 @@ def test_no_production_importer_under_app():
             continue
         if path.parent == PKG and path.stem in OFFLINE_MODULES:
             continue  # 模块自身不算消费者
+        relative = str(path.relative_to(ROOT))
+        if relative in APPROVED_PRODUCTION_CONSUMERS:
+            continue  # RFC-208 显式批准且独立开关隔离的唯一生产注入口
         if references_offline_module(path.read_text(encoding="utf-8", errors="ignore")):
-            offenders.append(str(path.relative_to(ROOT)))
+            offenders.append(relative)
     assert not offenders, (
         "app/ 下出现离线原型的生产消费者 (会随重启进入生产进程): %s\n"
         "若确要转生产: 先在 tests/test_offline_prototype_isolation.py 登记消费者与开关, "
         "不要删断言。" % offenders
     )
+
+
+def test_rfc208_consumer_is_explicitly_switch_gated():
+    assert APPROVED_PRODUCTION_CONSUMERS == {
+        "app/event_stream/da_prompt_injection.py": "DA_EVENT_CONTEXT_INJECT",
+    }
 
 
 def test_detector_has_teeth():

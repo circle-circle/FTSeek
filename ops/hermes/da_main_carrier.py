@@ -8,6 +8,20 @@
 - a hard ET deadline triggers ``pipeline.py --mode finalize`` from checkpoints;
 - success is verified from bridge/DB artifacts, not only stdout JSON;
 - a process lock prevents two carriers writing the same batch concurrently.
+
+2026-11-13 ledger-lifecycle hardening (root cause of the "ledger disappeared"
+investigation was a path/reader mismatch — ``data/da_main_schedule.jsonl`` and
+relative opens from a non-repo cwd both raise FileNotFoundError while the one
+true ledger lives at ``data/shadow/da_main_schedule.jsonl`` and was never
+unlinked). The carrier nevertheless now defends the ledger itself:
+- every event is one ``O_APPEND`` write(2) under ``flock`` + ``fsync`` so a
+  heartbeat and a terminal event can never interleave or be lost to a crash;
+- if the ledger vanishes after this process has written it, the carrier
+  recreates it and records ``ledger_missing_recreated`` in-band;
+- the heartbeat thread is stopped and joined before any terminal event, so a
+  heartbeat can never land after the terminal line;
+- write/verify failures are printed loudly and mirrored to
+  ``da_main_schedule.jsonl.fallback`` instead of vanishing into stdout.
 """
 
 from __future__ import annotations
@@ -18,6 +32,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import sys
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -90,17 +105,136 @@ def watchlist_symbols() -> list[str]:
     return [symbol for symbol in lines[-1].split(",") if symbol]
 
 
-def append_event(event: dict) -> None:
+def _encode_event(event: dict) -> bytes:
+    """Serialize exactly one ledger line (newline included)."""
+    return (json.dumps(event, ensure_ascii=False, default=str) + "\n").encode("utf-8")
+
+
+def _fsync_parent(path: Path) -> None:
+    """Make the directory entry durable when this append created the ledger."""
     try:
-        EVENT_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with EVENT_PATH.open("a", encoding="utf-8") as handle:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-            try:
-                handle.write(json.dumps(event, ensure_ascii=False, default=str) + "\n")
-            finally:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-    except Exception as exc:
-        print(f"[DA-main] schedule event write failed (non-blocking): {exc}")
+        dir_fd = os.open(str(path.parent), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(dir_fd)
+    except OSError as exc:
+        print(f"[DA-main] parent fsync failed (non-blocking): {exc}", file=sys.stderr)
+    finally:
+        os.close(dir_fd)
+
+
+def _append_bytes(path: Path, payload: bytes) -> None:
+    """Append one encoded event as a single, durable ``O_APPEND`` write.
+
+    ``flock`` + one write(2) keeps every line whole even when the heartbeat
+    thread and the main terminal path append at the same moment; ``fsync``
+    makes the event survive a crash instead of living only in the page cache.
+    The ledger is only ever opened append-only (never truncated/deleted).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    created = not path.exists()
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_CLOEXEC, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            view = memoryview(payload)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:
+                    raise OSError(f"short append write to {path}")
+                view = view[written:]
+            os.fsync(fd)
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+    if created:
+        _fsync_parent(path)
+
+
+def _persisted(path: Path, payload: bytes) -> bool:
+    """True when the ledger's tail is byte-identical to the event just written."""
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            end = handle.tell()
+            handle.seek(max(0, end - len(payload)))
+            return handle.read() == payload
+    except OSError:
+        return False
+
+
+def _fallback_path() -> Path:
+    return EVENT_PATH.with_name(EVENT_PATH.name + ".fallback")
+
+
+def _report_ledger_failure(event: dict, exc: Exception) -> None:
+    """Telemetry writes must never be silent: echo loudly and mirror the event."""
+    status = event.get("status")
+    line = (f"[DA-main] schedule event write failed (non-blocking): path={EVENT_PATH} "
+            f"status={status} error={type(exc).__name__}: {exc}")
+    print(line)
+    print(line, file=sys.stderr)
+    fallback = _fallback_path()
+    try:
+        _append_bytes(fallback, _encode_event({
+            **event,
+            "ledger_fallback_for": str(EVENT_PATH),
+            "ledger_error": f"{type(exc).__name__}: {exc}"[:300],
+        }))
+        print(f"[DA-main] schedule event preserved in fallback ledger: {fallback}")
+    except Exception as fallback_exc:  # noqa: BLE001 - last-resort diagnostics
+        print(f"[DA-main] schedule event fallback write failed too: "
+              f"{type(fallback_exc).__name__}: {fallback_exc}", file=sys.stderr)
+
+
+_LEDGER_WRITES: dict[str, int] = {}
+_LEDGER_WRITE_LOCK = threading.Lock()
+
+
+def append_event(event: dict, *, verify: bool = False) -> bool:
+    """Append one schedule event; return True when it is durably on disk.
+
+    ``verify`` re-reads the ledger tail after fsync and fails loudly when the
+    terminal event did not land. Write failures stay non-blocking for the DA
+    chain (legacy exit codes unchanged) but are visible on stdout+stderr and
+    preserved in the fallback ledger.
+    """
+    try:
+        payload = _encode_event(event)
+    except Exception as exc:  # noqa: BLE001 - payload must not kill the batch
+        _report_ledger_failure(event, exc)
+        return False
+    key = str(EVENT_PATH)
+    with _LEDGER_WRITE_LOCK:
+        vanished = _LEDGER_WRITES.get(key, 0) > 0 and not EVENT_PATH.exists()
+        try:
+            if vanished:
+                # The ledger existed earlier in this run and is now gone:
+                # record that fact in-band, then keep appending (self-heal).
+                _append_bytes(EVENT_PATH, _encode_event({
+                    "type": "da_main_schedule",
+                    "status": "ledger_missing_recreated",
+                    "date": event.get("date"),
+                    "pid": os.getpid(),
+                    "path": str(EVENT_PATH),
+                    "at": now_et().isoformat(),
+                    "note": "ledger vanished after this carrier appended to it; "
+                            "recreated without dropping prior-process history",
+                }))
+                print(f"[DA-main] schedule ledger vanished mid-run; recreated: "
+                      f"{EVENT_PATH}", file=sys.stderr)
+            _append_bytes(EVENT_PATH, payload)
+            _LEDGER_WRITES[key] = _LEDGER_WRITES.get(key, 0) + 1
+        except Exception as exc:  # noqa: BLE001 - non-blocking telemetry
+            _report_ledger_failure(event, exc)
+            return False
+        if verify and not _persisted(EVENT_PATH, payload):
+            _report_ledger_failure(
+                event, OSError("event missing from ledger tail after fsync"))
+            return False
+        return True
 
 
 def _checkpoint_count(date: str) -> int:
@@ -110,6 +244,20 @@ def _checkpoint_count(date: str) -> int:
                    if not p.name.endswith((".raw.json", ".bak", ".tmp")))
     except Exception:
         return 0
+
+
+_HEARTBEAT_STOP: threading.Event | None = None
+_HEARTBEAT_THREAD: threading.Thread | None = None
+
+
+def _stop_heartbeat(timeout: float = 2.0) -> None:
+    """Stop and join the heartbeat so a terminal event stays the last line."""
+    stop = _HEARTBEAT_STOP
+    thread = _HEARTBEAT_THREAD
+    if stop is not None:
+        stop.set()
+    if thread is not None and thread.is_alive():
+        thread.join(timeout=timeout)
 
 
 def _heartbeat(date: str, base_event: dict, stop: threading.Event) -> None:
@@ -328,13 +476,19 @@ def _batch_observation(event: dict, result=None) -> dict:
 
 
 def _append_terminal_event(event: dict, result=None) -> None:
-    """Observation failure must not change legacy status, artifact ok, or exit code."""
+    """Observation failure must not change legacy status, artifact ok, or exit code.
+
+    The heartbeat is stopped first so the terminal line is the ledger's last
+    line, and the write uses ``verify=True`` so a lost final event is reported
+    loudly instead of leaving the last visible state as ``running``/heartbeat.
+    """
+    _stop_heartbeat()
     try:
         observation = _batch_observation(event, result)
     except Exception as exc:
         observation = {"state": "unknown", "reason": "observation_error",
                        "error": type(exc).__name__}
-    append_event({**event, "batch_observation": observation})
+    append_event({**event, "batch_observation": observation}, verify=True)
 
 
 def _finalize(date: str) -> dict:
@@ -378,6 +532,8 @@ def _release_lock(handle) -> None:
 
 
 def main() -> int:
+    global _HEARTBEAT_STOP, _HEARTBEAT_THREAD
+    _HEARTBEAT_STOP, _HEARTBEAT_THREAD = None, None
     stamp = now_et()
     date = stamp.strftime("%Y-%m-%d")
     minute = stamp.hour * 100 + stamp.minute
@@ -408,6 +564,7 @@ def main() -> int:
                 target=_heartbeat, args=(date, base_event, heartbeat_stop),
                 name="da-carrier-heartbeat", daemon=True)
             heartbeat.start()
+            _HEARTBEAT_STOP, _HEARTBEAT_THREAD = heartbeat_stop, heartbeat
 
         symbols = watchlist_symbols()
         if not symbols:
@@ -476,9 +633,7 @@ def main() -> int:
                           "artifacts": artifacts})
             return 0 if artifacts.get("ok") else 1
         finally:
-            heartbeat_stop.set()
-            if heartbeat is not None:
-                heartbeat.join(timeout=2)
+            _stop_heartbeat()
 
         if completed.stdout:
             try:
@@ -555,7 +710,7 @@ def main() -> int:
                                 "finished_at": finished_at}, result=result)
         return 0
     finally:
-        heartbeat_stop.set()
+        _stop_heartbeat()
         _release_lock(lock)
 
 

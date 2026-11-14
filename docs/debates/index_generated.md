@@ -1,24 +1,35 @@
 # 辩论库机器索引 (index_generated.md)
 
-> **本文件由 `scripts/build_debate_index.py` 生成** (2026-11-05), 请勿手改。
+> **本文件由 `scripts/build_debate_index.py` 生成** (2026-11-14), 请勿手改。
 > 决策摘要以 [README.md](README.md) 手工索引为准; 本页只做全量清单与漏登对账。
 
-共 **222** 个 DEB 文件。
+共 **242** 个 DEB 文件。
 
 ## 漏登对账
 
-⚠️ 以下 **8** 个近 14 天新文件未在 README 索引收录 (需补登):
+⚠️ 以下 **19** 个近 14 天新文件未在 README 索引收录 (需补登):
 
-- `DEB-20261023-da-chain-hardening.md`
-- `DEB-20261023-earnings-429-and-futu-primary-surprise.md`
-- `DEB-20261023-freeze-fast-lane.md`
-- `DEB-20261023-ue-intraday-side-channel-adjudication.md`
-- `DEB-20261025-futu-live-safety-shadow.md`
-- `DEB-20261027-da-scope-and-confidence-coupling.md`
-- `DEB-20261028-ratchet-three-reds-cleanup.md`
 - `DEB-20261105-nomination-lift-counterfactual.md`
+- `DEB-20261106-score-calibration-and-entry-quality.md`
+- `DEB-20261109-session-review.md`
+- `DEB-20261110-cross-model-common-findings.md`
+- `DEB-20261110-da-postclose-chain-review.md`
+- `DEB-20261111-2335-exit-sync-log-interval-audit.md`
+- `DEB-20261111-da-ext-chain-diagnosis.md`
+- `DEB-20261111-full-chain-accuracy-inspection.md`
+- `DEB-20261111-log-chain-optimization-audit.md`
+- `DEB-20261111-ue-role-contribution-audit.md`
+- `DEB-20261111-us-20261110-session-review.md`
+- `DEB-20261111-win-small-loss-large-diagnosis.md`
+- `DEB-20261112-beyond-da-strategy-research.md`
+- `DEB-20261112-sim-visible-multi-sleeve-design.md`
+- `DEB-20261112-umar-review-external-strategies.md`
+- `DEB-20261113-entry-confirm-indicators-review.md`
+- `DEB-20261113-event-context-repeatability.md`
+- `DEB-20261113-open-log-and-mom-first-anchor-audit.md`
+- `DEB-20261114-mom-lifecycle-review.md`
 
-📦 历史归档 **170** 个未登文件 (执行记录类, 不强制登记, 本页全量清单可查):
+📦 历史归档 **177** 个未登文件 (执行记录类, 不强制登记, 本页全量清单可查):
 
 - `DEB-20260626-okr_trading_chain.md`
 - `DEB-20260626-simulate_architecture.md`
@@ -190,6 +201,13 @@
 - `DEB-20261008-profit-ladder-scaleout-feasibility.md`
 - `DEB-20261014-geometry-restart-preregistration.md`
 - `DEB-20261016-strategy-attribution-confidence-ic-gates.md`
+- `DEB-20261023-da-chain-hardening.md`
+- `DEB-20261023-earnings-429-and-futu-primary-surprise.md`
+- `DEB-20261023-freeze-fast-lane.md`
+- `DEB-20261023-ue-intraday-side-channel-adjudication.md`
+- `DEB-20261025-futu-live-safety-shadow.md`
+- `DEB-20261027-da-scope-and-confidence-coupling.md`
+- `DEB-20261028-ratchet-three-reds-cleanup.md`
 
 ## 全量清单 (按日期)
 
@@ -352,7 +370,7 @@
 | [DEB-20260917-mrcy-twin-row-exit-loop-fix](DEB-20260917-mrcy-twin-row-exit-loop-fix.md) | 2026-09-17 | (未标注) | - | 100 |
 | [DEB-20260918-crm-overnight-gap-review](DEB-20260918-crm-overnight-gap-review.md) | 2026-09-18 | (未标注) | - | 142 |
 | [DEB-20260918-extended-hours-ssot-and-observability](DEB-20260918-extended-hours-ssot-and-observability.md) | 2026-09-18 | (未标注) | 2 | 1321 |
-| [DEB-20260918-preflight-report-content-update](DEB-20260918-preflight-report-content-update.md) | 2026-09-18 | (未标注) | - | 81 |
+| [DEB-20260918-preflight-report-content-update](DEB-20260918-preflight-report-content-update.md) | 2026-09-18 | (未标注) | - | 93 |
 | [DEB-20260918-quality-caliber-and-llm-thinking-budget](DEB-20260918-quality-caliber-and-llm-thinking-budget.md) | 2026-09-18 | (未标注) | - | 119 |
 | [DEB-20260918-ue-push-readout-alignment](DEB-20260918-ue-push-readout-alignment.md) | 2026-09-18 | (未标注) | - | 164 |
 | [DEB-20260919-extended-hours-profit-lock-and-trail](DEB-20260919-extended-hours-profit-lock-and-trail.md) | 2026-09-19 | (未标注) | - | 508 |
@@ -417,3 +435,23 @@
 | [DEB-20261105-extended-hours-chain-audit](DEB-20261105-extended-hours-chain-audit.md) | 2026-11-05 | (未标注) | - | 133 |
 | [DEB-20261105-nomination-lift-counterfactual](DEB-20261105-nomination-lift-counterfactual.md) | 2026-11-05 | (未标注) | - | 153 |
 | [DEB-20261105-sl-initial-early-tight-acceptance](DEB-20261105-sl-initial-early-tight-acceptance.md) | 2026-11-05 | (未标注) | - | 92 |
+| [DEB-20261106-da-election-reasoning-audit](DEB-20261106-da-election-reasoning-audit.md) | 2026-11-06 | (未标注) | - | 182 |
+| [DEB-20261106-market-risk-switch-review](DEB-20261106-market-risk-switch-review.md) | 2026-11-06 | 待用户裁决（2026-11-06）；Phase 0 只读回放已完成；已过第二 agent 复核（§十四）与第一 agent 交叉核查（§十六）；日内运行模型见 §十五。 | - | 4104 |
+| [DEB-20261106-score-calibration-and-entry-quality](DEB-20261106-score-calibration-and-entry-quality.md) | 2026-11-06 | (未标注) | - | 423 |
+| [DEB-20261109-session-review](DEB-20261109-session-review.md) | 2026-11-09 | (未标注) | - | 370 |
+| [DEB-20261110-cross-model-common-findings](DEB-20261110-cross-model-common-findings.md) | 2026-11-10 | (未标注) | - | 344 |
+| [DEB-20261110-da-postclose-chain-review](DEB-20261110-da-postclose-chain-review.md) | 2026-11-10 | (未标注) | - | 242 |
+| [DEB-20261111-2335-exit-sync-log-interval-audit](DEB-20261111-2335-exit-sync-log-interval-audit.md) | 2026-11-11 | (未标注) | - | 101 |
+| [DEB-20261111-da-ext-chain-diagnosis](DEB-20261111-da-ext-chain-diagnosis.md) | 2026-11-11 | (未标注) | - | 263 |
+| [DEB-20261111-full-chain-accuracy-inspection](DEB-20261111-full-chain-accuracy-inspection.md) | 2026-11-11 | (未标注) | - | 146 |
+| [DEB-20261111-log-chain-optimization-audit](DEB-20261111-log-chain-optimization-audit.md) | 2026-11-11 | (未标注) | - | 149 |
+| [DEB-20261111-ue-role-contribution-audit](DEB-20261111-ue-role-contribution-audit.md) | 2026-11-11 | (未标注) | - | 96 |
+| [DEB-20261111-us-20261110-session-review](DEB-20261111-us-20261110-session-review.md) | 2026-11-11 | (未标注) | - | 102 |
+| [DEB-20261111-win-small-loss-large-diagnosis](DEB-20261111-win-small-loss-large-diagnosis.md) | 2026-11-11 | (未标注) | - | 176 |
+| [DEB-20261112-beyond-da-strategy-research](DEB-20261112-beyond-da-strategy-research.md) | 2026-11-12 | (未标注) | - | 277 |
+| [DEB-20261112-sim-visible-multi-sleeve-design](DEB-20261112-sim-visible-multi-sleeve-design.md) | 2026-11-12 | (未标注) | - | 1250 |
+| [DEB-20261112-umar-review-external-strategies](DEB-20261112-umar-review-external-strategies.md) | 2026-11-12 | (未标注) | - | 218 |
+| [DEB-20261113-entry-confirm-indicators-review](DEB-20261113-entry-confirm-indicators-review.md) | 2026-11-13 | (未标注) | - | 89 |
+| [DEB-20261113-event-context-repeatability](DEB-20261113-event-context-repeatability.md) | 2026-11-13 | (未标注) | - | 48 |
+| [DEB-20261113-open-log-and-mom-first-anchor-audit](DEB-20261113-open-log-and-mom-first-anchor-audit.md) | 2026-11-13 | (未标注) | - | 174 |
+| [DEB-20261114-mom-lifecycle-review](DEB-20261114-mom-lifecycle-review.md) | 2026-11-14 | (未标注) | - | 90 |

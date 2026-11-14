@@ -26,6 +26,11 @@ from app.event_stream.market_brief import (
     generate_market_event_brief,
     validate_event_snapshot,
 )
+from scripts.da_event_supplemental import (
+    CASE_SYMBOLS,
+    extract_supplemental_evidence,
+    merge_supplemental_into_context,
+)
 
 DEFAULT_DB = ROOT / "data" / "event_stream.db"
 
@@ -44,6 +49,27 @@ def _prepare_output(path: Path) -> Path:
 
 def _expected_sources() -> List[str]:
     return sorted(default_source_registry())
+
+
+def _priority_cluster_ids(snapshot: Dict[str, Any], event_ids: Iterable[str]) -> List[str]:
+    """Map requested event ids to the dedupe cluster ids used by brief selection."""
+    wanted = {str(item).strip() for item in event_ids if str(item).strip()}
+    return sorted({
+        cluster["cluster_id"]
+        for cluster in snapshot.get("clusters", [])
+        if wanted.intersection(str(event_id) for event_id in cluster.get("event_ids") or [])
+    })
+
+
+def _supplemental_symbols(raw_root: Path, supplied: str) -> List[str]:
+    if supplied.strip():
+        return [item.strip().upper().removeprefix("US.") for item in supplied.split(",") if item.strip()]
+    inferred = sorted({
+        path.name[len("US."):-len(".raw.json")]
+        for path in Path(raw_root).glob("US.*.raw.json")
+        if path.name.startswith("US.") and path.name.endswith(".raw.json")
+    }.intersection(CASE_SYMBOLS))
+    return inferred or list(CASE_SYMBOLS)
 
 
 def _load(db: Path, since: str, until: str):
@@ -122,9 +148,29 @@ def _smoke(db: Path, output_dir: Path, lookback_hours: int) -> Dict[str, Any]:
 
 def _dashscope_call(system: str, user: str, **kwargs) -> Dict[str, Any]:
     skill_scripts = Path("/root/.hermes/skills/deep-stock-analysis/scripts")
-    if str(skill_scripts) not in sys.path:
-        sys.path.insert(0, str(skill_scripts))
-    from llm_synth import _call_llm
+    # 仓库根目录有 config/ 包；仅调 sys.path 无法替换已加载的 sys.modules['config']。
+    # 显式加载 Hermes config，并让 llm_synth 固定引用它；随后恢复仓库配置对象，
+    # 避免离线 wrapper 的全局模块污染。
+    if str(skill_scripts) in sys.path:
+        sys.path.remove(str(skill_scripts))
+    sys.path.insert(0, str(skill_scripts))
+    import importlib.util
+    original_config = sys.modules.get("config")
+    spec = importlib.util.spec_from_file_location("config", skill_scripts / "config.py")
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load Hermes config from {skill_scripts / 'config.py'}")
+    hermes_config = importlib.util.module_from_spec(spec)
+    sys.modules["config"] = hermes_config
+    spec.loader.exec_module(hermes_config)
+    try:
+        from llm_synth import _call_llm
+        import llm_synth
+        llm_synth.config = hermes_config
+    finally:
+        if original_config is not None:
+            sys.modules["config"] = original_config
+        else:
+            sys.modules.pop("config", None)
     return _call_llm(system, user, temperature=0.1, **kwargs)
 
 
@@ -136,7 +182,31 @@ def _brief(args: argparse.Namespace) -> int:
     previous_brief = json.loads(args.previous_brief.read_text(encoding="utf-8")) if args.previous_brief else None
     if previous_brief and previous_brief.get("validation_errors"):
         raise ValueError(f"previous brief validation failed: {previous_brief['validation_errors']}")
-    context = build_brief_context(snapshot, limit=args.max_events, previous_brief=previous_brief)
+    priority_event_ids = [item.strip() for item in args.priority_event_ids.split(",") if item.strip()]
+    priority_cluster_ids = _priority_cluster_ids(snapshot, priority_event_ids)
+    target_universe = [item.strip() for item in args.target_symbols.split(",") if item.strip()]
+    context = build_brief_context(
+        snapshot, limit=args.max_events, previous_brief=previous_brief,
+        priority_cluster_ids=priority_cluster_ids, target_universe=target_universe,
+    )
+    supplemental = None
+    if args.supplemental_raw_root:
+        if not args.supplemental_cutoff:
+            raise ValueError("--supplemental-cutoff is required with --supplemental-raw-root")
+        supplemental_symbols = _supplemental_symbols(
+            args.supplemental_raw_root, args.supplemental_symbols,
+        )
+        supplemental = extract_supplemental_evidence(
+            args.supplemental_raw_root,
+            cutoff=args.supplemental_cutoff,
+            case_symbols=supplemental_symbols,
+        )
+        context = merge_supplemental_into_context(
+            context, supplemental,
+            cutoff=args.supplemental_cutoff,
+            limit=args.supplemental_limit,
+            case_symbols=supplemental_symbols,
+        )
     brief, artifacts = generate_market_event_brief(
         context,
         llm_call=_dashscope_call if args.execute else None,
@@ -148,6 +218,8 @@ def _brief(args: argparse.Namespace) -> int:
     _prepare_output(args.output_dir)
     _write_json_new(args.output_dir / "brief_context.json", context)
     _write_json_new(args.output_dir / "market_event_brief.json", brief)
+    if supplemental is not None:
+        _write_json_new(args.output_dir / "supplemental_evidence.json", supplemental)
     for key, filename in (
         ("main_system", "main_system.txt"), ("main_user", "main_user.json"),
         ("challenger_system", "challenger_system.txt"),
@@ -166,6 +238,16 @@ def _brief(args: argparse.Namespace) -> int:
         "brief_id": brief["brief_id"],
         "selected_fact_count": len(brief["facts"]),
         "transmission_count": len(brief["transmissions"]),
+        "priority_event_ids": priority_event_ids,
+        "priority_cluster_ids": priority_cluster_ids,
+        "priority_selected_cluster_ids": context["selection"]["requested_priority_selected_cluster_ids"],
+        "priority_omitted_cluster_ids": context["selection"]["requested_priority_omitted_cluster_ids"],
+        "target_universe": context.get("target_universe") or [],
+        "supplemental_evidence_hash": (supplemental or {}).get("evidence_hash"),
+        "supplemental_total_items": (supplemental or {}).get("stats", {}).get("unique_evidence_count"),
+        "supplemental_merged_facts": (context.get("supplemental") or {}).get("merged_fact_count"),
+        "supplemental_date_only_items": (context.get("supplemental") or {}).get("date_only_item_count"),
+        "supplemental_rejected_future_count": (supplemental or {}).get("stats", {}).get("rejected_future_count"),
         "opposition": brief["opposition"],
         "degraded": brief["degraded"],
         "validation_errors": brief["validation_errors"],
@@ -191,6 +273,17 @@ def build_parser() -> argparse.ArgumentParser:
         elif name == "brief":
             subparser.add_argument("--snapshot", type=Path, required=True)
             subparser.add_argument("--previous-brief", type=Path)
+            subparser.add_argument("--priority-event-ids", default="")
+            subparser.add_argument("--target-symbols", default="",
+                                   help="离线候选宇宙；逐标的评估受益/受损，不绕过 DA 复核")
+            subparser.add_argument("--supplemental-raw-root", type=Path,
+                                   help="可选: 从 DA raw checkpoints 提取补充证据 (默认关闭)")
+            subparser.add_argument("--supplemental-cutoff", default="",
+                                   help="补充证据共享 cutoff，必须等于 snapshot as_of")
+            subparser.add_argument("--supplemental-symbols", default="",
+                                   help="补充证据标的；默认从 raw root 的 US.*.raw.json 推断")
+            subparser.add_argument("--supplemental-limit", type=int, default=0,
+                                   help="补充证据最多合并条数；0=全部")
             subparser.add_argument("--execute", action="store_true")
             subparser.add_argument("--max-events", type=int, default=48)
             subparser.add_argument("--model", default="qwen3.7-max")

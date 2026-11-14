@@ -358,3 +358,15 @@ cohort 窗 — 全窗已不可逆有 4 个哈希, 按全窗字面判必 BROKEN; 
 | `crontab-stop-invalidation-audit` → `scripts/stop_invalidation_audit.py` | 元环·止损失效审计 | 存量只读审计环；失效时应产生可见错误，不以空结果冒充零异常。本行只补既有载体登记。 |
 | `fcec2b6482b6` (`gap-rank-attribution-daily`) | Hermes 中环·跳空排名归因 | enabled job 补登记；输出只作研究/复盘，不直接改交易参数。 |
 | `68cc76b16ebd` (`NVDA-RTH-10AM-checkpoint`) | Hermes 快环·NVDA RTH 10:00 检查点 | enabled job 补登记；属于单标的观察/检查点，不是自动下单授权。其 prompt 内嵌 SQL 守卫红另列，不在本批改线上 prompt。 |
+
+---
+
+## 8. 2026-11-13 RFC-207 record-only 载体补登记
+
+| 载体 | 层级/角色 | 给定值与失效模式 |
+|---|---|---|
+| `crontab-da-event-context-shadow` → `scripts/da_event_context_shadow.py` | 中环·每日共享 EventContext 简报 | 用户已批准每日付费调用；EventStore/raw checkpoint 只读，失败回退原行为并留原因，latest 不覆盖历史证据；不写 playbook/订单/退出，不得把简报当成已验证收益。 |
+| `crontab-da-instruction-quality-shadow` → `scripts/da_instruction_quality_shadow.py` | 中环·DA 指令质量报告 | 零模型调用，输出 valid/research/geometry/consistency；WARN 只报告，不改 Gate/模型/仓位/退出。 |
+| `crontab-ext-event-risk-live-shadow` → `scripts/ext_event_risk_live_shadow.py` | 快环·EXT 持仓事件复核 | 每 15 分钟只读评估，输出 NO_CHANGE/REVIEW/INVALIDATE 候选；`production_write=false`、零订单/零自动动作，未经证实消息不得触发 INVALIDATE。 |
+
+注：`da_event_preexecute_shadow.py` 当前**未安装 cron**，仍为按需只读影子，未授权自动 REVISE/INVALIDATE；不冒充常驻生产环。

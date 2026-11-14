@@ -3931,3 +3931,173 @@ CBOE 官方 OHLC：2026-11-05 VIX 开 **17.14**、收 **28.18**（+69.7%）；�
 **顺带发现（比影子本身更重要）**：`entry_gap` 覆盖率在塌方 ——
 2026-11-12 当天 **10 笔只有 1 笔**有该字段（此前全窗口 86%）。
 ⇒ §56.4 的"覆盖率 ≥95%"重启门槛**当前差得更远**，任何 gap 类判据都应在修复前搁置。
+
+## 六十五、NVDA 事件案例：源头可改，但主缺口是共享事件上下文与在途再评估（2026-11-13，只读）
+
+> 用户问：DA 的消息/情绪/盘前指标→Prompt/模型→标的与方向能否从源头改善；NVDA 昨晚信息后，关联行业和标的是否充分推理并采取相向方向。
+> 本节使用生产 checkpoint、EventStore、Playbook 指令与 trade_records 交叉核查。零 API、零 DB 写入、零订单、零生产行为变更。
+
+### 65.1 先把 DA 与 EXT 分开：亏损单不是 DA 产出
+
+| 时点（ET） | 事实 | 判定 |
+|---|---|---|
+| 11-11 08:15 | DA NVDA=`BUY/score6`，scanner=bearish；Signal Gate 因“真实动量空头+BUY”`BLOCK` | 未形成 DA Playbook 指令 |
+| 11-11 16:32 | `EXT-2026-11-11-US.NVDA-afterhours` 以 research_momentum 做多 28 股 @174.14 | 这是 EXT 盘后研究动量单，不是 DA |
+| 11-11 20:44 | 本次 EventStore 检索中，明确“may be ousted”的记录 `853ef3ee05478043a7c9` 首次可见 | 晚于 EXT 入场；应评估持仓中新事件再决策，而非假设入场时已见 |
+| 11-12 08:14–08:15 | DA 采集到 CEO 风波新闻、社区爆发讨论、NVDA 盘前 159.09/-8.43%、盘前量 15,358,136 股 | 信息已进入 NVDA 本股 Prompt |
+| 11-12 盘前批次 | DA NVDA=`SKIP`：飞刀、事件与财报不确定性、追空 RR 不足 | “不做”是合理输出，不应为凑方向强做空 |
+| 11-12 09:30 | EXT 149.76 出场，`OVERNIGHT_GAP_STOP`，净 -$686.88 | 属 EXT 隔夜事件/退出链，不能记成 DA 模型单 |
+
+NVDA 当日模型实测 `finish_reason=stop`、reasoning=4,630/8,192，并非思考预算撞顶。主分析师实际 `max_tokens=16,192`；挑战者 T1 也已是 `enable_thinking=True/max_tokens=16,000`。`config.py` 旧注释与 `SKILL.md:31-35` 的“挑战者关思考/生产 3000”描述漂移，不得再拿旧口径判断能力。
+
+### 65.2 关联标的：有部分正确传播，没有统一事件裁决
+
+11-12 各股 Prompt 确实分别看到了 NVDA 报道，最终产出为：
+
+- AMD=`BUY`：明确采用“NVDA 高管动荡→替代受益”逻辑；AVGO=`BUY`，其 Prompt 也含相同报道。
+- TSM/MU/SNDK=`BUY`：分别把下跌解释为“NVDA 传闻错杀/过度反应”。
+- ARM=`SELL_SHORT`；NBIS=`SKIP`；NVDA=`SKIP`。
+- 下游并未全部成交：AMD/SNDK 被 chase cap 拦截，AVGO/MU 被 falsification slope 拦截，TSM 被 entry-confirm 否决；ARM 成交后保本净 +$5.29。故“模型产出方向”与“实际可成交策略”必须分开验收。
+
+这证明“完全没获知”不成立；但也证明缺少组合级一致性：同一事件在不同单股调用中被独立解释为替代受益、供应链错杀、做空和观望，没有共享事实状态、收入暴露、传导边、已定价程度及最终组合裁决。挑战者对 TSM/MU/SNDK 给 SKIP 而主分析师给 BUY，也不能只当 risks 文案略过。
+
+### 65.3 生产链的六个结构缺口
+
+1. **候选先于新闻**：Stage 1 先截候选，Stage 3 才逐股 `collect_all`（`pipeline.py:1498-1542`）。仅受同行事件影响、自己未上榜的 peer 不会因该新闻进入 DA。
+2. **peer 只有量价估值表，没有共享新闻和供应/客户/竞争边**；各候选并发隔离分析，无法保证相同事件事实进入所有相关 Prompt。
+3. **事实与传闻未充分分层**：NVDA 社区帖同时出现“还没出消息”和“董事会已批准辞任”，若与 WSJ/Yahoo 摘要同级注入，模型可能把舆情当已确认事实。需要 `event_time/first_seen_at/source_tier/status/evidence_id`，官方披露、媒体报道、社交舆情不可混作同一真值。
+4. **量能尺仍不全**：盘前只有绝对股数，无同时段历史基准；盘后没有 `after_volume`，盘后扫描也不是真正盘后榜。无法严谨判断“放量确认/已经 price-in”。
+5. **评分契约不适合同行传导**：HIGH 要求 `product_catalyst` 或 `earnings_beat` 这类公司独有催化（`llm_synth.py:1312-1316`），纯宏观/同行事件天然难获高档。
+6. **DA 盘前批无法保护 EXT 持仓期事件**：需要共享事件流驱动的在途 `NO_CHANGE/REVIEW/INVALIDATE` 评估；这不是把 DA 换成更强模型能覆盖的职责。
+
+### 65.4 不另造框架：复用 §14–18 Event Intelligence v1，但先过稳定性与经济验证
+
+§17 已有“EventStore as-of→共享 MarketEventBrief→跨资产传导→个股卡→ISSUE/REVISE/INVALIDATE→R3 仲裁”离线原型，正对应本案例。仍须保留原边界：36 股 R2a 与经济反事实未完成、51 个 delta 簇未选、生产版本化改单消费者不存在、live 停止。§17.5/§18 还证明同 Prompt 同温度也会翻方向，单次 NVDA 对照不得宣称改善。
+
+建议顺序：
+
+1. **P0 冻结案例**：把 11-11/11-12 NVDA+AMD/AVGO/TSM/MU/SNDK/ARM/NBIS 加入隔离回归集，只使用 `first_seen_at<=as_of` 的事件；先报采集时延、事件召回、引证正确率、受影响标的覆盖与方向分布。
+2. **P1 两个独立实验，禁止同批混算**：A=原 Prompt 只换模型；B=同模型只加共享 EventContext。每个实验先有重复控制噪声带，再看方向差异；最终看 decision 后可成交价的 DA-only 费后净 bps、日聚类 CI/MDE 与隔夜尾损，不看叙事漂亮度。
+3. **P2 在途风险影子**：EXT 持仓遇到新重大事件时，只记录 `NO_CHANGE/REVIEW/INVALIDATE` 及反事实，不自动平仓、不改尺寸；另立 RFC/注册，不能与 P1 同批上线。
+4. **模型回放先修尺子**：`scripts/da_model_ab_replay.py:62-64,118` 对 qwen 缺省仍给 3000，而当前生产 completion 常达 5,000–7,000；未对齐生产输出预算前，旧/新回放排名都不能当能力结论。
+
+既有 §37 五模型各 12 例只能筛选不能裁决：deepseek-v4-pro 可保留为候选，qwen3.8-max 已有 539s 延迟反证；换“最强模型”也必须重新实测可用性、延迟、成本和重复控制，不能按名字直接替换。
+
+### 65.5 本轮验证与未验证
+
+- 证据：`data/da_checkpoint/2026-11-{11,12}/US.*.raw.json`、`data/da_gate_decisions.jsonl`、`data/event_stream.db::canonical_events`、`data/ftseek_us.db::{playbook_instructions,trade_records}`、§17/§18/§36–38。
+- 生产代码静态核查：主模型/挑战者、19 维采集、候选顺序、peer 上下文、Prompt 契约、Gate/Adapter；未触发任何生产写入。
+- **未验证**：未跑付费模型回放、未跑 Event Intelligence NVDA 新案例、未做收益反事实、未验证事件报道本身真伪、未证明任何模型或事件上下文有费后 edge。
+
+
+## 六十六、NVDA 源头优化实施：测量器 + 共享跨股证据 + SKIP 契约 + EXT 影子（2026-11-13）
+
+> 用户裁「按建议执行，明确合理的优化落地措施，有效提升指令产出质量」。本批完成离线实现与实弹回放，
+> 未改生产 Prompt/模型/DB/config/cron/订单，未重启。所有付费产物均在 `data/shadow/`，无生产消费者。
+
+### 66.1 先修测量器，避免把截断和随机翻向当能力提升
+
+`scripts/da_model_ab_replay.py` 已升级为 v2：实读生产 `thinking_budget=8192/max_tokens=16192`，支持冻结
+日期/标的、重复控制、原始与生效 Prompt SHA256、完整卡片、研究完整性、价格几何、方向—计划一致性、
+重复方向稳定性、成本覆盖率；默认 dry-run，`--execute` 才付费，JSONL/manifest 均拒绝覆盖。
+新增 `tests/test_da_model_ab_replay.py`，历史 `da_citation_ab_replay` 相邻测试同步通过。
+
+模型首轮 8 标的 × qwen/pro 均 8/8 有效卡，但 10 次重复控制推翻了“单轮即可排名”的想象：
+
+| 重复控制（NVDA+AMD，各10次） | qwen3.7-max | deepseek-v4-pro |
+|---|---:|---:|
+| valid_card | 20/20 | 20/20 |
+| NVDA 方向 | 7 SKIP / 3 SHORT | 6 SKIP / 4 SHORT |
+| AMD 方向 | 10 BUY | 5 BUY / 4 SKIP / 1 SHORT |
+| 两标的 stable_direction | 1/2 | 0/2 |
+| direction_plan_consistent | 13/20 | 11/20 |
+| 成本（价格表估算） | $4.50397 | $0.62141 |
+
+⇒ 不把 pro 的低成本或首轮命中当替换依据；qwen 的 AMD 方向稳定但 0/10 可达，入场几何仍是独立瓶颈。
+
+高性能臂只作技术验证：Kimi k3.1-pro 在 16k 两例均 `finish=length`（reasoning 14694/15864），
+32k 后两例均有效，但单股 latency **373.8s/500.1s**，不能直接替换当前批量盘前主分析师；价格表缺失，
+成本记 `n/a` 而非零。配置网关的 Models API 对 `claude-fable-5-2` / `claude-opus-5-5` 均返回 **404**，
+本批没有 Claude 实测，也没有把网关别名冒充 Claude。探测安装的 SDK/依赖已卸载并恢复原版本。
+
+### 66.2 SKIP 契约：离线一致性达标，但可达率警告阻止直接上线
+
+全量 checkpoint 扫描发现 **124/124 张 SKIP 卡均带方向性执行字段，覆盖21个分析日**，是旧 schema 的系统性
+语义矛盾，不是 NVDA 单例；下游忽略 SKIP，故不把它夸大为已知错误下单。
+
+新增独立 `--skip-contract` 臂：SKIP 时 entry/archetype/stop/target/confirmation/chase_cap 全部 null，
+右侧观察只保留研究文本/tripwire。RFC-206 在实验臂揭盲前冻结判据，10 次重复结果：
+
+| 指标 | 控制臂 | 契约臂 |
+|---|---:|---:|
+| valid / research / finish=stop | 20/20 | 20/20 |
+| direction_plan_consistent | 13/20 | **20/20** |
+| NVDA 一致性 | 3/10 | **10/10** |
+| stable direction（标的） | 1/2 | 2/2 |
+| 可达率 | 3/20 | **0/20（WARNING）** |
+| NVDA 方向 | 7 SKIP / 3 SHORT | 10 SKIP |
+| AMD 方向 | 10 BUY | 10 BUY |
+
+机械结论 **OFFLINE_CONTRACT_PASS + REACHABILITY_WARNING**（RFC-206）。它提升指令语义一致性，
+但 SHORT 供给消失且可达率下降，不允许直接改生产 Prompt；须先补多日期/多标的对照。
+
+### 66.3 EventContext：严格 as-of + 目标宇宙 + 跨股原始证据
+
+已实现并验证：
+
+1. `da_event_case_freeze.py`：冻结 11-11/11-12 案例、raw 路径与 SHA256、关键事件可见性和未来排除。
+2. `da_event_supplemental.py`：从 8 股 raw checkpoint 的 news/news_v2 抽取跨股证据；稳定 `SUP-*` ID、
+   原始发布时间/实际采集时间、来源标的与 raw 哈希；日期-only 不伪造午夜，URL/标题去重，拒绝未来与 ID 冲突。
+3. `market_brief.py`：可选 `target_universe`，要求逐个评估关联标的但禁止只凭同行业强猜；
+   OPPOSE 在顶层 evidence_ids 缺失时只可继承挑战者已提供的 fatal_flaw 证据，仍逐 ID grounding。
+4. 预算裁剪显式记录未审阅数，不能把未注入 Prompt 的证据算作已阅读。
+
+v2 冻结结果：共享 cutoff `2026-11-12T13:26:00Z`，EventStore 898 events/708 clusters；
+128 raw items→122 relevant→118 unique（4 duplicate collapsed），本轮注入48条 supplemental +48条 EventStore，
+另70条 supplemental 明确标为未审阅。关键 oust 事件可见，max direct first_seen=13:24:10Z、
+max supplemental first_seen=13:25:43Z，均不超过 cutoff。
+
+共享简报 `b6fe1668c85201439653` 产出：NVDA negative、AMD/AVGO 替代受益、MU/SNDK mixed，
+TSM/MU 另有出口管制负面链；挑战者指出盘前已定价且官方未确认。相比 v3 无 supplemental 时“不敢映射 peer”，
+这次能形成有证据的跨股假设，但仍只是研究假设。
+
+### 66.4 R2 配对与 R3 仲裁：方向/供给变化必须完整披露
+
+| 标的 | control→treatment | treatment event_role | R3 structured |
+|---|---|---|---|
+| NVDA | SHORT→SKIP | PRIMARY | SKIP（无可交易供给） |
+| AMD | BUY→SKIP | PRIMARY | SKIP（global fatal） |
+| AVGO | BUY→BUY | PRIMARY | 被 global fatal 拦截 |
+| TSM | BUY→BUY | CONTRARY | 被 evidenced oppose-skip 拦截 |
+| MU | BUY→BUY | PRIMARY | 被 evidenced oppose-skip 拦截 |
+| SNDK | BUY→BUY | PRIMARY | **BUY** |
+| ARM | BUY→BUY | CONTRARY | 被 global fatal 拦截 |
+| NBIS | SKIP→SHORT | **NONE** | **SHORT** |
+
+R3 合计：treatment 可交易供给 **6→2**（SNDK BUY/NBIS SHORT）。NBIS 没引用共享事件，方向翻转只能记为
+模型噪声，不能归因 EventContext。AVGO/MU 各有一次“论据无数字锚点”契约告警，虽卡片归一化为 VALID，
+仍应保留为质量风险，不得只看好方向。
+
+⇒ 信息共享提高了证据覆盖和“已定价/未确认时不做”的能力，但显著压缩供给；本批没有费后 edge 证据，
+不接生产，不把 R3 少交易自动解释成收益改善。
+
+### 66.5 EXT 独立影子已落地（RFC-205）
+
+> **时态说明**：本节及 §66.6 中“无 cron/registry/生产 shadow/无生产消费者”仅指该轮写作时的离线状态；后续已由 RFC-207 注册 PERMANENT_MEASURE 并安装只读 cron，RFC-208 进入生产 canary，相关现行状态以 RFC-207/208 为准。
+
+新增 `scripts/ext_event_risk_shadow.py` + 17 项 hermetic 测试。NVDA id=1864 实测：
+窗口 675 事件，直接相关去重后31、material 5，主事件 `853ef3ee05478043a7c9` 于
+`2026-11-12T01:44:03Z`（20:44 ET）触发 **REVIEW**；官方 8-K 仅 Item 5.02 通用样板，不能 INVALIDATE。
+`counterfactual.status=unavailable`、`avoided_pnl_usd=null`，没有虚构避损金额。
+当前无 cron/registry/生产消费者/自动动作，后续 live hook 须另行批准。
+
+### 66.6 验证与未验证
+
+- 联合离线套件 **176 passed**；完整棘轮家族 **41 passed**；`tests/playbook/test_offline_full_chain.py` **18 passed**。
+- `check_undefined_names.py` 与 `git diff --check` 均 exit 0。
+- 已知无关基线红：`test_db_connection_chokepoint.py` 指向另外5个脚本；`test_ops_scripts_sync.py` 指向另外3个线上脚本，
+  本批文件不在其违规集合。
+- 总证据索引：`data/shadow/da_optimization_20261113_summary.json`；RFC-205/RFC-206；回放脚本台账已登记。
+- **未验证**：单日/单事件、无费后经济反事实、无多日期方向供给与可达性验证、无 Claude 可用模型、无生产 shadow。
+- **下一步**：只读候选为「多日期 SKIP 契约对照」与「EventContext 重复控制/经济评估」；生产模型、Prompt、Gate、
+  cron、registry、订单均保持原状，任何进一步接线另裁。

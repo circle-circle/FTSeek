@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,7 +18,26 @@ from app.event_stream.intelligence import (
 )
 from app.event_stream.models import CanonicalEvent
 from app.event_stream.store import EventStore
-from scripts.da_event_intelligence import _write_json_new
+from scripts.da_event_intelligence import _dashscope_call, _write_json_new
+
+SKILL_SCRIPTS = "/root/.hermes/skills/deep-stock-analysis/scripts"
+pytestmark = pytest.mark.skipif(
+    not Path(SKILL_SCRIPTS).is_dir(),
+    reason="deep-stock-analysis skill unavailable",
+)
+
+
+def test_dashscope_call_moves_hermes_scripts_before_repo_config(monkeypatch):
+    skill = "/root/.hermes/skills/deep-stock-analysis/scripts"
+    monkeypatch.setattr(sys, "path", ["/opt/ftseek/FTSeek-US", skill] + sys.path)
+    original = SimpleNamespace(name="repo_config")
+    monkeypatch.setitem(sys.modules, "config", original)
+    fake = SimpleNamespace(config=None, _call_llm=lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setitem(sys.modules, "llm_synth", fake)
+    assert _dashscope_call("system", "user") == {"ok": True}
+    assert sys.path[0] == skill
+    assert hasattr(fake.config, "DASHSCOPE_KEY")
+    assert sys.modules["config"] is original
 
 
 def make_record(
