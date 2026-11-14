@@ -1,6 +1,6 @@
 # RFC-199: MOM-ETF-V1 富途 SIM 管道试点（保留 DA，单试点垂直切片）
 
-> **状态**: 已批准 / 已实施 / 入口已开启 / 锚点日 2026-11-13 ET 待验证
+> **状态**: 已批准 / 首锚故障修复已部署 / 待下一正常首单与持夜复验
 > **日期**: 2026-11-12
 > **作者**: Codex
 > **审批人**: 用户（2026-11-12「批准执行，明日交易日验证」）
@@ -204,3 +204,33 @@ maxDD 不变）或把 TP 作为**独立 RFC 的第二臂**（预注册阈值 + �
 - MOM metadata 仅在 `peak_price / trough_price / mfe_pct / mae_pct / policy_id`
   实际变化时 UPDATE+commit；首次初始化仍写，SL/MAX_HOLD 判定不依赖该写入。
 - 本批未改 V1 票池、信号、定尺、费用线、SL/TP、持有期、调仓锚点或任何 DA 参数。
+
+## R16 首个真实锚点核查（2026-11-13 09:30–10:18 ET）
+
+**判定：`PLUMBING_BROKEN`（簿记），不判策略收益。** 详细证据见 `docs/debates/DEB-20261113-open-log-and-mom-first-anchor-audit.md`。
+
+- 写入方正确生成 XLE/QQQ：asof=2026-11-12、QQQ>MA200、top2 momentum、调仓 index=0，尺寸/费用 precheck 均通过。
+- 实际排序与此前 handoff 的“DA 循环前处理 MOM”不一致：`auto_execute_flow.py:441-451` 将 MOM 落入 priority=0，排在 DA 后。09:51:28 主循环先处理 DA，XLE 09:52:04 才触发；QQQ 随后被 `PORTFOLIO_HEAT` 拒绝。是否调整预算优先级另裁，本核查未改。
+- XLE 76 股在 64.50 成交后，`playbook_service.py:2332` 对 NULL thesis 执行 `inst.get('thesis', '')[:200]`，触发 `'NoneType' object is not subscriptable`。补偿退出 76/76 @64.46 已 BOOKED，broker_qty_after=0，无裸仓。
+- 但指令 5621 仍为 `FILLED_UNBOOKED`，当日 trade_records 无 XLE，PositionSync 每约 31 秒重复 terminal-entry 警告；正常持夜、V1 allowlist、报表腿未闭环。补偿往返也不能被常规绩效查询遗漏，补账/排除口径须另行审计化设计。
+- QQQ 初期被 heat 拒绝，MRK/MU/COIN 平仓释放热量后于 10:04:55 成交 7 股，也在 10:05:00 复现同一 NULL thesis 簿记故障。QQQ 补偿退出 7/7 @679.28 已 BOOKED、broker_qty_after=0；指令 5622 同样为 `FILLED_UNBOOKED` 且无当日 trade_records。两腿实锤证明这是 MOM 写入形态的确定性 bug。修复并做穿过真实 PlaybookService 的 `thesis=None` 契约复验前，应暂停后续 MOM 新仓入口，本核查未自行改开关。
+- `mom_etf_v1_r13/r14` readiness 是历史产物：仍写 0 指令/0 成交，8 个代码 hash 中 5 个已 DIFF，不能作为今日首单验收凭据。
+
+## R17 簿记修复与历史补偿单收口（2026-11-13 用户「请执行优化修复」）
+
+- `playbook_service.py` 两处 thesis 切片改 `(inst.get('thesis') or '')`；真实 PlaybookService 回归验证 NULL thesis 首单正常 BOOKED，完整经过 MOM 费用/名义/预算复核。
+- 新增 `pipeline_parts/compensation_repair.py`：完整 schema 用验证过的 owner+exit fill 重建闭环，统一费用/净额/outcome，并按原 CAS 字段收口；旧/最小 schema 保留独立回执、不虚构交易。身份冲突拒绝、回执幂等、失败不留下未平补建行。
+- 用户另行明确授权后，仅对 XLE/QQQ 两个 intent 执行生产补账：XLE trade=1895 净 **-7.59**、QQQ trade=1896 净 **+2.45**；两指令均 BOOKED、MOM 未平=0，复跑=ALREADY_CURRENT。审计 `data/audits/compensation_entry_repair_20261113T234547Z.jsonl`、`*234548Z.jsonl`。
+- 部署 MainPID=2920876，启动冒烟 7/7，重启前后 9 仓不变、非 BOOKED=0；readiness=`data/readiness/mom_etf_v1_r16_compensation_repair.json`，聚焦 **37 passed**，2 指令/2 已平仓 MOM trade/0 持仓。
+- **仍不判 PLUMBING_OK**：历史补偿单已闭环，但下一次正常 MOM 首单须无 NoneType/无补偿退出并正常建立 trade/open_position，且持夜后只走 V1 allowlist，才完成 L1 复验。MOM/DA 优先级与 PORTFOLIO_HEAT 未改。
+- 详细测试/全仓失败归属与其他修复见 `docs/debates/DEB-20261113-open-log-and-mom-first-anchor-audit.md` §9。
+
+## R18 MOM 生命周期工程加固（2026-11-14，用户裁「请发挥你的能力做修复」）
+
+- **策略参数冻结**：12-1/top2/QQQ MA200、3% SL、5% 隔夜线、TP=0、21 交易日、等名义、MOM/DA 优先级与预算不变；完整设计评审见 `docs/debates/DEB-20261114-mom-lifecycle-review.md`。
+- **指令与调度**：writer 增加机器可读 thesis/invalidation；调仓日只允许 09:30–09:50 ET，错位 fail-closed 非零；cron 改 `CRON_TZ=America/New_York` + 09:35，后恢复 Asia/Shanghai，备份 `data/crontab.backup.20261114T010316Z_mom_dst.txt`。
+- **隔离与暂时态**：DA/UE 不得接管未执行 MOM 行；MOM 陈旧报价与 `MOM_MAX_OPEN_POSITIONS` 改 deferred 可复检，14:00 才终态，旧仓未平不强制放行。
+- **数据与止损**：数据不足与现金门分离；补偿重建优先 reprice SL/TP，XLE/QQQ 两行已对齐为 3.000%/3.006%，净额不变。
+- **出场与观测**：补 exit_gap；naive 按 CST→ET；`_mom_exit_price` 接入 decision；MOM 不再污染 RFC-203 DA grace 人群；删除定尺伪搜索与无界集合增长。
+- **验证**：扩展 MOM/隔离/补偿/grace 49 passed；恢复+棘轮+offline 57 passed；readiness 44 passed 且 `writer_cron_et_aware=true`，产物 `data/readiness/mom_etf_v1_r18_lifecycle_hardening.json`。MainPID=2927502，启动冒烟 7/7，9 仓不变、非 BOOKED=0。
+- **未裁**：MOM/DA 优先级、chase cap、VWAP、VIX/飞刀/风险缩放、writer heat/admission 统一、任何经济参数。下一自然首单与持夜仍须复验，未判 PLUMBING_OK。

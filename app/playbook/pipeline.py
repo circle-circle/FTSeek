@@ -3264,37 +3264,16 @@ def _book_playbook_exit_result(dual, result, conn=None):
             raise ValueError("exit source ledger missing")
         conn = sqlite3.connect(owner["db_path"])
         conn.row_factory = sqlite3.Row
+    from app.playbook.pipeline_parts import compensation_repair as _compensation_repair
     try:
         receipt = {"kind": owner["kind"], "db_path": owner["db_path"],
                    "exit_intent_id": intent_id}
         if owner["kind"] == "compensation":
             entry_id = owner.get("entry_order_id") or ""
-            candidates = conn.execute(
-                "SELECT * FROM trade_records WHERE (?<>'' AND futu_order_id=?) "
-                "OR (symbol=? AND entry_time=?)",
-                (entry_id, entry_id, owner["symbol"], owner["entry_time"]),
-            ).fetchall()
-            matching = []
-            for candidate in candidates:
-                candidate = dict(candidate)
-                candidate_meta = json.loads(candidate.get("metadata_json") or "{}")
-                identity_fields = ("symbol", "direction", "source_type", "entry_time", "entry_price", "quantity")
-                if (not isinstance(candidate_meta, dict)
-                        or any(candidate[key] != owner[key] for key in identity_fields)
-                        or candidate_meta.get("playbook_instruction_id") != owner["instruction_id"]
-                        or str(candidate.get("futu_order_id") or "") != entry_id):
-                    raise ValueError("compensation entry identity conflict")
-                matching.append(candidate)
-            if len(matching) > 1:
-                raise ValueError("compensation entry identity ambiguous")
-            if not matching:
-                receipt.update(instruction_id=owner["instruction_id"],
-                               execution_attempt=owner["execution_attempt"],
-                               entry_order_id=owner.get("entry_order_id"))
-                if not dual.acknowledge_close(intent_id, receipt):
-                    logger.error("[playbook] compensation receipt acknowledgement pending: %s", intent_id)
+            owner["trade_id"] = _compensation_repair.resolve_compensation_trade_id(
+                dual, conn, owner, entry_id, intent_id, receipt, _now_et)
+            if owner["trade_id"] is None:
                 return 0
-            owner["trade_id"] = matching[0]["id"]
         receipt["trade_id"] = owner["trade_id"]
         meta = dict(decision["metadata"])
         for key in ("_log_tag", "_symbol", "_skip_allowed"):
@@ -3344,13 +3323,16 @@ def _book_playbook_exit_result(dual, result, conn=None):
                                decision_id=decision.get("decision_id"))
             except Exception:
                 logger.exception("[playbook] overnight shadow failed after close: %s", intent_id)
+        if owner["kind"] == "compensation": _compensation_repair.mark_compensation_instruction_booked(conn, owner)
         if not dual.acknowledge_close(intent_id, receipt):
             logger.error("[playbook] trade receipt acknowledgement pending: %s", intent_id)
         return int(bool(booked))
+    except BaseException:
+        _compensation_repair.discard_unclosed_reconstruction(conn, owner.get("trade_id") if owner.get("_compensation_reconstructed") else None)
+        raise
     finally:
         if owned_connection:
             conn.close()
-
 
 # ── P0-1 滞留出场意图: 年龄升级告警 (2026-10-17 审计) ──────────────────────
 # blocked_exits 是符号级冻结: 一个未结算 intent 会让该标的 SL/TP/时间/因子规则

@@ -395,7 +395,9 @@ def _emit_exec_gate_audit(
                 direction,
                 confidence,
                 live_pass=True,
-                log=False,
+                # DA 直写已绕开旧生成侧打点；执行漏斗成为 edge 影子的常驻写方。
+                # EdgeShadowGate 内按 (ET日, decision_id) 去重，避免与旧路径双写。
+                log=True,
                 decision_id=str(instruction.get("decision_id", "") or ""),
             ) or {}
         except Exception:

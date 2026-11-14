@@ -68,6 +68,8 @@ class EdgeShadowGate:
         self._lock = threading.Lock()
         self._exp_by_bucket: Dict[str, Any] = {}
         self._loaded_mtime: float = -1.0
+        # 同一进程内每个 ET 日、每条指令只写一次；重启重复由离线按 decision_id 去重。
+        self._logged_decision_days: set = set()
 
     def _refresh(self) -> None:
         """按 latest.json 的 mtime 惰性刷新 expectancy_by_bucket (变更才重载)."""
@@ -102,8 +104,8 @@ class EdgeShadowGate:
         Args:
             confidence_0_100: 信号置信度 (0-100 尺度, 与 pipeline 一致)
             live_pass: 实盘闸门此刻是否放行 (confidence >= 门槛)
-            log: 是否写 edge_gate_shadow.jsonl. 统一收口审计 (exec_gate_audit) 已落库
-                 edge 判定时传 False, 避免同一场景双写 (2026-07-17).
+            log: 是否写 edge_gate_shadow.jsonl。旧生成侧与执行漏斗并存时，
+                 按 (ET日, decision_id) 进程内去重；重启重复由离线同键去重。
             decision_id: 2026-08-30 (DEB-20260830 F4): 透传指令 decision_id 落影子.
                  原字段缺失 (0/120) 导致无法按 decision_id join 结算
                  (只能退到 (symbol, date), 同符号同日有歧义). 旧调用方不传 → 空串,
@@ -156,10 +158,21 @@ class EdgeShadowGate:
         result: Dict[str, Any],
         decision_id: str = "",
     ) -> None:
+        dedup_key = None
         try:
+            now = datetime.now()
+            if decision_id:
+                from app.utils.timezone import now_et
+                dedup_key = (now_et().date().isoformat(), str(decision_id))
+                with self._lock:
+                    if dedup_key in self._logged_decision_days:
+                        return
+                    self._logged_decision_days.add(dedup_key)
+                    if len(self._logged_decision_days) > 20000:
+                        self._logged_decision_days.clear()
             _SHADOW_DIR.mkdir(parents=True, exist_ok=True)
             entry = {
-                "ts": datetime.now().isoformat(),
+                "ts": now.isoformat(),
                 "symbol": symbol,
                 "direction": direction,
                 "confidence": round(float(confidence), 2),
@@ -176,6 +189,9 @@ class EdgeShadowGate:
             with open(_SHADOW_LOG, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         except Exception as e:
+            if dedup_key is not None:
+                with self._lock:
+                    self._logged_decision_days.discard(dedup_key)
             logger.debug(f"[EdgeShadowGate] 写影子日志失败 (忽略): {e}")
 
 

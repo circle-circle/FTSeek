@@ -13,6 +13,7 @@ sys.path.insert(0, str(REPO))
 
 from app.playbook.pilot_policy import (  # noqa: E402
     MOM_ETF_V1,
+    MomDataIncompleteError,
     compute_mom_candidates,
     previous_local_trading_day,
     rebalance_day_status,
@@ -58,6 +59,11 @@ def build_instruction(candidate: Dict[str, Any], trade_date: str) -> Dict[str, A
         "position_size": quantity,
         "horizon": "long",
         "horizon_reasoning": "MOM-ETF-V1 fixed 21 trading-day plumbing pilot",
+        "thesis": (
+            f"MOM-ETF-V1 12-1动量={float(candidate['momentum_12_1']):.2%}，"
+            "QQQ>MA200现金过滤，四ETF取Top2等名义，计划持有21交易日。"
+        ),
+        "invalidation": "固定初始SL -3%；隔夜亏损达-5%；最长持有21个交易日；TP=0。",
         "triggered": 1,
         "raw_instruction": {
             "source": "mom_etf_v1",
@@ -96,6 +102,16 @@ def main() -> int:
                               "date": trade_date,
                               "trading_day_index": rebalance.trading_day_index}))
             return 0
+    # 调仓日的正常写入必须在 scheduled_et=09:50 前完成；CRON_TZ 配置错误/夏令时
+    # 错位要 fail-closed 非零告警，不能把整周期静默跳过。--force 仅供 rehearsal。
+    writer_minutes = now_et_dt.hour * 60 + now_et_dt.minute
+    if not args.force and not (9 * 60 + 30 <= writer_minutes < 9 * 60 + 50):
+        print(json.dumps({
+            "status": "fail_closed", "reason": "outside_writer_et_window",
+            "date": trade_date, "et_time": now_et_dt.strftime("%H:%M"),
+            "allowed_et": "09:30-09:50",
+        }))
+        return 1
 
     try:
         expected_asof_date = previous_local_trading_day(now_et_dt.date()).isoformat()
@@ -115,7 +131,12 @@ def main() -> int:
             print(json.dumps({"status": "fail_closed", "reason": "asof_mismatch", "symbol": symbol}))
             return 1
 
-    candidates = compute_mom_candidates(bars_by_symbol, asof_date)
+    try:
+        candidates = compute_mom_candidates(bars_by_symbol, asof_date)
+    except MomDataIncompleteError as exc:
+        print(json.dumps({"status": "fail_closed", "reason": "data_incomplete",
+                          "asof": asof_date, "error": str(exc)}))
+        return 1
     if not candidates:
         print(json.dumps({"status": "cash", "reason": "qqq_below_ma200_or_no_data", "asof": asof_date}))
         return 0

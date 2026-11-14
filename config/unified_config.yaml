@@ -1317,6 +1317,7 @@ playbook:
     #   ⚠️ 键放 execution_parameters 扁平层 (PlaybookConfig._load 只拍平两节)。
     #   回滚: false (热载 ~60s) 或删键。
     entry_open_blackout_hhmm: 0945    # 2026-08-15 (三问Q2,DEB§33)1015→0935 → 2026-11-12 用户令「开盘后5→15分钟避开盘波动,今晚观察」0935→0945. 回滚=改回0935(热载~60s). 注: auto_execute 早退闸已与本键**同源**(原硬编码 9:30+5 于 2026-11-12 删除, 现读本键; 关闸/非法值回落 0935) ⇒ 本键是唯一真源, 不存在第二处 09:35 floor.
+    open_floor_immediate_dispatch_enabled: true  # RFC-204: 黑窗到点后主线程下一轮立即执行，消除额外180s量化误差；false=恢复原轮询，须重启
     #   用户裁: sim核心是打磨链路和基建, 交易时间对齐实盘(开盘后5min), 不再延后.
     #   2026-11-12 改注: 「auto_execute 内置 5min 延迟(9:35) = 本值同刻」已过期 —— 硬编码
     #   已删, auto_execute 改读本键; 两处不再有「谁更晚谁 binding」的隐藏规则.
@@ -1352,6 +1353,7 @@ playbook:
                                       #    其轴 (5 处理/10 对照) 已停粮, 重开须走 RFC-158 新预注册。
                                       # 回滚 = true + restart (原批准 2026-10-10 SIM 全量)。
     entry_confirm_delay_sec: 120      # 影子裁过的 2min 腿 (DELAYS_MIN=(2,5), 5min 腿 opp 超门)
+    entry_confirm_fast_dispatch_enabled: true  # RFC-204: 确认后仅主线程提前一轮执行，完整守卫不变；false=恢复仅180s间隔，须重启
     #   holdout 归零 (2026-10-10 用户裁「直接走 sim 交易链路, 不用影子攒样, 看 sim 交易结果」):
     #   留 20% 对照臂会稀释 SIM 结果 ⇒ 全量走门。裁决基准改为开门前预注册基线 (RFC-141 §4),
     #   代价=无同期对照臂, 市况变化混淆 (披露见 RFC §5.4)。机制保留 inert, 需要对照时改本值。

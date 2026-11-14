@@ -393,6 +393,34 @@ def monitor_playbook_exits(
                 except Exception:
                     pass
 
+                # ── RFC-203 早期风险 record-only 影子 (2026-11-13, 用户裁 C4 影子先行) ──
+                #   宽限期 (held<5min) 的 extreme 波动仓越过方向性 2% 灾难线时,
+                #   只记候选 (entry/current/stop/held/atr/vol_bucket/MFE), **不退出**。
+                #   20s 快循环靠模块内 (date, trade_id, rule) 去重防洪峰; 重启可重复。
+                #   异常只 warn, 绝不阻断退出监控。
+                try:
+                    from app.playbook import early_risk_shadow as _early_risk
+                    _early_risk.record_grace_candidate(
+                        meta=meta,
+                        symbol=symbol,
+                        direction=direction,
+                        entry_price=entry_price,
+                        current_price=current_price,
+                        stop_loss=stop_loss,
+                        held_minutes=held_minutes,
+                        now_et=now_et,
+                        trade_id=r["id"],
+                        inst_id=inst_id,
+                        decision_id=r["decision_id"] or "",
+                        pb_cfg=_pb_cfg_m,
+                        logger=logger,
+                    )
+                except Exception as _early_risk_err:
+                    logger.warning(
+                        f"[playbook sim] {symbol} early-risk grace 影子记录异常 "
+                        f"(不影响退出): {_early_risk_err}",
+                        exc_info=True)
+
                 from app.playbook.pilot_policy import check_mom_exit, policy_for
                 _mom_policy = policy_for(r.get("decision_id"))
                 if _mom_policy is not None:
@@ -416,9 +444,11 @@ def monitor_playbook_exits(
                     #   字段多数轮次无变化 = 纯噪声 WAL/CPU 开销)。仅相关字段实际变化才落库;
                     #   首次字段初始化、peak/trough/MFE/MAE 更新、policy_id 首次写入仍写。
                     #   退出判定在下方独立进行, 不依赖本次写入 ⇒ 退出行为不变。
+                    from app.playbook.exit_engine import note_exit_gap as _note_mom_exit_gap
+                    _note_mom_exit_gap(meta, quote, exit_reason, current_price)
                     _mom_prev = {
                         _k: meta.get(_k)
-                        for _k in ("peak_price", "trough_price", "mfe_pct", "mae_pct", "policy_id")
+                        for _k in ("peak_price", "trough_price", "mfe_pct", "mae_pct", "policy_id", "exit_gap")
                     }
                     meta["peak_price"] = _mom_peak
                     meta["trough_price"] = _mom_trough
@@ -436,7 +466,8 @@ def monitor_playbook_exits(
                     from app.execution.dual_broker import get_dual_broker
                     dual = get_dual_broker()
                     decision = _playbook_exit_decision(
-                        exit_reason, current_price, meta, round(held_minutes / 60, 1))
+                        exit_reason, _mom_exit_price or current_price,
+                        meta, round(held_minutes / 60, 1))
                     decision["decision_id"] = r["decision_id"]
                     decision["emit_overnight_shadow"] = False
                     try:

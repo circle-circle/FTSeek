@@ -3,6 +3,7 @@ import pytest
 from app.playbook.pilot_policy import (
     MOM_ETF_V1,
     MOM_ETF_V1_ENTRIES_FLAG,
+    MomDataIncompleteError,
     check_mom_exit,
     compute_mom_candidates,
     is_rebalance_day,
@@ -102,7 +103,8 @@ def test_momentum_uses_t_minus_252_denominator_and_requires_253_bars():
     assert candidates
     assert candidates[0]["momentum_12_1"] == pytest.approx(0.10)
     short = {symbol: _bars(closes[1:]) for symbol in MOM_ETF_V1.universe}
-    assert compute_mom_candidates(short, "2026-11-11") == []
+    with pytest.raises(MomDataIncompleteError, match="bars=252"):
+        compute_mom_candidates(short, "2026-11-11")
 
 
 def test_momentum_fails_closed_when_universe_is_incomplete():
@@ -111,7 +113,8 @@ def test_momentum_fails_closed_when_universe_is_incomplete():
     closes[-1] = 120.0
     bars = {symbol: _bars(closes) for symbol in MOM_ETF_V1.universe}
     bars["US.XLY"] = bars["US.XLY"][:-1]
-    assert compute_mom_candidates(bars, "2026-11-11") == []
+    with pytest.raises(MomDataIncompleteError, match="bars=252"):
+        compute_mom_candidates(bars, "2026-11-11")
 
 
 def test_max_hold_calendar_failure_uses_conservative_fallback(monkeypatch):
@@ -263,11 +266,16 @@ def test_exit_entry_time_naive_aware_combinations():
     assert check_mom_exit(
         "LONG", 100.0, 94.0, 97.0, "2026-11-13T10:00:00-05:00", naive_now,
     )[0] == "OVERNIGHT_GAP_STOP"
-    # 同日 (naive now) 不得误判隔夜跳空
+    # 同一 ET 日 (23:00 CST = 10:00 ET) 不得误判隔夜跳空。
     assert check_mom_exit(
-        "LONG", 100.0, 94.0, 97.0, "2026-11-13T10:00:00",
+        "LONG", 100.0, 94.0, 97.0, "2026-11-13T23:00:00",
         naive_now.replace(day=13),
     )[0] == "SL_INITIAL"
+    # naive=CST：03:00 CST 是前一日 14:00 ET，不能把 entry_day 错推一天。
+    assert check_mom_exit(
+        "LONG", 100.0, 94.0, 97.0, "2026-11-17T03:00:00",
+        aware_now.replace(day=17),
+    )[0] == "OVERNIGHT_GAP_STOP"
 
 
 def test_mom_reprice_and_final_size_checks():

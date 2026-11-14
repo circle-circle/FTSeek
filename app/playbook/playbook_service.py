@@ -2329,7 +2329,7 @@ class PlaybookService:
                     "take_profit": float(take_profit) if take_profit else 0,
                     "atr": (_atr_pair := _extract_atr_with_basis(inst))[0],
                     "atr_basis": _atr_pair[1],  # real|proxy|missing — KR2 切片口径 (DEB-20260831 §8.7)
-                    "thesis": inst.get("thesis", "")[:200],
+                    "thesis": (inst.get("thesis") or "")[:200],
                     "invalidation": inst.get("invalidation", "") or "",  # 2026-07-11 Stage2a: 供退出侧影子评估
                     "peak_price": float(_fill),
                     "trough_price": float(_fill),  # 2026-07-11: 谷值追踪初始化 (与 peak 对称)
@@ -2449,7 +2449,7 @@ class PlaybookService:
             from app.coordinator.manual_hold_registry import manual_hold_registry
             manual_hold_registry.register(
                 symbol=symbol, direction=mos_direction, quantity=_effective_qty,
-                reason=f"Playbook {_mode_label}: {inst.get('thesis', '')[:60]}",
+                reason=f"Playbook {_mode_label}: {(inst.get('thesis') or '')[:60]}",
                 account=("real" if _trade_mode == "live" else "sim"),
             )
         except Exception as _e:

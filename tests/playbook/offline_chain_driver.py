@@ -360,7 +360,10 @@ def run(workdir: Path, db_path: Path) -> dict:
                    lambda: workdir / "chain.sqlite"),
              # Signal IC 快照库同样双登记，避免盘后巡检写生产。
              patch("app.analysis.signal_ic_tracker._get_db_path",
-                   lambda: str(workdir / "data" / "signal_snapshots.db"))]
+                   lambda: str(workdir / "data" / "signal_snapshots.db")),
+             # RFC-203 早期风险候选同样双登记，防止测试写生产样本。
+             patch("app.playbook.early_risk_shadow.DEFAULT_PATH",
+                   workdir / "data" / "early_risk_shadow.jsonl")]
     daily_active_pool_module._active_pool_instance = None
     original_pool_init = daily_active_pool_module.DailyActivePool.__init__
 

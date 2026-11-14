@@ -1226,16 +1226,52 @@ class TradingScheduler:
 
     def _maybe_auto_execute(self, now) -> bool:
         """盘中自动执行 (含 interval 门 + 异常隔离)。原内联块抽出入方法: 现在两处调用
-        (执行优先 / 老顺序), 抽方法避免复制产生漂移。返回本轮是否真的调用了执行。"""
+        (执行优先 / 老顺序), 抽方法避免复制产生漂移。返回本轮是否真的调用了执行。
+
+        RFC-204: entry_confirm 确认通过后可提前一轮执行，但仍只在主线程走原完整
+        执行链。代际计数防止执行期间的新确认被覆盖；普通 interval 语义不变。
+        """
         if not hasattr(self, '_playbook_auto_execute_last_run'):
             self._playbook_auto_execute_last_run = None
+        if not hasattr(self, '_entry_confirm_ready_generation'):
+            self._entry_confirm_ready_generation = 0
+        if not hasattr(self, '_entry_confirm_dispatched_generation'):
+            self._entry_confirm_dispatched_generation = 0
+        try:
+            from app.core.config_container import get_config as _gc
+            fast_dispatch = bool(_gc().get_dotted(
+                "playbook.entry_confirm_fast_dispatch_enabled", True)) if _gc() else True
+        except Exception:
+            fast_dispatch = True
+        ready_generation = self._entry_confirm_ready_generation
         _last = self._playbook_auto_execute_last_run
-        if _last is not None and (now - _last).total_seconds() < self.PLAYBOOK_AUTO_EXECUTE_INTERVAL_SEC:
+        has_ready_confirmation = (
+            fast_dispatch
+            and ready_generation > self._entry_confirm_dispatched_generation
+        )
+        try:
+            from app.playbook.pipeline_parts.auto_execute_flow import open_floor_minutes
+            floor_min, _ = open_floor_minutes()
+            now_min = now.hour * 60 + now.minute
+            last_min = _last.hour * 60 + _last.minute if _last is not None else None
+            open_floor_now = bool(_gc().get_dotted(
+                "playbook.open_floor_immediate_dispatch_enabled", True)) if _gc() else True
+        except Exception:
+            floor_min, now_min, last_min, open_floor_now = 585, now.hour * 60 + now.minute, None, True
+        has_open_floor_boundary = bool(
+            open_floor_now and _last is not None
+            and last_min < floor_min <= now_min
+        )
+        if (_last is not None and not has_ready_confirmation and not has_open_floor_boundary
+                and (now - _last).total_seconds() < self.PLAYBOOK_AUTO_EXECUTE_INTERVAL_SEC):
             return False
         try:
             from app.playbook.pipeline import run_playbook_auto_execute
             run_playbook_auto_execute(self)
             self._playbook_auto_execute_last_run = now
+            if has_ready_confirmation:
+                # 只推进本轮捕获的代际；执行期间新到的确认会在下轮再次提前执行。
+                self._entry_confirm_dispatched_generation = ready_generation
             return True
         except Exception as _e:
             logger.warning(f"[Playbook] 盘中自动执行异常 (已隔离): {_e}")
@@ -3022,6 +3058,11 @@ class TradingScheduler:
                         _ec_r = _ec_sweep(self, _ec_route("sim"), _ec_now())
                         if any(_ec_r.get(k) for k in ("confirmed", "abandoned", "expired")):
                             logger.info(f"[EntryConfirm] sweep: {_ec_r}")
+                        if _ec_r.get("confirmed"):
+                            # RFC-204: 主线程下一轮 auto_execute 提前执行；不在这里下单，
+                            # 以保全部执行守卫与单宿主语义。代际只增不减，防新确认被吞。
+                            self._entry_confirm_ready_generation = (
+                                getattr(self, "_entry_confirm_ready_generation", 0) + 1)
                 except Exception as _ec_sweep_err:
                     logger.warning(f"[EntryConfirm] sweep 异常 (已隔离): {_ec_sweep_err}", exc_info=True)
 

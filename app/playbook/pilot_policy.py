@@ -323,6 +323,10 @@ def _parse_entry_date(
         return None, exc
     if entry_dt.tzinfo is not None and now_et_dt.tzinfo is not None:
         return entry_dt.astimezone(now_et_dt.tzinfo).date(), None
+    if entry_dt.tzinfo is None:
+        # 仓内 naive 时间约定为服务器 CST，不是 ET；跨日边界必须换算后再定 entry_day。
+        from app.utils.timezone import to_et
+        return to_et(entry_dt).date(), None
     return entry_dt.date(), None
 
 
@@ -354,6 +358,8 @@ def check_mom_exit(
                 entry_time_str, entry_err, exc_info=entry_err,
             )
             _INVALID_ENTRY_TIME_LOGGED.add(log_key)
+            if len(_INVALID_ENTRY_TIME_LOGGED) > 256:
+                _INVALID_ENTRY_TIME_LOGGED.clear()
         if current_price <= stop_loss:
             return "SL_INITIAL", current_price
         return "", 0.0
@@ -370,6 +376,10 @@ def check_mom_exit(
     return "", 0.0
 
 
+class MomDataIncompleteError(ValueError):
+    """四 ETF 历史/价格不足，不得与 QQQ<MA200 的主动现金空仓混淆。"""
+
+
 def compute_mom_candidates(
     bars_by_symbol: Dict[str, List[Any]],
     asof_date: str,
@@ -379,13 +389,16 @@ def compute_mom_candidates(
     for symbol in policy.universe:
         bars = bars_by_symbol.get(symbol) or []
         if len(bars) < policy.lookback_days + 1:
-            return []
+            raise MomDataIncompleteError(
+                f"{symbol}: bars={len(bars)} < required={policy.lookback_days + 1}")
         dates = [str(bar[0])[:10] for bar in bars]
         if dates[-1] != asof_date:
-            return []
+            raise MomDataIncompleteError(
+                f"{symbol}: asof={dates[-1]} != expected={asof_date}")
         closes = [float(bar[4]) for bar in bars]
         if closes[-(policy.lookback_days + 1)] <= 0:
-            return []
+            raise MomDataIncompleteError(
+                f"{symbol}: nonpositive close at T-{policy.lookback_days}")
         momentum = closes[-(policy.skip_days + 1)] / closes[-(policy.lookback_days + 1)] - 1.0
         ma_filter = sum(closes[-policy.ma_filter_days:]) / policy.ma_filter_days
         rows.append({
@@ -412,18 +425,18 @@ def size_mom_order(
     quantity = int(policy.max_leg_notional_usd // price)
     if quantity <= 0:
         return None
-    while quantity * price <= policy.max_leg_notional_usd:
-        notional = quantity * price
-        fee = float(fee_estimator(quantity, price))
-        fee_bps = 10000.0 * fee / notional if notional > 0 else float("inf")
-        if notional >= policy.min_notional_usd and fee_bps <= policy.max_fee_bps:
-            return {
-                "quantity": quantity,
-                "notional": notional,
-                "round_trip_fee": fee,
-                "fee_bps": fee_bps,
-            }
-        quantity += 1
+    # 费用 bps 随名义额单调下降，最大合法股数就是唯一最优候选；
+    # 再 +1 必越单腿帽，不做伪“搜索”。
+    notional = quantity * price
+    fee = float(fee_estimator(quantity, price))
+    fee_bps = 10000.0 * fee / notional if notional > 0 else float("inf")
+    if notional >= policy.min_notional_usd and fee_bps <= policy.max_fee_bps:
+        return {
+            "quantity": quantity,
+            "notional": notional,
+            "round_trip_fee": fee,
+            "fee_bps": fee_bps,
+        }
     return None
 
 

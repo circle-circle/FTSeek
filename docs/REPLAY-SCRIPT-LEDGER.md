@@ -48,6 +48,18 @@
 | da_blocked_signal_cf_eval.py | 240 | **活体** | DEB-20260901 Phase C 观察点③ (B14): cron 15 6 * * 2-6 + 注册表 da_blocked_cf; 日K缓存 CF 评估族 (同 gate_counterfactual_ruler 口径, 只读零拉取) |
 | entry_blackout_shadow_eval.py | 468 | **活体·手动(建议不入 cron)** | RFC-200 §6/§8 开盘禁入窗黑窗影子只读评估器 (2026-11-12)。**非回放**: 只读 `data/entry_blackout_shadow.jsonl`, 零生产写入 (仅 `data/shadow/entry_blackout_shadow_eval_latest.json` 产物), 不接交易门。答: cycle 覆盖/首末时间/取价异常 (QUOTE_ALL_FAIL / INCOMPLETE) / R1 writer_status / hit 按 (date, inst_id) **最早 ts** 去重 + duplicate_hit / decision_id 源分桶 (DA/MOM/OTHER)。`band_would_trigger` 只是带几何上限、不算收益。状态机 OK/INCOMPLETE/QUOTE_ALL_FAIL/NO_CYCLES/NO_DATA/READ_ERROR: 无 hit 不报错, 无文件/无 cycle 非零。 |
 | entry_blackout_window_stats.py | 132 | **活体·手动(建议不入 cron)** | RFC-200 §8 历史开盘时间桶 SQL 统计 (2026-11-12)。**非 bar 回放**: 只读 `trade_records` (mode=ro), 净盈亏 `pnl_net` 优先否则 `realized_pnl-fees_est`, 未平仓单列, 输出各 ET 入场桶与日簇描述性区间；零写入、不接交易门、不是因果反事实。 |
+| entry_geometry_review.py | 267 | **活体·手动(建议不入 cron)** | RFC-202 入场几何/确认后派发/恢复口径分析器 (2026-11-12)。**非回放**: 只读 `trade_records`、`playbook_instructions`、`entry_confirm_forward.jsonl`，输出原始锚→reprice→fill 漂移、确认后排队、宽限期 MAE、收养仓 ATR/MFE；候选锚带仅标 affected，不拦单、不算反事实 PnL、不写 DB。 |
+| early_risk_shadow.py / early_risk_shadow_eval.py | 547 / 231 | **活体·常驻 record-only + 手动评估** | RFC-203 早期风险候选（extreme 宽限灾难 2% / 计划锚漂移 3% / 确认后排队）写方与只读汇总。钩子仅 append `data/early_risk_shadow.jsonl`，不退出、不拒单、不改尺寸/派发；注册 `early_risk_shadow`（PERMANENT_MEASURE、eval_on_demand）；评估按日/rule/symbol 输出 affected，NO_DATA 非零，不计算反事实 PnL。 |
+| da_model_ab_replay.py | — | **活体·手动离线(无 cron/无生产消费者)** | DEB-20261106 §36/§65–66：同一 raw Prompt 的模型/Prompt 契约对照。**非交易回放**：只读 checkpoint 与本地 bars，不调用交易加载、退出或费用原语；v2 对齐生产输出预算，支持冻结样本、重复控制、完整卡片、方向—计划一致性与价格几何检查；默认 dry-run，`--execute` 才调用付费 API，拒绝覆盖产物。 |
+| da_event_case_freeze.py / da_event_supplemental.py / da_event_intelligence.py / da_event_instruction_replay.py / da_repeatability_probe.py | — | **活体·手动离线(无 cron/无生产消费者)** | DEB-20261106 §14–18/§65–66：EventContext as-of 冻结、raw 跨股证据补充、共享简报、配对指令与重复控制。严格 `first_seen_at<=as_of`，稳定证据 ID/来源哈希/无未来检查；只写 `data/shadow/event_intelligence/`，不接生产 import、DB、cron 或订单。 |
+| ext_event_risk_shadow.py | — | **活体·手动 offline record-only(无 cron/registry)** | RFC-205：EXT 持仓窗口事件三态评估。只读 SQLite URI + `query_only`，`entry<first_seen<=as_of`、直接相关、去重与证据分层；媒体/传闻最多 REVIEW，仅官方显式反证可 INVALIDATE；无 bars 不计算 avoided PnL，不自动动作。 |
+| da_event_context_shadow.py / da_event_context_shadow_eval.py | — | **活体·手动 record-only(cron 已获批准安装)** | RFC-207：每日共享 EventContext 简报。环境开关默认 false + `--execute` 双门，单输入最多2次LLM，同哈希 ALREADY_CURRENT；as-of/grounding/未审阅数/不可变证据齐全，不写真实指令或生产 DB。 |
+| ext_event_risk_live_shadow.py / ext_event_risk_live_shadow_eval.py | — | **活体·手动 record-only(cron 已获批准安装)** | RFC-207：未平 EXT 持仓事件 NO_CHANGE/REVIEW；官方反证也只记 candidate，零订单/零 avoided PnL；latest 原子更新，REVIEW 不可变证据按内容哈希去重。 |
+| da_instruction_quality_shadow.py / da_instruction_quality_shadow_eval.py | — | **活体·手动 record-only(cron 已获批准安装)** | RFC-207：DA 指令有效卡/研究完整/方向—计划一致性/价格几何日报；缺 bars 不造指标，WARN 不拦截，零模型调用。 |
+| shadow_runtime.py | — | **活体·库(无独立入口)** | 三项只读影子的环境开关（默认 false）、JSON 哈希、原子 latest 与 O_EXCL 不可变写入原语；无交易/DB 写入。 |
+| da_prompt_injection.py / da_event_inject_report.py | — | **C1 生产 canary + 按需评估** | RFC-208：EventContext 直接注入 Hermes DA Prompt（SIM），仅 raw checkpoint/质量评估器消费，Gate/订单不可见；无效/过期简报回退原行为，injection_hash 隔离 checkpoint。评估器对照同 raw control，禁止 ungrounded ID、NONE 归因与收益宣称。 |
+| da_event_preexecute_shadow.py / da_event_preexecute_shadow_eval.py | — | **活体·手动 record-only(cron 待明确批准)** | 执行前新鲜度与版本一致性检查：同版 NO_CHANGE、有效新版 REVIEW、无效/过期/未来 REVIEW_INVALID_BRIEF；不改单/撤单/Gate/退出，refresh 需双开关+显式 --execute-refresh。 |
+
 
 ## 唯一现行判读入口 (2026-09-07c 立, DEB-20260907 §4.9)
 

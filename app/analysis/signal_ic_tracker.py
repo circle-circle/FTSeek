@@ -260,7 +260,8 @@ def record_signal_snapshot(
             strategy_id = "unknown"
         
         if created_at is None:
-            created_at = datetime.now().isoformat()
+            from app.utils.timezone import now_et
+            created_at = now_et().isoformat()
         
         # 计算交易日 (ET) — 支持显式传入 (历史回填) 或自动推导 (实时)
         if trade_date is None:
@@ -270,7 +271,8 @@ def record_signal_snapshot(
             except Exception:
                 trade_date = datetime.now().strftime("%Y-%m-%d")
         
-        now_snap = datetime.now().isoformat()
+        from app.utils.timezone import now_et
+        now_snap = now_et().isoformat()
         
         # 判断当前交易模式 (实盘/模拟)
         try:

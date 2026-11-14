@@ -1278,7 +1278,146 @@ def _quote_from_snapshot_row(row):
     }
 
 
+class _QuoteCache:
+    """执行前流动性闸的**第二次报价**: 批量预取 + 本轮缓存 (429 收口, 2026-11-13)。
+
+    背景: 第一波 `_snapshot_candidates` 的批量快照已顺带产出 `_batch_quote`; 执行前闸门
+    仍需要一份**独立时间样本** (反事实 `_batch_quote_counterfactual` 正是拿两份样本对照,
+    直接复用 `_batch_quote` 会把对照变成恒等)。原实现逐票 `get_market_snapshot([symbol])`,
+    候选 50 只 ⇒ 第二轮 50 次单票请求, 撞 OpenD 限频 (429)。
+
+    本缓存把第二轮合并成按 `SNAPSHOT_BATCH` 的**批量**请求, 三条纪律:
+      ① 取样点仍是执行前闸门时刻的新快照, 与 `_batch_quote` 相互独立 (不读它);
+      ② 失败/缺失一律缓存为 None (**fail-closed**), 同一轮内**不再逐票重试**;
+         限频/网络类错误整批放弃 (不二分、不逐票重发) —— 不回落成逐票 429 风暴;
+         其余错误按 `_snapshot_candidates` 同款策略二分隔离坏票 (不超过对数级请求);
+      ③ 只有"帧形状解析不出逐票行"(测试替身/未来 API 变更)才退回单票解析,
+         次数有界 (`_LEGACY_FALLBACK_MAX`), 与网络/限频失败路径无关。
+
+    对调度方其余 API (kline 等) 透明: 未命中属性原样转交底层 qctx。
+    """
+
+    # 与 `_snapshot_candidates._batch_abort` 同款判据, 另补 rate limit/429 措辞。
+    _ABORT_MARKERS = ("频率", "最多", "网络", "连接", "断开", "too frequent",
+                      "throttl", "timeout", "timed out", "connect",
+                      "rate limit", "429")
+
+    _LEGACY_FALLBACK_MAX = 5
+
+    def __init__(self, qctx, symbols=()):
+        self._qctx = qctx
+        self._known = []
+        self._known_set = set()
+        self._quotes = {}
+        self._legacy_fallbacks = 0
+        self._shape_warned = False
+        self.register(symbols)
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return getattr(self._qctx, name)
+
+    def register(self, symbols):
+        """登记候选标的 (只登记不发请求; 首次取价时一并批量取回)。"""
+        for symbol in symbols or ():
+            if not symbol or symbol in self._known_set:
+                continue
+            self._known_set.add(symbol)
+            self._known.append(symbol)
+
+    def quote(self, symbol):
+        """取该票第二次报价; 已解析 (含失败为 None) 直接复用, 绝不重复请求。"""
+        if symbol in self._quotes:
+            return self._quotes[symbol]
+        if symbol not in self._known_set:
+            self.register([symbol])
+        self._resolve_pending()
+        return self._quotes.get(symbol)
+
+    def _resolve_pending(self):
+        pending = [s for s in self._known if s not in self._quotes]
+        for i in range(0, len(pending), SNAPSHOT_BATCH):
+            self._fetch_batch(pending[i:i + SNAPSHOT_BATCH])
+
+    def _fetch_batch(self, batch):
+        if not batch:
+            return
+        from futu import RET_OK
+        symbols = list(batch)
+        try:
+            ret, snapshot = self._qctx.get_market_snapshot(symbols)
+        except Exception as exc:
+            _log.warning(
+                "[ext_entry] liquidity batch quote exception symbols=%s error=%s",
+                ",".join(symbols), exc, exc_info=True)
+            self._mark_unavailable(symbols)
+            return
+        if ret != RET_OK:
+            message = str(snapshot)
+            lowered = message.lower()
+            aborted = any(marker in lowered for marker in self._ABORT_MARKERS)
+            if len(symbols) == 1 or aborted:
+                # 限频/网络错误: 整批 fail-closed, 不二分、不逐票重试 (429 风暴的根源)。
+                _log.warning(
+                    "[ext_entry] liquidity batch quote failed symbols=%s ret=%s error=%s",
+                    ",".join(symbols), ret, message[:200])
+                self._mark_unavailable(symbols)
+                return
+            # 非限频类错误 (如个别标的行情不可用): 二分隔离坏票, 与第一波同款策略。
+            mid = len(symbols) // 2
+            self._fetch_batch(symbols[:mid])
+            self._fetch_batch(symbols[mid:])
+            return
+        parsed = self._parse_snapshot(snapshot)
+        if parsed is None:
+            self._legacy_fallback(symbols)
+            return
+        for symbol in symbols:
+            self._quotes[symbol] = parsed.get(symbol)
+
+    def _parse_snapshot(self, snapshot):
+        """批量帧 → {symbol: quote|None}; 形状不支持逐票解析时返回 None。"""
+        if snapshot is None or not hasattr(snapshot, "columns") \
+                or not hasattr(snapshot, "iterrows"):
+            return None
+        if getattr(snapshot, "empty", False):
+            return {}
+        try:
+            parsed = {}
+            for _, row in snapshot.iterrows():
+                sec = str(row.get("code", ""))
+                if sec:
+                    parsed[sec] = _quote_from_snapshot_row(row)
+            return parsed
+        except Exception as exc:
+            _log.warning("[ext_entry] liquidity batch quote parse failed error=%s",
+                         exc, exc_info=True)
+            return None
+
+    def _mark_unavailable(self, symbols):
+        for symbol in symbols:
+            self._quotes[symbol] = None
+
+    def _legacy_fallback(self, symbols):
+        if not self._shape_warned:
+            self._shape_warned = True
+            _log.warning(
+                "[ext_entry] liquidity batch quote frame unparseable, falling back to "
+                "per-symbol shape (bounded=%s)", self._LEGACY_FALLBACK_MAX)
+        for symbol in symbols:
+            if self._legacy_fallbacks >= self._LEGACY_FALLBACK_MAX:
+                self._quotes[symbol] = None
+                continue
+            self._legacy_fallbacks += 1
+            self._quotes[symbol] = _liquidity_quote(self._qctx, symbol)
+
+
 def _liquidity_quote(qctx, symbol):
+    # `qctx` 可为 `_QuoteCache`: 执行前第二轮报价走批量预取/缓存 (见该类 docstring),
+    # 保留单票路径供无缓存调用方 (测试/离线工具) 使用。
+    if isinstance(qctx, _QuoteCache):
+        return qctx.quote(symbol)
     from futu import RET_OK
     try:
         ret, snapshot = qctx.get_market_snapshot([symbol])
@@ -1720,6 +1859,7 @@ def _research_downstream_gates_live(item, session, today, qctx, counts, pretrade
     """
     symbol, price, change_pct, volume = item["symbol"], item["px"], item["chg"], item["vol"]
     source = str(item.get("_source") or "")
+    # 研究臂与严格臂共用第二次报价源: 调用方传入 `_QuoteCache` 时走批量缓存。
     quote = _liquidity_quote(qctx, symbol)
     grade, grade_reason = _grade_from_quote(price, volume, quote)
     if grade is None:
@@ -2970,6 +3110,8 @@ def collect(session, dry=False):
         price_gate_rejects = []
         try:
             movers = _scan_candidates(session, qctx)
+            # 执行前第二轮报价: 批量预取 + 本轮缓存 (第一波 `_batch_quote` 保持独立样本)。
+            quote_cache = _QuoteCache(qctx, [m.get("symbol") for m in movers])
             counts = {}
             earnings_reason_counts = {}
             earnings_reject_details = []
@@ -3068,7 +3210,7 @@ def collect(session, dry=False):
                             )
                             _record_research_funnel(session, today, item, "selected")
                     continue
-                quote = _liquidity_quote(qctx, symbol)
+                quote = _liquidity_quote(quote_cache, symbol)
                 grade, grade_reason = _grade_from_quote(price, volume, quote)
                 if grade is None:
                     counts[grade_reason] = counts.get(grade_reason, 0) + 1
@@ -3145,6 +3287,8 @@ def collect(session, dry=False):
             _existing_research = _research_existing_symbols(research_pool, results)
             for _ri in _research_source_candidates(session, qctx, _existing_research):
                 research_pool.append(_ri)
+                # 研究臂新增标的并入第二轮报价批次 (首个研究臂取价时统一批量取回)。
+                quote_cache.register([_ri.get("symbol")])
                 _rsrc = str(_ri.get("_source") or "?")
                 counts[f"research_src_{_rsrc}_pool"] = (
                     counts.get(f"research_src_{_rsrc}_pool", 0) + 1
@@ -3153,7 +3297,7 @@ def collect(session, dry=False):
             if research_pool:
                 counts["research_pool"] = len(research_pool)
                 _research_pass_dry(
-                    research_pool, session, today, qctx, counts, results,
+                    research_pool, session, today, quote_cache, counts, results,
                     pretrade_rejects,
                 )
             counts["earnings_phase"] = (
@@ -3257,6 +3401,8 @@ def collect(session, dry=False):
                                 port=int(os.getenv("FUTU_OPD_PORT", "11111")))
         try:
             movers = _scan_candidates(session, qctx)
+            # 执行前第二轮报价: 批量预取 + 本轮缓存 (第一波 `_batch_quote` 保持独立样本)。
+            quote_cache = _QuoteCache(qctx, [m.get("symbol") for m in movers])
             counts = {}
             earnings_reason_counts = {}
             earnings_reject_details = []
@@ -3363,7 +3509,7 @@ def collect(session, dry=False):
                             _record_research_funnel(session, today, item, "selected")
                     continue
 
-                quote = _liquidity_quote(qctx, symbol)
+                quote = _liquidity_quote(quote_cache, symbol)
                 grade, grade_reason = _grade_from_quote(price, volume, quote)
                 if grade is None:
                     counts[grade_reason] = counts.get(grade_reason, 0) + 1
@@ -3473,6 +3619,8 @@ def collect(session, dry=False):
             _existing_research = _research_existing_symbols(research_pool, results)
             for _ri in _research_source_candidates(session, qctx, _existing_research):
                 research_pool.append(_ri)
+                # 研究臂新增标的并入第二轮报价批次 (首个研究臂取价时统一批量取回)。
+                quote_cache.register([_ri.get("symbol")])
                 _rsrc = str(_ri.get("_source") or "?")
                 counts[f"research_src_{_rsrc}_pool"] = (
                     counts.get(f"research_src_{_rsrc}_pool", 0) + 1
@@ -3481,7 +3629,7 @@ def collect(session, dry=False):
             if research_pool:
                 counts["research_pool"] = len(research_pool)
                 total_today, session_today = _research_pass_real(
-                    research_pool, session, today, qctx, state, attempts,
+                    research_pool, session, today, quote_cache, state, attempts,
                     opened_today, day_key, total_today, session_today,
                     premarket_limit, results, pretrade_rejects, counts,
                 )

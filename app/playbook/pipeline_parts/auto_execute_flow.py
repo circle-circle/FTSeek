@@ -70,15 +70,23 @@ def _reprice_quote_age_gate(
         _qage_ok, _qage_why = True, f"check_error: {_qage_err}"
     if not _qage_ok:
         _qage_reason = f"stale_quote_gate({_qage_why})"
-        db.update_instruction_tracking(inst["id"], {"skip_reason": _qage_reason})
-        _emit_exec_gate_audit(
-            inst, action="skipped_stale_quote",
-            entry=float(inst.get("entry_price") or 0),
-            size=float(inst.get("position_size") or 0),
-            notional=0.0,
-            extra={"gate": "reprice_quote_age",
-                   "why": _qage_why,
-                   "quote_age_ms": _qage_ms})
+        from app.playbook.pilot_policy import policy_for as _pilot_policy_for
+        if _pilot_policy_for(inst.get("decision_id")) is not None:
+            _record_mom_defer(
+                db, inst, str(inst.get("date") or ""), _qage_reason,
+                action="skipped_stale_quote", gate="reprice_quote_age",
+                why=_qage_why, logger=logger,
+                emit_exec_gate_audit=_emit_exec_gate_audit)
+        else:
+            db.update_instruction_tracking(inst["id"], {"skip_reason": _qage_reason})
+            _emit_exec_gate_audit(
+                inst, action="skipped_stale_quote",
+                entry=float(inst.get("entry_price") or 0),
+                size=float(inst.get("position_size") or 0),
+                notional=0.0,
+                extra={"gate": "reprice_quote_age",
+                       "why": _qage_why,
+                       "quote_age_ms": _qage_ms})
         logger.info(
             f"[playbook] {inst['symbol']} 报价过龄 ({_qage_why}) "
             f"→ 本轮不起价 (下轮重试)")
@@ -128,6 +136,8 @@ def _record_mom_defer(db: Any, inst: Dict[str, Any], today: str, reason: str,
         extra={"gate": gate, "why": why, "transient": True})
     logger.warning(f"[MOM-ETF-V1] {inst.get('symbol')} {reason} (下轮复检)")
     _MOM_DEFER_AUDIT_SEEN.add(key)
+    if len(_MOM_DEFER_AUDIT_SEEN) > 10000:
+        _MOM_DEFER_AUDIT_SEEN.clear()
 
 
 def open_floor_minutes(logger: Any = None):
@@ -1651,11 +1661,19 @@ def run_playbook_auto_execute(
                     _max_deploy, _bp_limit, _mom_policy,
                 )
                 if _mom_reject:
-                    db.mark_instruction_guardrail_skip(inst["id"], _mom_reject)
-                    _emit_exec_gate_audit(
-                        inst, action="skipped_mom_budget",
-                        entry=_entry, size=_size, notional=_new_notional,
-                        extra={"gate": "mom_budget", "reason": _mom_reject})
+                    if _mom_reject == "MOM_MAX_OPEN_POSITIONS":
+                        # 旧周期退出尚未落定是暂时态：允许当日复检，14:00 才终止。
+                        _record_mom_defer(
+                            db, inst, today, _mom_reject,
+                            action="skipped_mom_budget", gate="mom_budget",
+                            why="open_slots_pending_exit", logger=logger,
+                            emit_exec_gate_audit=_emit_exec_gate_audit)
+                    else:
+                        db.mark_instruction_guardrail_skip(inst["id"], _mom_reject)
+                        _emit_exec_gate_audit(
+                            inst, action="skipped_mom_budget",
+                            entry=_entry, size=_size, notional=_new_notional,
+                            extra={"gate": "mom_budget", "reason": _mom_reject})
                     skipped_count += 1
                     continue
 
@@ -1798,6 +1816,45 @@ def run_playbook_auto_execute(
                     skipped_count += 1
                     continue
 
+            # ── RFC-203 早期风险 record-only 影子 (2026-11-13, 用户裁 C4 影子先行) ──
+            #   计划锚 → 实际 reprice/成交的方向性偏离 > 3% 时只记 anchor_candidate
+            #   (would_skip=true), **绝不拦截执行**。锚复用 _resolve_generated_anchor,
+            #   与触发/路由/双锚影子同一解析口径; 3% 只是候选阈值, 不是生产规则。
+            #   放在全部 guardrail/MOM 终态判断之后 = 只对"本轮真会下单"的指令取样。
+            try:
+                from app.playbook import early_risk_shadow as _early_risk
+                from app.playbook.pipeline_parts.intraday_indicators import (
+                    _resolve_generated_anchor as _resolve_anchor,
+                )
+                _anchor_is_short = str(inst.get("direction", "")).upper() in (
+                    "SHORT", "SELL_SHORT", "SELL")
+                _planned_entry, _planned_source = _resolve_anchor(inst, _anchor_is_short)
+                _effective_entry = float(
+                    (_reprice_params or {}).get("entry_price")
+                    or inst.get("entry_price") or 0.0)
+                _current_for_anchor = None
+                if isinstance(_ctx, dict):
+                    _current_for_anchor = (_ctx.get("price")
+                                           or _ctx.get("last") or None)
+                _early_risk.record_anchor_candidate(
+                    symbol=inst.get("symbol"),
+                    direction=inst.get("direction", ""),
+                    planned_entry=_planned_entry,
+                    planned_entry_source=_planned_source,
+                    effective_entry=_effective_entry,
+                    current_price=_current_for_anchor,
+                    now_et=datetime_cls.now(_now_et()),
+                    inst_id=inst.get("id"),
+                    decision_id=inst.get("decision_id") or "",
+                    pb_cfg=pb_cfg,
+                    logger=logger,
+                )
+            except Exception as _early_risk_anchor_err:
+                logger.warning(
+                    f"[playbook] {inst.get('symbol')} early-risk anchor 影子记录异常 "
+                    f"(不影响交易): {_early_risk_anchor_err}",
+                    exc_info=True)
+
             # 自动执行
             _audit_action = "error"
             try:
@@ -1821,6 +1878,61 @@ def run_playbook_auto_execute(
                         _mom_today_notional += _new_notional
                     _audit_action = "executed"
                     logger.info(f"[playbook] ✅ 自动执行: {inst['symbol']} {inst['direction']}")
+
+                    # ── RFC-203 确认后排队候选 record-only 影子 (2026-11-13) ──
+                    #   entry_confirm.confirmed_at → 实际 execution_time 的 latency
+                    #   只测量、不立即下单、不改执行路径。确认门未启用/未确认 → 无
+                    #   confirmed_at ⇒ 本函数自然不写。执行时间优先读成交后的 DB 行;
+                    #   簿记失败/旧行缺字段时用"成交后当前时刻"并在行内标来源。
+                    try:
+                        from app.playbook import early_risk_shadow as _early_risk
+                        _row_after = {}
+                        try:
+                            _row_after = db.get_instruction_by_id(inst["id"]) or {}
+                        except Exception as _q_db_err:
+                            logger.warning(
+                                f"[playbook] {inst.get('symbol')} queue 影子读取成交后行失败 "
+                                f"(回退本轮指令快照): {_q_db_err}", exc_info=True)
+                        _md_after = (_row_after.get("metadata_json")
+                                     or inst.get("metadata_json"))
+                        if isinstance(_md_after, str):
+                            try:
+                                _md_after = json.loads(_md_after or "{}")
+                            except Exception as _q_md_err:
+                                logger.warning(
+                                    f"[playbook] {inst.get('symbol')} queue 影子解析 "
+                                    f"metadata_json 失败 (按无确认态处理): {_q_md_err}",
+                                    exc_info=True)
+                                _md_after = {}
+                        if not isinstance(_md_after, dict):
+                            _md_after = {}
+                        _confirm_state = _md_after.get("entry_confirm")
+                        if not isinstance(_confirm_state, dict):
+                            _confirm_state = {}
+                        _confirmed_at = _confirm_state.get("confirmed_at")
+                        _execution_time = _row_after.get("execution_time")
+                        _exec_time_source = "execution_time"
+                        if not _execution_time:
+                            _execution_time = datetime_cls.now(_now_et()).isoformat()
+                            _exec_time_source = "now_after_execute"
+                        _early_risk.record_queue_candidate(
+                            symbol=inst.get("symbol"),
+                            direction=inst.get("direction", ""),
+                            confirmed_at=_confirmed_at,
+                            execution_time=_execution_time,
+                            now_et=datetime_cls.now(_now_et()),
+                            inst_id=inst.get("id"),
+                            decision_id=inst.get("decision_id") or "",
+                            arm_delay_actual_sec=_confirm_state.get("delay_actual_sec"),
+                            execution_time_source=_exec_time_source,
+                            pb_cfg=pb_cfg,
+                            logger=logger,
+                        )
+                    except Exception as _early_risk_queue_err:
+                        logger.warning(
+                            f"[playbook] {inst.get('symbol')} early-risk queue 影子记录异常 "
+                            f"(不影响交易): {_early_risk_queue_err}",
+                            exc_info=True)
 
                     if live_context is not None:
                         live_instruction_id, live_gate = _mirror_instruction_to_live_if_allowed(

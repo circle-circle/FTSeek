@@ -4748,6 +4748,152 @@ REGISTRY: list[ShadowItem] = [
               "每 symbol 最新快照；无文件或无有效行返回 NO_DATA 非零。回滚=环境开关关闭"
               "且不挂 cron；产物留档。",
     ),
+    # ── RFC-203 (2026-11-13, 用户裁「小亏变大亏」; C4 影子先行) ──
+    ShadowItem(
+        id="early_risk_shadow",
+        name="早期风险候选 record-only 影子 (宽限灾难/计划锚追价/确认后排队)",
+        status=ShadowStatus.OBSERVING,
+        description="解决「小亏变大亏」的候选识别面, 零交易行为变更。三类 kind: "
+                    "① grace_candidate — held<5min 的 extreme 波动仓越过方向性 2% 灾难线, "
+                    "记录 entry/current/stop/held/atr_pct/vol_bucket/MFE, 不退出; "
+                    "② anchor_candidate — raw planned_entry/生成锚 到实际 reprice 的方向性偏离 >3%, "
+                    "记录 planned/effective/current/direction/drift_pct 且 would_skip=true, 不拦截; "
+                    "③ queue_candidate — entry_confirm.confirmed_at 到实际 execution_time 的 "
+                    "latency>0s, 只测量排队, 不立即下单。"
+                    "三个阈值 (2%/3%/0s) 都只是本影子候选阈值, 不是生产规则。",
+        data_path="data/early_risk_shadow.jsonl",
+        config_key="playbook.execution_parameters.early_risk_shadow_enabled",
+        min_n=30,
+        graduation_criteria="PERMANENT_MEASURE: 候选规则识别面, 无毕业转门路径。"
+                            "样本门 (仅为进入后续 DEB 的最低条件, 不是自动转正): "
+                            "n≥30 且覆盖≥10 个 ET 交易日; 任何把候选变成入场/退出/尺寸"
+                            "硬规则的动作都须另立行为变更 RFC + 用户裁。",
+        eval_script="scripts/early_risk_shadow_eval.py",
+        eval_on_demand=True,
+        no_adjudication_reason="PERMANENT_MEASURE: 只读候选计数/影响面, 不自动改入场/退出/尺寸; "
+                               "样本达 n≥30 且≥10 交易日后由用户另裁是否进入行为变更 RFC。",
+        created="2026-11-13",
+        notes="写方 app/playbook/early_risk_shadow.py; 生产钩子: exit_monitor_flow "
+              "(grace, 20s 快循环) + auto_execute_flow (anchor 执行前 / queue 成交后)。"
+              "config_key 缺省 true (代码默认, YAML 未写); 置 false 才真停写方。"
+              "进程内 (date, inst_id/trade_id, rule) 去重, 重启后可重复; TEST 符号不写。"
+              "停摆检查 = check_mounting 的产出缺失/超龄 (14d) 哨兵; eval_on_demand=True "
+              "表示评估器按需手跑、不要求 cron 挂载。评估器状态 OK/NO_DATA, "
+              "明示非反事实 PnL。回滚: early_risk_shadow_enabled=false (需重载/重启) "
+              "或删三个写方钩子; 产物留档。",
+    ),
+    # ── RFC-207 (2026-11-13, 用户裁「继续」): 三项只读接入, 无新入场假设/毕业门 ──
+    ShadowItem(
+        id="da_event_context_shadow",
+        name="DA EventContext 共享跨股事件简报 (只读)",
+        status=ShadowStatus.OBSERVING,
+        description="每日 DA 主批后, 以 first_seen_at<=as_of 的 EventStore + raw checkpoint "
+                    "跨股证据生成共享 MarketEventBrief。保留来源/时间/哈希与未审阅数, "
+                    "只写隔离简报, 不注入真实 direction/Gate/仓位/订单。相同输入哈希 "
+                    "ALREADY_CURRENT, 新输入每日最多主/挑战者各一次 LLM。",
+        data_path="data/shadow/event_intelligence/live/latest.json",
+        config_key=None,
+        min_n=1,
+        count_mode="json_key:fact_count",
+        graduation_criteria="PERMANENT_MEASURE: 事件覆盖与证据质量观测, 无毕业转门路径; "
+                            "任何接生产 Prompt/指令/Gate 的动作须另立行为 RFC + 用户裁。",
+        eval_script="scripts/da_event_context_shadow_eval.py",
+        eval_on_demand=True,
+        no_adjudication_reason="PERMANENT_MEASURE: 共享事件简报只读, 不自动裁决任何交易行为。",
+        created="2026-11-13",
+        notes="写方 scripts/da_event_context_shadow.py; 环境开关 DA_EVENT_CONTEXT_SHADOW "
+              "缺省 false, 且 cron 必须显式 --execute 才允许付费。计划 cron CST22:15 工作日; "
+              "latest 原子更新, 历史不可变, 同哈希不重复付费。回滚=.env.us 置0, 下轮即停; "
+              "产物留档。",
+    ),
+    ShadowItem(
+        id="ext_event_risk_live_shadow",
+        name="EXT 持仓新事件 NO_CHANGE/REVIEW (只读)",
+        status=ShadowStatus.OBSERVING,
+        description="每15分钟只读评估未平 EXT 持仓的 entry<first_seen<=as_of 新事件。 "
+                    "输出仅 NO_CHANGE/REVIEW; 即使官方反证也只记 "
+                    "official_invalidate_candidate, 不自动 INVALIDATE/平仓/减仓/改SL。 "
+                    "无 bars 不计算 avoided PnL。",
+        data_path="data/shadow/ext_event_risk/live/latest.json",
+        config_key=None,
+        min_n=1,
+        count_mode="json_key:counts.positions_total",
+        graduation_criteria="PERMANENT_MEASURE: 持仓事件可见性与相关性观测, 无毕业门; "
+                            "≥30 position-event pairs 且≥10 ET 日+人工复核前, 不得讨论动作; "
+                            "任何 live hook 须另立 RFC + 用户明确裁。",
+        eval_script="scripts/ext_event_risk_live_shadow_eval.py",
+        eval_on_demand=True,
+        no_adjudication_reason="PERMANENT_MEASURE: REVIEW 仅供人工复核, 不是退出信号。",
+        created="2026-11-13",
+        notes="写方 scripts/ext_event_risk_live_shadow.py; 环境开关 EXT_EVENT_RISK_SHADOW "
+              "缺省 false。计划每15min工作日, 零模型/券商调用。NO_CHANGE 仅更新 latest, "
+              "REVIEW 内容变化才写不可变证据。回滚=.env.us 置0, 下轮即停; 产物留档。",
+    ),
+    ShadowItem(
+        id="da_instruction_quality_shadow",
+        name="DA 指令质量 (有效卡/研究完整/方向一致/价格几何)",
+        status=ShadowStatus.OBSERVING,
+        description="每日只读 DA checkpoint, 汇总有效卡、研究完整性、方向—执行计划一致性、 "
+                    "价格几何、SKIP 不一致和缺 bars 数。缺 bars 的价格指标为 null, "
+                    "不伪造可达性/收益; WARN 仅报告, 不拦截或改写指令。",
+        data_path="data/shadow/da_instruction_quality/latest.json",
+        config_key=None,
+        min_n=1,
+        count_mode="json_key:metrics.total",
+        graduation_criteria="PERMANENT_MEASURE: 指令语义质量观测, 无毕业门; "
+                            "不把一致性/几何指标直接换算成收益或自动改 Prompt。",
+        eval_script="scripts/da_instruction_quality_shadow_eval.py",
+        eval_on_demand=True,
+        no_adjudication_reason="PERMANENT_MEASURE: 指令质量报告只读, WARN 不构成交易闸。",
+        created="2026-11-13",
+        notes="写方 scripts/da_instruction_quality_shadow.py; 环境开关 "
+              "DA_INSTRUCTION_QUALITY_SHADOW 缺省 false。计划 cron CST22:20 工作日, "
+              "零模型调用。同内容不重复写历史, latest 原子更新。回滚=.env.us 置0; 产物留档。",
+    ),
+    ShadowItem(
+        id="da_event_prompt_canary",
+        name="EventContext 直接注入 DA Prompt (C1 单变量 canary)",
+        status=ShadowStatus.OBSERVING,
+        description="RFC-208 唯一新入场假设: 原19维采集/模型/Gate/Playbook不变, 仅在 "
+                    "数据段后追加经校验的 symbol 级 EventContext。真实 SIM 指令受影响, "
+                    "不写 real。按 brief_id/injection_hash 切分 cohort, 无效/过期简报不注入。",
+        data_path="data/shadow/da_event_prompt_canary/latest.json",
+        config_key=None,
+        min_n=30,
+        count_mode="json_key:metrics.injected_count",
+        graduation_criteria="≥30 position-event pairs 且≥10 ET 日; valid/research 不低于同 raw "
+                            "control−5pp、无 ungrounded ID、无重复订单/绕门; 后续经济评估须报 "
+                            "可成交价 DA-only 费后净 bps、日聚类 CI/MDE 与误杀/不可达成本。"
+                            "任何转常态生产须用户另裁, 不自动晋级。",
+        eval_script="scripts/da_event_inject_report.py",
+        eval_on_demand=True,
+        created="2026-11-13",
+        notes="写方=Hermes llm_synth + 本评估器; 生产开关 DA_EVENT_CONTEXT_INJECT "
+              "缺省 false。回滚=.env.us 置0, 下一轮恢复原 Prompt, 不动订单。"
+              "同 raw control 不写生产; event_role=NONE 的翻向不归因简报。",
+    ),
+    ShadowItem(
+        id="da_event_preexecute_shadow",
+        name="EventContext 执行前新鲜度 NO_CHANGE/REVIEW (只读)",
+        status=ShadowStatus.OBSERVING,
+        description="比较当前有效简报与真实注入版本的 brief_id/injection_hash/传导主题。 "
+                    "同版=NO_CHANGE, 新版有效=REVIEW, 失效/过期/未来/无法核验=REVIEW_INVALID_BRIEF。 "
+                    "不自动改单、撤单、改 Gate 或退出, 只保留执行前证据链。",
+        data_path="data/shadow/da_event_preexecute/latest.json",
+        config_key=None,
+        min_n=1,
+        count_mode="json_key:unchanged_transmission_count",
+        graduation_criteria="PERMANENT_MEASURE: 执行前新鲜度观测, 无毕业门; "
+                            "任何自动 REVISE/INVALIDATE/订单动作须另立 RFC + 用户裁。",
+        eval_script="scripts/da_event_preexecute_shadow_eval.py",
+        eval_on_demand=True,
+        no_adjudication_reason="PERMANENT_MEASURE: 只读版本与新鲜度检查, 不是交易信号。",
+        created="2026-11-13",
+        notes="写方 scripts/da_event_preexecute_shadow.py; 环境开关 "
+              "DA_EVENT_PREEXECUTE_SHADOW 缺省 false, 当前仅手动/on-demand, cron 待明确批准。 "
+              "refresh 仍需 DA_EVENT_CONTEXT_SHADOW=1 + --execute-refresh 才允许付费。"
+              "回滚=.env.us 置0, 下轮即停; 产物留档。",
+    ),
 ]
 
 

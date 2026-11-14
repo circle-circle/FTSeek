@@ -187,7 +187,8 @@ def compensation_case(monkeypatch, tmp_path):
     source = sqlite3.connect(trade_path)
     source.execute("CREATE TABLE voting_predictions (decision_id TEXT, model_votes TEXT, predicted_strength REAL, predicted_confidence REAL)")
     source.execute("CREATE TABLE trade_records (id INTEGER PRIMARY KEY, source_type TEXT, exit_time TEXT, "
-                   "symbol TEXT, direction TEXT, quantity REAL, entry_price REAL, futu_order_id TEXT, exit_price REAL)")
+                   "symbol TEXT, direction TEXT, quantity REAL, entry_price REAL, futu_order_id TEXT, exit_price REAL, "
+                   "decision_id TEXT, entry_time TEXT)")
     source.commit()
     source.close()
     conn = sqlite3.connect(":memory:")
@@ -406,6 +407,28 @@ def test_unresolved_partial_never_books_or_releases(compensation_case, snapshot)
     assert not case.db.unlock_execution_if_zero_fill_terminal(case.iid, 1, "CANCELLED_ALL", 0)
     assert case.db.try_claim_execution(case.iid) is None
     assert case.saved == []
+    case.broker.close_position.assert_not_called()
+
+
+def test_mom_null_thesis_books_without_compensation(compensation_case):
+    """MOM 写入方省略 thesis 时，真实服务层必须完成首单簿记而非补偿平仓。"""
+    import json
+    case = compensation_case
+    case.failure = None
+    case.conn.execute(
+        "UPDATE playbook_instructions SET thesis=NULL, decision_id=?, position_size=49 WHERE id=?",
+        ("MOM-ETF-V1-20260910-US.COMP", case.iid),
+    )
+    case.conn.commit()
+    case.broker.submit_order.return_value["filled_qty"] = 49
+
+    response = case.service.execute_instruction(case.iid, acknowledge_risk=True)
+
+    assert response["success"] is True, response
+    assert _entry_row(case)["execution_state"] == "BOOKED"
+    assert len(case.saved) == 1
+    metadata = json.loads(case.saved[0]["metadata_json"])
+    assert metadata["thesis"] == ""
     case.broker.close_position.assert_not_called()
 
 

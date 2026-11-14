@@ -725,6 +725,16 @@ class PlaybookDB:
                                            _existing[-1], "lower_priority")
                     return _existing[-1][0]
                 _best = [r for r in _existing if _prio(r[1]) == _max_prio][-1]
+                # sleeve 隔离: MOM 未执行行也不得被 DA/UE 原地接管。反向（DA/UE 先写）
+                # 仍由上方 priority 拒绝，保持 DA 优先预算语义，不新建平行指令行。
+                if (str(_best[1] or "").startswith("MOM-ETF-V1-")
+                        and not _did_new.startswith("MOM-ETF-V1-")):
+                    logger.warning(
+                        f"[save_instruction] 跨策略覆盖拒绝: {_symbol} ({_date}) "
+                        f"现存 MOM 行#{_best[0]} 不得被 did={_did_new} 接管")
+                    self._emit_arbitration(
+                        _date, _symbol, inst, _best, "mom_cross_strategy")
+                    return _best[0]
                 # [DEB-20260902-stale-bridge P1-② 2026-09-02] 同源类"新鲜度" tiebreaker:
                 #   两侧 did 均可解析 DA 日期且 新 < 旧 → 拒绝覆盖 (返回现存行 id, 保留
                 #   当日决策); 任一侧非 DA 源/不可解析 → 不介入 (fail-soft 保持既有阶梯语义)。

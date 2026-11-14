@@ -29,6 +29,21 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _mom_cron_et_aware(cron_text: str) -> bool:
+    """MOM 行必须以 ET 09:35 运行，并在其后恢复主机 CST，避免污染其他任务。"""
+    if "mom_etf_v1_generate.py" not in cron_text:
+        return False
+    lines = cron_text.splitlines()
+    mom_index = next(i for i, line in enumerate(lines) if "mom_etf_v1_generate.py" in line)
+    before = lines[max(0, mom_index - 2):mom_index]
+    after = lines[mom_index + 1:mom_index + 3]
+    return (
+        "CRON_TZ=America/New_York" in before
+        and any(line.startswith("35 9 * * 1-5 ") for line in lines[mom_index:mom_index + 1])
+        and "CRON_TZ=Asia/Shanghai" in after
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-tests", action="store_true")
@@ -49,6 +64,7 @@ def main() -> int:
         ["systemctl", "show", "ftseek-us", "-p", "ActiveEnterTimestamp", "--value"], text=True).strip()
     cron = subprocess.run(["crontab", "-l"], capture_output=True, text=True).stdout
     cron_mounted = "mom_etf_v1_generate.py" in cron
+    cron_et_aware = _mom_cron_et_aware(cron)
 
     trade_path = get_trade_records_db_for_arm("sim")
     trade_conn = sqlite3.connect(f"file:{trade_path}?mode=ro", uri=True)
@@ -79,6 +95,7 @@ def main() -> int:
         "service_main_pid": pid,
         "service_active_enter": active_enter,
         "writer_cron_mounted": cron_mounted,
+        "writer_cron_et_aware": cron_et_aware,
         "mom_instructions": mom_instructions,
         "mom_trades": mom_trades,
         "mom_open_positions": mom_open,
@@ -90,6 +107,8 @@ def main() -> int:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(text + "\n", encoding="utf-8")
     if tests is not None and tests["returncode"] != 0:
+        return 1
+    if cron_mounted and not cron_et_aware:
         return 1
     return 0
 

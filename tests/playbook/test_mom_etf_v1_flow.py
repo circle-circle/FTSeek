@@ -88,6 +88,19 @@ def _writer_instruction():
     }
 
 
+def test_writer_instruction_has_machine_readable_thesis_and_invalidation():
+    import scripts.mom_etf_v1_generate as writer
+    instruction = writer.build_instruction({
+        "symbol": "US.QQQ", "close": 100.0,
+        "momentum_12_1": 0.123456, "asof_date": "2026-11-12",
+    }, "2026-11-13")
+    assert "12-1动量=12.35%" in instruction["thesis"]
+    assert "21交易日" in instruction["thesis"]
+    assert "-3%" in instruction["invalidation"]
+    assert "-5%" in instruction["invalidation"]
+    assert "21个交易日" in instruction["invalidation"]
+
+
 def _patch_writer(monkeypatch, db, asof="2026-11-12"):
     import scripts.mom_etf_v1_generate as writer
 
@@ -102,7 +115,7 @@ def _patch_writer(monkeypatch, db, asof="2026-11-12"):
     ])
     monkeypatch.setattr(writer, "build_instruction", lambda candidate, trade_date: _writer_instruction())
     monkeypatch.setattr("app.utils.timezone.now_et", lambda: datetime(
-        2026, 11, 13, 9, 0, tzinfo=timezone(timedelta(hours=-5))))
+        2026, 11, 13, 9, 35, tzinfo=timezone(timedelta(hours=-5))))
 
     monkeypatch.setattr("app.playbook.db.route_playbook_db", lambda arm: db)
     return writer
@@ -157,6 +170,30 @@ def test_writer_calendar_failure_is_fail_closed_not_no_op(monkeypatch, capsys):
     assert "calendar down" in payload["error"]
 
 
+def test_writer_after_entry_open_is_no_op_not_late_entry(monkeypatch, capsys):
+    writer = _patch_writer(monkeypatch, object())
+    monkeypatch.setattr("app.utils.timezone.now_et", lambda: datetime(
+        2026, 7, 13, 10, 35, tzinfo=timezone(timedelta(hours=-4))))
+    assert writer.main() == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "fail_closed"
+    assert payload["reason"] == "outside_writer_et_window"
+    assert payload["allowed_et"] == "09:30-09:50"
+
+
+def test_writer_data_incomplete_is_not_cash_gate(monkeypatch, capsys):
+    writer = _patch_writer(monkeypatch, object())
+    monkeypatch.setattr(
+        writer, "compute_mom_candidates",
+        lambda bars, asof: (_ for _ in ()).throw(
+            pilot_policy.MomDataIncompleteError("US.XLE: bars=252")))
+    assert writer.main() == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "fail_closed"
+    assert payload["reason"] == "data_incomplete"
+    assert "bars=252" in payload["error"]
+
+
 class _FakePBConfig:
     def get_horizon_params(self, horizon):
         return {}
@@ -166,7 +203,7 @@ class _FakePBConfig:
 
 
 def _run_auto_execute(monkeypatch, instruction, now_et_dt, now_sequence=None,
-                      quote_ctx="default", quote_error=None):
+                      quote_ctx="default", quote_error=None, mom_snapshot=None):
     from app.playbook.pipeline_parts import auto_execute_flow as aef
     import datetime as datetime_module
 
@@ -242,7 +279,8 @@ def _run_auto_execute(monkeypatch, instruction, now_et_dt, now_sequence=None,
     monkeypatch.setattr(pilot_policy, "entries_enabled", lambda: True)
     monkeypatch.setattr(pilot_policy, "rebalance_day_status", lambda today, policy=None: (
         pilot_policy.RebalanceDayStatus(True, "rebalance_day", 0)))
-    monkeypatch.setattr(pilot_policy, "mom_budget_snapshot", lambda now, policy=None: (0, 0.0))
+    monkeypatch.setattr(pilot_policy, "mom_budget_snapshot", lambda now, policy=None: (
+        mom_snapshot if mom_snapshot is not None else (0, 0.0)))
     monkeypatch.setattr("app.execution.fee_model.estimate_round_trip",
                         lambda quantity, entry, exit_price, direction, date: {"total": 4.0})
     monkeypatch.setattr("app.playbook.entry_routing.chase_cap_enforce_enabled", lambda cfg=None: False)
@@ -336,6 +374,47 @@ def test_auto_execute_mom_quote_failure_is_transient_not_fee_skip(monkeypatch, q
     assert "MOM_FEE_SIZE_INFEASIBLE" not in (updated.get("skip_reason") or "")
 
 
+def test_auto_execute_mom_stale_quote_is_transient_not_terminal_skip(monkeypatch):
+    now = datetime(2026, 11, 13, 10, 0, tzinfo=timezone(timedelta(hours=-5)))
+    instruction = {
+        "id": 1, "date": "2026-11-13",
+        "decision_id": "MOM-ETF-V1-20261113-US.XLE",
+        "symbol": "US.XLE", "direction": "BUY", "entry_price": 95.0,
+        "stop_loss": 92.0, "executed": 0, "triggered": 1,
+        "raw_instruction_json": {"source": "mom_etf_v1"},
+    }
+    result, executed, updated = _run_auto_execute(
+        monkeypatch, instruction, now,
+        quote_ctx={"price": 100.0, "last": 100.0, "lv3_ask": 100.0,
+                   "lv3_quote_age_ms": 60000})
+    assert result["executed"] == 0 and result["skipped"] == 1
+    assert executed == []
+    assert updated["direction"] == "BUY"
+    assert not (updated.get("skip_reason") or "")
+
+
+def test_auto_execute_mom_open_slots_pending_exit_defer_then_recover(monkeypatch):
+    now = datetime(2026, 11, 13, 10, 0, tzinfo=timezone(timedelta(hours=-5)))
+    instruction = {
+        "id": 1, "date": "2026-11-13",
+        "decision_id": "MOM-ETF-V1-20261113-US.XLE",
+        "symbol": "US.XLE", "direction": "BUY", "entry_price": 95.0,
+        "stop_loss": 92.0, "executed": 0, "triggered": 1,
+        "raw_instruction_json": {"source": "mom_etf_v1"},
+    }
+    result, executed, updated = _run_auto_execute(
+        monkeypatch, instruction, now, mom_snapshot=(2, 9000.0))
+    assert result["executed"] == 0 and result["skipped"] == 1
+    assert executed == []
+    assert updated["direction"] == "BUY"
+    assert not (updated.get("skip_reason") or "")
+
+    result, executed, _ = _run_auto_execute(
+        monkeypatch, instruction, now, mom_snapshot=(0, 0.0))
+    assert result["executed"] == 1
+    assert len(executed) == 1
+
+
 def test_auto_execute_mom_expires_after_cutoff(monkeypatch):
     now = datetime(2026, 11, 13, 14, 1, tzinfo=timezone(timedelta(hours=-5)))
     instruction = {
@@ -409,7 +488,7 @@ def _seed_mom_exit_row(db_path, metadata, entry_price=100.0, stop_loss=97.0):
     conn.close()
 
 
-def _run_mom_exit_monitor(monkeypatch, db_path, price):
+def _run_mom_exit_monitor(monkeypatch, db_path, price, quote_extra=None):
     """跑一轮 monitor_playbook_exits, 返回 (exited, metadata UPDATE 语句列表, fake dual)。"""
     import types
 
@@ -465,10 +544,10 @@ def _run_mom_exit_monitor(monkeypatch, db_path, price):
 
     class Router:
         def get_batch_quotes(self, symbols):
-            return {s: {"last": price, "price": price} for s in symbols}
+            return {s: {"last": price, "price": price, **(quote_extra or {})} for s in symbols}
 
         def get_quote(self, symbol):
-            return {"last": price, "price": price}
+            return {"last": price, "price": price, **(quote_extra or {})}
 
     exited = pb.monitor_playbook_exits(types.SimpleNamespace(data_router=Router()))
     assert any("metadata_json" in s and s.lstrip().upper().startswith("SELECT")
@@ -536,4 +615,33 @@ def test_mom_exit_still_exits_when_metadata_unchanged(monkeypatch, tmp_path):
     assert exited == 1
     assert len(fake_dual.closed) == 1
     assert fake_dual.closed[0][0] == "US.QQQ"
+
+
+def test_mom_exit_records_gap_evidence(monkeypatch, tmp_path):
+    db_path = tmp_path / "trades.db"
+    _seed_mom_exit_row(db_path, {})
+    exited, _, fake_dual = _run_mom_exit_monitor(
+        monkeypatch, db_path, price=96.0,
+        quote_extra={"prev_close": 99.0, "open": 98.0, "data_source": "fixture"})
+    assert exited == 1
+    assert len(fake_dual.closed) == 1
+    meta = _read_mom_metadata(db_path)
+    assert meta["exit_gap"]["prev_close"] == 99.0
+    assert meta["exit_gap"]["today_open"] == 98.0
+    assert meta["exit_gap"]["decision_price"] == 96.0
+    assert meta["exit_gap"]["recorded_for"] == "SL_INITIAL"
     assert fake_dual.closed[0][3]["exit_decision"]["exit_reason"] == "SL_INITIAL"
+
+
+def test_readiness_requires_dst_aware_mom_cron():
+    from scripts.verify_mom_etf_v1_readiness import _mom_cron_et_aware
+    good = (
+        "CRON_TZ=America/New_York\n"
+        "35 9 * * 1-5 cd /x && python scripts/mom_etf_v1_generate.py\n"
+        "CRON_TZ=Asia/Shanghai\n"
+    )
+    assert _mom_cron_et_aware(good) is True
+    assert _mom_cron_et_aware(good.replace("35 9", "35 22")) is False
+    assert _mom_cron_et_aware(good.replace("America/New_York", "UTC")) is False
+    assert _mom_cron_et_aware(good.replace("Asia/Shanghai", "UTC")) is False
+    assert _mom_cron_et_aware("") is False

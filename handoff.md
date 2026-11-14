@@ -2,6 +2,46 @@
 
 > **写入约定（2026-11-11 起）**：每条交接必须带三件可核凭据 —— `**凭据**`（commit sha / 改动文件数，`git show --stat` 可核）、`**验证**`（可复跑命令 + 日志路径，不写“已通过”）、`**未验证**`（显式列出没验的部分，无则写“无”）。自述≠事实，这三行是给下一个人核的。
 
+## 2026-11-14 09:12 CST · MOM 生命周期工程加固已部署（设计评审 + DST/隔离/退出）
+
+- **设计结论**：12-1/asof/QQQ MA200/top2 等名义、reprice 费用/预算、3% SL、5% 隔夜线、21 日退出与 V1 allowlist 符合设计；收益仍未证明，R14 非 PIT/选池前视/调仓日簇限制不改。MOM/DA 优先级、chase cap、VWAP/VIX/飞刀/风险缩放、预算与任何经济参数均冻结待裁。
+- **本批修复**：writer 机器可读 thesis/invalidation；DA/UE 不得接管未执行 MOM 行；陈旧报价和 MOM_MAX_OPEN_POSITIONS 改 deferred 可复检，14:00 才终态；数据不足与现金门分离；`size_mom_order` 去伪搜索；补 exit_gap、naive=CST→ET、_mom_exit_price 接入、MOM grace 人群隔离、集合有界。
+- **reprice 补账口径**：补偿重建优先 reprice SL/TP；XLE/QQQ 两行已审计化对齐为 3.000%/3.006%，净额不变，复跑 ALREADY_CURRENT。新增审计 `data/audits/compensation_entry_repair_20261114T002713Z.jsonl`、`*002714Z.jsonl`。
+- **DST**：用户明确授权后 cron 改 `CRON_TZ=America/New_York` 全年 09:35，后恢复 Asia/Shanghai；备份 `data/crontab.backup.20261114T010316Z_mom_dst.txt`。writer 调仓日仅 09:30–09:50 ET，错位 fail-closed 非零，readiness 新增 `writer_cron_et_aware`。
+- **部署**：MainPID=2927502，启动冒烟 **7/7**，重启前后 9 仓不变、非 BOOKED=0。readiness=`data/readiness/mom_etf_v1_r18_lifecycle_hardening.json`，2 指令/2 已平仓 MOM trade/0 持仓。
+- **凭据**：本批改 `pilot_policy.py`、`db.py`、`auto_execute_flow.py`、`exit_monitor_flow.py`、`early_risk_shadow.py`、`mom_etf_v1_generate.py`、`verify_mom_etf_v1_readiness.py`、`repair_compensation_entry_ledger.py` 及测试；新增 `docs/debates/DEB-20261114-mom-lifecycle-review.md`、RFC-199 R18、RFC-203 §10、CONTROL-LOOP-LEDGER、handoff。未提交。
+- **验证**：扩展 MOM/隔离/补偿/grace **49 passed**；恢复+棘轮+offline **57 passed**；readiness **44 passed 且 writer_cron_et_aware=true**；`check_undefined_names`、py_compile、diff-check exit 0。控制环台账测试仍仅报其他 3 个 EventContext/EXT 脚本未登记，MOM 行已挂账；未宣称全仓全绿。
+- **未验证**：下一自然 MOM 首单/持夜未发生，未判 PLUMBING_OK；chase cap/VWAP/VIX/风险缩放/优先级/预算/参数未裁；EXT 429 与 edge 自然样本仍待观察；其他基线红未处理。
+- **下一步**：QQQ≤MA200 时接受现金不造样本；若正常首单，须无补偿退出且正常建 trade/open_position、SL=执行 reprice 3%、decision_id 不被接管；旧仓退出 BOOKED 后同窗口可执行，持夜只走 V1 allowlist。收益进入 L2/L3，用实际成交时间/价格，不替代 R14 开盘假设。
+
+最后更新：2026-11-14（本条）
+
+## 2026-11-14 07:52 CST · MOM/补偿/EXT/edge/queue 优化修复已部署，历史两单已补账
+
+- **MOM P0**：`playbook_service.py` 两处 NULL thesis 切片已修，真实 PlaybookService 首单回归通过；新增 `pipeline_parts/compensation_repair.py`，完整 schema 重建已平仓 trade+费用/净额/outcome+CAS 收口，旧/最小 schema 保留独立回执不造单。MOM/DA 优先级、PORTFOLIO_HEAT、四锁未改。
+- **用户明确授权的历史补账**：仅 XLE/QQQ 两 intent。XLE trade=1895 净 **-7.59**、QQQ trade=1896 净 **+2.45**，两指令均 BOOKED、MOM 未平=0，复跑=ALREADY_CURRENT；审计 `data/audits/compensation_entry_repair_20261113T234547Z.jsonl`、`*234548Z.jsonl`。07:46 起 terminal-entry 重复警告停止。
+- **观测/供给修复**：PositionSync queue 影子覆盖 SUBMITTED 补录且只用券商时间；edge 执行侧恢复写入并按真实 ET 日+decision_id 去重；EXT 第二次报价改批量 `_QuoteCache`，保留两波独立样本、失败 fail-closed不逐票重试；signal snapshot 默认时间改 ET-aware。
+- **部署**：重启前 broker=internal=9、drift=[]、external=[]、非 BOOKED=0；重启 MainPID=2920876，启动冒烟 **7/7**，9 仓不变、非 BOOKED=0。readiness=`data/readiness/mom_etf_v1_r16_compensation_repair.json`（2指令/2已平仓MOM trade/0持仓）。
+- **凭据**：本批改 `playbook_service.py`、`pipeline.py`、`position_sync.py`、`risk_gates.py`、`edge_shadow_gate.py`、`signal_ic_tracker.py`、`extended_hours_entry_executor.py`，新增 `compensation_repair.py`、`repair_compensation_entry_ledger.py` 与7个测试文件；RFC-199 R17、RFC-203 §9、DEB §9、本 handoff。未提交，未改 MOM/DA 优先级或交易阈值。
+- **验证**：最终相关联合回归 **58 passed**；MOM readiness **37 passed**；EXT 新缓存+executor **66 passed**；全仓一次 **9064 passed/14 failed/3 errors**，其中本批相关3 recovery+2 snapshot夹具失败已修复复跑，余项为既有基线/其他WIP（详见DEB §9.2）；`check_undefined_names`、py_compile、diff-check exit 0，pipeline.py 3700→3682。
+- **未验证**：EXT 最新 cron 因 open_position_limit=5 未进实际二次报价闸，生产429降幅待自然候选；edge 尚无重启后自然DA新行；下一次正常MOM首单/持夜未发生，不能判PLUMBING_OK；既有新库 market_context_json 迁移缺口和其他基线红未处理。
+- **下一步**：自然候选时核 EXT 批量报价与429；下一 DA 日核 edge 当日写入及去重、queue 新补录覆盖率；下一正常 MOM 首单须无 NoneType/无补偿退出且正常建 trade/open_position，持夜只走 V1 allowlist 后再判 L1。
+
+最后更新：2026-11-14（本条）
+
+## 2026-11-13 10:18 ET · 开盘全级别日志核查：MOM 首锚 PLUMBING_BROKEN，EXT 429 与影子断流并列
+
+- **结论**：DA 黑窗/确认/风控/下单/恢复/退出总体符合设计，但不能判全链正常。MOM 的 XLE 76 股与 QQQ 7 股均在成交后因 `thesis=NULL` 于 `playbook_service.py:2332` 切片失败并补偿退出；XLE 76/76 @64.46、QQQ 7/7 @679.28 均 BOOKED、broker_qty_after=0、非 BOOKED=0，无裸仓。两条指令都停 `FILLED_UNBOOKED`、当日 trade_records 均无 MOM 行，PositionSync 对双标的每约31秒重复 terminal-entry 警告，故 RFC-199 首个真实锚点判 **PLUMBING_BROKEN**。
+- **MOM 供给/排序**：XLE+QQQ 生成规则、asof、top2、费用尺寸均正确；实现却按 `auto_execute_flow.py:441-451` 把 MOM 排 DA 后，并非旧交接所称“DA 前处理”。09:51:28 首个可执行轮先占 DA 热量，XLE 09:52:04 才触发；QQQ 初期被 PORTFOLIO_HEAT 拒绝，MRK/MU/COIN 平仓释放热量后于10:04:55成交，10:05:00复现同一故障。修复并做真实 PlaybookService `thesis=None` 契约复验前应暂停后续 MOM 新仓入口，本次未改开关。
+- **EXT 与监控**：`ext_entry.log` 快照 429 共827次（前一日轮转164次），多个研究池全 `research_quote_unavailable`，今日盘前0单；fail-closed未错放行，但配额归因未定。`edge_gate_shadow` 最后写入=11-09 23:40，健康检查全绿不覆盖该断流。`signal_snapshots.created_at` 同列混用 DA ET-aware 与 UE naive-CST。
+- **正常证据**：黑窗 evaluator=OK（5 cycle/20去重hit/报价错误0）；09:45:52首次 auto_execute；8笔DA新仓各一条记录，10:18正常未平仓7个（MRK/MU/COIN/CSCO已正常退出），两个MOM补偿仓均为0。6笔确认后成交按券商 entry_time 延迟25.548–52.506s、中位44.205s，但 RFC-203 原生 queue 影子仅覆盖2/6（SUBMITTED→PositionSync 路径缺钩子），不得用两条样本代表整体。23:01/23:16 error_alert 分别捕获 XLE/QQQ 各2条严重日志并推送成功。
+- **凭据**：本批新增 `docs/debates/DEB-20261113-open-log-and-mom-first-anchor-audit.md`，追加 `docs/decisions/RFC-199-mom-etf-v1-sim-plumbing-pilot.md` R16 + 本 handoff；仅审计文档，未提交，零生产代码/配置/DB/cron/订单变更。
+- **验证**：`scripts/entry_blackout_shadow_eval.py --date 2026-11-13 --json --no-write`=OK；主日志22:30–23:18:07=1598 INFO/138 WARNING/2 ERROR/2 CRITICAL；只读 SQL 核 `playbook_instructions`、`trade_records`、`playbook_exits.exit_intents`；`rg` 核 EXT 429 与 edge shadow 末行；日志/代码锚点见 DEB。未跑 pytest。
+- **未验证**：未观察完整交易日、正常 MOM 持夜/21日退出或净alpha；未目检富途App；未确定429配额责任方；未修XLE/QQQ簿记、补账、queue覆盖或edge断流。
+- **下一步**：优先裁暂停 MOM 新仓并修两处 thesis 空值切片+真实service首单测试；设计XLE/QQQ幂等补账/排除及补偿后同步和解；补PositionSync queue影子；另做EXT 429调用方归因与edge_gate覆盖哨兵。MOM/DA预算优先级如需改变另裁，不为攒样本放宽PORTFOLIO_HEAT。
+
+最后更新：2026-11-13（本条）
+
 ## 2026-11-12 15:20 · 多会话调整统一复核、全量验证与提交（主提交 10694b619）
 
 - **落地**：统一复核全部会话 WIP。除本批 RFC-199/200 安全与黑窗优化外，修复 BE 兜底 0.4 与 horizon 一致性、EXT 无 batch quote 反事实误判、DA 输入 ET/epoch 时间口径、PositionSync aware-ET、审计 CAS/日志、影子注册/控制环台账、测试 hermetic 与生产写隔离。`us_overnight_shadow` 以手动 PERMANENT_MEASURE 注册，未挂 cron。**排除** `scripts/manual_nvda_sl_override_20261111.py`（导入即写生产库、无 dry-run/CAS）与 `docs/debeate` 软链，未入库、未执行、未删本地文件。

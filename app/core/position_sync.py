@@ -35,6 +35,17 @@ EXTERNAL_CLOSE_DUP_SQL = (
 )
 
 
+def _proxy_atr_from_stop(entry_price: float, stop_loss: float) -> float:
+    """与 PlaybookService 的 SL 隐含 ATR 代理保持同一量纲（绝对价）。
+
+    正常路径使用完整的 |entry-SL|，不能在恢复/收养路径再除以 2；否则
+    early-tight 的 0.5×ATR 会变成 0.25×SL 距离，系统性偏紧。
+    """
+    entry = float(entry_price or 0)
+    stop = float(stop_loss or 0)
+    return abs(entry - stop) if entry > 0 and stop > 0 else 0.0
+
+
 def _reconcile_pending_sync_status(cursor, symbol: str, db_info: Dict) -> bool:
     """Broker 已匹配时收口 EXT 等路径留下的 pending_sync 状态。
 
@@ -247,6 +258,47 @@ def _pick_order_ts(order: Dict) -> Optional[str]:
         if text and text.lower() not in ("nan", "nat", "none"):
             return text
     return None
+
+def _record_recovered_queue_candidate(*, instruction: Dict, order_snapshot: Dict,
+                                      now_et_value, shadow_path=None) -> bool:
+    """RFC-203：PositionSync 补录成交也纳入确认后排队观测（record-only）。
+
+    主执行线程只在 execute_instruction success 分支打点；SUBMITTED 后由本模块
+    补录的成交也必须覆盖。执行时间只取券商订单 updated/create_time，禁止用
+    reconcile/补录时刻冒充真实成交，缺失时宁可少一条样本。
+    """
+    try:
+        metadata = instruction.get("metadata_json") or {}
+        if isinstance(metadata, str):
+            metadata = json.loads(metadata or "{}")
+        if not isinstance(metadata, dict):
+            return False
+        confirm = metadata.get("entry_confirm") or {}
+        if not isinstance(confirm, dict):
+            return False
+        execution_time = _pick_order_ts(order_snapshot)
+        if not execution_time:
+            return False
+        from app.playbook.early_risk_shadow import record_queue_candidate
+        return record_queue_candidate(
+            symbol=instruction.get("symbol"),
+            direction=instruction.get("direction"),
+            confirmed_at=confirm.get("confirmed_at"),
+            execution_time=execution_time,
+            execution_time_source="broker_order_updated_or_create_time",
+            now_et=now_et_value,
+            inst_id=instruction.get("id"),
+            decision_id=instruction.get("decision_id") or "",
+            arm_delay_actual_sec=confirm.get("delay_actual_sec"),
+            path=shadow_path,
+            logger=logger,
+        )
+    except Exception:
+        logger.warning(
+            "[US Sync] early-risk queue 影子记录异常（不影响补录） instruction=%s",
+            instruction.get("id"), exc_info=True)
+        return False
+
 
 # ── [RFC-080 2026-09-09] 系统委托 remark 白名单 — AUTO 认领的唯一凭证 ──────────
 # 病灶: _query_today_futu_orders 返回当日 env 内**所有**已成交委托, AUTO/MANUAL 分类
@@ -627,8 +679,8 @@ class USPositionSync:
             except Exception:  # pragma: no cover - now_et 不可用时的 ET 兜底
                 from zoneinfo import ZoneInfo
                 now_iso = datetime.now(ZoneInfo("America/New_York")).isoformat()
-            # atr 从 SL 距离反推 (playbook 退出用 %-drawdown, atr 仅诊断用途)
-            atr_guess = abs(entry - sl) / 2.0 if (entry and sl) else 0.0
+            # early-tight 使用 0.5×ATR；代理必须与 PlaybookService 的完整 SL 距离同量纲
+            atr_guess = _proxy_atr_from_stop(entry, sl)
             # [RFC-169 复查 2026-10-27] entry_time/entry_session 以**入场时刻**为准:
             #   券商订单 updated_time(成交) → create_time(建单) 依次取值; 两者都缺失
             #   才回退 now_et(既有行为) 记 entry_time, 但 entry_session 落 "" (unknown),
@@ -801,6 +853,9 @@ class USPositionSync:
                                     iid, attempt, execution_price=observation['price'],
                                     execution_time=row['execution_time'] or now_et().isoformat(),
                                     outcome='holding')
+                                _record_recovered_queue_candidate(
+                                    instruction=row, order_snapshot=snapshot,
+                                    now_et_value=now_et())
                             break
                         if observation['zero_terminal']:
                             pdb.unlock_execution_if_zero_fill_terminal(

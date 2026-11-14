@@ -9,10 +9,13 @@ def _use_temp_db(monkeypatch, tmp_path):
     monkeypatch.setattr(tracker, "_DB_PATH", db_path)
     monkeypatch.setattr(tracker, "_INITIALIZED", False)
     tracker._ensure_table()
+    db_path = tracker._get_db_path()
     with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            "ALTER TABLE signal_snapshots ADD COLUMN market_context_json TEXT"
-        )
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(signal_snapshots)")}
+        if "market_context_json" not in columns:
+            conn.execute(
+                "ALTER TABLE signal_snapshots ADD COLUMN market_context_json TEXT"
+            )
     return db_path
 
 
