@@ -11,7 +11,7 @@
   3. 尾部片段拼接后必须仍是合法 JSON 数组 (元素不被截断)。
 """
 import json
-from datetime import datetime
+from datetime import datetime, tzinfo
 
 import pytest
 
@@ -108,3 +108,45 @@ def test_production_files_when_present(tmp_path):
             full = json.load(fh)
         tail = _read_bars_window(path, 20 + 3)
         assert tail == full[-len(tail):], f"{path.name} 尾部片段与全量不一致"
+
+
+# ── 默认参数自洽 (2026-11-15 第二批: 两处"默认值写错") ─────────────────────
+def test_default_tz_provider_returns_tzinfo():
+    """默认 now_et_provider 必须返回 tzinfo。
+
+    病灶: 6 处默认分支塞 `app.utils.timezone.now_et` (返回 datetime), 而函数体是
+    `datetime.now(provider())` ⇒ 不注入 provider 必抛 TypeError。生产 wrapper 注入了
+    正确的 `_now_et` (返回 ET), 所以线上从未暴露 —— 只咬直接调用/脚本/新用例。
+    """
+    from app.playbook.pipeline_parts import intraday_indicators as ii
+
+    tz = ii._resolve_tz_provider(None)()
+    assert isinstance(tz, tzinfo), f"默认 provider 返回了 {type(tz).__name__}, 必须是 tzinfo"
+    assert datetime.now(tz).tzinfo is not None
+
+
+def test_default_repo_root_finds_replay_bars_dir():
+    """默认 repo root 必须真的指到仓库根 (原 parents[2] 会算成 app/)。"""
+    from pathlib import Path
+
+    from app.playbook.pipeline_parts import intraday_indicators as ii
+
+    root = ii._resolve_repo_root(None)
+    assert root == Path(__file__).resolve().parents[2], f"默认 root 定位错误: {root}"
+    if not (root / "data" / "replay_bars_1m").is_dir():
+        pytest.skip("裸 worktree: 无 data/replay_bars_1m")
+    assert (root / "data" / "replay_bars_1m").is_dir()
+
+
+def test_curve_callable_without_any_injection():
+    """零参数调用必须可用 (修复前: 先 TypeError, 修掉后仍会因路径错误静默 None)。"""
+    from pathlib import Path
+
+    from app.playbook.pipeline_parts import intraday_indicators as ii
+
+    prod = Path(__file__).resolve().parents[2] / "data" / "replay_bars_1m"
+    if not (prod / "US_AAPL.json").is_file():
+        pytest.skip("裸 worktree: 无 US_AAPL.json")
+    curve = ii._intraday_vol_curve_p50("US.AAPL", cache={})
+    assert curve, "零参数调用应能读到真实 bar 并算出曲线 (静默 None = 默认值又坏了)"
+    assert len(curve) > 100

@@ -27,6 +27,38 @@ _BAR_READ_CHUNK = 1 << 20
 _BAR_START_RE = re.compile(rb'\["(\d{4}-\d{2}-\d{2})')
 
 
+def _resolve_tz_provider(now_et_provider):
+    """统一 now_et_provider 契约 = **返回 tzinfo** (配 `datetime.now(tz)` 使用)。
+
+    2026-11-15 根因修复: 本模块 6 处默认分支原写 `from app.utils.timezone import now_et`,
+    而 `now_et()` 返回的是 **datetime**, 与函数体 `datetime.now(now_et_provider())` 的
+    用法自相矛盾 ⇒ 任何"不注入 provider"的直接调用必抛
+    `TypeError: tzinfo argument must be None or of a tzinfo subclass`。
+    生产 wrapper (app/playbook/pipeline.py) 注入的是 `_now_et` (返回 ET tzinfo),
+    所以线上从未暴露 —— 属**默认值契约错误**, 只咬直接调用/脚本/新用例。
+    """
+    if now_et_provider is not None:
+        return now_et_provider
+    from app.utils.timezone import ET as _ET
+    return lambda: _ET
+
+
+def _resolve_repo_root(module_file=None) -> Path:
+    """定位仓库根 (含 data/replay_bars_1m 的那一级), 不依赖调用方文件深度。
+
+    2026-11-15 根因修复: 原写法是 `Path(module_file or __file__).parents[2]` ——
+    这个"上跳两级"只对 `app/playbook/pipeline.py` 成立; 用本模块自己的 `__file__`
+    作默认值时会算成 `app/` ⇒ 找 `app/data/replay_bars_1m/…` 必然不存在 ⇒
+    直接调用静默返回 None (不报错, 看起来像"数据不足")。现改为按标记目录向上找,
+    与调用方文件所在层级解耦。
+    """
+    start = Path(module_file) if module_file else Path(__file__)
+    for cand in start.resolve().parents:
+        if (cand / "data" / "replay_bars_1m").is_dir():
+            return cand
+    return Path(__file__).resolve().parents[3]
+
+
 def _read_bars_window(path: Path, days_needed: int):
     """只解析文件尾部覆盖最近 days_needed 个交易日的 bar (与全量解析同值)。
 
@@ -210,8 +242,7 @@ def _calc_vwap_slope(
             return None
         bars = futu.get_kline(symbol, ktype="K_1M", count=800) or []
         if now_et_provider is None:
-            from app.utils.timezone import now_et
-            now_et_provider = now_et
+            now_et_provider = _resolve_tz_provider(None)
         today = datetime.now(now_et_provider()).strftime("%Y-%m-%d")
         today_bars = [
             bar for bar in bars
@@ -254,8 +285,7 @@ def _capital_flow_divergence(
     """资金流背离判定 (record-only, 不参与拦截)。"""
     try:
         if now_et_provider is None:
-            from app.utils.timezone import now_et
-            now_et_provider = now_et
+            now_et_provider = _resolve_tz_provider(None)
         day = datetime.now(now_et_provider()).strftime("%Y-%m-%d")
         if _CAPITAL_FLOW_CACHE.get("day") != day:
             by_symbol: Dict[str, Any] = {}
@@ -354,14 +384,13 @@ def _intraday_vol_curve_p50(
     cache = cache if cache is not None else _VOL_CURVE_CACHE
     try:
         if now_et_provider is None:
-            from app.utils.timezone import now_et
-            now_et_provider = now_et
+            now_et_provider = _resolve_tz_provider(None)
         day = datetime.now(now_et_provider()).strftime("%Y-%m-%d")
         hit = cache.get(symbol)
         if hit is not None and hit[0] == day:
             return hit[1]
         path = (
-            Path(module_file or __file__).resolve().parents[2]
+            _resolve_repo_root(module_file)
             / "data" / "replay_bars_1m" / f"{symbol.replace('.', '_')}.json"
         )
         if not path.exists():
@@ -420,10 +449,8 @@ def _intraday_vol_curve_p50(
 
 
 def _default_now_et(now_et_provider):
-    if now_et_provider is not None:
-        return now_et_provider()
-    from app.utils.timezone import now_et
-    return now_et()
+    """返回 ET 的 tzinfo (供 `datetime.now(...)` 用) —— 与 _resolve_tz_provider 同契约。"""
+    return _resolve_tz_provider(now_et_provider)()
 
 
 def _calc_intraday_vol_ratio(
@@ -460,8 +487,7 @@ def _calc_intraday_vol_ratio(
     """
     try:
         if now_et_provider is None:
-            from app.utils.timezone import now_et
-            now_et_provider = now_et
+            now_et_provider = _resolve_tz_provider(None)
         now = datetime.now(now_et_provider())
         today = now.strftime("%Y-%m-%d")
 
@@ -591,8 +617,7 @@ def _check_liquidity_gate(
 
     try:
         if now_et_provider is None:
-            from app.utils.timezone import now_et
-            now_et_provider = now_et
+            now_et_provider = _resolve_tz_provider(None)
         key = (symbol, datetime.now(now_et_provider()).strftime("%Y-%m-%d"))
         if key not in _LIQUIDITY_CACHE:
             daily_bars = data_router.get_daily_bars(symbol, count=10) or []
@@ -653,8 +678,7 @@ def _check_borrow_pool_gate(
         if not pb_cfg.get("borrow_pool_gate_enabled", False):
             return True, "disabled"
         if now_et_provider is None:
-            from app.utils.timezone import now_et
-            now_et_provider = now_et
+            now_et_provider = _resolve_tz_provider(None)
         key = (
             symbol,
             datetime.now(now_et_provider()).strftime("%Y-%m-%d"),
