@@ -6,6 +6,7 @@ import json
 # 2026-11-03 冻结长轮次: 主线程进度心跳 (与出场快循环心跳分离, 见 progress_beat)
 from app.observability.progress_beat import progress_ping  # noqa: E402
 from app.playbook.price_ledger import build_price_ledger, calculate_risk_reward
+from app.playbook import s1_arm as _s1_gate  # 判据 B23 臂闸 (enabled=false 时整体空转)
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
@@ -440,6 +441,9 @@ def run_playbook_auto_execute(
         _today_opened_count = _budget_ctx["today_opened_count"]
         _open_positions_count = _budget_ctx["open_positions_count"]
         _cycle_new_count = 0
+        # S1 臂闸 (判据 B23 / 用户 2026-11-15 裁): enabled=false (默认) ⇒ 全部字段空转,
+        # 下面每处引用都以 if _s1_st["enabled"] 包裹, 零行为变更。回滚 = 该键改 false。
+        _s1_st = _s1_gate.cycle_state(today, _today_opened_count)
 
         # 按来源优先级 + confidence 降序 — 购买力优先分配给高优先来源的最强信号.
         # 漏斗最后一层: 多层过滤后剩N只, BP只够开2-3笔 → 先执行优先级最高的.
@@ -1620,6 +1624,39 @@ def run_playbook_auto_execute(
                 _entry = inst.get("entry_price") or 0.0
                 _size = inst.get("position_size") or 0
             _new_notional = _entry * _size if _entry > 0 and _size > 0 else 0.0
+
+            # ── S1 臂闸 (判据 B23): 只做空 / ET≥09:45 / 单笔帽 / 日笔数 / 敞口 / kill switch ──
+            #    enabled=false (默认) ⇒ 本块空转。缩股结果同步写回 execute_instruction 真正
+            #    读取的位置 (_reprice_params['position_size'] 或 inst['position_size'])。
+            if _s1_st.get("enabled"):
+                _s1_st["today_count"] = _today_opened_count
+                _s1_ok, _s1_why = _s1_gate.check_entry(
+                    _s1_st, direction=inst.get("direction"), entry_minute=_now_min)
+                _s1_qty = _s1_gate.cap_size(_s1_st, int(_size or 0), float(_entry or 0)) if _s1_ok else 0
+                if _s1_ok and _s1_qty <= 0:
+                    _s1_ok, _s1_why = False, "s1_arm_cap_zero_room"
+                if not _s1_ok:
+                    logger.info(f"[playbook] {inst['symbol']} 跳过 — S1臂闸 {_s1_why}")
+                    try:
+                        db.mark_instruction_guardrail_skip(inst["id"], f"s1_arm:{_s1_why}")
+                    except Exception as _s1_e:
+                        logger.warning(f"[playbook] S1臂闸落痕失败 (仍跳过) {_s1_e}")
+                    _emit_exec_gate_audit(inst, action="skipped_s1_arm", entry=_entry,
+                                          size=_size, notional=_new_notional,
+                                          extra={"gate": "s1_arm", "reason": _s1_why})
+                    skipped_count += 1
+                    continue
+                if _s1_qty != _size:
+                    logger.info(
+                        f"[playbook] {inst['symbol']} S1臂帽缩股 {_size}→{_s1_qty} "
+                        f"(单笔≤${_s1_gate.cfg('s1_arm_single_notional_cap_usd'):.0f}, "
+                        f"敞口余量见 s1_arm)")
+                    _size = _s1_qty
+                    _new_notional = _entry * _size
+                    if _reprice_params and _reprice_params.get("position_size"):
+                        _reprice_params["position_size"] = _size
+                    else:
+                        inst["position_size"] = _size
             if _bp_limit > 0 and (_max_deploy + _new_notional) > _bp_limit:
                 logger.info(
                     f"[playbook] {inst['symbol']} 跳过 — 购买力上限 "
@@ -1871,6 +1908,9 @@ def run_playbook_auto_execute(
                     _today_opened_notional += _new_notional
                     _today_opened_count += 1
                     _open_positions_count += 1
+                    # S1 臂闸: 已成交笔即时计入 (敞口/日笔数在同一轮内生效, 不等下一轮重算)
+                    _s1_st["today_count"] = _today_opened_count
+                    _s1_st["exposure"] = (_s1_st.get("exposure") or 0.0) + (_new_notional or 0.0)
                     if _mom_policy is not None:
                         _mom_open_count += 1
                         _mom_today_notional += _new_notional

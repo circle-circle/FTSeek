@@ -1309,6 +1309,19 @@ playbook:
     early_tight_sl_atr_enabled: true
     early_tight_sl_atr_mult: 0.5
     early_tight_sl_pct_max: 2.5
+    # ── S1 臂闸 (判据 B23 / 用户 2026-11-15 裁「授权真钱」): 只做空 / ET>=09:45 /
+    #   单笔 <=$4200 / 单日 <=2 笔 / 总敞口 <=$8400 / kill switch(累计 -$300 或前15笔净<0)。
+    #   实现在 app/playbook/s1_arm.py, 接线在 auto_execute_flow (enabled=false 时整体空转)。
+    #   回滚 = s1_arm_enabled: false (热载 ~60s)。
+    s1_arm_enabled: false
+    s1_arm_start_date: '2026-11-16'
+    s1_arm_allowed_direction: SELL_SHORT
+    s1_arm_min_entry_minute_et: 585
+    s1_arm_single_notional_cap_usd: 4200
+    s1_arm_max_entries_per_day: 2
+    s1_arm_max_open_exposure_usd: 8400
+    s1_arm_kill_cum_pnl_usd: -300
+    s1_arm_kill_after_n: 15
     entry_open_blackout_enabled: true
     entry_blackout_shadow_enabled: true  # 2026-11-12 (用户裁 A): 黑窗内只读观测 (record-only) —
     #   本闸让 auto_execute 整轮 return, 逐条 trigger 一次不跑 ⇒ 09:30-09:45 零遥测。
