@@ -12,11 +12,19 @@
 
 ## 二、残留登记（不擅改，需裁决/另立项）
 
-### R-1 ATR 止损倍数两张皮（4.0 vs yaml 2.0）
-- 现状：`order_executor:1553` 钉 4.0（喂 `calc_position_size` 的 `risk_per_share`）；`position_sync` 恢复路径已读 yaml=2.0。
-- 翻转代价：止损距离减半 ⇒ **同 risk_amount 下名义额约翻倍**；恢复路径 `initial_sl` 从 4×ATR 收到 2×ATR，与 exit_rule 的 2×ATR 地板叠加后会在高波动桶更早触发。
-- 结论：属**交易行为变更**（尺寸/退出），须预注册（S1/S2/S3 停止条件）+ 回放；`MAIN_PIPELINE` 自 2026-06-30 无新成交，现役零影响。
-- 重开条件：决定重启 legacy 入场链之前必须先行裁决。
+### R-1 ATR 止损倍数两张皮（4.0 vs yaml 2.0）—— ✅ 已按用户「按建议执行」翻转
+- 落地：`order_executor._get_order_qty` 改读 `get_guardian().load_policy_dict()`（yaml 现役 2.0），yaml 不可读时仍回落 4.0；`position_sync` 恢复路径同批已读 SSOT。
+- **翻转是口径统一，不是尺寸变更（2026-11-15 实算，更正此前"名义额约翻倍"的说法）**：
+  股数 = min(风险驱动, 分层总额 20%, 单名 8%, **单笔 5%**)；要令风险驱动低于 5% 需
+  `ATR% × 倍数 > 60%`（倍数 4 ⇒ ATR%>15%；倍数 2 ⇒ ATR%>30%）。库内 **400 笔**有 ATR 的成交：
+  ATR% 中位 **4.99%** / p99 6.29% / max **7.03%** ⇒ **0/400 受影响**（权益在不等式两边约掉，与账户大小无关）。
+  静态不变量已钉成用例：`tests/test_position_sizer_default_parity.py::test_atr_multiplier_flip_is_sizing_invariant`。
+- 预注册复核（20 个交易日后，任一变化即回滚为 4.0 并记录）：①被 5% 单笔帽截断的比例不变 ②成交笔数不变 ③费用率不变。
+  **怎么量**：`grep -c "\[动态仓位·告警\].*单笔上限" logs/ftseek_us.log`（`order_executor` 已把 `sizing_result.warnings` 升到 WARNING 落盘），
+  除以同期 `[动态仓位]` 行数 = 截断率；②用 `trade_records` 按 `source_type='MAIN_PIPELINE'` 计数；③费用率取 `fees_est/realized_pnl` 的桶均。
+  三条全中 = 确认空操作并销案；任一变 = 回滚 4.0（`git revert` 或改回钉值）并写明触发项。
+- 现役影响：`MAIN_PIPELINE` 自 2026-06-30 无新成交 ⇒ 今日零影响；**真正绑住仓位的是单笔 5% / 单名 8%**，要动仓位规模应从这两处立项，而非 ATR 倍数。
+- 遗留观察（不在本项）：400 笔 ATR% 全挤在 2.5%–7%、中位恰 5%，疑似被某处 5% 上限规范化过；若后续要"用波动定风险"，先查 ATR 来源与钳制。
 
 ### R-2 死代码批次（约 600+ 行 + 若干整包）
 - 清单：`app/strategy/registry.py` + `app/decision/strategies/*`(4) + `app/strategy/base.py`；`app/evolution/`；`app/risk/exit_reason_registry.py`；`llm_pipeline.run_open_checker`；`fundamental_filter.py`、`risk/engine.should_exit`、5 个 `ConfigKeys` 枚举、`analytics/` 空目录；`docs/debeate` 笔误软链。

@@ -66,3 +66,26 @@ def test_missing_key_falls_back_to_conservative_cap():
     )
     # 0.08 * 120000 / 100 = 96 股上限
     assert result.shares <= 96, f"缺键时单名帽被放宽: {result.shares} 股"
+
+
+def test_atr_multiplier_flip_is_sizing_invariant():
+    """预注册判据的静态版: 现配置帽结构下 4×ATR 与 2×ATR 给出**相同股数**。
+
+    依据 (2026-11-15 实算): 股数 = min(风险驱动, 分层总额 20%, 单名 8%, 单笔 5%),
+    最紧的是单笔 5%。风险驱动要低于它需 ATR% × 倍数 > 60% (倍数4 ⇒ ATR%>15%,
+    倍数2 ⇒ ATR%>30%); 库内 400 笔有 ATR 的成交 ATR% 中位 4.99% / max 7.03%
+    ⇒ 0/400 受影响。所以 ATR 倍数 4.0→2.0 是**口径统一**, 不是尺寸变更。
+
+    这条断言一旦变红, 说明有人在"帽结构/风险比例"上动了刀子 ——
+    那才是真正会改变仓位的地方, 必须重新预注册而非顺手放过。
+    """
+    from app.risk.position_sizer import DEFAULT_GUARDS, calc_position_size
+
+    equity, price, atr = 82_000.0, 100.0, 5.0  # ATR% = 5% (库内中位数)
+    common = dict(equity=equity, buying_power=equity, entry_price=price,
+                  drawdown_pct=0.0, guards=DEFAULT_GUARDS)
+    four = calc_position_size(stop_loss_price=price - atr * 4, **common)
+    two = calc_position_size(stop_loss_price=price - atr * 2, **common)
+    assert four.shares == two.shares, (four.shares, two.shares)
+    # 两种倍数下都由"单笔 5%"截断 (82000×5%/100 = 41 股), 风险驱动分别是 123 / 246 股
+    assert four.shares == 41 and two.shares == 41

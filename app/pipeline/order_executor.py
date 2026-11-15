@@ -1545,16 +1545,25 @@ def _get_order_qty(scheduler, symbol: str, atr: float = 0, direction: str = "LON
                 session_ratio = 1.0  # 降级
 
             effective_atr = atr * session_ratio
-            # F32 修复 (2026-05-12 → 2026-06-14 SSOT): ATR 止损倍数
-            # 2026-11-15 根因核对: 原 try 块调 `ExitPolicyGuardian()._load_exit_policy_dict()`
-            #   —— 本类没有该方法 (只属于 PositionExitMonitor) ⇒ 恒 AttributeError,
-            #   实际一直用 fallback 4.0。exit_policy.yaml 现役 multiplier_by_profit.initial
-            #   已改为 2.0 (2026-07-05 分桶重做后), 但本处倍数直接喂 calc_position_size 的
-            #   risk_per_share ⇒ 4.0→2.0 会把单笔名义额放大约一倍 (同一 risk_amount 除以
-            #   更窄的止损距离)。属交易行为变更, 未预注册不做 (MAIN_PIPELINE 自 2026-06-30
-            #   起无新成交, 现役零影响)。删除死读取, 显式钉住现役值。
-            _ATR_STOP_MULT_LEGACY = 4.0  # 现役生效值; 对齐 yaml 2.0 = 需预注册的尺寸变更
-            atr_mult = _ATR_STOP_MULT_LEGACY
+            # F32 修复 (2026-05-12 → 2026-11-15 SSOT): ATR 止损倍数走 exit_policy.yaml
+            # 2026-11-15 第二轮: 原 try 块调 `ExitPolicyGuardian()._load_exit_policy_dict()`
+            #   —— 本类没有该方法 ⇒ 恒 AttributeError, 实际一直用 fallback 4.0。
+            #   现改走进程级单例 + load_policy_dict(); yaml 现役 2.0。
+            #   翻转为何零影响 (2026-11-15 实算, 用户"按建议执行"): 本处倍数只影响
+            #   risk_per_share, 而最终股数 = min(风险驱动, 分层总额20%, 单名8%, 单笔5%)
+            #   —— 最紧的是单笔 5%。要让风险驱动低于 5% 需 ATR%×倍数 > 60%
+            #   (倍数4 ⇒ ATR%>15%; 倍数2 ⇒ ATR%>30%); 库内 400 笔有 ATR 的成交
+            #   ATR% 中位 4.99% / max 7.03% ⇒ 0/400 受影响 (权益在不等式两边约掉,
+            #   与账户大小无关)。故本次是**口径统一**, 不是尺寸变更。
+            #   预注册复核 (20 个交易日后): ①被 5% 单笔帽截断的比例不变 ②成交笔数不变
+            #   ③费用率不变; 任一变化即回滚为 4.0 并记录。
+            try:
+                from app.risk.exit_policy_guardian import get_guardian
+                _policy = get_guardian().load_policy_dict()
+                atr_mult = float(_policy.get("exit_rules", {}).get(
+                    "atr_stop", {}).get("multiplier_by_profit", {}).get("initial", 4.0))
+            except Exception:
+                atr_mult = 4.0  # yaml 不可读时保持历史生效值, 防降级路径跳出新行为
             if hasattr(scheduler, 'position_store') and scheduler.position_store.has(symbol):
                 atr_mult = atr_mult * 0.9  # 已有持仓 → 收紧 10% (加仓场景, 原比例 1.8/2.0=0.9)
 

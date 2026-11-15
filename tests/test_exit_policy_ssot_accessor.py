@@ -70,3 +70,22 @@ def test_position_sync_reads_ssot_not_hardcode():
     """恢复路径合成 SL 的 ATR 倍数必须来自 SSOT (而不是又写死一个 4.0)。"""
     src = (ROOT / "app/core/position_sync.py").read_text(encoding="utf-8")
     assert "get_guardian().load_policy_dict()" in src
+
+
+def test_order_executor_reads_ssot_not_pinned_constant():
+    """下单股数路径也必须读 SSOT (2026-11-15 第二轮: 原钉 _ATR_STOP_MULT_LEGACY=4.0)。
+
+    注: 这条翻转是**口径统一**, 不是尺寸变更 —— 静态不变量见
+    tests/test_position_sizer_default_parity.py::test_atr_multiplier_flip_is_sizing_invariant。
+    """
+    src = (ROOT / "app/pipeline/order_executor.py").read_text(encoding="utf-8")
+    assert "_ATR_STOP_MULT_LEGACY" not in src, "又用硬编码钉住 ATR 倍数了"
+    assert "load_policy_dict()" in src
+    assert "get_guardian()" in src
+
+
+def test_ssot_atr_multiplier_value():
+    """SSOT 现役值必须能被读到 (2.0, medium 桶默认, 盘中由 vol bucket 覆盖)。"""
+    policy = epg.get_guardian().load_policy_dict()
+    value = float(policy["exit_rules"]["atr_stop"]["multiplier_by_profit"]["initial"])
+    assert value == 2.0
