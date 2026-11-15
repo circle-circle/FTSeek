@@ -1545,16 +1545,16 @@ def _get_order_qty(scheduler, symbol: str, atr: float = 0, direction: str = "LON
                 session_ratio = 1.0  # 降级
 
             effective_atr = atr * session_ratio
-            # F32 修复 (2026-05-12 → 2026-06-14 SSOT): 从 exit_policy.yaml 读取, 不再硬编码
-            # BUG FIX: 原硬编码 2.0 与 exit_policy.yaml atr_stop.initial=4.0 不一致
-            # 导致入场止损定价 (用于仓位计算) 与退出止损 (ExitMonitor) 脱节
-            try:
-                from app.risk.exit_policy_guardian import ExitPolicyGuardian as _EPG
-                _exit_policy = _EPG()._load_exit_policy_dict()
-                atr_mult = float(_exit_policy.get("exit_rules", {}).get(
-                    "atr_stop", {}).get("multiplier_by_profit", {}).get("initial", 4.0))
-            except Exception:
-                atr_mult = 4.0  # exit_policy.yaml atr_stop.initial 默认
+            # F32 修复 (2026-05-12 → 2026-06-14 SSOT): ATR 止损倍数
+            # 2026-11-15 根因核对: 原 try 块调 `ExitPolicyGuardian()._load_exit_policy_dict()`
+            #   —— 本类没有该方法 (只属于 PositionExitMonitor) ⇒ 恒 AttributeError,
+            #   实际一直用 fallback 4.0。exit_policy.yaml 现役 multiplier_by_profit.initial
+            #   已改为 2.0 (2026-07-05 分桶重做后), 但本处倍数直接喂 calc_position_size 的
+            #   risk_per_share ⇒ 4.0→2.0 会把单笔名义额放大约一倍 (同一 risk_amount 除以
+            #   更窄的止损距离)。属交易行为变更, 未预注册不做 (MAIN_PIPELINE 自 2026-06-30
+            #   起无新成交, 现役零影响)。删除死读取, 显式钉住现役值。
+            _ATR_STOP_MULT_LEGACY = 4.0  # 现役生效值; 对齐 yaml 2.0 = 需预注册的尺寸变更
+            atr_mult = _ATR_STOP_MULT_LEGACY
             if hasattr(scheduler, 'position_store') and scheduler.position_store.has(symbol):
                 atr_mult = atr_mult * 0.9  # 已有持仓 → 收紧 10% (加仓场景, 原比例 1.8/2.0=0.9)
 

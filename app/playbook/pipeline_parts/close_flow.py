@@ -215,23 +215,22 @@ def _close_trade_record(
         try:
             # #6: 复用 _tr (原此处独立 SELECT entry_time)
             if _tr is not None and _tr[3]:
-                _entry_dt = datetime_cls.fromisoformat(_tr[3])
-                _et_tz = _now_et()
-                _now_dt = datetime_cls.fromisoformat(now_iso)
-                if _now_dt.tzinfo is None:
-                    _now_dt = _et_tz.localize(_now_dt) if hasattr(_et_tz, "localize") else _now_dt.replace(tzinfo=_et_tz)
-                # 2026-07-16 P1 修复: entry_time 可能是 naive (CST 无 tz), now_dt 是 tz-aware (ET).
-                #   两者相减抛 TypeError → holding_hours 回退为调用方传入值 (0.0).
-                #   修复: naive entry_dt 加上 ET tz 再相减, 或用 wall-clock fallback.
-                if _entry_dt.tzinfo is None:
-                    # 2026-07-25 (时区SSOT批漏网补修): pytz 时区禁 replace(tzinfo=) — 产生 -04:56 LMT 偏移
-                    _entry_dt = _et_tz.localize(_entry_dt) if hasattr(_et_tz, "localize") else _entry_dt.replace(tzinfo=_et_tz)
+                # 2026-11-15 根因修复: 原实现把 naive 时间戳一律 localize 成 ET,
+                #   而账本列的 naive 值是**服务器本地墙钟 (CST)** —— utils.timezone
+                #   的 SSOT 约定是 to_et() (naive 视为 CST, 见 parse_ledger_ts docstring)。
+                #   按 ET 解读 naive ⇒ 持仓时长偏 ~13h (EOG 曾算出 -6.7h 负时长)。
+                #   两种口径都统一走 to_et(): aware-ET 行 astimezone 后同刻不变
+                #   (现役写入路径已是 aware-ET, 存量 874 行零变化), naive-CST 历史行
+                #   才被纠正。pytz 禁 replace(tzinfo=) 的老坑同样由 to_et 内部处理。
+                from app.utils.timezone import to_et as _to_et
+                _entry_dt = _to_et(datetime_cls.fromisoformat(_tr[3]))
+                _now_dt = _to_et(datetime_cls.fromisoformat(now_iso))
                 from app.risk.position_exit_monitor import get_market_hours_us
                 _market_hh = get_market_hours_us(_entry_dt, _now_dt)
                 if _market_hh > 0:
                     holding_hours = round(_market_hh, 1)
                 else:
-                    # fallback: wall-clock 差值 (比 0 好); abs 兜底防 naive 北京时间被当 ET 导致负值 (如 EOG -6.7h)
+                    # fallback: wall-clock 差值 (比 0 好)
                     holding_hours = round(abs((_now_dt - _entry_dt).total_seconds()) / 3600, 1)
         except Exception as _hh_err:
             logger.warning(f"[_close_trade_record] holding_hours 重算失败 trade_id={trade_id}: {_hh_err}", exc_info=True)

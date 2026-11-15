@@ -992,6 +992,7 @@ def _is_manual_position_for_reconcile(symbol: str) -> bool:
     SNDK/MU 事件修复: 运行时 broker 对账每 5min 调用,
     必须在 add 到 position_store 前排除手动仓位.
     """
+    global _manual_position_cache_ts
     import time as _t
     now = _t.time()
     if symbol in _manual_position_cache and (now - _manual_position_cache_ts) < _MANUAL_CACHE_TTL:
@@ -1251,7 +1252,7 @@ def _reconcile_position_store(scheduler):
         from app.core.config_container import get_config
         try:
             cfg = get_config()
-            max_pos_pct = cfg.get_dotted("risk.position.max_position_pct", 0.15)
+            max_pos_pct = cfg.get_dotted("risk.position.max_position_pct", 0.08)  # 2026-11-15: fallback 0.15→0.08 对齐 yaml SSOT
             account_equity = 0.0
             try:
                 from app.risk.capital_safety import get_capital_safety_system

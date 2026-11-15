@@ -1979,16 +1979,15 @@ class USPositionSync:
                         initial_sl = info['cost'] + atr * atr_mult
                         initial_tp = info['cost'] * (1 - _tp_pct)
                     
-                    # 硬底限保护: 与 exit_policy.yaml max_loss_pct=15% 对齐
-                    _max_loss_pct = 0.15  # exit_policy global max_loss_pct
-                    try:
-                        from app.risk.exit_policy_guardian import ExitPolicyGuardian as _EPG
-                        _pol = _EPG()._load_exit_policy_dict()
-                        _ml = float(_pol.get("exit_rules", {}).get(
-                            "atr_stop", {}).get("max_loss_pct", 15.0))
-                        _max_loss_pct = _ml / 100.0
-                    except Exception:
-                        pass
+                    # 硬底限保护: **刻意不读 exit_policy.yaml** (2026-11-15 根因核对)。
+                    #   yaml 现役 atr_stop.max_loss_pct=2.0 (medium 桶默认, 盘中由
+                    #   vol_bucket_multipliers 覆盖)。本处是"恢复路径合成 SL 的兜底地板",
+                    #   曾在 2026-11-09 实测到 2% 硬底把 US.LLY 的 SL 合成成 −2%
+                    #   (见本文件头部 RFC-195 注释: 31s 后被指令真值 −5% 覆盖)。
+                    #   原 try 块调 `ExitPolicyGuardian()._load_exit_policy_dict()` 本就不存在
+                    #   ⇒ 恒 AttributeError 被吞, 15% 一直在生效。为避免复活 −2% 硬底,
+                    #   这里显式写死 15% 并删除死读取。
+                    _max_loss_pct = 0.15  # 恢复路径地板 (不是 atr_stop 规则值)
                     hard_stop = info['cost'] * (1 - _max_loss_pct) if info['direction'] == 'LONG' else info['cost'] * (1 + _max_loss_pct)
                     if info['direction'] == 'LONG':
                         initial_sl = max(initial_sl, hard_stop)
@@ -2237,11 +2236,11 @@ class USPositionSync:
                     sl_price = cost + atr * atr_mult
                     tp_price = cost - atr * atr_mult * 2.0
                 
-                # 硬底限保护: 读 exit_policy.yaml SSOT (与 line 841-851 对齐)
+                # 硬底限保护: 读 exit_policy.yaml SSOT (与 line 2030 的恢复路径地板不同:
+                #   本处是"新发现持仓的合成 SL", 取 atr_stop 规则值 2.0%)
                 try:
-                    from app.risk.exit_policy_guardian import ExitPolicyGuardian
-                    _ep = ExitPolicyGuardian()
-                    _policy = _ep._load_exit_policy_dict()
+                    from app.risk.exit_policy_guardian import get_guardian
+                    _policy = get_guardian().load_policy_dict()
                     _ml = float(_policy.get("exit_rules", {}).get(
                         "atr_stop", {}).get("max_loss_pct", 2.0))
                     _max_loss_pct = _ml / 100.0
@@ -3177,14 +3176,19 @@ class USPositionSync:
     def _get_atr_stop_mult(self) -> float:
         """P1 修复 (2026-06-07): SSOT 读取 ATR 止损倍数
 
-        从 exit_policy.yaml 读取 atr_stop.multiplier_by_profit.initial,
-        消除 position_sync 中 3 处硬编码 (2.5/4.0) 的不一致。
-        默认 4.0 (与 exit_policy.yaml SSOT 对齐)。
+        从 exit_policy.yaml 读取 atr_stop.multiplier_by_profit.initial。
+
+        2026-11-15 根因修复: 原实现 `ExitPolicyGuardian()._load_exit_policy_dict()`
+        读的是一个**不存在的私有方法**(该方法只属于 PositionExitMonitor) ⇒ 每次调用
+        必抛 AttributeError 被 `except` 吞掉 ⇒ 恒返回硬编码 4.0, 且每标的每轮新建
+        guardian + 重读 yaml。现改为进程级单例 `get_guardian().load_policy_dict()`,
+        yaml 只解析一次; 取值 = SSOT 现役值 (2.0, 与 ExitMonitor 的
+        atr_mult_val 默认 2.0 / atr_stop_engine 同源)。yaml 不可读时才回落 4.0
+        (历史实际生效值, 防降级路径跳出新行为)。
         """
         try:
-            from app.risk.exit_policy_guardian import ExitPolicyGuardian
-            _ep = ExitPolicyGuardian()
-            _policy = _ep._load_exit_policy_dict()
+            from app.risk.exit_policy_guardian import get_guardian
+            _policy = get_guardian().load_policy_dict()
             return float(_policy.get("exit_rules", {}).get(
                 "atr_stop", {}).get("multiplier_by_profit", {}).get("initial", 4.0))
         except Exception:

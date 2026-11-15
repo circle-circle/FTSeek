@@ -206,7 +206,7 @@ class RSSHubUSNewsFetcher:
         '谷歌': 'US.GOOG', 'GOOGL': 'US.GOOG', 'GOOG': 'US.GOOG',
         '亚马逊': 'US.AMZN', 'AMZN': 'US.AMZN',
         'Meta': 'US.META', 'META': 'US.META',
-        'AMD': 'US.AMD', 'AMD': 'US.AMD',
+        'AMD': 'US.AMD',
         '博通': 'US.AVGO', 'AVGO': 'US.AVGO',
         '阿里巴巴': 'US.BABA', 'BABA': 'US.BABA', '阿里': 'US.BABA',
         '京东': 'US.JD', 'JD': 'US.JD',

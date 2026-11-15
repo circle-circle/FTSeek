@@ -77,6 +77,19 @@ class ExitPolicyGuardian:
             self.policy = self._default_policy()
             return self.policy
     
+    def load_policy_dict(self) -> Dict[str, Any]:
+        """读取 exit_policy.yaml 原始字典 (实例内缓存, 二次调用零 IO).
+
+        根因修复 (2026-11-15): position_sync.py(3 处) / order_executor.py(1 处) 曾调用
+        `ExitPolicyGuardian()._load_exit_policy_dict()` —— 该方法只存在于
+        PositionExitMonitor, 本类从未有 ⇒ 每次调用必抛 AttributeError 被
+        `except Exception` 吞掉, 四处"读 SSOT"实为**恒读硬编码 fallback**, 日志干净、
+        测试全绿。统一入口 = get_guardian().load_policy_dict() (进程内只 load 一次)。
+        """
+        if not self.policy:
+            self.load()
+        return self.policy or {}
+
     def validate(self) -> PolicyResult:
         """
         启动时策略校验 — 验证代码是否覆盖了所有启用的规则

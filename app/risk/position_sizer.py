@@ -58,7 +58,12 @@ class SizingResult:
 DEFAULT_TIERS = {
     "micro":    {"min_equity": 0,       "max_equity": 10000,   "risk_pct": 0.05,  "total_pct": 0.30, "max_positions": 3,  "min_trade_usd": 100,   "max_position_pct": 0.35},
     "small":    {"min_equity": 10000,   "max_equity": 50000,   "risk_pct": 0.035, "total_pct": 0.25, "max_positions": 5,  "min_trade_usd": 500,   "max_position_pct": 0.30},
-    "medium":   {"min_equity": 50000,   "max_equity": 200000,  "risk_pct": 0.03,  "total_pct": 0.20, "max_positions": 10, "min_trade_usd": 2000,  "max_position_pct": 0.25},
+    # 2026-11-15 根因修复: medium.max_position_pct 0.25 → 0.08 与
+    #   unified_config.yaml risk.capital_safety.tiers 对齐 (DEB-20260815 P0-A 把
+    #   yaml 0.25→0.08, 单名帽收紧来自实盘 MU 86% 集中/$65.9k 回撤教训;
+    #   代码侧 fallback 未同步 ⇒ YAML 加载失败时降级路径把单名帽放宽 3 倍)。
+    #   漂移守卫: tests/test_position_sizer_default_parity.py
+    "medium":   {"min_equity": 50000,   "max_equity": 200000,  "risk_pct": 0.03,  "total_pct": 0.20, "max_positions": 10, "min_trade_usd": 2000,  "max_position_pct": 0.08},
     "large":    {"min_equity": 200000,  "max_equity": 1000000, "risk_pct": 0.025, "total_pct": 0.15, "max_positions": 10, "min_trade_usd": 5000,  "max_position_pct": 0.20},
     "inst":     {"min_equity": 1000000, "max_equity": None,    "risk_pct": 0.02,  "total_pct": 0.10, "max_positions": 15, "min_trade_usd": 10000, "max_position_pct": 0.15},
 }
@@ -161,7 +166,9 @@ def calc_position_size(
     max_cap_shares = int(max_position_value / entry_price)
 
     # ── 7. 单只仓位上限 ──
-    max_pos_pct = tier_cfg.get("max_position_pct", 0.25)
+    # 缺键时取 0.08 (与 yaml risk.position.max_per_symbol 对齐的保守值);
+    # 原 0.25 会把单名帽放宽 3 倍 (2026-11-15)。
+    max_pos_pct = tier_cfg.get("max_position_pct", 0.08)
     max_single_shares = int((equity * max_pos_pct) / entry_price)
 
     # ── 8. 取最小值 ──

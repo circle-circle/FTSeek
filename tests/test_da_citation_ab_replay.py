@@ -6,10 +6,52 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-sys.path.insert(0, "/root/.hermes/skills/deep-stock-analysis/scripts")
+
+SKILL_SCRIPTS = Path("/root/.hermes/skills/deep-stock-analysis/scripts")
 
 import da_citation_ab_replay as replay
-import llm_synth
+
+
+def _import_llm_synth():
+    """导入技能侧 llm_synth, 绕开本仓根目录的 `config/` 包同名遮蔽。
+
+    病灶 (2026-11-15 根因): llm_synth 顶部 `import config` 是**裸名**, 而本仓
+    /opt/ftseek/FTSeek-US/config/ 是个包 (存 unified_config.yaml)。全量跑测试时它已被
+    别的用例以顶层名 `config` 缓存 ⇒ llm_synth 拿到本仓 config 包 (无 DASHSCOPE_KEY)
+    ⇒ AttributeError 发生在**收集期**, 直接中断整个套件 (单文件跑却绿 = 顺序依赖,
+    跨环境脆弱)。修法: 只在本函数内临时摘掉冲突的顶层模块 + 把技能目录顶到
+    sys.path[0], 导入完立即恢复 sys.modules/sys.path 原状, 不改变其他用例的模块身份。
+    """
+    if not SKILL_SCRIPTS.exists():
+        raise ImportError("skill scripts missing: %s" % SKILL_SCRIPTS)
+    names = ("config", "data_collector", "llm_synth")
+    saved_modules = {name: sys.modules.pop(name) for name in names if name in sys.modules}
+    saved_path = list(sys.path)
+    try:
+        while str(SKILL_SCRIPTS) in sys.path:
+            sys.path.remove(str(SKILL_SCRIPTS))
+        sys.path.insert(0, str(SKILL_SCRIPTS))
+        import llm_synth  # noqa: F401
+        return llm_synth
+    finally:
+        sys.path[:] = saved_path
+        # config/data_collector 还原 (其他用例按顶层名在用本仓 config 包);
+        # llm_synth **必须留在 sys.modules** —— replay.run_arm 内部是 `import llm_synth`,
+        # 只有拿到同一对象, 用例的 monkeypatch.setattr(llm_synth,"synthesize") 才生效;
+        # 若把它摘掉, 内部重新导入会打到真 LLM (实测被测试挡板拦下 = 假红/真付费风险)。
+        for name in ("config", "data_collector"):
+            sys.modules.pop(name, None)
+        for name, module in saved_modules.items():
+            if name != "llm_synth":
+                sys.modules[name] = module
+
+
+try:
+    llm_synth = _import_llm_synth()
+    _LLM_SYNTH_SKIP = ""
+except Exception as _llm_synth_err:  # 环境缺技能脚本/凭据 → 只跳这两条用例, 不中断收集
+    llm_synth = None
+    _LLM_SYNTH_SKIP = "llm_synth 不可用: %s" % _llm_synth_err
 
 
 def _report(tmp_path):
@@ -56,6 +98,7 @@ def test_citation_section_contains_only_real_visible_ids():
 
 
 @pytest.mark.parametrize("arm", ["control_1", "treatment_1"])
+@pytest.mark.skipif(llm_synth is None, reason=_LLM_SYNTH_SKIP or "llm_synth unavailable")
 def test_run_arm_changes_only_citation_layer(monkeypatch, arm):
     captured = {}
 

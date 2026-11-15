@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime
 import time
 from pathlib import Path
@@ -18,6 +19,49 @@ _STREAK_BAN_CACHE: Dict[str, Any] = {}
 _VOL_CURVE_CACHE: Dict[str, Any] = {}
 _LIQUIDITY_CACHE: Dict[str, Any] = {}
 _BORROW_POOL_CACHE: Dict[str, Any] = {}
+
+# 尾部窗口读取 (2026-11-15): data/replay_bars_1m/{sym}.json 单文件 5-7 MB / 8.5 万根,
+# 原先每标的每日首读全量 json.load 只为取最近 ~20 日 ⇒ 日首 8-15 标的 = 40-105 MB
+# 解析突发。从文件尾按 _BAR_READ_CHUNK 回读, 攒够天数后只解析尾部片段。
+_BAR_READ_CHUNK = 1 << 20
+_BAR_START_RE = re.compile(rb'\["(\d{4}-\d{2}-\d{2})')
+
+
+def _read_bars_window(path: Path, days_needed: int):
+    """只解析文件尾部覆盖最近 days_needed 个交易日的 bar (与全量解析同值)。
+
+    格式契约: 生产端 (scripts/fetch_minute_bars.py) 写的是单行 JSON 数组,
+    每根 bar 形如 ``["YYYY-MM-DD HH:MM:SS", o, h, l, c, v]``。这里按 ``["`` + 日期
+    定位元素起点, 用 ``json.loads(b"[" + 片段)`` **整体解析** (不逐条正则拼数),
+    因此结果与 ``json.load`` 逐值相同; 片段起点之后的字节一直延伸到 EOF, 不会截断元素。
+
+    任何边界/格式异常都 raise (由调用方回落全量 json.load) —— 宁可慢不能错:
+    该曲线是盘中量能门的分母 (交易判定输入)。
+    """
+    with path.open("rb") as source:
+        source.seek(0, 2)
+        pos = source.tell()
+        buf = b""
+        while pos > 0:
+            step = min(_BAR_READ_CHUNK, pos)
+            pos -= step
+            source.seek(pos)
+            buf = source.read(step) + buf
+            if len({m.group(1) for m in _BAR_START_RE.finditer(buf)}) >= days_needed:
+                break
+    if pos == 0:
+        return json.loads(buf)  # 已把整文件读进内存 (小文件/数据不足) → 全量语义
+    dates = sorted({m.group(1) for m in _BAR_START_RE.finditer(buf)})
+    if len(dates) < days_needed:
+        raise ValueError("tail window accumulated %d days < %d" % (len(dates), days_needed))
+    cutoff = dates[-days_needed]
+    for match in _BAR_START_RE.finditer(buf):
+        if match.group(1) == cutoff:
+            bars = json.loads(b"[" + buf[match.start():])
+            if not isinstance(bars, list) or not bars:
+                raise ValueError("tail window parse produced empty list")
+            return bars
+    raise ValueError("cutoff bar start not found in tail window")
 
 _SECTOR_TO_PULSE = (
     (("semiconductor",), "Semis"),
@@ -324,7 +368,15 @@ def _intraday_vol_curve_p50(
             cache[symbol] = (day, None)
             return None
         with path.open(encoding="utf-8") as source:
-            bars = json.load(source)
+            try:
+                # 尾部窗口 (days + 3 留缓冲: 文件若已含当日 bar, 仍需 ≥ days 个历史日)
+                bars = _read_bars_window(path, days + 3)
+            except Exception as _tail_err:
+                logger.debug(
+                    "[playbook] 量能曲线尾部读取回落全量 %s: %s", symbol, _tail_err
+                )
+                source.seek(0)
+                bars = json.load(source)
         by_day: Dict[str, list] = {}
         for bar in bars:
             try:
