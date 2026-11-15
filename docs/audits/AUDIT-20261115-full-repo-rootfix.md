@@ -49,7 +49,7 @@
 | `llm_pipeline.run_open_checker` | 调用点 `scheduler_core.py:2526`（WIP 中）；且属"活码死跑"，删除须连 trigger 配置一起裁 |
 | `risk/engine.should_exit` | 需先判 `app/risk/engine.py` 整模块是否仍在链上（有 deprecation 包装），未核完 |
 | 5 个 `ConfigKeys` 枚举 / `analytics/` 空目录 | 前者牵连 `config_key_census` 守卫（当前因 WIP 已红）；后者 git 不跟踪空目录，无删除动作 |
-| `docs/debeate` 软链 | **更正：不是垃圾** —— 是给用户指定拼写的软链，已按 DEB 决定"排除提交、保留磁盘"，不删 |
+| `docs/debeate` 软链 | **已删（2026-11-15 用户确认："误建，可以删除掉"）** —— 是拼写变体软链，未跟踪、无引用；`docs/debates/`（258 项）完好。此前"用户指定拼写"的推断被用户本人更正。 |
 
 ### R-5 观察项：`commit-msg` 治理钩子被"散文"命中（未修，待裁）
 - 现象：`HIGH_RISK_PATTERNS` 是对**整份 staged diff 的文本**做 `grep -qiE`，因此注释/文档里出现 `order_executor`、`exit_policy` 等**词**即触发拦截，与实际改了哪个文件无关。
