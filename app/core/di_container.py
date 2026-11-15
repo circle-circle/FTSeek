@@ -111,11 +111,12 @@ class DIContainer:
     # ================================================================
     #  策略层
     # ================================================================
-    def strategy_registry(self) -> "StrategyRegistry":
-        """策略注册中心"""
-        from app.strategy.registry import get_strategy_registry
-        return self._get_or_create("strategy_registry", get_strategy_registry)
-
+    # [CLEANUP 2026-11-15] strategy_registry() 工厂已删除 (R-2a):
+    #   它构造的 StrategyRegistry 被赋给 scheduler.strategy_registry 后**零读取**
+    #   (全仓 grep 只有本文件与赋值行命中); 现役策略配置真源是
+    #   app/core/strategy_registry.py (配置驱动, 下单执行器 / 指令构建 / 信号 IC 追踪
+    #   都在读它)。同批删除 app/strategy/{base,registry}.py 与
+    #   app/decision/strategies/。回滚 = revert 该批 sha。
     # [CLEANUP 2026-07-14] voting_coordinator() 工厂已删除 — 零调用者.
     #   scheduler 恒用 Null/Bridge/TechnicalFallbackAdapter; 真·3模型VotingCoordinator
     #   已随死投票脑 (voting_coordinator.py/voting_aggregator.py/model_agent.py) 一同清理.
@@ -263,8 +264,8 @@ class DIContainer:
         )
 
         # ── 注入增强组件 ──
-        # 策略注册中心
-        scheduler.strategy_registry = self.strategy_registry()
+        # [CLEANUP 2026-11-15] scheduler.strategy_registry 注入已删除 (R-2a):
+        #   该属性全仓零读取 (死路径); 策略配置请用 app.core.strategy_registry。
         # [CLEANUP 2026-06-13] performance_tracker + auto_tuner injections removed
         # DI 容器引用（供后续扩展）
         scheduler.di_container = self
