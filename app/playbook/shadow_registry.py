@@ -4979,6 +4979,30 @@ REGISTRY: list[ShadowItem] = [
               "refresh 仍需 DA_EVENT_CONTEXT_SHADOW=1 + --execute-refresh 才允许付费。"
               "回滚=.env.us 置0, 下轮即停; 产物留档。",
     ),
+    ShadowItem(
+        id="s1_short_after_open",
+        name="空头「开盘45分钟后」入场臂前瞻判据 (B23)",
+        status=ShadowStatus.OBSERVING,
+        description="判据字典 B23 的登记项: 人群 = A10 口径 ∧ direction='SHORT' ∧ ET 入场 >=09:45 "
+                    "∧ 已平仓, 前瞻窗口自 2026-11-16 起。评估器每小时可重算 (只读 trade_records), "
+                    "落档前的 88 笔仅作历史参照, 不入判据。不改任何入场/退出判定。",
+        data_path="data/s1_cohort/latest.json",
+        config_key=None,
+        min_n=40,
+        count_mode="json_key:forward_n",
+        graduation_criteria="前瞻已平 n>=40 时四条全过才过: ① 净 bps >= 该窗实测费 bps×1.5 "
+                            "(落档时门槛 ~13.4bps) ② Σ净>0 ③ 剔最大单笔后 Σ净 仍>0 ④ 同窗对照臂 "
+                            "(SHORT<09:45 与 LONG>=09:45) 不得同时转正。停止条件: 前瞻 n>=15 且净 bps<0 / "
+                            "Σ净<-$300 / 实盘滑点中位 >15bps, 触发即当日回滚。转正须另立裁决 + 用户裁, "
+                            "本判据不自动生效。",
+        eval_script="scripts/s1_short_after_open_cohort.py",
+        eval_on_demand=True,
+        created="2026-11-15",
+        notes="写方 scripts/s1_short_after_open_cohort.py (sqlite mode=ro, 只读; 产物锚定仓内 data/, "
+              "不写交易库不下单)。历史参照: n=88 毛 39.69/费 8.94/净 +30.75bps, 日聚类 t=+2.58。"
+              "已知局限: t 取自约 20 个切片的最大值, 逐笔 sd=121 ⇒ 净 bps 不能作短周期判据, "
+              "短期只判滑点与引擎臂同号。",
+    ),
 ]
 
 
