@@ -92,7 +92,7 @@ updated: 2026-11-17
 ## 5. 执行提案（待裁，一次一变量）
 
 - **P0（已落地，本批）**：本文件 + DEB-20261103 §6.4 结算 + README 索引 + handoff 条目。纯 .md，零重启，零 app/ 改动。
-- **P1（已实施 2026-11-17，观测级）**：探针读 `_stack` 快照，非空即报「停摆期间 GC 进行中 gen=X 已 Yms（get_stats 只计已完成，在途不计增量）」替代「非 GC 所致」误导提示。抽 `_build_stall_message(elapsed, interval_s, d_collections, stack_snapshot)` 纯函数便于 hermetic 测试（在途/空栈/已完成增量三例）。注意 `_stack` 存 perf_counter、探针用 monotonic，在途时长用 perf_counter 算。零交易语义。**部署**：MainPID 3260934（16:33:43 CST），冒烟 7/7，gc_guard+round_timer 20 passed（含新增 3 例），重启后 0 ERROR、8 sim 仓恢复、源码 mtime 16:32:44 早于进程启动；探针文案不在 open_health_report 解析面，不破解析器。**未提交**（待裁）。
+- **P1（已实施 2026-11-17，观测级）**：探针读 `_stack` 快照，非空即报「停摆期间 GC 进行中 gen=X 已 Yms（get_stats 只计已完成，在途不计增量）」替代「非 GC 所致」误导提示。抽 `_build_stall_message(elapsed, interval_s, d_collections, stack_snapshot)` 纯函数便于 hermetic 测试（在途/空栈/已完成增量三例）。注意 `_stack` 存 perf_counter、探针用 monotonic，在途时长用 perf_counter 算。零交易语义。**部署**：MainPID 3260934（16:33:43 CST），冒烟 7/7，gc_guard+round_timer 20 passed（含新增 3 例），重启后 0 ERROR、8 sim 仓恢复、源码 mtime 16:32:44 早于进程启动；探针文案不在 open_health_report 解析面，不破解析器。**已提交** `1cee64d27`（P0+P1 同批）。
 - **P2（观测级，与 P1 分批）**：reporter 行**追加** `VmSwap=…MB`（可加 majflt 增量），保持 open_health_report 现有 regex 子串不破；RSS 告警门 2200MB 重校准或改 VmSwap 门。
 - **P3（纯 env 可逆，需前后观测）**：`FTSEEK_GC_TRIM_RSS_MB` 降至 ~150–200MB 让 trim 真触发。预期管理：trim 归还空闲页、缩小未来换出压力，但消不了已在 swap 的活页停顿；MALLOC_ARENA_MAX=2 下收益有限。
 - **P4（运维裁，非代码）**：宿主内存竞争根因——dev agent（Hermes/qodercli/codex）迁出交易宿主 / 加内存 / EOD 重批错峰。收益最大，超出 gc_guard 范围。
