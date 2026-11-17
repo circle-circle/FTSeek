@@ -99,6 +99,23 @@ def _rss_mb() -> Optional[float]:
     return None
 
 
+def _swap_mb() -> Optional[float]:
+    """当前进程 VmSwap (MB); 读 /proc/self/status, 失败返回 None (不抛)。
+
+    为什么单列: 11-16/11-17 的 gen1 长停顿 (20972ms/11322ms) 是换出页缺页所致,
+    RSS 只反映驻留页, 换出集大小要看 VmSwap —— 此前 reporter 只报 RSS, swap 主线
+    在日志里看不见 (DEB-20261117 §2.3)。与 RSS 同读 /proc/self/status, 零额外开销面。
+    """
+    try:
+        with open("/proc/self/status", "r") as fh:
+            for line in fh:
+                if line.startswith("VmSwap:"):
+                    return int(line.split()[1]) / 1024.0
+    except Exception:
+        return None
+    return None
+
+
 def release_free_memory(reason: str = "periodic") -> Optional[Tuple[float, float]]:
     """把 glibc 已 free 的堆页还给 OS (malloc_trim), 返回 (前MB, 后MB)。
 
@@ -160,9 +177,10 @@ def _on_gc(phase: str, info: dict) -> None:
         warn_ms = _env_num("FTSEEK_GC_PAUSE_WARN_MS", _DEFAULT_WARN_MS)
         if elapsed_ms >= warn_ms:
             logger.warning(
-                "[GC] 停顿 %.0fms ≥ %.0fms (gen=%d, collected=%s, RSS=%.0fMB) — "
+                "[GC] 停顿 %.0fms ≥ %.0fms (gen=%d, collected=%s, RSS=%.0fMB, VmSwap=%.0fMB) — "
                 "该线程此间独占 GIL, 其它循环与心跳全部静默",
                 elapsed_ms, warn_ms, gen, info.get("collected"), _rss_mb() or -1,
+                _swap_mb() or -1,
             )
     except Exception as _gc_cb_err:  # 钩子内异常会污染 GC 状态, 但失败要留痕
         logger.warning("[GC] 停顿回调异常 (忽略; GC 停顿取证失灵): %s", _gc_cb_err, exc_info=True)
@@ -236,7 +254,7 @@ def _reset_window() -> None:
 
 
 def _report_loop(interval_s: float) -> None:
-    """周期汇总: 各代次数/已回收/窗口最长停顿/RSS。
+    """周期汇总: 各代次数/已回收/窗口最长停顿/RSS/VmSwap。
 
     口径: `gc.get_stats()` 的代计数是**进程累计值** (只能靠与上次快照做差得到窗口值),
     故日志里显式标"启动以来"; 只有停顿计数 (_window_*) 是本窗口值 (报告后清零)。
@@ -246,6 +264,7 @@ def _report_loop(interval_s: float) -> None:
             time.sleep(interval_s)
             stats = gc.get_stats()  # [{'collections','collected','uncollectable'}, ...]
             rss = _rss_mb()
+            swap = _swap_mb()
             parts = []
             for i, st in enumerate(stats):
                 parts.append(
@@ -253,10 +272,11 @@ def _report_loop(interval_s: float) -> None:
                 )
             logger.info(
                 "[GC] %dmin 汇总: 启动以来 %s | 本窗口停顿 %d 次, 最长 %.0fms (gen=%d); "
-                "进程启动以来最长 %.0fms | RSS=%.0fMB",
+                "进程启动以来最长 %.0fms | RSS=%.0fMB | VmSwap=%.0fMB",
                 int(interval_s // 60), " ".join(parts), _window_pauses,
                 _window_max_ms, _window_max_gen, _since_start_max_ms,
                 rss if rss is not None else -1,
+                swap if swap is not None else -1,
             )
             _reset_window()
             rss_warn = _env_num("FTSEEK_GC_RSS_WARN_MB", _DEFAULT_RSS_WARN_MB, int)

@@ -2,6 +2,14 @@
 
 > **写入约定（2026-11-11 起）**：每条交接必须带三件可核凭据 —— `**凭据**`（commit sha / 改动文件数，`git show --stat` 可核）、`**验证**`（可复跑命令 + 日志路径，不写“已通过”）、`**未验证**`（显式列出没验的部分，无则写“无”）。自述≠事实，这三行是给下一个人核的。
 
+## 2026-11-17 16:4x CST · GC 护栏 P2 swap 可见性（观测级，已重启·冒烟 7/7；P3/P4 待裁）
+
+- **结论**（用户「提交归档，继续」⇒ P0+P1 已提交归档，续 P2）：reporter 与停顿 WARNING 追加 VmSwap，把 swap 主线写进日志本身（此前只报 RSS，11-16/11-17 缺页长停顿的换出集在日志里看不见，DEB-20261117 §2.3）。新增 `_swap_mb()`（读 /proc/self/status VmSwap，与 _rss_mb 同面零额外开销）；10min 汇总行与停顿 WARNING **追加式**加 `VmSwap=%.0fMB`，保 open_health_report 子串 regex（`RSS=(\d+)MB` 等）不破。设计取舍：选 swap 可见性而非新告警门（免任意阈值噪音），RSS 2200MB 门保留作高水位网；majflt 增量暂缓（可选）。**零交易语义**。
+- **凭据**：原 HEAD `e4ce16ad7`；本批 **2 文件**（运行时 `app/observability/gc_guard.py`：+_swap_mb/汇总行/停顿 WARNING/docstring；测试 `tests/observability/test_gc_guard.py` +2 hermetic 例）；提交 SHA 待归账。
+- **验证**：`pytest tests/observability/test_gc_guard.py tests/observability/test_round_timer.py` **22 passed**（gc_guard 13=11+2 / round_timer 9）；`py_compile` OK；`check_undefined_names.py` rc=0；**解析兼容实跑** `from scripts.open_health_report import _gc_summary` 喂新格式行 → stats=(57,15243,4,396,1,138)/rss=[87]/since=119 全命中（PARSER_COMPAT_OK）；重启前核 exit_ledger 0 行、app/ 仅 gc_guard.py（guard 断言）、8 sim/0 live；`systemctl restart ftseek-us` → MainPID **3263263**（16:45:34 CST），冒烟 **7/7 exit=0**；重启后阈值 178x/冻结行已出、0 ERROR、8 sim 仓恢复、mtime 16:44:08 早于进程启动。
+- **未验证**：P3（trim 门 env）/P4（宿主内存运维裁）未实施。（首条含 VmSwap 汇总已 in-vivo 确认：16:55:33,958 …RSS=137MB | VmSwap=0MB。）
+- **下一步**：①首条 VmSwap 汇总已实证（16:55:33）；②P3 env 待裁；③P4 运维裁；④本批提交归账。
+
 ## 2026-11-17 16:3x CST · GC 护栏 P1 探针在途归因修正（观测级，已重启·冒烟 7/7；P2–P4 待裁）
 
 - **结论**（用户「继续」⇒ 执行 DEB-20261117 P1）：修 StallProbe 在途 GC 归因反例（11-16 23:31 探针报「gen 全+0⇒非 GC」，260ms 后被 20972ms gen1 WARNING 打脸）。根因=get_stats() 只计已完成回收，在途 GC 不计增量。修法=抽 `_build_stall_message(elapsed, interval_s, d_collections, stack_snapshot)` 纯函数，采样时取 `list(_stack)` 快照，非空即报「停摆期间 GC 进行中 gen=X 已 Yms…归因 GC」，空栈保留原「非 GC」提示；在途时长用 perf_counter（_stack 存 perf_counter，探针主体 monotonic，两钟不混）。**零交易语义**，探针文案不在 open_health_report 解析面（其只解析汇总/停顿/gen2 行）⇒ 不破解析器。

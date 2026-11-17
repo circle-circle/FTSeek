@@ -21,7 +21,7 @@ updated: 2026-11-17
 > 本文性质：**诊断 + 登记**。P0（本文件 + §6.4 结算 + handoff）已落地，纯 .md 零重启；
 > P1/P2/P3/P4 为执行提案，**待用户裁决**，本批未动任何运行时码。
 
-**状态**：待决策（诊断完成；不弃用结论成立；P0+P1 已落地，P2–P4 待裁）
+**状态**：待决策（诊断完成；不弃用结论成立；P0+P1+P2 已落地，P3/P4 待裁）
 
 ## 0. 结论先行
 
@@ -93,7 +93,7 @@ updated: 2026-11-17
 
 - **P0（已落地，本批）**：本文件 + DEB-20261103 §6.4 结算 + README 索引 + handoff 条目。纯 .md，零重启，零 app/ 改动。
 - **P1（已实施 2026-11-17，观测级）**：探针读 `_stack` 快照，非空即报「停摆期间 GC 进行中 gen=X 已 Yms（get_stats 只计已完成，在途不计增量）」替代「非 GC 所致」误导提示。抽 `_build_stall_message(elapsed, interval_s, d_collections, stack_snapshot)` 纯函数便于 hermetic 测试（在途/空栈/已完成增量三例）。注意 `_stack` 存 perf_counter、探针用 monotonic，在途时长用 perf_counter 算。零交易语义。**部署**：MainPID 3260934（16:33:43 CST），冒烟 7/7，gc_guard+round_timer 20 passed（含新增 3 例），重启后 0 ERROR、8 sim 仓恢复、源码 mtime 16:32:44 早于进程启动；探针文案不在 open_health_report 解析面，不破解析器。**已提交** `1cee64d27`（P0+P1 同批）。
-- **P2（观测级，与 P1 分批）**：reporter 行**追加** `VmSwap=…MB`（可加 majflt 增量），保持 open_health_report 现有 regex 子串不破；RSS 告警门 2200MB 重校准或改 VmSwap 门。
+- **P2（已实施 2026-11-17，观测级，与 P1 分批）**：新增 `_swap_mb()`（读 /proc/self/status VmSwap），10min 汇总行与停顿 WARNING **追加式**加 `VmSwap=%.0fMB`，保 open_health_report 子串 regex（`RSS=(\d+)MB` 等）不破。**设计取舍**：选 swap 可见性而非新告警门（免任意阈值噪音），RSS 2200MB 门保留作高水位网；majflt 增量暂缓（可选）。**部署**：MainPID 3263263（16:45:34 CST），冒烟 7/7，gc_guard 13 + round_timer 9 = 22 passed（含新增 2 例），`_gc_summary` 实跑解析新格式行 PARSER_COMPAT_OK，重启后 0 ERROR、8 sim 仓恢复、mtime 16:44:08 早于进程启动。零交易语义。
 - **P3（纯 env 可逆，需前后观测）**：`FTSEEK_GC_TRIM_RSS_MB` 降至 ~150–200MB 让 trim 真触发。预期管理：trim 归还空闲页、缩小未来换出压力，但消不了已在 swap 的活页停顿；MALLOC_ARENA_MAX=2 下收益有限。
 - **P4（运维裁，非代码）**：宿主内存竞争根因——dev agent（Hermes/qodercli/codex）迁出交易宿主 / 加内存 / EOD 重批错峰。收益最大，超出 gc_guard 范围。
 
@@ -101,7 +101,7 @@ updated: 2026-11-17
 
 - P0：`grep -n "20972\|11322" logs/ftseek_us.log*`、`grep -n "非 GC 所致" logs/ftseek_us.log-20261117`、`awk '{print $12}' /proc/3235787/stat`、`ps aux --sort=-rss | head` 可复算本文数字。
 - P1：✅ 新增 3 例 hermetic + 既有 8 例不回退（gc_guard 11 + round_timer 9 = 20 passed）；✅ 重启后冒烟 7/7（MainPID 3260934）；⏳ 盘中实证探针在途归因（需一次自然长停顿或注入，休市无自然样本，未验证）。
-- P2：open_health_report.py 实跑解析不回退（子串兼容契约例）。
+- P2：✅ `_gc_summary` 实跑解析新格式行不回退（stats/RSS/since 全命中，PARSER_COMPAT_OK）；✅ gc_guard 13 + round_timer 9 = 22 passed；✅ 重启冒烟 7/7（MainPID 3263263）；✅ 首条含 VmSwap 的 10min 汇总 in-vivo 已确认（16:55:33,958：…RSS=137MB | VmSwap=0MB）。
 - P3：trim 触发后「归还空闲堆」行出现 + RSS/VmSwap/停顿前后对照。
 
 ## 7. 边界声明
@@ -115,3 +115,4 @@ updated: 2026-11-17
 
 - 2026-11-17：诊断方（本会话）按 AGENTS.md 必读顺序读治理文件，逐条取证（§2），结论 §0；P0 落档。P1–P4 待裁。
 - 2026-11-17（P1）：用户「继续」⇒ 实施探针在途归因修正（`_build_stall_message` 纯函数 + `_stack` 快照判别），3 例契约测试，重启冒烟 7/7 部署（MainPID 3260934）。P2–P4 仍待裁。
+- 2026-11-17（P2）：用户「提交归档，继续」⇒ P0+P1 提交 `1cee64d27`（归账 `1a97621c1`/`e4ce16ad7`）；实施 P2 swap 可见性（`_swap_mb` + 汇总/停顿行追加 VmSwap，追加式保解析器），22 passed + 解析兼容实跑 OK，重启冒烟 7/7（MainPID 3263263）。P3/P4 仍待裁。

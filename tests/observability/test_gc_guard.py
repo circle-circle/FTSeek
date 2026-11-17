@@ -175,3 +175,35 @@ def test_stall_message_empty_stack_keeps_non_gc_hint(fresh):
 def test_stall_message_completed_gc_delta_present(fresh):
     msg = gc_guard._build_stall_message(22.1, 5.0, [0, 1, 0], [])
     assert "gen1=+1" in msg and "采样间隔 22.1s" in msg
+
+
+def test_report_line_includes_vmswap(fresh, monkeypatch, caplog):
+    """P2: 10min 汇总行追加 VmSwap, 且 RSS 子串仍在 (open_health_report 解析面不破)。"""
+    sleeps = {"n": 0}
+
+    def fake_sleep(_s):
+        sleeps["n"] += 1
+        if sleeps["n"] >= 2:
+            raise SystemExit("stop loop")
+
+    monkeypatch.setattr(gc_guard.time, "sleep", fake_sleep)
+    monkeypatch.setattr(gc_guard, "_rss_mb", lambda: 100.0)
+    monkeypatch.setattr(gc_guard, "_swap_mb", lambda: 62.0)
+    caplog.set_level("INFO")
+    with pytest.raises(SystemExit):
+        gc_guard._report_loop(600.0)
+    assert "10min 汇总" in caplog.text
+    assert "RSS=100MB" in caplog.text and "VmSwap=62MB" in caplog.text
+
+
+def test_pause_warning_includes_vmswap(fresh, monkeypatch, caplog):
+    """P2: 长停顿 WARNING 带 VmSwap, 把停顿与换出集直接关联 (缺页归因)。"""
+    monkeypatch.setenv("FTSEEK_GC_PAUSE_WARN_MS", "500")
+    clock = iter([100.0, 101.2])
+    monkeypatch.setattr(gc_guard.time, "perf_counter", lambda: next(clock))
+    monkeypatch.setattr(gc_guard, "_rss_mb", lambda: 130.0)
+    monkeypatch.setattr(gc_guard, "_swap_mb", lambda: 62.0)
+    caplog.set_level("WARNING")
+    gc_guard._on_gc("start", {"generation": 1, "collected": 0})
+    gc_guard._on_gc("stop", {"generation": 1, "collected": 2159})
+    assert "停顿 1200ms" in caplog.text and "VmSwap=62MB" in caplog.text
