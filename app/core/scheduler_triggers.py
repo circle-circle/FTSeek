@@ -12,7 +12,9 @@ import logging
 import os
 import time
 import threading
+import json
 from datetime import datetime, date, timedelta
+from pathlib import Path
 from app.utils.timezone import now_et
 from typing import TYPE_CHECKING, Callable
 from enum import Enum
@@ -27,6 +29,31 @@ logger = logging.getLogger(__name__)
 
 # 美东时区
 ET = pytz.timezone("America/New_York")
+
+# 周报跨重启幂等：scheduler._last_weekly_review 仅进程内有效，60s Hub dedup 也覆盖不了重启。
+_WEEKLY_REVIEW_PUSH_STATE = get_project_root() / "data" / "weekly_review_push_state.json"
+
+
+def _weekly_review_already_sent(week_end: str) -> bool:
+    try:
+        state = json.loads(_WEEKLY_REVIEW_PUSH_STATE.read_text(encoding="utf-8"))
+        return state.get("week_end") == week_end
+    except (OSError, ValueError, TypeError):
+        return False  # 状态缺失/损坏宁可重推一次，不丢周报
+
+
+def _weekly_review_mark_sent(week_end: str) -> None:
+    try:
+        path = Path(_WEEKLY_REVIEW_PUSH_STATE)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps({
+            "week_end": week_end,
+            "pushed_at": datetime.now(ET).isoformat(timespec="seconds"),
+        }, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, path)
+    except Exception:
+        logger.warning("[周报] 跨重启幂等状态写入失败（下轮可能重推）", exc_info=True)
+
 
 # Task #30 系统性问题周度归纳 kill switch (2026-09-03, DEB-20260903-trade-attribution-
 # zombie-watch 方案A, 用户裁"按建议执行"): analyze_weekly 唯一数据源 trade_attribution 表
@@ -716,12 +743,13 @@ def check_weekly_review(scheduler: 'TradingScheduler'):
         if not hasattr(scheduler, '_last_weekly_review'):
             scheduler._last_weekly_review = None
 
-        if scheduler._last_weekly_review != week_end:
+        if scheduler._last_weekly_review != week_end and not _weekly_review_already_sent(week_end):
             scheduler._last_weekly_review = week_end
             try:
                 from app.review.weekly_review import generate_weekly_review
                 report = generate_weekly_review(week_start, week_end)
-                _push_review_text(scheduler, _format_weekly_review(report=report), "周报")
+                if _push_review_text(scheduler, _format_weekly_review(report=report), "周报"):
+                    _weekly_review_mark_sent(week_end)
                 logger.info(f"[周报] 复盘推送完成：{week_start} 至 {week_end}")
                 
                 # 2026-05-02: 接入完整 review_loop 闭环 (替代已废弃的 AutoTuner)
@@ -1065,10 +1093,8 @@ def _mark_review_hint_pushed(fp: str) -> None:
         logger.warning(f"[ReviewLoop] 次日提示去重状态写失败 (下轮可能重推一次): {e}")
 
 
-def _push_review_text(scheduler, text: str, label: str) -> None:
-    """复盘报告推送 (2026-08-01, 用户裁): 走 PushHub — 钉钉失败自动 fallback 飞书 + 全失败落盘。
-    旧路径 scheduler.notifier.send_text 单通道无重试, webhook 故障 = 报告静默丢失。
-    PushHub 不可用时退化旧路径。"""
+def _push_review_text(scheduler, text: str, label: str) -> bool:
+    """复盘报告推送；返回是否已被 Hub 接受或旧通道成功发送，供跨重启幂等记账。"""
     try:
         from app.push import get_push_hub, PushMessage, Level, Category
         first_nl = text.find("\n")
@@ -1080,10 +1106,13 @@ def _push_review_text(scheduler, text: str, label: str) -> None:
         ))
         if not ok:
             logger.warning(f"[{label}] PushHub 全通道失败 (已落盘 push_failures.jsonl)")
+        return bool(ok)
     except Exception as e:
         logger.warning(f"[{label}] PushHub 异常 ({e}), 退化单通道")
         if scheduler.notifier:
             scheduler.notifier.send_text(text)
+            return True
+        return False
 
 
 def _format_daily_review(report: dict) -> str:

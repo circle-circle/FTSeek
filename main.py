@@ -162,6 +162,16 @@ def _resolve_lock_file():
     return first_existing or candidates[0]
 
 
+def _lifecycle_notifications_enabled() -> bool:
+    """正常启停是否外发 INFO；配置异常也按降噪默认关闭，安全告警不走此开关。"""
+    try:
+        from app.core.config_container import get_config
+        return bool(get_config().get_dotted("push.lifecycle_notifications", False))
+    except Exception as exc:
+        logger.warning("[Push] lifecycle_notifications 读取失败，按关闭处理: %s", exc)
+        return False
+
+
 def _validate_startup_mode_or_exit():
     """在任何 OpenD/DI 副作用前阻断 broker、数据库路由或许可半翻。"""
     from app.core.trading_mode import (
@@ -449,11 +459,12 @@ def _run_new_scheduler(args):
             logger.warning(f"[shutdown] PostTradeHook.shutdown() 异常: {e}")
         # 6. 清理进程锁
         cleanup_lock()
-        # 7. 发送关闭通知 (P2 补齐)
-        try:
-            notifier.send_text("[INFO] FTSeek-US 正在关闭")
-        except Exception:
-            pass
+        # 7. 正常关闭通知默认仅落日志；异常/风险告警不走 lifecycle 开关
+        if _lifecycle_notifications_enabled():
+            try:
+                notifier.send_text("[INFO] FTSeek-US 正在关闭")
+            except Exception:
+                pass
         # 8. 强制退出 (防止 Futu SDK 内部非 daemon 线程阻止进程退出)
         logger.info("[shutdown] 执行强制退出 (os._exit)")
         os._exit(0)
@@ -695,10 +706,11 @@ def _run_new_scheduler(args):
     except Exception as _hke:
         logger.warning(f"⚠️ PostTradeHook wiring 自检失败 (不阻断启动): {_hke}")
 
-    try:
-        notifier.send_text("[INFO] FTSeek-US v2.0.0 (LV3实时行情) 已启动")
-    except Exception:
-        pass
+    if _lifecycle_notifications_enabled():
+        try:
+            notifier.send_text("[INFO] FTSeek-US v2.0.0 (LV3实时行情) 已启动")
+        except Exception:
+            pass
 
     # 💓 盘中心跳 (2026-05-19): 30min 一次综合健康报告 → 钉钉
     # 第一性: 给决策者一眼看完的状态, 不伪造数据.
@@ -711,13 +723,13 @@ def _run_new_scheduler(args):
         # P0 (2026-10-18 推送治理批): 30→60min 可配置。原 30min × 6.5h = 13 条/日,
         #   实测 10/16 全量推送 34 条中心跳占 13 条 (38%)。心跳是状态播报不是告警,
         #   告警/异常仍有 error_alert + 通道熔断兜底。回滚: 配置改回 30。
-        _hb_interval_min = 60
+        _hb_interval_min = 360
         try:
             from app.core.config_container import get_config as _hb_gc
             _hb_interval_min = int(_hb_gc().get_dotted(
-                "push.intraday_heartbeat_interval_min", 60))
+                "push.intraday_heartbeat_interval_min", 360))
         except Exception as _hb_e:
-            logger.warning(f"⚠️ 心跳间隔配置读取失败, 用默认 60min: {_hb_e}")
+            logger.warning(f"⚠️ 心跳间隔配置读取失败, 用默认 360min: {_hb_e}")
         _heartbeat = HeartbeatLoop(interval_min=_hb_interval_min, scheduler=scheduler)
         _heartbeat.start()
         logger.info(

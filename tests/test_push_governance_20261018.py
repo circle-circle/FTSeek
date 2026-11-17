@@ -252,7 +252,7 @@ def test_config_declares_push_governance_keys():
 
     cfg = (Path(__file__).resolve().parents[1] / "config" / "unified_config.yaml").read_text(
         encoding="utf-8")
-    assert "intraday_heartbeat_interval_min: 60" in cfg
+    assert "intraday_heartbeat_interval_min: 360" in cfg
     assert "health_check_interval_sec" in cfg
     assert "health_check_shared_state" in cfg
 

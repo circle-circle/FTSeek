@@ -4,7 +4,12 @@
 
 设计目标:
 - 默认 30min 一次; 生产由 `push.intraday_heartbeat_interval_min` 控制 (2026-10-18
-  推送治理起 = 60min, 盘中约 7 次/天)。心跳是状态播报不是告警。
+  推送治理起 = 60min; 2026-11-14 降噪批起 = 360min, 盘中约 1-2 次/天)。心跳是状态播报不是告警。
+- 卡片窗口跟随推送间隔 (2026-11-14): 间隔 360min 而卡内三处查询窗仍写死 30min 时,
+  一张卡只描述 6 小时里的 30 分钟却读作"当前状态" ⇒ 口径失真 (违 "不伪造数据")。
+  故 `_format_heartbeat(window_min=)` 把窗口传给 funnel/LLM/alert 三查询并同步标签。
+  告警/异常检测不依赖本卡: error_alert.py 每 15min、health_check.sh 每 10min、
+  business_heartbeat.sh 每 30min 各自独立推送。
 - 钉钉合并到现有 PushHub (利用 dedup/aggregate 基础设施)
 - 7 个关键维度: 服务/持仓/资金/盈亏/信号/LLM/风控
 
@@ -222,14 +227,19 @@ def _query_llm_health(window_min: int = 30) -> Dict:
 
 
 def _query_alert_counts(window_min: int = 30) -> Dict:
-    """近 N 分钟日志中的 ERROR/WARNING 数 (从 logs/ftseek_us.log 末尾扫描)"""
+    """近 N 分钟日志中的 ERROR/WARNING 数 (从 logs/ftseek_us.log 末尾扫描)
+
+    尾扫上限 5MB: 窗口拉宽到 360min 后若日志超上限, 早段行扫不到会让计数假性偏低。
+    故回传 truncated, 由卡片显式标注, 不呈现为"0 ERROR = 干净"。
+    """
     log_path = PROJECT_ROOT / "logs" / "ftseek_us.log"
     if not log_path.exists():
-        return {"errors": 0, "warnings": 0, "top_warning": ""}
+        return {"errors": 0, "warnings": 0, "top_warning": "", "truncated": False}
     try:
         cutoff = (datetime.now() - timedelta(minutes=window_min)).strftime("%Y-%m-%d %H:%M")
         # 仅扫文件末尾 5MB (避免大文件全扫)
         size = log_path.stat().st_size
+        truncated = size > 5_000_000
         with open(log_path, "rb") as f:
             f.seek(max(0, size - 5_000_000))
             tail = f.read().decode("utf-8", errors="ignore")
@@ -254,10 +264,11 @@ def _query_alert_counts(window_min: int = 30) -> Dict:
         if warn_msgs:
             top_msg, top_n = max(warn_msgs.items(), key=lambda x: x[1])
             top_warning = f"{top_msg} (×{top_n})"
-        return {"errors": errors, "warnings": warnings, "top_warning": top_warning}
+        return {"errors": errors, "warnings": warnings, "top_warning": top_warning,
+                "truncated": truncated}
     except Exception as e:
         logger.debug(f"[Heartbeat] alert query 失败: {e}")
-        return {"errors": 0, "warnings": 0, "top_warning": ""}
+        return {"errors": 0, "warnings": 0, "top_warning": "", "truncated": False}
 
 
 def _query_risk_state(window_hours: int = 8) -> Dict:
@@ -392,18 +403,36 @@ def _format_uptime(sec: int) -> str:
     return f"{sec // 86400}d{(sec % 86400) // 3600}h"
 
 
-def _format_heartbeat(scheduler=None) -> str:
+_WINDOW_FLOOR_MIN = 30
+_WINDOW_CEIL_MIN = 390
+
+
+def _resolve_window_min(window_min) -> int:
+    """卡片统计窗 = 推送间隔, 夹在 [30, 390] 内。
+
+    下限 30 保旧语义 (未传/非法值回落 30min); 上限 390 = 6.5h 整个盘中时段,
+    防误配 1440 之类把"盘中卡"变成跨日卡。
+    """
+    try:
+        resolved = int(window_min)
+    except (TypeError, ValueError):
+        return _WINDOW_FLOOR_MIN
+    return max(_WINDOW_FLOOR_MIN, min(resolved, _WINDOW_CEIL_MIN))
+
+
+def _format_heartbeat(scheduler=None, window_min=None) -> str:
     """组装心跳报告 (Markdown 格式, 钉钉/飞书友好). 每个 query 独立容错."""
     from app.utils.timezone import now_et
     now = now_et()
+    w = _resolve_window_min(window_min)
     trades = _safe_query(_query_today_trades,
                           {"today_trades": 0, "today_pnl": 0.0, "today_wins": 0, "positions": []})
-    funnel = _safe_query(lambda: _query_signal_funnel(30),
-                          {"window_min": 30, "entries": 0, "rejects": 0, "top_reasons": []})
-    llm = _safe_query(lambda: _query_llm_health(30),
+    funnel = _safe_query(lambda: _query_signal_funnel(w),
+                          {"window_min": w, "entries": 0, "rejects": 0, "top_reasons": []})
+    llm = _safe_query(lambda: _query_llm_health(w),
                        {"calls": 0, "success_pct": 0, "pre_gate_calls": 0, "pre_gate_blocked": 0})
-    alerts = _safe_query(lambda: _query_alert_counts(30),
-                          {"errors": 0, "warnings": 0, "top_warning": ""})
+    alerts = _safe_query(lambda: _query_alert_counts(w),
+                          {"errors": 0, "warnings": 0, "top_warning": "", "truncated": False})
     risk = _safe_query(lambda: _query_risk_state(window_hours=8),
                         {"breakers": 0, "flat_all": 0, "window_hours": 8})
     health = _safe_query(lambda: _query_service_health(scheduler),
@@ -451,22 +480,25 @@ def _format_heartbeat(scheduler=None) -> str:
         pos_block,
         f"{pnl_emoji} 已平盈亏(今日): ${trades['today_pnl']:+.2f} | "
         f"{trades['today_trades']} 笔 (胜率 {win_rate_pct}%)",
-        f"🎯 信号 (近30min): 入 {funnel.get('entries', 0)} 笔 / 拒 {funnel['rejects']} 笔 [{rej_block}]",
-        f"🤖 LLM (近30min): {llm['calls']} 调用 / 成功率 {llm['success_pct']}% | "
+        f"🎯 信号 (近{w}min): 入 {funnel.get('entries', 0)} 笔 / 拒 {funnel['rejects']} 笔 [{rej_block}]",
+        f"🤖 LLM (近{w}min): {llm['calls']} 调用 / 成功率 {llm['success_pct']}% | "
         f"Pre-Gate 拦 {llm['pre_gate_blocked']}/{llm['pre_gate_calls']}",
-        f"⚠️ 告警 (近30min): {alerts['errors']} ERROR / {alerts['warnings']} WARN" +
+        f"⚠️ 告警 (近{w}min): {alerts['errors']} ERROR / {alerts['warnings']} WARN"
+        + (" [日志尾扫截断, 计数偏低]" if alerts.get("truncated") else "") +
         (f" | Top: {alerts['top_warning']}" if alerts['top_warning'] else ""),
         f"🔵 风控 (近{risk_window}h): 熔断 {risk['breakers']} 次 | FLAT_ALL {risk['flat_all']} 次",
     ]
     return "\n".join(lines)
 
 
-def push_heartbeat(scheduler=None, force: bool = False) -> bool:
+def push_heartbeat(scheduler=None, force: bool = False, window_min=None) -> bool:
     """主入口 — 推一次心跳到钉钉/飞书.
 
     Args:
         scheduler: 可选, 用于读 uptime / 线程状态
         force: True 强制推 (跳过 market_hours 检查), 用于测试
+        window_min: 卡内统计窗 (分钟)。None ⇒ 30 (旧语义)。生产由 HeartbeatLoop
+            传自身 interval_min, 使"卡描述的时间跨度"== "两卡之间的间隔"。
 
     Returns:
         True 推送成功, False 已跳过/失败
@@ -475,7 +507,7 @@ def push_heartbeat(scheduler=None, force: bool = False) -> bool:
         logger.debug("[Heartbeat] 非盘中, 跳过")
         return False
 
-    text = _format_heartbeat(scheduler)
+    text = _format_heartbeat(scheduler, window_min=window_min)
     try:
         from app.push import get_push_hub
         from app.push.message import PushMessage, Level, Category
@@ -506,10 +538,12 @@ def push_heartbeat(scheduler=None, force: bool = False) -> bool:
 # 后台线程 (供 scheduler 启动期注入)
 # ─────────────────────────────────────────────────────
 class HeartbeatLoop:
-    """后台线程, 按 interval_min 触发 push_heartbeat (生产默认由 main.py 传 60)"""
+    """后台线程, 按 interval_min 触发 push_heartbeat (生产默认由 main.py 传 360)"""
 
     def __init__(self, interval_min: int = 30, scheduler=None):
         self.interval_sec = max(60, interval_min * 60)  # 至少 1min, 防误配
+        # 卡内统计窗跟随间隔, 防"6h 一张卡却只报 30min"的口径失真
+        self.interval_min = interval_min
         self.scheduler = scheduler
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -530,7 +564,7 @@ class HeartbeatLoop:
     def _loop(self):
         # 启动后立即推一次 (确认通道工作)
         try:
-            push_heartbeat(self.scheduler, force=False)
+            push_heartbeat(self.scheduler, force=False, window_min=self.interval_min)
         except Exception as e:
             logger.warning(f"[Heartbeat·init] {e}")
 
@@ -544,7 +578,7 @@ class HeartbeatLoop:
                 time.sleep(self.interval_sec)
                 if not self._running:
                     break
-                push_heartbeat(self.scheduler, force=False)
+                push_heartbeat(self.scheduler, force=False, window_min=self.interval_min)
             except Exception as e:
                 logger.warning(f"[Heartbeat·loop] {e}")
 

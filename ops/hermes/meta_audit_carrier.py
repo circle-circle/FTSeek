@@ -7,8 +7,8 @@
 
 stdout 契约 (**静默成功型**, 与门活性探针那种"输出本体即产物"相反):
   · rc == 0 且子进程无输出 → 本载体**也零输出** = 不推送 (状态无变化, 不刷屏)。
-  · rc == 0 且有输出       → 原样投递摘要 (状态有变化: 新增/关闭/逾期/探测器停更)。
-  · rc != 0                → 先输出一行载体/环级异常 (含尾部证据), 再输出子进程输出, 并以同 rc 退出
+  · rc == 0 且有输出       → 仅当内容指纹较上次变化才投递；相同未决清单跨日静默。
+  · rc != 0 / 探测器异常   → 不受指纹静默影响，必须投递载体/环级异常。
                              ⇒ 环自身崩溃必须与"零 finding"可区分 (元环规则 5)。
   · 超时 → 杀子进程, rc 2; 子脚本缺失 → rc 3。
 环境变量: META_AUDIT_FORCE=1 透传 `--force-print` (人工查验用; cron 不带)。
@@ -22,6 +22,9 @@ import os
 import subprocess
 import sys
 import time
+import hashlib
+import json
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -31,6 +34,38 @@ CHILD = REPO / "scripts" / "meta_audit_loop.py"
 PYTHON = REPO / "venv" / "bin" / "python"
 CHILD_LOG = REPO / "logs" / "meta_audit.log"
 TIMEOUT = int(os.environ.get("CARRIER_TIMEOUT_S", "180"))
+PUSH_STATE = REPO / "data" / ".meta_audit_push_fingerprint.json"
+
+
+def _fingerprint(text: str) -> str:
+    """只抹首行运行时刻；finding/级别/owner/due/LOOP_DONE 全部参与去重。"""
+    normalized = re.sub(
+        r"^\[meta_audit\]\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}",
+        "[meta_audit] <RUN_TS>", text.strip(), count=1)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _same_as_last_delivery(text: str) -> bool:
+    """状态缺失/损坏 fail-open 不静默；META_AUDIT_FORCE 人工查验绕过。"""
+    if os.environ.get("META_AUDIT_FORCE") == "1":
+        return False
+    try:
+        state = json.loads(PUSH_STATE.read_text(encoding="utf-8"))
+        return state.get("fingerprint") == _fingerprint(text)
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def _mark_delivered(text: str) -> None:
+    try:
+        tmp = PUSH_STATE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps({
+            "fingerprint": _fingerprint(text),
+            "pushed_at": datetime.now().isoformat(timespec="seconds"),
+        }, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, PUSH_STATE)
+    except Exception as exc:
+        print(f"[meta_audit_carrier] 推送指纹写入失败（下轮可能重复）: {exc}", file=sys.stderr)
 
 
 def _append_log(path: Path, text: str) -> None:
@@ -95,7 +130,11 @@ def main() -> int:
         print(f"[meta_audit_carrier] 载体级异常: intraday_health_snapshot rc={snapshot_rc} "
               f"⇒ 盘中异常源不可用")
     if out.strip():
-        print(out.rstrip())
+        healthy = rc == 0 and snapshot_rc == 0
+        if not healthy or not _same_as_last_delivery(out):
+            print(out.rstrip())
+            if healthy:
+                _mark_delivered(out)
     return rc if rc >= snapshot_rc else snapshot_rc
 
 

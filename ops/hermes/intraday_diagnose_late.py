@@ -24,6 +24,7 @@ LOG_PATH = '/opt/ftseek/FTSeek-US/logs/ftseek_us.log'
 HEALTHCHECK_LOG = '/opt/ftseek/FTSeek-US/logs/healthcheck.log'
 VENV_PYTHON = '/opt/ftseek/FTSeek-US/venv/bin/python3'
 TRADING_DAY_CHECK = '/opt/ftseek/FTSeek-US/scripts/trading_day_check.py'
+PNL_CONCERN_USD = 100.0  # 小额负 PnL 只展示，不升级成「关注大亏」事件
 
 # 8/27 时钟统一: 硬编码 -4 → zoneinfo 真实 ET (DST 自适); 极端环境落固定偏移兜底
 try:
@@ -466,8 +467,8 @@ if recent_errors and error_count > 0:
 
 # Notable findings
 findings = []
-if total_pnl + overnight_net < 0:
-    findings.append(f"今日PnL为负(入场日口径${total_pnl:.2f}/出场日口径${total_pnl + overnight_net:.2f}), 关注大亏交易")
+if total_pnl + overnight_net <= -PNL_CONCERN_USD:
+    findings.append(f"今日PnL显著为负(入场日口径${total_pnl:.2f}/出场日口径${total_pnl + overnight_net:.2f}), 关注大亏交易")
 if drawdown != '?' and float(drawdown) > 5:
     findings.append(f"回撤{drawdown}%超过5%")
 if regime_stale:

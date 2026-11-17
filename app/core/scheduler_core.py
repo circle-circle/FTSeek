@@ -10,6 +10,7 @@ import logging
 import os
 import threading
 import time
+import json
 from datetime import datetime, timedelta, date
 from typing import Dict, Any, List, Optional, Set
 from pathlib import Path
@@ -42,6 +43,41 @@ from app.storage.trade_store import TradeStore
 # from app.execution.options_selector import OptionSelector, OptionContract
 
 logger = logging.getLogger(__name__)
+
+_VIX_ALERT_STATE = PROJECT_ROOT / "data" / "vix_alert_state.json"
+_VIX_ALERT_REPEAT_SEC = 86400
+
+
+def _should_send_vix_level_alert(level: str, now_ts: Optional[float] = None) -> bool:
+    """级别跳变立即推；同级跨重启每日最多一次，状态损坏 fail-open。"""
+    now = time.time() if now_ts is None else float(now_ts)
+    try:
+        state = json.loads(_VIX_ALERT_STATE.read_text(encoding="utf-8"))
+        if state.get("level") != level:
+            return True
+        return now - float(state.get("pushed_at_epoch") or 0.0) >= _VIX_ALERT_REPEAT_SEC
+    except (OSError, ValueError, TypeError):
+        return True
+
+
+def _mark_vix_level_alert(level: str, *, delivered: bool, now_ts: Optional[float] = None) -> None:
+    """发送成功才写冷却；NORMAL 仅在级别变化时落盘，避免每 5 分钟写文件。"""
+    now = time.time() if now_ts is None else float(now_ts)
+    try:
+        try:
+            prior = json.loads(_VIX_ALERT_STATE.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            prior = {}
+        if not delivered and prior.get("level") == level:
+            return
+        tmp = _VIX_ALERT_STATE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps({
+            "level": level, "pushed_at_epoch": now,
+            "pushed_at": datetime.now(ET).isoformat(timespec="seconds"),
+        }, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, _VIX_ALERT_STATE)
+    except Exception:
+        logger.warning("[VIX] 告警冷却状态写入失败（下轮可能重试）", exc_info=True)
 
 
 class PositionStore:
@@ -2981,17 +3017,21 @@ class TradingScheduler:
                             except Exception as _jump_e:
                                 logger.warning(f"[VIX] 跳变推送失败: {_jump_e}")
 
-                        # 级别变化时推送告警
-                        if level != self._last_vix_alert_level and level in ("WARNING", "HIGH", "CRITICAL"):
-                            self._last_vix_alert_level = level
+                        # 级别跳变立即告警；同级持久冷却 24h，重启不再重复轰炸。
+                        if level in ("WARNING", "HIGH", "CRITICAL") and _should_send_vix_level_alert(level):
                             if self.notifier:
                                 try:
                                     self.notifier.send_text(
                                         f"[VIX 警报] {vix_data['message']}\n"
                                         f"建议: {vix_data.get('recommendation', 'N/A')}"
                                     )
+                                    self._last_vix_alert_level = level
+                                    _mark_vix_level_alert(level, delivered=True)
                                 except Exception as _silent_e:
                                     logger.warning(f"[silent_except:scheduler_core.py] {_silent_e}")
+                        elif level == "NORMAL":
+                            self._last_vix_alert_level = level
+                            _mark_vix_level_alert(level, delivered=False)
             except Exception as e:
                 logger.debug("[VIX Monitor] 监控异常: %s", e)
 

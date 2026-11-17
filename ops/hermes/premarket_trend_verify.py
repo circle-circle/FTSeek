@@ -14,7 +14,8 @@
   - data/ftseek_us.db playbook_instructions: entry band / skip_reason
   - Futu 日K: open/high/low/close (via venv python subprocess)
 
-输出语义 (no_agent): 非交易日/无数据 → 空输出静默; 交易日 → 报告文本.
+输出语义 (no_agent): 非交易日/无数据 → 空输出静默；每日仍采集，完整报告仅周六输出，
+手工指定日期回填时照常输出。B 类轴已终局，不再每个交易日重复推送 FAIL 文案。
 落盘: data/premarket_trend_outcomes.jsonl (按 date 幂等: 重跑先删当日行).
 """
 import json
@@ -44,6 +45,11 @@ except Exception:
 
 def et_now():
     return datetime.now(ET)
+
+
+def should_deliver_report(now, backfill_date=None):
+    """每日采集不外发；周六汇总一次，显式历史回填保留命令行可见输出。"""
+    return bool(backfill_date) or now.weekday() == 5
 
 
 def is_trading_day(date_str):
@@ -297,7 +303,8 @@ def main():
         out.append(f"\n累计 (n={cum_cont_n}): 延续率 {cum_cont_hit/cum_cont_n*100:.0f}% | "
                    f"顺势影子均 {cum_ret/cum_ret_n:+.2f}%/笔 — ⚖️已裁 FAIL·B类轴关闭 "
                    f"(DEB-20261008/判据C13, 2026-10-08): 禁转实盘信号; 本行仅作采集健康度")
-    print('\n'.join(out))
+    if should_deliver_report(now, backfill_date):
+        print('\n'.join(out))
 
 
 if __name__ == '__main__':

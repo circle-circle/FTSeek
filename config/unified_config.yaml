@@ -1462,6 +1462,7 @@ playbook:
     #   退回现行路径, 绝不阻断孤儿接管。启用 (A2) 须前瞻 n≥30 + 结局守卫 + 用户裁 (RFC-211 §5)。
     #   回滚: 改 false + 重启 (恢复现行路径)。
     #   A2 启用: 2026-11-14 用户「启用」批准 sim 前瞻观察 (RFC-211 §5/§15); 攒 n≥30 重放事件验保真+零双簿+结局守卫。
+    #   授权边界由 app.playbook.config.entry_booking_outbox_enabled(target_env) 硬执行: real/live 永远 false。
     entry_booking_outbox_enabled: true
     # 2026-08-13 (DEB-20260813 §十六/§18.3, 用户裁"跳过影子直接 sim 观察"): 耐心出场 —
     #   DEAD_SIGNAL_EXIT 触发且信号时刻浅水下 (水下 ≤1.0%) 时不立即市价卖, 转为轮询
@@ -2083,12 +2084,14 @@ push:
   #   shared_state=true ⇒ 业务成功证据与 ping 时隙写入 data/push_health_state.json,
   #   长驻服务与长跑 cron 全局只发一条/周期 (原各进程各发, 实测 5 条/天)。
   #   false = 回到进程内抑制 (回滚开关, 无需改代码)。
-  health_check_interval_sec: 3600
+  health_check_interval_sec: 21600
   health_check_shared_state: true
-  # P0 (2026-10-18 推送治理批): 盘中心跳 30→60min (main.py 读取; 仅重启后生效)。
-  #   10/16 实测 34 条推送中心跳 13 条 (38%); 心跳是状态播报非告警, 60min 足够。
-  #   回滚 = 改回 30。
-  intraday_heartbeat_interval_min: 60
+  # 2026-11-14 推送降噪批: 正常启动/关闭属运维日志，不逐次推送；异常退出/风险告警不受影响。
+  # 回滚 = true 恢复每次启停发送 INFO。
+  lifecycle_notifications: false
+  # 盘中心跳与通道探测均约 6h：盘中每日 1-2 次状态卡，静默期通道每日至多 4 次探测。
+  # 失败计数、半开恢复、error_alert 和业务异常推送不变。回滚分别改回 60 / 3600。
+  intraday_heartbeat_interval_min: 360
   # 2026-09-18 (用户裁「交易类事件双发钉钉+飞书」): 成交/平仓类消息广播到全部可用通道,
   #   不走"主通道成功即停"。根因: 盘中链走 Hub→钉钉, 而延长时段链直连飞书, 同一事件
   #   在两个平台各出现一半 (用户 9/18 实测: WBD 成交在飞书、平仓在钉钉)。
