@@ -223,3 +223,17 @@ switch=false（已是默认）+ 重启 ⇒ 现行写路径+降级补录+B1，行
 switch=false + 重启 ⇒ 现行写路径+降级补录+B1（行为完全不变）；outbox 表留存审计。
 
 **当前状态：a2_enabled_sim_forward_validation_observing。A0 探针 + A1 写路径 Outbox + A2 启用（sim）已落地；前瞻 cohort 11-16 起攒 n≥30；A3 毕业默认开启待裁。**
+
+## 16. A2 开始前复查修复（2026-11-14，用户裁「基于合理性和必要性进行优化修复」）
+
+独立复查发现并已修正四类实现/治理缺口；cohort 尚未开始，无窗内样本或判据混算：
+
+1. **已投递未消费**：旧恢复在既有 trade_record 的提前返回处绕过 replay，导致 PENDING 永久残留且 A2 漏计。现对既有记录复核 symbol/direction/qty/entry_price 后补 `booking_outbox_replay=True` 并消费精确意图；不修改价格、数量或盈亏。
+2. **订单身份**：`get_pending_booking_intent` 恢复调用强制带 `futu_order_id`，并核对意图/record 的订单、标的、source_type 与 SIM lane；冲突拒绝重放并留 critical，退回原降级补录，禁止跨 attempt/订单写错台账。
+3. **发现持仓路径**：从 `pb_{instruction_id}_{env}_{attempt}` remark 精确还原 instruction_id，使 Outbox/B1 在 broker holdings 发现路径也可恢复；其他系统单/异常 remark 不认领。
+4. **SIM 授权硬边界**：`app.playbook.config.entry_booking_outbox_enabled(target_env)` 为唯一开关入口，real/live 即使全局 true 也返回 false；看门狗将 Outbox 登记为事件驱动表，零行/长期无事件不再误报。
+5. **正常路径消费原子性**：`mark_execution_booked` 与 PENDING→BOOKED 在同一 PlaybookDB 事务提交；消费异常回滚指令 BOOKED，避免已 BOOKED 指令离开恢复扫描后残留永久 PENDING。旧最小 schema 无 Outbox 表时保持兼容。
+
+同时补齐恢复异常的堆栈日志，清除本批新增的 except-pass/W6 棘轮回归。
+
+**设计边界不变**：本实现仍是 §14.2 的“投递前持久化意图”，不是 §4.3 的 mark⟺intent 严格同事务；`mark_execution_filled_unbooked` 到意图持久化之间的中断仍由降级补录+B1 兜底。因此当前定位为**增强部分崩溃窗口的干净恢复**，不得把 A2 结果表述为已消除全部 dual-write 窗口。若未来要严格原子化，须另立行为 RFC、故障点测试和用户裁，不与本批小修捆绑。

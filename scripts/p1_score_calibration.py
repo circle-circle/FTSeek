@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from app.core.db_utils import ERA_CLEAN_PERFORMANCE_WHERE  # noqa: E402
+from app.core.paths import get_trade_records_db  # noqa: E402
 
 BIN_LABELS = ["<6", "6.0", "6.5", "7.0", "7.5", "8.0"]
 FEE_BPS = 11.54
@@ -90,10 +91,11 @@ def day_cluster_ci(rows, stat_fn, seed=SEED, iters=BOOT):
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=str(ROOT / "data" / "ftseek_us.db"))
+    ap.add_argument("--db", default=str(get_trade_records_db()))
     ap.add_argument("--json", default=None)
     args = ap.parse_args(argv)
-    con = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
+    db_path = Path(args.db)
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     c = con.cursor()
 
     scores = {}

@@ -65,10 +65,44 @@ def test_settle_graduation_candidate_when_cap2_clearly_helps():
     assert report["verdict"] == "GRADUATION_CANDIDATE"
 
 
-def test_settle_excludes_recovery_artifacts_from_population():
+def test_settle_frequency_population_keeps_recovery_pnl_but_excludes_compensation():
     rows = [_row("2026-11-16", 30, 10.0), _row("2026-11-16", 40, -5.0)]
     rows += [{**_row("2026-11-16", 50, -20.0), "entry_reason": "sync_recovery_backfill"}]
+    rows += [{**_row("2026-11-16", 60, -100.0),
+              "entry_reason": "playbook_entry_bookkeeping_compensation"}]
     report = MODULE.settle(rows)
-    assert report["uncapped"]["n_trades"] == 2
+    assert report["uncapped"]["n_trades"] == 3
     assert report["n_artifact_excluded"] == 1
+    assert report["n_recovery_included"] == 1
     assert report["caps"][0]["kept_trades"] == 2
+    assert report["caps"][1]["kept_trades"] == 3
+
+
+def test_negative_capped_expectancy_cannot_graduate_even_when_delta_positive():
+    rows = []
+    for day in range(1, 31):
+        date = f"2026-11-{day:02d}"
+        rows.extend([
+            _row(date, 30, -0.1), _row(date, 40, -0.1), _row(date, 50, -29.8),
+        ])
+    report = MODULE.settle(rows)
+    cap2 = report["caps"][0]
+    assert cap2["mean_delta_bps"] > 0
+    assert cap2["cap_day_mean_bps"] < 0
+    assert cap2["criteria"]["day_cluster_ci80_lower>0"] is True
+    assert cap2["criteria"]["cap_day_mean_bps>0"] is False
+    assert cap2["pass"] is False
+    assert report["verdict"] != "GRADUATION_CANDIDATE"
+
+
+def test_significantly_harmful_caps_are_not_called_indistinguishable():
+    rows = []
+    for day in range(1, 31):
+        date = f"2026-11-{day:02d}"
+        rows.extend([
+            _row(date, 30, -1.0), _row(date, 40, -1.0),
+            _row(date, 50, 2.0), _row(date, 60, 2.0),
+        ])
+    report = MODULE.settle(rows)
+    assert all(c["ci80"][1] < 0 for c in report["caps"])
+    assert report["verdict"] == "FREQUENCY_CAP_HARMFUL"

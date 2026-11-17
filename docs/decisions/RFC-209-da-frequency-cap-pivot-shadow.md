@@ -28,14 +28,14 @@ DA 前进窗（10-06→11-13，A9 干净，n=203/29 日）：毛 **−2.23bps**�
 
 - **cohort 起点**：2026-11-16（下一交易日，前瞻；不复用探索窗 10-06→11-13，防过拟合）。
 - **人群/口径**：`owner_strategy='playbook_sim'` ∧ A9 干净（`exit_price>0 ∧ pnl_net 非空 ∧ exclusion_reason 空`）；bps=`pnl_net/(entry_price×qty)×1e4`（含费）。
-- **人群精化（2026-11-14 前置澄清，cohort 未起 days=0，非窗内改）**：再剔除收养/补录记账行（`entry_reason∈{sync_recovery_backfill, playbook_entry_bookkeeping_compensation, adopt_to_playbook}`），只算真实信号入场。依据：补录行 `entry_time`/MFE 为收养时近似值（peak 重置=entry），非干净信号入场，混入会扭曲「取前 N 笔」反事实（`scripts/utils/da_sample.py`、DEB-20261114-da-kpi-backfill-stratification）。补录行真实盈亏另计入总账不抹账。阈值/N/样本门/毕业判据**均不变**。
+- **人群精化（2026-11-14 复查修正，cohort 未起 days=0）**：恢复补录行的 MFE/regime 受恢复时刻污染，但其成交顺序、费用与净盈亏仍属实际 DA 组合；降频反事实只消费这些真实字段，因此保留 `sync_recovery_backfill`，仅排除补偿立即平仓（`playbook_entry_bookkeeping_compensation`）与人工收养（`adopt_to_playbook`）。死单率/edge 特征研究仍按 `scripts/utils/da_sample.py` 剔除全部 artifact，两把尺子不混用。
 - **动作（反事实，record-only）**：每日按 `entry_time` 排序取前 N 笔，N∈**{2,3}**（固定，禁窗内调 N）；对照=不限频。
 - **样本门**：前瞻 **n≥30 交易日**；不足只观察，不下结论。
-- **毕业判据**：对 N=2 与 N=3 各算「capped−uncapped 笔均净 bps」的**按日聚类 80% CI**；
-  **任一 N 的 CI 下界 >0** 且 **MDE80 已报** → 提请设生产频帽（**另立 DEB + 用户裁，影子不自动生效**）；
-  两 N 均 CI 含 0 → 记「不可分辨」；效应<MDE → 「不可分辨」非「证伪」。
+- **毕业判据**：对 N=2 与 N=3 各算 capped 绝对笔均净 bps，以及「capped−uncapped 笔均净 bps」的**按日聚类 80% CI**；
+  **任一 N 同时满足 capped 绝对笔均净 bps >0、差值 CI 下界 >0、mean>MDE80** → 提请设生产频帽（**另立 DEB + 用户裁，影子不自动生效**）。绝对为正防止“从 −100bps 改善到 −1bps”也误判毕业。
+- **负向与不可分辨**：两 N 的差值 CI 上界均 <0 → `FREQUENCY_CAP_HARMFUL`（显著有害，不冒充证据不足）；其余未达毕业情形记「不可分辨」，效应<MDE 不得写「已证伪」。
 - **决策日**：cohort 起第 30 个交易日（约 2026-12-28）批量裁；到期无结论 → 自动 KILLED（KR4）。
-- **必报**：毛/费/净三段 bps、日聚类 80% CI、MDE80、capped/uncapped 日均净 $、保留笔数。
+- **必报**：capped 绝对笔均净 bps、capped−uncapped 差值、毛/费/净三段 bps、日聚类 80% CI、MDE80、capped/uncapped 日均净 $、保留笔数。
 
 ## 4. 非重叠声明（不重开已闭轴）
 
@@ -62,3 +62,7 @@ DA 前进窗（10-06→11-13，A9 干净，n=203/29 日）：毛 **−2.23bps**�
 - **降频减总利润**：笔均期望升但总笔数降，日均净 $ 可能仍负；必报 capped/uncapped 日均 $ 双读数。
 - **KR4 前置**：名额未腾出前本影子不转正、不占生产资源。
 - **不承诺收益**：本 RFC 只产证据，不宣称 DA 有 edge、不宣称 live readiness。
+
+## 8. 复查修正记录（2026-11-14，cohort 开始前）
+
+用户裁「基于合理性和必要性进行优化修复」。独立复查构造 30 日样本实证：旧结算器在 capped=−1bps 时仍返回 `GRADUATION_CANDIDATE`；且显著负向结果与证据不足同标 `INDISTINGUISHABLE`。另发现把恢复补录的真实 PnL 全部剔出对照会把 203 笔/29 日缩成 138 笔/27 日，超出“修 MFE 尺子”的必要范围。故在 days=0 时修正 §3 人群与判据，并补负期望禁毕业、显著有害、恢复 PnL 保留三类契约测试；cohort/N/样本门/决策日均不变。

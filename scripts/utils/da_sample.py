@@ -27,6 +27,14 @@ ARTIFACT_ENTRY_REASONS = frozenset({
     "adopt_to_playbook",
 })
 
+# 降频反事实评估真实成交顺序与净盈亏，不使用受恢复污染的 MFE/regime。
+# sync_recovery_backfill 仍是实际策略成交且 entry_time 优先取券商订单时间，必须留在
+# capped/uncapped 对照；补偿立即平仓与人工收养不代表自然策略结局，单列排除。
+FREQUENCY_EXCLUDED_ENTRY_REASONS = frozenset({
+    "playbook_entry_bookkeeping_compensation",
+    "adopt_to_playbook",
+})
+
 
 def is_recovery_artifact(row):
     """收养/补录记账行 ⇒ True（其 MFE/ATR/regime 为收养时近似值，不可与信号入场混算）。"""
@@ -39,3 +47,13 @@ def split_signal_artifact(rows):
     for row in rows:
         (artifact if is_recovery_artifact(row) else signal).append(row)
     return signal, artifact
+
+
+def split_frequency_population(rows):
+    """降频人群：保留正常信号及恢复补录的真实 PnL，排除补偿/人工收养。"""
+    included, excluded = [], []
+    for row in rows:
+        excluded_row = (row.get("entry_reason") or "") in FREQUENCY_EXCLUDED_ENTRY_REASONS
+        target = excluded if excluded_row else included
+        target.append(row)
+    return included, excluded

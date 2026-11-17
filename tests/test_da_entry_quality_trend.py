@@ -15,6 +15,13 @@ def _row(day, net, mfe):
             "pnl_net": net, "realized_pnl": net, "mfe_pct": mfe}
 
 
+def test_net_fallback_subtracts_fees_from_gross_realized_pnl():
+    row = _row("2026-11-10", -6.0, 1.0)
+    row["pnl_net"] = None
+    row["fees_est"] = 2.0
+    assert MODULE._net(row) == pytest.approx(-8.0)
+
+
 def test_breakeven_formula():
     assert MODULE.breakeven_dead_rate(-100.0, 50.0) == pytest.approx(50.0 / 150.0)
     assert MODULE.breakeven_dead_rate(-147.38, 35.62) == pytest.approx(35.62 / (35.62 + 147.38))

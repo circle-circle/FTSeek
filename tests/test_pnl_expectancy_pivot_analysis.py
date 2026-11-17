@@ -28,6 +28,13 @@ def test_bps_unit_is_notional_weighted():
     assert MODULE._bps(row) == pytest.approx(100.0)
 
 
+def test_net_fallback_subtracts_fees_from_gross_realized_pnl():
+    row = _row("2026-11-10", 30, net=-6.0, fees=2.0)
+    row["pnl_net"] = None
+    assert MODULE._net(row) == pytest.approx(-8.0)
+    assert MODULE.decompose([row])["gross_usd"] == pytest.approx(-6.0)
+
+
 def test_decompose_gross_fee_net_and_dead_rate():
     rows = [
         _row("2026-11-10", 30, net=10.0, fees=2.0, mfe=1.0),

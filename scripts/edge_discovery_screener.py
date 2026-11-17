@@ -55,7 +55,10 @@ def _load(conn, start):
 
 
 def _net(row):
-    return row["pnl_net"] if row["pnl_net"] is not None else (row["realized_pnl"] or 0.0)
+    if row["pnl_net"] is not None:
+        return row["pnl_net"]
+    # realized_pnl 是毛盈亏；回退必须扣费，不能把毛额当净额（项目净 PnL 约定）。
+    return (row["realized_pnl"] or 0.0) - (row.get("fees_est") or 0.0)
 
 
 def _notional(row):

@@ -165,6 +165,9 @@ LATCH_TABLES = {
 # 误报 stalled。豁免不是放弃监控: 手动单链路另有提交/回报错误与对账监控。
 EVENT_DRIVEN_TABLES = {
     "manual_order_audit": "人工下单审计表: 无新行 = 无人手动下单 = 健康",
+    # RFC-211: 只在成交后持久化记账意图；周末/无入场/回滚关闭时零行或长期无新行均健康。
+    # 真正的恢复故障由 FILLED_UNBOOKED、PENDING 对账及重放异常日志监控，不靠表行数推断。
+    "entry_booking_outbox": "入场记账意图事件表: 无新行 = 无新成交意图或开关关闭 = 健康",
 }
 
 _WRITE_SQL_RE = re.compile(

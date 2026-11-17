@@ -166,6 +166,17 @@ def test_event_driven_table_long_gap_is_healthy(tmp_path, monkeypatch):
     assert any(o["table"] == "manual_order_audit" for o in observed)
 
 
+def test_entry_booking_outbox_zero_rows_is_healthy(tmp_path, monkeypatch):
+    """RFC-211 周末/无成交/回滚时零行是正常态，不得误报生产者从未喂数。"""
+    db = _mk_db(tmp_path, {"entry_booking_outbox": []})
+    monkeypatch.setattr(wf, "_main_db", lambda: db)
+    monkeypatch.setattr(wf, "_repo_write_targets",
+                        lambda: {"entry_booking_outbox": {"db.py"}})
+    findings, _, observed = wf._check_table_liveness({})
+    assert not any("entry_booking_outbox" in f["key"] for f in findings)
+    assert any(o["table"] == "entry_booking_outbox" for o in observed)
+
+
 def test_event_driven_exemption_does_not_leak_to_other_tables(tmp_path, monkeypatch):
     """防过修: 未声明的事件态表仍照告, 豁免只覆盖显式登记表。"""
     today = datetime.now()

@@ -38,6 +38,8 @@ for p in (ROOT, Path("/root/.hermes/skills/deep-stock-analysis/scripts")):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
+from app.core.paths import get_data_dir, get_trade_records_db  # noqa: E402
+
 CACHE = ROOT / "data" / "replay_cache" / "index_daily"
 ET = ZoneInfo("America/New_York")
 SHOCK_PCT = -2.0
@@ -243,8 +245,10 @@ def main(argv=None) -> int:
     args.output_dir.mkdir(parents=True)
 
     import sqlite3
-    con = sqlite3.connect(f"file:{ROOT / 'data' / 'ftseek_us.db'}?mode=ro", uri=True)
-    evdb = sqlite3.connect(f"file:{ROOT / 'data' / 'event_stream.db'}?mode=ro", uri=True)
+    db_path = get_trade_records_db()
+    event_db_path = get_data_dir() / "event_stream.db"
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    evdb = sqlite3.connect(f"file:{event_db_path}?mode=ro", uri=True)
 
     series = {}
     for sym in ("US.QQQ", "US.IWM", "US.SPY"):

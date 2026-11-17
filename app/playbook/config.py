@@ -314,6 +314,21 @@ def get_playbook_config() -> PlaybookConfig:
     return _playbook_config
 
 
+def entry_booking_outbox_enabled(target_env: str) -> bool:
+    """RFC-211 Outbox 开关与 SIM 授权边界的唯一入口。
+
+    用户只批准 sim 前瞻观察；即使全局配置为 true，REAL/LIVE 也必须保持旧路径。
+    配置读取异常 fail-safe 关闭增强恢复，不影响正常下单与降级补录。
+    """
+    if str(target_env or "").strip().lower() not in {"sim", "simulate"}:
+        return False
+    try:
+        return bool(get_playbook_config().get("entry_booking_outbox_enabled", False))
+    except Exception:
+        logger.warning("[PlaybookConfig] entry Outbox 开关读取失败，按关闭处理", exc_info=True)
+        return False
+
+
 def tighten_sl_by_beta(direction: str, entry_price: float, initial_sl: float) -> float:
     """SL β收紧公式的单一真源 (2026-08-14, 止损可见性修复).
 

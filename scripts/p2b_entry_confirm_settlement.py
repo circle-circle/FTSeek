@@ -27,6 +27,10 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from app.core.paths import get_trade_records_db  # noqa: E402
+
 A10_START = "2026-07-01"
 FEE_BPS_CAP = 11.54          # admission.max_fee_bps (仅作参照, 结算用真实佣金公式)
 COMMISSION_FLOOR = 1.99
@@ -123,13 +127,14 @@ def boot_ci_by_day(rows, key, seed=SEED, iters=BOOT):
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=str(ROOT / "data" / "ftseek_us.db"))
+    ap.add_argument("--db", default=str(get_trade_records_db()))
     ap.add_argument("--bars", default=str(ROOT / "data" / "cache" / "daily_kline_v1.json"))
     ap.add_argument("--json", default=None)
     args = ap.parse_args(argv)
 
     bars = load_bars(Path(args.bars))
-    con = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
+    db_path = Path(args.db)
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     c = con.cursor()
     rows = list(c.execute(
         "select date, symbol, direction, raw_instruction_json, metadata_json "

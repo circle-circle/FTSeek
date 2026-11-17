@@ -304,3 +304,27 @@ V1 的收益有效性仍未证明。R14 回放无 TP 点估计较好（198 笔�
   `systemctl restart ftseek-us` → MainPID=**2948878**（15:01:00），启动冒烟 **7/7**；重启后 9 仓不变、非 BOOKED=0。
 - 未验证：aef 重构后首个自然交易日盘中实跑（行为中性已由 1228 用例背书，但自然盘口/网络路径未自然 exercised）；
   D2/edge/MOM/EventContext 自然首跑同前；任何收益/live readiness。
+
+## 11. 第 6 轮：既有 DB/线上脚本治理收口（2026-11-14 22:45 CST，Claude，用户裁「按建议执行修复优化」）
+
+### 11.1 必要性分诊与实施边界
+
+- §7.2 两项既有红不再长期挂账，但不为全绿而扩 `GRANDFATHER` / `LEGACY_EXCLUDE`。
+- 5 个分析脚本均为 `mode=ro`，不写交易库/不下单；只把默认主库路径收编到
+  `app.core.paths.get_trade_records_db()`，保留 `--db` 显式覆盖。P3 事件库改走
+  `get_data_dir()`，不实例化 EventStore，避免只读分析建表。SQL、样本口径与判据未改。
+- 3 个线上脚本原样入 `ops/hermes/`：Lift 周报仍 enabled、11-14 最近成功、下次 11-21，必须纳入 git；
+  gap 已 paused，不恢复调度；RFC-194 一次性验收已 completed，不新增 cron。未改 jobs.json/crontab/systemd。
+
+### 11.2 验证与遗留观察
+
+- `tests/test_db_connection_chokepoint.py tests/test_ops_scripts_sync.py`：**5 passed**；
+  三个线上/仓内文件 SHA256 分别完全一致。完整棘轮家族 **70 passed / 0 failed**。
+- 5 个脚本 py_compile + `--help`、两个 shell `bash -n` 均 exit 0；全链复盘、P1、P2b 和 RFC-194
+  以当前 SIM 库只读实跑成功，未触网/未付费/未运行 gap 或 Lift。
+- 首轮接入差异已修正而非豁免：`args.db` 变量名被字面连接棘轮命中，统一先解析 `db_path`；
+  线上原文件均无末尾换行，仓内副本按原字节保留。
+- **独立遗留观察**：RFC-194 当前数据复跑为 27 笔中有效 25 / stale 2（US.AAPL、US.XOM）。
+  这是历史一次性脚本对当前扩展样本的新读数，不是本批引入；本批不改 EXT/prior_move 行为，
+  后续应单独核 stale 原因，不能把 11-10 的 completed 当成当前持续健康证明。
+- 本轮仅 scripts/ops/docs，脚本逐次加载新码，**无需重启服务**；任何策略收益/live readiness 不在本批范围。

@@ -15,8 +15,9 @@
   对比「不限频」的笔均净 bps 与日均净 $。**这是探索性读数，不是裁决**：n<30 日不下结论，
   转正须前瞻攒样 + 预注册日聚类 CI（见 DEB §4/§5）。
 样本分层（2026-11-14 修尺子）：headline=真实信号期望；收养/补录记账行（MFE/peak/regime
-  为收养时近似值）单列 artifact，全样本总账 decomposition_all 保留不抹账；降频反事实只算
-  真实信号入场。详见 scripts/utils/da_sample.py。
+  为收养时近似值）单列 artifact，全样本总账 decomposition_all 保留不抹账。降频只使用成交
+  顺序与真实 PnL，故保留恢复补录行，仅排除补偿立即平仓和人工收养，避免删掉真实交易。
+  详见 scripts/utils/da_sample.py。
 
 用法：PYTHONPATH=. venv/bin/python scripts/pnl_expectancy_pivot_analysis.py \
         --start 2026-10-06 --source playbook_sim --max-cap 6
@@ -28,7 +29,7 @@ import statistics as st
 from collections import defaultdict
 from pathlib import Path
 
-from scripts.utils.da_sample import split_signal_artifact
+from scripts.utils.da_sample import split_frequency_population, split_signal_artifact
 
 ROOT = Path(__file__).resolve().parents[1]
 DB = ROOT / "data" / "ftseek_us.db"
@@ -56,7 +57,10 @@ def _load(conn, start, source):
 
 
 def _net(row):
-    return row["pnl_net"] if row["pnl_net"] is not None else (row["realized_pnl"] or 0.0)
+    if row["pnl_net"] is not None:
+        return row["pnl_net"]
+    # realized_pnl 是毛盈亏；回退必须扣费，不能把毛额当净额（项目净 PnL 约定）。
+    return (row["realized_pnl"] or 0.0) - (row.get("fees_est") or 0.0)
 
 
 def _notional(row):
@@ -121,6 +125,7 @@ def frequency_cap(rows, max_cap):
         dm, ds, dd, dt = _clustered(diff_bps)
         caps.append({
             "cap": cap, "kept_trades": kept,
+            "cap_day_mean_bps": round(um + dm, 2),
             "delta_day_mean_bps": round(dm, 2), "delta_sd": round(ds, 2),
             "days": dd, "delta_t": round(dt, 2),
             "cap_day_mean_usd": round(sum(cap_day_usd) / len(cap_day_usd), 2),
@@ -132,12 +137,16 @@ def frequency_cap(rows, max_cap):
 def build_report(rows, max_cap):
     """headline=真实信号；artifact 单列；decomposition_all 保留全样本总账（分层≠抹账）。"""
     signal, artifact = split_signal_artifact(rows)
+    frequency_rows, frequency_excluded = split_frequency_population(rows)
     return {
         "decomposition": decompose(signal),
         "decomposition_all": decompose(rows),
         "artifact": decompose(artifact),
-        "frequency_cap": frequency_cap(signal, max_cap) if signal else None,
+        "frequency_cap": frequency_cap(frequency_rows, max_cap) if frequency_rows else None,
         "n_artifact_excluded": len(artifact),
+        "n_frequency_excluded": len(frequency_excluded),
+        "n_frequency_recovery_included": sum(
+            (r.get("entry_reason") or "") == "sync_recovery_backfill" for r in frequency_rows),
     }
 
 
@@ -158,7 +167,7 @@ def main():
     report = {
         "source": args.source, "start": args.start,
         **build_report(rows, args.max_cap),
-        "note": "探索性读数，非裁决；n<30 日不下结论；转正须前瞻预注册日聚类 CI（DEB-20261114 §4/§5）。headline=真实信号，收养/补录单列。",
+        "note": "探索性读数，非裁决；n<30 日不下结论；转正须前瞻预注册日聚类 CI（DEB-20261114 §4/§5）。headline=真实信号，收养/补录单列；降频保留恢复补录真实PnL，仅排除补偿/人工收养。",
     }
     dec = report["decomposition"]
     print("== %s since %s | 真实信号 n=%d (剔除收养/补录 %d) ==" % (
@@ -175,10 +184,11 @@ def main():
         print("  uncapped day-mean bps=%.2f t=%.2f days=%d | day-mean $=%.2f" % (
             fc["uncapped"]["day_mean_bps"], fc["uncapped"]["t"], fc["uncapped"]["days"],
             fc["uncapped"]["day_mean_usd"]))
-        print("  cap | kept | Δday-mean bps | Δt | cap day-mean $")
+        print("  cap | kept | capped bps | Δday-mean bps | Δt | cap day-mean $")
         for c in fc["caps"]:
-            print("   %2d | %4d | %13.2f | %5.2f | %14.2f" % (
-                c["cap"], c["kept_trades"], c["delta_day_mean_bps"], c["delta_t"], c["cap_day_mean_usd"]))
+            print("   %2d | %4d | %10.2f | %13.2f | %5.2f | %14.2f" % (
+                c["cap"], c["kept_trades"], c["cap_day_mean_bps"],
+                c["delta_day_mean_bps"], c["delta_t"], c["cap_day_mean_usd"]))
     if args.json:
         Path(args.json).write_text(json.dumps(report, ensure_ascii=False, indent=2))
         print("wrote", args.json)

@@ -340,6 +340,12 @@ def is_system_order_remark(remark) -> bool:
     return any(r.startswith(p) for p in _SYSTEM_ORDER_REMARK_PREFIXES)
 
 
+def _playbook_instruction_id_from_remark(remark) -> Optional[int]:
+    """从 pb_{instruction_id}_{env}_{attempt} 精确还原指令 id；其他系统单一律不认领。"""
+    match = re.fullmatch(r"pb_(\d+)_(?:sim|real)_(\d+)", str(remark or ""))
+    return int(match.group(1)) if match else None
+
+
 def _entry_time_epoch(entry_time) -> Optional[float]:
     try:
         parsed = datetime.fromisoformat(str(entry_time).replace("Z", "+00:00"))
@@ -592,59 +598,100 @@ class USPositionSync:
                 return str(regime), "instruction"
             return "UNKNOWN", "unknown_fallback"
         except Exception:
-            logger.warning("[US Sync·P3] backfill regime inherit fail-safe UNKNOWN inst=%s", instruction_id)
+            logger.warning(
+                "[US Sync·P3] backfill regime inherit fail-safe UNKNOWN inst=%s",
+                instruction_id, exc_info=True)
             return "UNKNOWN", "unknown_failsafe"
 
     def _replay_pending_booking_intent(self, instruction_id, db_path, broker_env, futu_order_id, symbol):
-        """A1 (RFC-211): 恢复时按 outbox 全量意图干净重放 save_trade (真 regime/ATR/因子)。
+        """按当前订单的精确意图恢复簿记；已投递记录补审计标记并消费意图。
 
-        开关 off / 无 PENDING 意图 / 任何异常 → False (fail-safe 退回降级补录, 绝不阻断孤儿接管)。
-        幂等: trade_records 已有同 futu_order_id 记录 → 仅消费意图, 不重复记账。
+        开关 off / 无匹配 PENDING / 任何异常 → False，退回降级补录。
+        instruction_id + futu_order_id 共同钉住身份，禁止把其他 attempt 的意图
+        重放成当前订单。已有台账按 symbol/direction/qty/entry_price 全字段复核，
+        只有复核通过才补 booking_outbox_replay 并消费，保证恢复事件可进入 A2 计数。
         """
-        if not instruction_id:
+        if not instruction_id or not futu_order_id:
             return False
         try:
-            from app.playbook.config import get_playbook_config
-            if not bool(get_playbook_config().get("entry_booking_outbox_enabled", False)):
+            from app.playbook.config import entry_booking_outbox_enabled
+            if not entry_booking_outbox_enabled(broker_env):
                 return False
         except Exception:
+            logger.warning(
+                "[US Sync·A1] %s Outbox 开关判定失败，退回降级补录", symbol, exc_info=True)
             return False
         try:
+            import math
             from app.playbook.db import route_playbook_db
             pdb = route_playbook_db(broker_env)
-            intent_row = pdb.get_pending_booking_intent(int(instruction_id))
+            intent_row = pdb.get_pending_booking_intent(
+                int(instruction_id), futu_order_id=str(futu_order_id))
             if not intent_row:
                 return False
             intent = json.loads(intent_row["intent_json"])
             record = intent.get("record")
-            if not record:
+            if not isinstance(record, dict):
                 return False
-            voting_data = intent.get("voting_data")
             attempt = int(intent_row["attempt"])
             _source = "PLAYBOOK_LIVE" if broker_env == "real" else "PLAYBOOK_SIM"
+            identity_ok = (
+                str(intent_row.get("futu_order_id") or "") == str(futu_order_id)
+                and str(intent_row.get("symbol") or "") == str(symbol)
+                and str(record.get("futu_order_id") or "") == str(futu_order_id)
+                and str(record.get("symbol") or "") == str(symbol)
+                and str(record.get("source_type") or "") == _source
+                and str(intent_row.get("target_env") or "").strip().lower() in {"sim", "simulate"}
+            )
+            if not identity_ok:
+                logger.critical(
+                    "[US Sync·A1] %s Outbox 意图身份冲突，拒绝重放 instruction=%s order=%s",
+                    symbol, instruction_id, futu_order_id)
+                return False
             conn = safe_sqlite_connect(db_path, timeout=5)
             try:
                 existing = conn.execute(
-                    "SELECT 1 FROM trade_records WHERE futu_order_id=? AND source_type=? LIMIT 1",
-                    (str(futu_order_id), _source)).fetchone()
+                    "SELECT symbol, direction, quantity, entry_price, metadata_json "
+                    "FROM trade_records WHERE futu_order_id=? AND source_type=?",
+                    (str(futu_order_id), _source)).fetchall()
+                if existing:
+                    matches = (
+                        len(existing) == 1
+                        and existing[0][0] == record.get("symbol")
+                        and existing[0][1] == record.get("direction")
+                        and math.isclose(float(existing[0][2]), float(record.get("quantity")), rel_tol=0, abs_tol=1e-9)
+                        and math.isclose(float(existing[0][3]), float(record.get("entry_price")), rel_tol=1e-9, abs_tol=1e-6)
+                    )
+                    if not matches:
+                        logger.critical(
+                            "[US Sync·A1] %s 既有台账与 Outbox 意图冲突，拒绝消费 order=%s",
+                            symbol, futu_order_id)
+                        return False
+                    replay_meta = json.loads(existing[0][4] or "{}")
+                    if not replay_meta.get("booking_outbox_replay"):
+                        replay_meta["booking_outbox_replay"] = True
+                        conn.execute(
+                            "UPDATE trade_records SET metadata_json=? "
+                            "WHERE futu_order_id=? AND source_type=?",
+                            (json.dumps(replay_meta, ensure_ascii=False), str(futu_order_id), _source))
+                        conn.commit()
+                else:
+                    meta = json.loads(record.get("metadata_json") or "{}")
+                    meta["booking_outbox_replay"] = True
+                    record["metadata_json"] = json.dumps(meta, ensure_ascii=False)
+                    from app.storage.trade_store import TradeStore
+                    TradeStore(db_path).save_trade(record, voting_data=intent.get("voting_data"))
             finally:
                 conn.close()
-            if existing:
-                pdb.consume_booking_intent(int(instruction_id), attempt)
-                return True
-            meta = json.loads(record.get("metadata_json") or "{}")
-            meta["booking_outbox_replay"] = True
-            record["metadata_json"] = json.dumps(meta, ensure_ascii=False)
-            from app.storage.trade_store import TradeStore
-            TradeStore(db_path).save_trade(record, voting_data=voting_data)
             pdb.consume_booking_intent(int(instruction_id), attempt)
             logger.info(
-                "[US Sync·A1] %s 按 outbox 全量意图干净重放 trade_record (instruction=%s attempt=%s)",
-                symbol, instruction_id, attempt)
+                "[US Sync·A1] %s 按当前订单 Outbox 意图完成恢复并消费 "
+                "(instruction=%s attempt=%s order=%s)",
+                symbol, instruction_id, attempt, futu_order_id)
             return True
-        except Exception as exc:
+        except Exception:
             logger.warning(
-                "[US Sync·A1] %s outbox 干净重放失败 (fail-safe 退回降级补录): %s", symbol, exc)
+                "[US Sync·A1] %s outbox 干净重放失败，退回降级补录", symbol, exc_info=True)
             return False
 
     def _backfill_playbook_trade_record(self, symbol: str, direction: str, qty: int,
@@ -741,6 +788,11 @@ class USPositionSync:
                                and math.isclose(float(existing[0][3]), entry, rel_tol=1e-9, abs_tol=1e-6))
                     if not matches:
                         logger.critical('[US Sync] entry receipt conflicts with existing trade order=%s', futu_order_id)
+                    else:
+                        # save_trade 已投递但进程在 consume 前退出：补审计标记并消费精确意图，
+                        # 否则指令转 BOOKED 后 PENDING 永久残留且 A2 漏计恢复事件。
+                        self._replay_pending_booking_intent(
+                            instruction_id, db_path, broker_env, futu_order_id, symbol)
                     return matches
                 conflict = conn.execute(
                     "SELECT 1 FROM trade_records WHERE symbol=? AND "
@@ -2388,6 +2440,7 @@ class USPositionSync:
                     trace_id=_sync_trace,
                     futu_order_id=str(_order_info.get('order_id', '')),
                     broker_env=_auto_acc,
+                    instruction_id=_playbook_instruction_id_from_remark(_order_info.get('remark')),
                     # [RFC-169 复查] 当日委托时间 (create_time, ET) 作为入场时间
                     entry_ts=_order_info.get('time'),
                 )

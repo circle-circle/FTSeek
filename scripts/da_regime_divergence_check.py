@@ -21,6 +21,8 @@ import sqlite3
 import sys
 from zoneinfo import ZoneInfo
 
+from app.core.paths import get_trade_records_db
+
 
 def main() -> int:
     ap = argparse.ArgumentParser()
@@ -30,7 +32,8 @@ def main() -> int:
     args = ap.parse_args()
     date = args.date or datetime.datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
 
-    c = sqlite3.connect("file:data/ftseek_us.db?mode=ro", uri=True)
+    db_path = get_trade_records_db()
+    c = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     c.row_factory = sqlite3.Row
     # 只算真实指令行 (排除 supply_placeholder 占位行 — 它们恒为 SKIP, 会稀释方向)
     rows = {r["direction"]: r["n"] for r in c.execute(

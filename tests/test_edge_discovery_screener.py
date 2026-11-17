@@ -1,6 +1,8 @@
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "edge_discovery_screener.py"
 SPEC = importlib.util.spec_from_file_location("edge_discovery_screener", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -20,6 +22,13 @@ def _row(day, order, net):
 
 def _days(count, start_day=1, month="2026-10"):
     return [f"{month}-{start_day + i:02d}" for i in range(count)]
+
+
+def test_net_fallback_subtracts_fees_from_gross_realized_pnl():
+    row = _row("2026-11-10", 30, 8.0)
+    row["pnl_net"] = None
+    row["fees_est"] = 2.0
+    assert MODULE._net(row) == pytest.approx(6.0)
 
 
 def test_robust_candidate_passes_all_gates():

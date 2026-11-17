@@ -2,6 +2,8 @@
 import json
 import sqlite3
 
+import pytest
+
 import app.core.position_sync as ps
 import app.playbook.config as pconfig
 import app.playbook.db as pdb_mod
@@ -20,6 +22,21 @@ def _outbox_db():
     conn.row_factory = sqlite3.Row
     conn.execute(_OUTBOX_SCHEMA)
     return PlaybookDB(conn=conn)
+
+
+def _add_filled_instruction(pdb, instruction_id=10, attempt=1, order_id="oid1"):
+    conn = pdb._conn()
+    conn.execute("""CREATE TABLE playbook_instructions (
+        id INTEGER PRIMARY KEY, execution_state TEXT, execution_attempt INTEGER,
+        broker_order_id TEXT, metadata_json TEXT, executed INTEGER,
+        execution_price REAL, execution_time TEXT, outcome TEXT,
+        skip_reason TEXT, updated_at TEXT)""")
+    metadata = {"entry_fill": {"confirmed": 1, "attempt": attempt, "order_id": order_id}}
+    conn.execute(
+        "INSERT INTO playbook_instructions (id, execution_state, execution_attempt, "
+        "broker_order_id, metadata_json, executed) VALUES (?,?,?,?,?,0)",
+        (instruction_id, "FILLED_UNBOOKED", attempt, order_id, json.dumps(metadata)))
+    conn.commit()
 
 
 def _record(regime="cautious", atr=4.0, oid="oid1"):
@@ -65,6 +82,40 @@ def test_db_persist_idempotent_no_overwrite():
     pdb.persist_booking_intent(10, 1, '{"v":2}', "oid1", "sim", "US.X")
     row = pdb.get_pending_booking_intent(10)
     assert json.loads(row["intent_json"])["v"] == 1
+
+
+def test_mark_booked_and_consume_intent_are_atomic():
+    pdb = _outbox_db()
+    _add_filled_instruction(pdb)
+    pdb.persist_booking_intent(10, 1, '{"v":1}', "oid1", "sim", "US.X")
+    assert pdb.mark_execution_booked(10, 1, execution_price=100.0) is True
+    row = pdb._conn().execute(
+        "SELECT execution_state FROM playbook_instructions WHERE id=10").fetchone()
+    assert row[0] == "BOOKED"
+    assert pdb.get_pending_booking_intent(10) is None
+
+
+def test_mark_booked_rolls_back_when_consume_fails():
+    pdb = _outbox_db()
+    _add_filled_instruction(pdb)
+    pdb.persist_booking_intent(10, 1, '{"v":1}', "oid1", "sim", "US.X")
+    pdb._conn().execute(
+        "CREATE TRIGGER reject_outbox_consume BEFORE UPDATE ON entry_booking_outbox "
+        "BEGIN SELECT RAISE(ABORT, 'forced consume failure'); END")
+    with pytest.raises(sqlite3.IntegrityError, match="forced consume failure"):
+        pdb.mark_execution_booked(10, 1)
+    row = pdb._conn().execute(
+        "SELECT execution_state FROM playbook_instructions WHERE id=10").fetchone()
+    assert row[0] == "FILLED_UNBOOKED"
+    assert pdb.get_pending_booking_intent(10) is not None
+
+
+def test_mark_booked_without_outbox_table_keeps_legacy_schema_compatible():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    pdb = PlaybookDB(conn=conn)
+    _add_filled_instruction(pdb)
+    assert pdb.mark_execution_booked(10, 1) is True
 
 
 def _setup_replay(tmp_path, monkeypatch, enabled, with_intent=True, existing_trade=False):
@@ -128,3 +179,74 @@ def test_replay_no_instruction_id_falls_through(tmp_path, monkeypatch):
     db_path, _ = _setup_replay(tmp_path, monkeypatch, enabled=True)
     ok = _inst()._replay_pending_booking_intent(None, db_path, "sim", "oid1", "US.X")
     assert ok is False
+
+
+def test_pending_lookup_is_scoped_to_current_order():
+    pdb = _outbox_db()
+    pdb.persist_booking_intent(10, 1, '{"v":1}', "oid1", "sim", "US.X")
+    assert pdb.get_pending_booking_intent(10, futu_order_id="oid2") is None
+    assert pdb.get_pending_booking_intent(10, futu_order_id="oid1")["attempt"] == 1
+
+
+def test_outbox_switch_is_sim_only(monkeypatch):
+    monkeypatch.setattr(pconfig, "get_playbook_config", lambda: _FakeConfig(True))
+    assert pconfig.entry_booking_outbox_enabled("sim") is True
+    assert pconfig.entry_booking_outbox_enabled("simulate") is True
+    assert pconfig.entry_booking_outbox_enabled("real") is False
+    assert pconfig.entry_booking_outbox_enabled("live") is False
+
+
+def test_replay_real_is_inert_even_when_global_switch_on(tmp_path, monkeypatch):
+    db_path, pdb = _setup_replay(tmp_path, monkeypatch, enabled=True)
+    ok = _inst()._replay_pending_booking_intent(10, db_path, "real", "oid1", "US.X")
+    assert ok is False
+    assert pdb.get_pending_booking_intent(10) is not None
+    conn = sqlite3.connect(db_path)
+    assert conn.execute("SELECT COUNT(*) FROM trade_records").fetchone()[0] == 0
+    conn.close()
+
+
+def test_replay_never_uses_intent_from_another_order(tmp_path, monkeypatch):
+    db_path, pdb = _setup_replay(tmp_path, monkeypatch, enabled=True)
+    ok = _inst()._replay_pending_booking_intent(10, db_path, "sim", "oid2", "US.X")
+    assert ok is False
+    assert pdb.get_pending_booking_intent(10) is not None
+    conn = sqlite3.connect(db_path)
+    assert conn.execute("SELECT COUNT(*) FROM trade_records").fetchone()[0] == 0
+    conn.close()
+
+
+def test_backfill_existing_trade_consumes_and_marks_replay(tmp_path, monkeypatch):
+    db_path, pdb = _setup_replay(tmp_path, monkeypatch, enabled=True, existing_trade=True)
+    monkeypatch.setattr(ps, "_get_db_path", lambda: db_path)
+    ok = _inst()._backfill_playbook_trade_record(
+        symbol="US.X", direction="LONG", qty=10, entry=100.0, sl=95.0, tp=110.0,
+        trace_id="existing-replay", futu_order_id="oid1", broker_env="sim",
+        order_evidence={"confirmed": True, "order_id": "oid1", "dealt_qty": 10, "price": 100.0},
+        broker_position={"qty": 10, "direction": "LONG"}, instruction_id=10)
+    assert ok is True
+    assert pdb.get_pending_booking_intent(10) is None
+    conn = sqlite3.connect(db_path)
+    count, meta_raw = conn.execute("SELECT COUNT(*), metadata_json FROM trade_records").fetchone()
+    conn.close()
+    assert count == 1
+    assert json.loads(meta_raw)["booking_outbox_replay"] is True
+
+
+def test_replay_existing_conflict_is_not_consumed(tmp_path, monkeypatch):
+    db_path, pdb = _setup_replay(tmp_path, monkeypatch, enabled=True, existing_trade=True)
+    conn = sqlite3.connect(db_path)
+    conn.execute("UPDATE trade_records SET quantity=11 WHERE futu_order_id='oid1'")
+    conn.commit()
+    conn.close()
+    ok = _inst()._replay_pending_booking_intent(10, db_path, "sim", "oid1", "US.X")
+    assert ok is False
+    assert pdb.get_pending_booking_intent(10) is not None
+
+
+def test_playbook_remark_restores_only_exact_instruction_identity():
+    assert ps._playbook_instruction_id_from_remark("pb_77_sim_2") == 77
+    assert ps._playbook_instruction_id_from_remark("pb_78_real_3") == 78
+    assert ps._playbook_instruction_id_from_remark("ext_entry_77") is None
+    assert ps._playbook_instruction_id_from_remark("pb_77_sim") is None
+    assert ps._playbook_instruction_id_from_remark("pb_77_sim_2_extra") is None

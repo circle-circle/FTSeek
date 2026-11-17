@@ -7,11 +7,12 @@
 预注册（RFC-209 §3，窗内冻结，改=重裁）：
   cohort 起点 2026-11-16（前瞻，不复用探索窗）；人群 owner_strategy=playbook_sim ∧ A9 干净；
   动作=每日按 entry_time 取前 N 笔，N∈{2,3}（固定）；对照=不限频；
-  样本门 n≥30 交易日；毕业=任一 N 的「capped−uncapped 笔均净 bps」日聚类 80% CI 下界>0
-  且 mean>MDE80 → 提请设生产频帽（另立 DEB+用户裁，影子不自动生效）；否则不可分辨。
-人群精化（2026-11-14，cohort 未起 days=0 前置澄清，非窗内改）：剔除收养/补录记账行
-  （sync_recovery_backfill 等，其 entry_time/MFE 为收养时近似值，非干净信号入场），
-  只算真实信号入场。依据 scripts/utils/da_sample.py；补录行真实盈亏另计入总账不抹账。
+  样本门 n≥30 交易日；毕业=任一 N 的 capped 绝对笔均净 bps>0，且「capped−uncapped」
+  日聚类 80% CI 下界>0、mean>MDE80 → 提请设生产频帽（另立 DEB+用户裁）；
+  两 N 的差值 CI 均显著为负 → FREQUENCY_CAP_HARMFUL；其余不可分辨。
+人群精化（2026-11-14 复查修正，cohort 未起 days=0）：恢复补录的 MFE/regime 虽受污染，
+但其真实成交顺序与净盈亏仍属实际 DA 组合，降频对照必须保留；仅排除补偿立即平仓与
+人工收养行。死单率/edge 特征研究仍按 scripts/utils/da_sample.py 分层，不混用尺子。
 
 日聚类口径与仓内同源（risk_size_tier_forward_eval._day_cluster）：
   Z80=1.2815515655446004；MDE80=(Z80+Z_POWER80)×se；等权日均。
@@ -27,7 +28,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from scripts.utils.da_sample import split_signal_artifact
+from scripts.utils.da_sample import split_frequency_population
 
 ROOT = Path(__file__).resolve().parents[1]
 ANALYZER = ROOT / "scripts" / "pnl_expectancy_pivot_analysis.py"
@@ -63,7 +64,8 @@ def _day_cluster(daily_delta):
 
 
 def settle(rows):
-    signal, artifact = split_signal_artifact(rows)
+    signal, excluded = split_frequency_population(rows)
+    recovery_included = sum((r.get("entry_reason") or "") == "sync_recovery_backfill" for r in signal)
     by_day = defaultdict(list)
     for row in signal:
         by_day[row["trade_date"]].append(row)
@@ -72,17 +74,22 @@ def settle(rows):
     days = len(by_day)
     caps = []
     for cap in CAPS:
-        delta, cap_usd, kept = {}, {}, 0
+        delta, cap_usd, capped_day_bps = {}, {}, {}
+        kept = 0
         for day, trades in by_day.items():
             taken = trades[:cap]
             kept += len(taken)
             cap_mean = sum(_A._bps(r) for r in taken) / len(taken)
+            capped_day_bps[day] = cap_mean
             delta[day] = cap_mean - uncapped_day_bps[day]
             cap_usd[day] = sum(_A._net(r) for r in taken)
         cluster = _day_cluster(delta)
         ci80 = cluster["ci80"]
+        cap_day_mean_bps = (
+            round(statistics.mean(capped_day_bps.values()), 4) if capped_day_bps else None)
         criteria = {
             "sample_days>=30": days >= MIN_DAYS,
+            "cap_day_mean_bps>0": bool(cap_day_mean_bps is not None and cap_day_mean_bps > 0),
             "day_cluster_ci80_lower>0": bool(ci80 and ci80[0] > 0),
             "day_cluster_mean>mde80": bool(
                 cluster["mde80"] is not None and cluster["mean_delta"] > cluster["mde80"]),
@@ -90,6 +97,7 @@ def settle(rows):
         caps.append({
             "cap": cap, "kept_trades": kept,
             "n_days": cluster["n_days"], "mean_delta_bps": cluster["mean_delta"],
+            "cap_day_mean_bps": cap_day_mean_bps,
             "ci80": ci80, "mde80": cluster["mde80"],
             "cap_day_mean_usd": round(sum(cap_usd.values()) / days, 2) if days else None,
             "criteria": criteria,
@@ -99,6 +107,8 @@ def settle(rows):
         verdict = "TOO_EARLY"
     elif any(c["pass"] for c in caps):
         verdict = "GRADUATION_CANDIDATE"
+    elif all(c["ci80"] and c["ci80"][1] < 0 for c in caps):
+        verdict = "FREQUENCY_CAP_HARMFUL"
     else:
         verdict = "INDISTINGUISHABLE"
     return {
@@ -112,10 +122,11 @@ def settle(rows):
             "day_mean_bps": round(sum(uncapped_day_bps.values()) / days, 2) if days else None,
             "day_mean_usd": round(sum(uncapped_day_usd.values()) / days, 2) if days else None,
         },
-        "n_artifact_excluded": len(artifact),
+        "n_artifact_excluded": len(excluded),
+        "n_recovery_included": recovery_included,
         "caps": caps,
         "verdict": verdict,
-        "note": "RFC-209 record-only 前瞻反事实；人群=真实信号(剔除收养/补录)；n<30 只观察；毕业须另立 DEB+用户裁，影子不自动设硬帽。",
+        "note": "RFC-209 record-only 前瞻反事实；人群=真实信号+恢复补录真实PnL(剔除补偿/人工收养)；n<30 只观察；毕业须 capped>0 且改善显著，另立 DEB+用户裁。",
     }
 
 
@@ -129,7 +140,7 @@ def main():
     tmp.replace(OUTPUT)
     print("verdict=%s days=%d caps=%s" % (
         report["verdict"], report["uncapped"]["days"],
-        [(c["cap"], c["mean_delta_bps"], c["ci80"]) for c in report["caps"]]))
+        [(c["cap"], c["cap_day_mean_bps"], c["mean_delta_bps"], c["ci80"]) for c in report["caps"]]))
     print("wrote", OUTPUT)
 
 

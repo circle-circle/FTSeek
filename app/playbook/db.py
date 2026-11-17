@@ -1340,7 +1340,21 @@ class PlaybookDB:
             "AND json_extract(metadata_json, '$.entry_fill.order_id')=broker_order_id",
             (execution_price, execution_time, outcome, now_utc().isoformat(), instruction_id, attempt),
         )
-        conn.commit()
+        if cur.rowcount == 1 and conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='entry_booking_outbox'").fetchone():
+            # 指令 BOOKED 与意图消费同生共死；否则已 BOOKED 指令不再进入恢复扫描，
+            # 消费失败会留下永久 PENDING。旧最小 schema 无 Outbox 表时维持原行为。
+            try:
+                conn.execute(
+                    "UPDATE entry_booking_outbox SET state='BOOKED', version=version+1, updated_at=? "
+                    "WHERE instruction_id=? AND attempt=? AND state='PENDING'",
+                    (now_utc().isoformat(), int(instruction_id), int(attempt)))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        else:
+            conn.commit()
         return cur.rowcount == 1
 
     def persist_booking_intent(self, instruction_id: int, attempt: int, intent_json: str,
@@ -1369,14 +1383,18 @@ class PlaybookDB:
         )
         conn.commit()
 
-    def get_pending_booking_intent(self, instruction_id: int) -> Optional[Dict[str, Any]]:
-        """A1 (RFC-211): 取该指令最新 PENDING 意图 (恢复干净重放用)。无则 None。"""
+    def get_pending_booking_intent(self, instruction_id: int,
+                                   futu_order_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """取 PENDING 意图；恢复调用必须传订单号，禁止跨订单/attempt 重放。"""
         conn = self._conn()
-        row = conn.execute(
-            "SELECT intent_json, attempt, futu_order_id FROM entry_booking_outbox "
-            "WHERE instruction_id=? AND state='PENDING' ORDER BY attempt DESC LIMIT 1",
-            (int(instruction_id),),
-        ).fetchone()
+        sql = ("SELECT intent_json, attempt, futu_order_id, target_env, symbol "
+               "FROM entry_booking_outbox WHERE instruction_id=? AND state='PENDING'")
+        params = [int(instruction_id)]
+        if futu_order_id is not None:
+            sql += " AND futu_order_id=?"
+            params.append(str(futu_order_id))
+        sql += " ORDER BY attempt DESC LIMIT 1"
+        row = conn.execute(sql, params).fetchone()
         return dict(row) if row else None
 
     def unlock_execution_if_zero_fill_terminal(self, instruction_id: int, attempt: int,
