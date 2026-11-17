@@ -1140,6 +1140,7 @@ def _reconcile_position_store(scheduler):
     # 2026-08-22 audit: 循环外预载 playbook 未平仓集合 (原逐 symbol 一连接 = N+1)
     from app.playbook.pipeline import load_playbook_open_symbols, playbook_open_check as _pb_check_pm
     _pb_open_syms = load_playbook_open_symbols()
+    _added = 0
     for symbol in new_symbols:
         # P0 修复 (2026-05-23): 跳过 PRICE_FAIL 已关闭的期权，与 position_sync 保持一致
         if symbol in _pf_closed:
@@ -1297,7 +1298,8 @@ def _reconcile_position_store(scheduler):
             take_profit_levels=[], time_stop_hours=72, market_regime=MR.RANGE,
             trace_id=recovered_trace_id, signal_id=recovered_signal_id)
         position.trail_state = {"highest_price": cost, "lowest_price": cost, "prev_scan_price": cost}
-        scheduler.position_store.add(symbol, position)
+        if scheduler.position_store.add(symbol, position):
+            _added += 1
         logger.warning(f"[持仓对账] 发现 Broker 新持仓 {symbol} ({bp['direction']} {size}股 @${cost:.2f})")
         discrepancies.append({
             "type": "unknown_position",
@@ -1383,7 +1385,9 @@ def _reconcile_position_store(scheduler):
         _send_reconcile_alert(scheduler, discrepancies, broker_positions, mem_positions)
     
     if new_symbols or cleaned:
-        logger.info(f"[持仓对账] 完成: +{len(new_symbols)} 新增, -{cleaned} 清理, 内存共 {scheduler.position_store.count()} 个")
+        # 2026-11-17: 报实际纳管数而非过滤前差集 — 原 "+N 新增" 把 playbook 自管/手动/
+        # 结算窗/外部仓跳过的候选全算成新增, 与 "内存共 0 个" 矛盾误导排障 (本次收盘核查实证)。
+        logger.info(f"[持仓对账] 完成: +{_added} 纳管, {len(new_symbols) - _added} 跳过, -{cleaned} 清理, 内存共 {scheduler.position_store.count()} 个")
 
 
 def _remove_from_open_positions_db(symbol: str):
