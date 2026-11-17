@@ -4556,11 +4556,12 @@ REGISTRY: list[ShadowItem] = [
         config_key=None,
         min_n=30,
         count_mode="json_key:uncapped.days",
-        graduation_criteria="RFC-209 §3 预注册 (窗内冻结, 改=重裁): 前瞻 cohort 2026-11-16 起 "
-                            "n≥30 交易日; 任一 N∈{2,3} 的 capped−uncapped 笔均净 bps 日聚类 80% CI "
-                            "下界>0 ∧ mean>MDE80 → 提请设生产频帽 (另立 DEB+用户裁, 影子不自动生效); "
-                            "两 N CI 含 0 → 不可分辨; 效应<MDE → 不可分辨非证伪。到期 (约 2026-12-28) "
-                            "无结论自动 KILLED。N/cohort/阈值窗内禁改。",
+        graduation_criteria="RFC-209 §3/§8 预注册 (cohort 开始前复查修正): 前瞻 cohort 2026-11-16 起 "
+                            "n≥30 交易日; 任一 N∈{2,3} 同时满足 capped 绝对笔均净 bps>0 ∧ "
+                            "capped−uncapped 日聚类 80% CI 下界>0 ∧ mean>MDE80 → 提请设生产频帽 "
+                            "(另立 DEB+用户裁); 两 N 差值 CI 上界均<0 → FREQUENCY_CAP_HARMFUL; "
+                            "其余不可分辨。恢复补录真实 PnL 保留, 补偿/人工收养单列。到期 "
+                            "(约 2026-12-28) 无结论自动 KILLED。N/cohort/阈值窗内禁改。",
         eval_script="scripts/settle_da_frequency_cap_pivot.py",
         eval_on_demand=True,
         created="2026-11-14",
@@ -5001,7 +5002,44 @@ REGISTRY: list[ShadowItem] = [
         notes="写方 scripts/s1_short_after_open_cohort.py (sqlite mode=ro, 只读; 产物锚定仓内 data/, "
               "不写交易库不下单)。历史参照: n=88 毛 39.69/费 8.94/净 +30.75bps, 日聚类 t=+2.58。"
               "已知局限: t 取自约 20 个切片的最大值, 逐笔 sd=121 ⇒ 净 bps 不能作短周期判据, "
-              "短期只判滑点与引擎臂同号。",
+              "短期只判滑点与引擎臂同号。"
+              "⚠️ 执行力留痕 (2026-11-15 复查 / 2026-11-16 更新, 只记实现进度, "
+              "graduation_criteria 原文一字不动): 上行三条停止条件中, 运行时臂闸 "
+              "app/playbook/s1_arm.py:174 kill_reason() **仍只实现 S1/S2** —— S3 (实盘滑点中位"
+              ">15bps) 今天无法实现: exit_slippage_bps 有 (metadata_json, PLAYBOOK_SIM 727/871 行), "
+              "但 B23 要求的另一半「入场追价 bps」**全库无持久化字段**; 只用退出侧算会低估滑点、"
+              "让 S3 更难触发 = 弱化 kill switch, 故宁缺勿半 (RFC-212 §5.5, 前置=先做采集落库)。"
+              "**看板与周报不得把「三条停止条件」写成已生效。** 另三项 (账本按臂别解析 P8 / 读库"
+              "失败 fail-close P9 / 方向门只约束空头不拦多头 P10) 已于 2026-11-16 提前落地并带契约"
+              "测试 (tests/test_s1_arm_gate.py 20→31 条, 含变异验证), 全部 inert —— s1_arm_enabled "
+              "仍 false, C0-C5 一项未动, 真钱可达性零变化 (RFC-212 §5.4)。日笔数计数口径 P13 "
+              "已裁已落地 (2026-11-16 用户授权重设计「一条账本一个锚点一个增量」, RFC-212 §5.8, inert)。"
+              "真钱侧停止条件观测另见注册项 s1_real_kill_shadow (2026-11-16, record-only)。",
+    ),
+    ShadowItem(
+        id="s1_real_kill_shadow",
+        name="S1 真钱侧停止条件 record-only 影子 (C5/C6)",
+        status=ShadowStatus.OBSERVING,
+        description="DEB-20261116 五模型审计共性 C5/C6 的影子先行步: kill switch 只读 sim 账本 "
+                    "⇒ 真钱亏损永不进停止条件; 且人群混入非本臂空单。本影子每 auto_execute 轮读 "
+                    "real 账本一次, 落 敞口/臂属 cohort(source_type=PLAYBOOK_LIVE)/kill_reason/"
+                    "degraded 一行。**不拦截、不 halt、不写交易库**, 独立于 s1_arm_enabled。"
+                    "执行接线 (kill_reason→halt_live_new_positions 持久化 + 镜像前 real 臂闸) "
+                    "属签署日批, 须先经本影子观测 + 用户裁 (RFC-212 §5.6)。",
+        data_path="data/shadow/s1_real_kill_shadow.jsonl",
+        config_key=None,
+        min_n=0,
+        eval_on_demand=True,
+        no_adjudication_reason="PERMANENT_MEASURE: 真钱停止条件的可读性/触发观测, 不是交易信号; "
+                               "执行接线另立裁决, 本影子不自动生效。",
+        created="2026-11-16",
+        notes="写方 app/playbook/s1_arm.py::record_real_kill_shadow (sqlite mode=ro 只读 real 库; "
+              "产物 data/shadow/s1_real_kill_shadow.jsonl)。臂属谓词=source_type='PLAYBOOK_LIVE' "
+              "(live 库 SHORT 实测全为 MANUAL MU 手动仓; PLAYBOOK_LIVE 行无 dual_arm 落库标记, "
+              "C13 未落 ⇒ 暂以 source_type 过滤, S1_WHERE 冻结面未动)。读库失败落 degraded=true "
+              "行 + warning(exc_info), 绝不抛进交易路径。落盘路径由 flow 从 module_file 派生 "
+              "(同 sizing_delta 范式, hermetic 沙箱自动落 tmp)。回滚=删 auto_execute_flow.py "
+              "的调用点 (3 行), 产物留档。停采路径=该调用点删除 (无 config 键, 勿照 config_key 判停)。",
     ),
 ]
 

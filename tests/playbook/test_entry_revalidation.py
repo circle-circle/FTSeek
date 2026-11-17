@@ -46,7 +46,11 @@ class Config(dict):
                          max_new_positions_per_cycle=5, max_open_positions=5,
                          max_daily_positions=16,
                          daily_notional_cap_pct=0.8, risk_base_capital=100000.0,
-                         max_position_pct=0.06, risk_pct=0.5)
+                         max_position_pct=0.06, risk_pct=0.5,
+                         # C11 单源 fail-close 后, 沙箱配置必须模拟生产 YAML 的键在位
+                         # 状态 (s1_arm_enabled=false): 缺键会被臂闸按配置故障降级拒单,
+                         # 那不是本夹具要测的行为。
+                         s1_arm_enabled=False)
         self.horizon = {"vol_buckets": copy.deepcopy(BUCKETS), "rr_ratio": 1.5,
                         "buy_fixed_stop_loss_pct": 2.5,
                         "sell_fixed_stop_loss_pct": 2.0}
@@ -144,8 +148,24 @@ def env(tmp_path, monkeypatch):
     def isolated_connect(database, *args, **kwargs):
         # Explicit legacy-path routing precedes the hard allowlist: the original
         # production path is never passed to SQLite, even for a read-only query.
-        if os.fspath(database) == PRODUCTION_BUDGET_DB:
-            redirected_budget_calls.append(os.fspath(database))
+        name = os.fspath(database)
+        # file: URI 与裸路径同判 (对齐 offline_chain_driver.connect_guarded):
+        # 只读影子 (s1_arm._connect) 用 uri=True 连 tmp 库, 原实现把整条 URI
+        # 当相对路径判 in_tmp ⇒ 误拦合法沙箱内读取。隔离强度不降: 生产路径
+        # 照旧改道留痕, tmp 外一律拒。
+        if name.startswith("file:"):
+            target, separator, query = name[5:].partition("?")
+            if target == PRODUCTION_BUDGET_DB:
+                redirected_budget_calls.append(target)
+                name = f"file:{budget_db}{separator}{query}"
+                db_calls.append(str(budget_db))
+                return raw_connect(name, *args, **kwargs)
+            if not in_tmp(target):
+                return forbidden(f"sqlite {name}")()
+            db_calls.append(target)
+            return raw_connect(name, *args, **kwargs)
+        if name == PRODUCTION_BUDGET_DB:
+            redirected_budget_calls.append(name)
             database = budget_db
         if os.fspath(database) != ":memory:" and not in_tmp(database):
             return forbidden(f"sqlite {database}")()

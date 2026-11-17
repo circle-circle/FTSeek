@@ -443,7 +443,20 @@ def run_playbook_auto_execute(
         _cycle_new_count = 0
         # S1 臂闸 (判据 B23 / 用户 2026-11-15 裁): enabled=false (默认) ⇒ 全部字段空转,
         # 下面每处引用都以 if _s1_st["enabled"] 包裹, 零行为变更。回滚 = 该键改 false。
-        _s1_st = _s1_gate.cycle_state(today, _today_opened_count)
+        # target_env 显式传 "sim" (P8): 本轮是 sim 臂流 (同函数 :473 get_positions 与
+        # :596 get_trade_records_db_for_arm 均已写死 sim)。臂闸据此解析账本, 不再回落
+        # 模块级常量。日笔数自臂账本锚定 (P13 重设计): 不再传全流向计数器, 多头不吃
+        # 空头额度。签署日若要让 LIVE 镜像也受真钱限额约束, 必须另建一份
+        # target_env="real" 的 cycle_state 并用它闸镜像 —— 见 RFC-212 §5 P8。
+        _s1_st = _s1_gate.cycle_state(today, "sim")
+        # 真钱侧停止条件 record-only 影子 (DEB-20261116 C5/C6, RFC-212 §5.6): 每轮读
+        # real 账本落一行 data/shadow/s1_real_kill_shadow.jsonl —— 不拦截/不 halt/不写
+        # 交易库, 独立于 s1_arm_enabled。执行接线 (kill→halt 持久化+镜像闸) 归签署日批。
+        # 路径从 module_file 派生 (同 sizing_delta 范式): hermetic 沙箱改写 __file__
+        # 后自动落 tmp, 不触 tests/playbook 写守卫。
+        _s1_gate.record_real_kill_shadow(
+            today,
+            shadow_path=Path(module_file).resolve().parents[2] / "data" / "shadow" / "s1_real_kill_shadow.jsonl")
 
         # 按来源优先级 + confidence 降序 — 购买力优先分配给高优先来源的最强信号.
         # 漏斗最后一层: 多层过滤后剩N只, BP只够开2-3笔 → 先执行优先级最高的.
@@ -1629,18 +1642,23 @@ def run_playbook_auto_execute(
             #    enabled=false (默认) ⇒ 本块空转。缩股结果同步写回 execute_instruction 真正
             #    读取的位置 (_reprice_params['position_size'] 或 inst['position_size'])。
             if _s1_st.get("enabled"):
-                _s1_st["today_count"] = _today_opened_count
                 _s1_ok, _s1_why = _s1_gate.check_entry(
                     _s1_st, direction=inst.get("direction"), entry_minute=_now_min)
-                _s1_qty = _s1_gate.cap_size(_s1_st, int(_size or 0), float(_entry or 0)) if _s1_ok else 0
+                # direction 必传 (P10): 非臂方向已被 check_entry 放行, 若不传方向这里
+                # 仍会按 $4,200 单笔帽缩股 ⇒ 多头仓位被空头臂的帽砍掉。
+                _s1_qty = _s1_gate.cap_size(
+                    _s1_st, int(_size or 0), float(_entry or 0),
+                    direction=inst.get("direction")) if _s1_ok else 0
                 if _s1_ok and _s1_qty <= 0:
-                    _s1_ok, _s1_why = False, "s1_arm_cap_zero_room"
+                    _s1_ok, _s1_why = False, (
+                        "s1_arm_no_price" if _entry <= 0 else "s1_arm_cap_zero_room")
                 if not _s1_ok:
                     logger.info(f"[playbook] {inst['symbol']} 跳过 — S1臂闸 {_s1_why}")
                     try:
                         db.mark_instruction_guardrail_skip(inst["id"], f"s1_arm:{_s1_why}")
                     except Exception as _s1_e:
-                        logger.warning(f"[playbook] S1臂闸落痕失败 (仍跳过) {_s1_e}")
+                        logger.warning(f"[playbook] S1臂闸落痕失败 (仍跳过) {_s1_e}",
+                                       exc_info=True)
                     _emit_exec_gate_audit(inst, action="skipped_s1_arm", entry=_entry,
                                           size=_size, notional=_new_notional,
                                           extra={"gate": "s1_arm", "reason": _s1_why})
@@ -1649,14 +1667,20 @@ def run_playbook_auto_execute(
                 if _s1_qty != _size:
                     logger.info(
                         f"[playbook] {inst['symbol']} S1臂帽缩股 {_size}→{_s1_qty} "
-                        f"(单笔≤${_s1_gate.cfg('s1_arm_single_notional_cap_usd'):.0f}, "
+                        f"(单笔≤${_s1_st.get('single_cap_usd', 0):.0f}, "
                         f"敞口余量见 s1_arm)")
                     _size = _s1_qty
                     _new_notional = _entry * _size
-                    if _reprice_params and _reprice_params.get("position_size"):
-                        _reprice_params["position_size"] = _size
-                    else:
-                        inst["position_size"] = _size
+                    # X2 (DEB-20261116 §10 第 4 步): 缩股一律物化到 custom_params。
+                    # 原 else 分支写 inst 内存 dict, 但 execute_instruction 内部
+                    # _find_instruction_by_id 重查库 ⇒ 写回被丢, 订单按库中原股数
+                    # 提交 (fail-open), 轮内敞口却按缩小后名义记账 (账实不符)。
+                    # _reprice_params 缺省时新建部分 dict: execute_instruction 逐键
+                    # 回退 (DEB-20260903 #90), entry/SL/TP 不受影响; 下游消费点均为
+                    # (x or {}).get(key) or inst 回退模式, 已逐一核过。
+                    if _reprice_params is None:
+                        _reprice_params = {}
+                    _reprice_params["position_size"] = _size
             if _bp_limit > 0 and (_max_deploy + _new_notional) > _bp_limit:
                 logger.info(
                     f"[playbook] {inst['symbol']} 跳过 — 购买力上限 "
@@ -1908,8 +1932,12 @@ def run_playbook_auto_execute(
                     _today_opened_notional += _new_notional
                     _today_opened_count += 1
                     _open_positions_count += 1
-                    # S1 臂闸: 已成交笔即时计入 (敞口/日笔数在同一轮内生效, 不等下一轮重算)
-                    _s1_st["today_count"] = _today_opened_count
+                    # S1 臂闸 (P13 重设计): 日笔数轮内唯一增量 —— 只计臂方向成交,
+                    # 兜簿记时滞 (锚点每轮自臂账本重取); 多头不再吃空头额度。
+                    # 方向取臂态载值 (C11: cycle_state 已读配置, 此处不再直接读 cfg)。
+                    # 敞口累加维持全方向 (已裁保守面, 与敞口帽谓词同口径)。
+                    if _s1_st.get("enabled") and str(inst.get("direction") or "").upper() == str(_s1_st.get("allowed_direction") or "").upper():
+                        _s1_st["today_count"] = (_s1_st.get("today_count") or 0) + 1
                     _s1_st["exposure"] = (_s1_st.get("exposure") or 0.0) + (_new_notional or 0.0)
                     if _mom_policy is not None:
                         _mom_open_count += 1
@@ -1986,13 +2014,15 @@ def run_playbook_auto_execute(
                             )
                             logger.info(
                                 f"[playbook] LIVE mirror rejected before write: {inst['symbol']} "
+                                f"arm_mode={live_gate.get('arm_mode', '')} "
                                 f"reasons={[reason.get('code') for reason in live_gate.get('reasons', [])]}"
                             )
                             try:
                                 from app.push import get_push_hub
                                 from app.push.message import Level
                                 get_push_hub().push_text(
-                                    f"⚠️ [LIVE C-lite] {inst['symbol']} 未镜像: {reason_messages}",
+                                    f"⚠️ [LIVE C-lite] {inst['symbol']} 未镜像 "
+                                    f"(arm_mode={live_gate.get('arm_mode', '')}): {reason_messages}",
                                     level=Level.HIGH,
                                 )
                             except Exception as push_error:

@@ -541,3 +541,21 @@ def test_live_stop_receipt_updates_real_position_columns(monkeypatch, tmp_path):
         service._record_live_stop_receipt(
             "US.MU", "ENTRY-1", "STOP-2", 98.0, 1
         )
+
+
+# ── DEB-20261116 C10: 缺账本文件 = 判不出 ⇒ None ⇒ fail-closed ──────────────
+def test_missing_live_ledger_returns_none_not_zero(tmp_path):
+    """原实现缺文件返 0 (fail-open), 与 docstring 'return None to force a
+    fail-closed gate' 契约相反。对齐后: 缺文件 ⇒ None ⇒ 门拒。"""
+    from app.playbook.live_arm_gate import count_open_live_positions
+    assert count_open_live_positions(tmp_path / "nonexistent.db") is None
+
+
+def test_gate_rejects_when_open_count_unavailable(tmp_path):
+    from app.playbook.live_arm_gate import count_open_live_positions
+    kwargs = _gate_kwargs()
+    kwargs["allow_real_trading"] = False   # 避免 waiver 依赖, 只验计数 fail-close
+    kwargs["open_live_positions"] = count_open_live_positions(tmp_path / "nonexistent.db")
+    decision = evaluate_live_arm_gate(_ARM_CONFIG, **kwargs)
+    assert decision["allowed"] is False
+    assert "LIVE_OPEN_COUNT_UNAVAILABLE" in {r["code"] for r in decision["reasons"]}

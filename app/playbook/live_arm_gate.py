@@ -33,7 +33,9 @@ def count_open_live_positions(live_ledger: Path) -> Optional[int]:
     try:
         ledger_path = Path(live_ledger)
         if not ledger_path.exists():
-            return 0
+            # 缺文件 = 判不出 (DEB-20261116 C10): 原返 0 是 fail-open, 与 docstring
+            # "return None to force a fail-closed gate" 契约相反 ⇒ 对齐返 None。
+            return None
         connection = sqlite3.connect(f"file:{ledger_path.resolve()}?mode=ro", uri=True, timeout=3)
         try:
             row = connection.execute(

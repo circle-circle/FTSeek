@@ -704,3 +704,43 @@ def test_unresolved_live_alert_only_on_halt_transition_or_reason_change(compensa
     notify('real', 'US.COMP', 'ENTRY-17', 'query_failed')
     assert case.halt.call_count == 3
     assert case.push_hub.push_text.call_count == 3
+
+
+def test_dual_arm_mark_propagates_to_booking_metadata(compensation_case):
+    """C13/C14 后半 (DEB-20261116): 镜像指令的 dual_arm 标记必须传播到
+    trade_records 簿记层 metadata —— 真钱成交事后可按臂归因。"""
+    import json
+    case = compensation_case
+    case.failure = None
+    mark = {"target_env": "real", "source_instruction_id": 99,
+            "decision_id": "DA-DUAL", "mode": "strategy_probe", "s1_arm_enabled": True}
+    case.conn.execute(
+        "UPDATE playbook_instructions SET metadata_json=?, position_size=49 WHERE id=?",
+        (json.dumps({"dual_arm": mark}), case.iid),
+    )
+    case.conn.commit()
+    case.broker.submit_order.return_value["filled_qty"] = 49
+
+    response = case.service.execute_instruction(case.iid, acknowledge_risk=True)
+
+    assert response["success"] is True, response
+    assert len(case.saved) == 1
+    metadata = json.loads(case.saved[0]["metadata_json"])
+    assert metadata["dual_arm"] == mark
+
+
+def test_sim_booking_without_dual_arm_mark_is_null(compensation_case):
+    """sim 指令无镜像标记 ⇒ dual_arm=None, 不得伪造归因。"""
+    import json
+    case = compensation_case
+    case.failure = None
+    case.conn.execute(
+        "UPDATE playbook_instructions SET position_size=49 WHERE id=?", (case.iid,))
+    case.conn.commit()
+    case.broker.submit_order.return_value["filled_qty"] = 49
+
+    response = case.service.execute_instruction(case.iid, acknowledge_risk=True)
+
+    assert response["success"] is True, response
+    metadata = json.loads(case.saved[0]["metadata_json"])
+    assert metadata["dual_arm"] is None

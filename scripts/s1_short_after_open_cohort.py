@@ -33,6 +33,10 @@ import sqlite3
 REPO = Path(__file__).resolve().parents[1]
 DB_PATH = REPO / "data" / "ftseek_us.db"
 OUT_PATH = REPO / "data" / "s1_cohort" / "latest.json"
+# --db live 写另一份产物: 注册表 s1_short_after_open 的 data_path 锚定 latest.json
+# (count_mode=json_key:forward_n), 若让 live 读数覆盖它, 影子看板会把真钱 cohort 与
+# sim 历史参照混成一格。签署日要让看板跟真钱 cohort, 须显式改 data_path (RFC-212 §5 P6)。
+OUT_PATH_LIVE = REPO / "data" / "s1_cohort" / "latest_live.json"
 
 ET = ZoneInfo("America/New_York")
 FORWARD_START = "2026-11-16"   # 判据落档日 (2026-11-15) 之后的首个交易日; 改它 = 重新裁决
@@ -62,6 +66,17 @@ def _entry_minute(ts: str):
         dt = dt.replace(tzinfo=ET)
     et = dt.astimezone(ET)
     return et.hour * 60 + et.minute
+
+
+def _resolve_db(arm: str) -> Path:
+    """按臂别解析账本, 与 `app/playbook/s1_arm.py::_ledger` 同一 SSOT (防两处漂移)。
+
+    P6/P8: 原 DB_PATH 写死 sim 研究库 ⇒ 签署后前瞻 cohort 读空 (真钱空单落
+    `ftseek_us_live.db`)。默认 arm='sim' 与落档以来同库, 数值不变。
+    """
+    from app.core.paths import get_trade_records_db_for_arm
+
+    return Path(get_trade_records_db_for_arm(arm))
 
 
 def load_rows(db_path: Path = DB_PATH):
@@ -167,14 +182,30 @@ def evaluate(rows, forward_start: str = FORWARD_START):
 
 def main(argv=None):
     argv = argv if argv is not None else sys.argv[1:]
-    res = evaluate(load_rows())
-    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    OUT_PATH.write_text(json.dumps(res, ensure_ascii=False, indent=2), encoding="utf-8")
+    arm = "sim"
+    if "--db" in argv:
+        i = argv.index("--db")
+        if i + 1 >= len(argv):
+            print("--db 需要一个值 (sim|live)", file=sys.stderr)
+            return 2
+        arm = argv[i + 1].strip().lower()
+    if arm not in ("sim", "live", "real"):
+        print("--db 只接受 sim|live (收到 %r)" % arm, file=sys.stderr)
+        return 2
+    db_path = _resolve_db(arm)
+    out_path = OUT_PATH if arm == "sim" else OUT_PATH_LIVE
+    res = evaluate(load_rows(db_path))
+    # 产物自带账本出处: 否则 sim 历史参照与真钱前瞻 cohort 在 JSON 里不可区分
+    res["arm"] = arm
+    res["ledger"] = str(db_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(res, ensure_ascii=False, indent=2), encoding="utf-8")
     if "--json" in argv:
         print(json.dumps(res, ensure_ascii=False, indent=2))
         return 0
     f, h = res["forward"], res["historical_reference"]
-    print("S1 臂前瞻判据 (B23) — 前瞻起点 %s, 样本门 n>=%d" % (res["forward_start"], res["min_n"]))
+    print("S1 臂前瞻判据 (B23) — 前瞻起点 %s, 样本门 n>=%d | 账本 arm=%s %s"
+          % (res["forward_start"], res["min_n"], arm, db_path))
     print("  前瞻: n=%d 净 $%.2f  毛 %s / 费 %s / 净 %s bps"
           % (f["n"], f["net"], f["gross_bps"], f["fee_bps"], f["net_bps"]))
     print("  历史参照(不入判据): n=%d 净 $%.2f 毛 %s / 费 %s / 净 %s bps"
@@ -184,7 +215,7 @@ def main(argv=None):
         print("    - %s" % r)
     for s in res["stop_conditions_triggered"]:
         print("  ⚠️ %s" % s)
-    print("  产物: %s" % OUT_PATH)
+    print("  产物: %s" % out_path)
     return 0
 
 

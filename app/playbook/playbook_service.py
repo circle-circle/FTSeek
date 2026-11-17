@@ -283,6 +283,49 @@ def _extract_atr_with_basis(inst: Dict[str, Any]) -> tuple:
 
 
 
+def compute_entry_chase_bps(fill_price, anchor_price, direction) -> Optional[float]:
+    """P11 入场追价 bps (RFC-212 §5.5 / DEB-20261116, record-only 采集, S3 未接线)。
+
+    口径 (预注册, 改口径=重新裁决): 成交价 vs **盘前计划锚** 的偏离, 单位 bps
+    (绝对基点, 10000 制, 非百分数), **正=不利追价** (LONG 成交更高 / SHORT 成交更低),
+    符号约定与 exit_slippage_bps / execution.slippage_bps 逐字一致。
+    与 execution.slippage_bps 的区别: 后者锚=下单时 arrival (微观结构滑点),
+    本值锚=决策时计划 (追价成本, 含 reprice 一步) —— 两段合成 B23 S3。
+    锚/价缺失或 ≤0 ⇒ None (判不出不写假值)。
+    """
+    try:
+        fill = float(fill_price)
+        anchor = float(anchor_price)
+    except (TypeError, ValueError):
+        return None
+    if fill <= 0 or anchor <= 0:
+        return None
+    raw = (fill - anchor) / anchor * 10000.0
+    return round(-raw if str(direction or "").upper() == "SHORT" else raw, 2)
+
+
+def extract_dual_arm_mark(inst: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """C13/C14 后半 (DEB-20261116): 提取指令行 dual_arm 标记, 供 trade_records 簿记层传播。
+
+    镜像标记写在指令 metadata_json (save_instruction 读 metadata 键落库);
+    行适配器 _row_to_dict 不解析 metadata_json ⇒ 此处兼容 str/dict 两形态,
+    metadata 键优先。缺失/损坏/非 dict ⇒ None (sim 行无标记, 零变化)。
+    此前标记仅指令层、trade_records 无 ⇒ 真钱成交无法按臂归因 (PLAYBOOK_LIVE
+    历史 3 行实读无 dual_arm)。
+    """
+    md = inst.get("metadata")
+    if md is None:
+        md = inst.get("metadata_json")
+    if isinstance(md, str):
+        try:
+            md = json.loads(md or "{}")
+        except (TypeError, ValueError):
+            return None
+    if isinstance(md, dict) and isinstance(md.get("dual_arm"), dict):
+        return md["dual_arm"]
+    return None
+
+
 def get_playbook_service():
     """获取 PlaybookService 单例"""
     global _service_instance
@@ -1541,6 +1584,7 @@ class PlaybookService:
                 inst, instruction_id, symbol, direction, entry_price, stop_loss,
                 take_profit, position_size, mos_direction, _matched_decision_id,
                 target_env=_explicit_target, archetype_route=_route_exec,
+                reprice_from=_cp.get("reprice_from"),
             ), _explicit_target)
 
         _auto_account = _os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
@@ -1560,6 +1604,7 @@ class PlaybookService:
             inst, instruction_id, symbol, direction, entry_price, stop_loss,
             take_profit, position_size, mos_direction, _matched_decision_id,
             target_env="sim", archetype_route=_route_exec,
+            reprice_from=_cp.get("reprice_from"),
         ), "sim")
 
     # ── R-1 (2026-08-23 DEB-20260823): per-symbol 下单互斥 ──
@@ -1582,7 +1627,7 @@ class PlaybookService:
     def _execute_via_dual_broker(
         self, inst, instruction_id, symbol, direction, entry_price, stop_loss,
         take_profit, position_size, mos_direction, matched_decision_id, target_env,
-        archetype_route=None,
+        archetype_route=None, reprice_from=None,
     ):
         """per-symbol 互斥包装层 (R-1). 真实逻辑在 _execute_via_dual_broker_inner.
 
@@ -1620,7 +1665,7 @@ class PlaybookService:
             return self._execute_via_dual_broker_inner(
                 inst, instruction_id, symbol, direction, entry_price, stop_loss,
                 take_profit, position_size, mos_direction, matched_decision_id, target_env,
-                archetype_route=archetype_route,
+                archetype_route=archetype_route, reprice_from=reprice_from,
             )
         finally:
             _release_cross_process_symbol_lock(_xproc)
@@ -1629,7 +1674,7 @@ class PlaybookService:
     def _execute_via_dual_broker_inner(
         self, inst, instruction_id, symbol, direction, entry_price, stop_loss,
         take_profit, position_size, mos_direction, matched_decision_id, target_env,
-        archetype_route=None,
+        archetype_route=None, reprice_from=None,
     ):
         """sim/live 共用执行路径 (Phase 2 无缝统一, 2026-06-24).
 
@@ -2171,6 +2216,20 @@ class PlaybookService:
             "entry_price_source": _entry_price_source,
         }
 
+        # P11 入场追价 bps 采集落库 (RFC-212 §5.5, record-only, S3 未接线):
+        # 锚 = 盘前计划入场价。指令行 entry_price 会被 reprice tracking 改写
+        # (_TRACKING_FIELDS 含 entry_price), 故优先取 reprice_from (execute_instruction
+        # 自 custom_params 穿透, = 改写前原值); 非 reprice 路径回落 inst 原值。
+        _chase_anchor_src = "inst_entry_price"
+        _chase_anchor = inst.get("entry_price")
+        if reprice_from is not None:
+            _chase_anchor = reprice_from
+            _chase_anchor_src = "reprice_from"
+        _entry_chase_bps = compute_entry_chase_bps(_fill, _chase_anchor, mos_direction)
+
+        # C13/C14 后半: dual_arm 标记传播到簿记层 (sim 行无标记 ⇒ None, 零变化)。
+        _dual_arm_mark = extract_dual_arm_mark(inst)
+
         # 2026-07-22 只读探针: 开盘 gap 采集 (不拦截, 纯记录). 复用上面已抓的 _arr_ctx, 零额外 API.
         #   动机: 无法凭感觉给 gap 拦截阈值 — 先积累 gap↔outcome 数据 (join 本单最终 pnl/mfe/mae),
         #   2周后用相关性裁决"高开追单是否真更易亏 / 拐点在几%", 再决定是否加门. fail-open 记 None.
@@ -2344,6 +2403,13 @@ class PlaybookService:
                     "data_quality": _parse_json_field(inst.get("data_quality_json"), {}),
                     # 滑点数据闭环 (P0): arrival price / 真实成交价 / 滑点 bps
                     "execution": _exec_meta,
+                    # P11 (RFC-212 §5.5): 入场追价 bps (record-only, S3 未接线)。
+                    # 单位 bps(10000 制), 正=不利追价; 锚=盘前计划 (reprice_from 优先)。
+                    "entry_chase_bps": _entry_chase_bps,
+                    "entry_chase_anchor_price": float(_chase_anchor) if _chase_anchor else None,
+                    "entry_chase_anchor_source": _chase_anchor_src,
+                    # C13/C14 后半: 镜像臂归因传播 (sim=None; LIVE 镜像单带 mode/源指令 id)
+                    "dual_arm": _dual_arm_mark,
                     # 2026-07-22 只读探针: 开盘 gap (record-only, 供 gap↔outcome 裁决)
                     "entry_gap": _gap_meta,
                     # 2026-07-28 (首夜复盘 #2): 归因块 — metadata 内自证信号源/分桶,
@@ -2365,12 +2431,8 @@ class PlaybookService:
                     "futu_order_id": _futu_id,
                 }),
             }
-            _outbox_enabled = False
-            try:
-                from app.playbook.config import get_playbook_config as _gpc_ob
-                _outbox_enabled = bool(_gpc_ob().get("entry_booking_outbox_enabled", False))
-            except Exception:
-                _outbox_enabled = False
+            from app.playbook.config import entry_booking_outbox_enabled as _outbox_switch
+            _outbox_enabled = _outbox_switch(target_env)
             if _outbox_enabled:
                 try:
                     self.db.persist_booking_intent(
@@ -2501,11 +2563,7 @@ class PlaybookService:
                 f"futu_id={_futu_id} err={_bk_err} — 需 position_sync/人工补账"
             )
 
-        if _outbox_enabled and _bk_failed is None:
-            try:
-                self.db.consume_booking_intent(instruction_id, _attempt)
-            except Exception:
-                pass
+        # mark_execution_booked 已在同一事务内消费 Outbox 意图；这里不另开提交点。
 
         _env_desc = "实盘真实成交" if _is_live else "模拟盘真实成交"
         logger.info(f"Playbook {_mode_label} executed: {symbol} {direction} @ ${_fill} ({_env_desc}, futu_id={_futu_id})")

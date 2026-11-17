@@ -492,11 +492,26 @@ def _mirror_instruction_to_live(
                 metadata = {}
         if not isinstance(metadata, dict):
             metadata = {}
+        # C13/C14 (DEB-20261116 §10 第 7 步): 臂归因单源 —— mode 读 live_manual_arm
+        # (原硬编码 engineering_probe ⇒ 签署日翻 strategy_probe 后标记仍是旧值,
+        # 真钱单事后无法按臂归因); 附臂闸状态快照, 事后可辨"镜像时限额是否生效"。
+        # 审计元数据读失败只降级标签, 不影响镜像写入。
+        try:
+            from app.core.config_container import get_config
+            _arm_mode = str(get_config().get_dotted("playbook.live_manual_arm.mode", "") or "")
+        except Exception:
+            _arm_mode = ""
+        try:
+            from app.playbook import s1_arm as _s1
+            _s1_on = bool(_s1.enabled())
+        except Exception:
+            _s1_on = None
         metadata["dual_arm"] = {
             "target_env": "real",
             "source_instruction_id": instruction.get("id"),
             "decision_id": instruction.get("decision_id"),
-            "mode": "engineering_probe",
+            "mode": _arm_mode or "config_unreadable",
+            "s1_arm_enabled": _s1_on,
         }
         mirror["metadata"] = metadata
         mirror["position_size"] = 1
@@ -525,7 +540,7 @@ def _live_mirror_gate_decision(
     )
 
     arm = get_config().get_dotted("playbook.live_manual_arm", {}) or {}
-    return evaluate_live_arm_gate(
+    decision = evaluate_live_arm_gate(
         arm,
         allow_real_trading=(
             os.getenv("ALLOW_REAL_TRADING", "false").strip().lower() == "true"
@@ -539,6 +554,9 @@ def _live_mirror_gate_decision(
         ),
         halted=bool(read_live_arm_halt().get("halted")),
     )
+    # C14: 拒绝归因上下文 —— 运维可辨"哪个臂模式的限额拒了单" (附加键, 旧消费方不受影响)
+    decision["arm_mode"] = str(arm.get("mode") or "")
+    return decision
 
 
 def _mirror_instruction_to_live_if_allowed(

@@ -182,3 +182,74 @@ def test_exit_monitor_scans_and_aggregates_both_lanes_separately():
     assert 'for _arm_target in ("sim", "real")' in source
     assert "rows_by_arm" in source
     assert "for _bs_arm_path, _bs_arm_rows in rows_by_arm.items()" in source
+
+
+# ── C13/C14 镜像臂归因 (DEB-20261116 §10 第 7 步) ─────────────────────────────
+def _capture_mirror(monkeypatch, arm_mode):
+    """直接驱动 _mirror_instruction_to_live, 捕获写入行; mode 由配置注入。"""
+    from app.playbook.pipeline_parts import risk_gates
+    captured = []
+    live_db = SimpleNamespace(save_instruction=lambda m: captured.append(m) or 42)
+    if arm_mode == "RAISE":
+        def _boom():
+            raise RuntimeError("config unreadable")
+        monkeypatch.setattr("app.core.config_container.get_config", _boom)
+    else:
+        monkeypatch.setattr(
+            "app.core.config_container.get_config",
+            lambda: SimpleNamespace(
+                get_dotted=lambda key, default=None: arm_mode if key == "playbook.live_manual_arm.mode" else default),
+        )
+    inst = {"id": 7, "symbol": "US.TEST", "decision_id": "DA-TEST", "metadata": {}}
+    mirror_id = risk_gates._mirror_instruction_to_live(inst, live_db)
+    assert mirror_id == 42 and len(captured) == 1
+    return captured[0]["metadata"]["dual_arm"]
+
+
+def test_mirror_mode_follows_config_not_hardcoded(monkeypatch):
+    """C13: 签署日翻 strategy_probe 后镜像标记必须跟随, 不得仍是 engineering_probe。"""
+    dual = _capture_mirror(monkeypatch, "strategy_probe")
+    assert dual["mode"] == "strategy_probe"
+    assert dual["target_env"] == "real"
+    assert dual["source_instruction_id"] == 7
+    assert "s1_arm_enabled" in dual          # C14 归因快照: 镜像时臂闸是否生效
+
+
+def test_mirror_mode_engineering_probe_unchanged(monkeypatch):
+    """现行配置下行为逐字不变 (mode=engineering_probe)。"""
+    dual = _capture_mirror(monkeypatch, "engineering_probe")
+    assert dual["mode"] == "engineering_probe"
+
+
+def test_mirror_mode_config_unreadable_honest_label(monkeypatch):
+    """配置读失败 ⇒ 诚实标签 config_unreadable, 镜像照写 (审计元数据不阻断交易)。"""
+    dual = _capture_mirror(monkeypatch, "RAISE")
+    assert dual["mode"] == "config_unreadable"
+
+
+def test_mirror_no_hardcoded_mode_source_contract():
+    from app.playbook.pipeline_parts import risk_gates
+    src = inspect.getsource(risk_gates._mirror_instruction_to_live)
+    assert '"mode": "engineering_probe"' not in src
+    assert "playbook.live_manual_arm.mode" in src
+
+
+def test_gate_decision_carries_arm_mode_for_rejection_attribution(monkeypatch):
+    """C14: 门决策附 arm_mode ⇒ 拒绝日志/推送可辨哪个臂模式的限额拒了单。"""
+    from app.playbook.pipeline_parts import risk_gates
+    monkeypatch.setattr(
+        "app.core.config_container.get_config",
+        lambda: SimpleNamespace(get_dotted=lambda key, default=None: dict(_ARM_CONFIG) if key == "playbook.live_manual_arm" else default),
+    )
+    monkeypatch.setattr(
+        "app.core.scheduler_triggers.get_market_phase",
+        lambda: SimpleNamespace(value="TRADING"),
+    )
+    monkeypatch.setattr(
+        "app.playbook.live_arm_gate.count_open_live_positions",
+        lambda ledger: 0,
+    )
+    live_db = SimpleNamespace(db_name="ftseek_us_live")
+    decision = risk_gates._live_mirror_gate_decision(live_db, {"direction": "SELL_SHORT"})
+    assert decision["arm_mode"] == "engineering_probe"
+    assert decision["allowed"] is False      # SHORT 被方向锁拒 (现行语义不变)

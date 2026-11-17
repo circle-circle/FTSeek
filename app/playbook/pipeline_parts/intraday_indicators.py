@@ -401,8 +401,12 @@ def _intraday_vol_curve_p50(
                 # 尾部窗口 (days + 3 留缓冲: 文件若已含当日 bar, 仍需 ≥ days 个历史日)
                 bars = _read_bars_window(path, days + 3)
             except Exception as _tail_err:
-                logger.debug(
-                    "[playbook] 量能曲线尾部读取回落全量 %s: %s", symbol, _tail_err
+                # W4 棘轮处置 (2026-11-16): 原 logger.debug 把"快读断裂→回落全量解析"藏在
+                # LOG_LEVEL=INFO 之下。该曲线是盘中量能门的分母 (交易判定输入), 回落虽不错但
+                # 会变慢, 必须可见且带栈。cache 按 (symbol, day) 命中 ⇒ 每标的每日至多一条。
+                logger.warning(
+                    "[playbook] 量能曲线尾部读取回落全量 %s: %s", symbol, _tail_err,
+                    exc_info=True,
                 )
                 source.seek(0)
                 bars = json.load(source)
