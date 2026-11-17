@@ -168,14 +168,44 @@ def _on_gc(phase: str, info: dict) -> None:
         logger.warning("[GC] 停顿回调异常 (忽略; GC 停顿取证失灵): %s", _gc_cb_err, exc_info=True)
 
 
+def _build_stall_message(elapsed: float, interval_s: float,
+                         d_collections: List[int], stack_snapshot: list) -> str:
+    """停摆 WARNING 文案 (纯函数, 便于契约测试)。
+
+    stack_snapshot = 采样瞬间 gc.callbacks 配对栈 (_stack) 的快照。非空 ⇒ 有 GC 正在进行:
+    get_stats() 只计**已完成**回收, 在途 GC 不计入增量, 此时「gen 全 0 ⇒ 非 GC」会说反
+    (2026-11-16 23:31 实证: 探针报 gen+0/非 GC, 260ms 后 GC WARNING 实证 20972ms gen1)。
+    故在途情形直接归因 GC, 空栈才保留原「非 GC」提示。_stack 存 perf_counter, 在途时长
+    亦用 perf_counter 算 (探针主体用 monotonic, 两钟不混)。
+    """
+    base = (
+        "[冻结取证] 采样间隔 %.1fs (预期 %.0fs) — 进程整体停摆约 %.0fs; "
+        "期间 GC 次数 gen0=+%d gen1=+%d gen2=+%d, 窗口最长停顿 %.0fms, RSS=%.0fMB; "
+        % (elapsed, interval_s, max(0.0, elapsed - interval_s),
+           d_collections[0] if len(d_collections) > 0 else -1,
+           d_collections[1] if len(d_collections) > 1 else -1,
+           d_collections[2] if len(d_collections) > 2 else -1,
+           _window_max_ms, _rss_mb() or -1)
+    )
+    if stack_snapshot:
+        gen, start_t = stack_snapshot[-1]
+        in_flight_ms = (time.perf_counter() - start_t) * 1000.0
+        return base + (
+            "停摆期间有 GC 正在进行 (gen=%d, 已 %.0fms) — get_stats() 只计已完成回收, "
+            "在途 GC 不计入上面增量, 本次停摆归因 GC (全堆扫描/缺页)" % (gen, in_flight_ms)
+        )
+    return base + "若 gen 全为 0 则停摆非 GC 所致 (查 C 扩展/长解析/死锁)"
+
+
 def _stall_probe_loop(interval_s: float, gap_warn_s: float) -> None:
     """整体停摆探针: 自己每 interval_s 唤醒一次, 若实际间隔远大于预期 ⇒ 进程被整体卡住。
 
     为什么需要它: 11-02 冻结时只有**单点**证据 (py-spy + 一次 SIGUSR1 快照), 无法回答
     "到底是谁独占 GIL 三分钟"。本探针在恢复后立刻能给出 (停顿秒数 + 期间各代 GC 次数增量):
       - 期间 gen2 次数 +N (N>0) ⇒ GC 风暴成立, 归因闭合;
-      - 期间 GC 次数 +0        ⇒ 不是 GC, 去查 C 扩展/正则/protobuf 长解析;
-    两者都是可直接落到代码的结论, 不再是猜测。
+      - 期间 GC 次数 +0        ⇒ 不是 GC, 去查 C 扩展/正则/protobuf 长解析
+        (例外: 采样时若有在途 GC, get_stats 尚未计入增量, 由 _build_stall_message 按 _stack 判别);
+      两者都是可直接落到代码的结论, 不再是猜测。
     """
     last = time.monotonic()
     last_stats = gc.get_stats()
@@ -191,14 +221,7 @@ def _stall_probe_loop(interval_s: float, gap_warn_s: float) -> None:
             last, last_stats = now, stats
             if gap_warn_s > 0 and elapsed >= gap_warn_s:
                 logger.warning(
-                    "[冻结取证] 采样间隔 %.1fs (预期 %.0fs) — 进程整体停摆约 %.0fs; "
-                    "期间 GC 次数 gen0=+%d gen1=+%d gen2=+%d, 窗口最长停顿 %.0fms, RSS=%.0fMB; "
-                    "若 gen 全为 0 则停摆非 GC 所致 (查 C 扩展/长解析/死锁)",
-                    elapsed, interval_s, max(0.0, elapsed - interval_s),
-                    d_collections[0] if len(d_collections) > 0 else -1,
-                    d_collections[1] if len(d_collections) > 1 else -1,
-                    d_collections[2] if len(d_collections) > 2 else -1,
-                    _window_max_ms, _rss_mb() or -1,
+                    _build_stall_message(elapsed, interval_s, d_collections, list(_stack))
                 )
         except Exception as exc:  # 观测失败不影响交易
             logger.warning("[冻结取证] 探针异常 (忽略; 停摆探针失明): %s", exc, exc_info=True)

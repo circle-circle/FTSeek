@@ -22,6 +22,7 @@ FTSeek-US 用于处理技术/策略分歧的标准决策流程。
 
 | 编号 | 议题 | 状态 | 创建时间 | 决策 |
 |---|---|---|---|---|
+| [DEB-20261117-gc-guard-completion-swap-pause](DEB-20261117-gc-guard-completion-swap-pause.md) | GC 护栏完成度诊断: 不弃用 + gen1/swap 长停顿复发 + 探针归因反例 + trim 门休眠 | **待决策** (诊断完成, P0 已落档; P1–P4 待裁) | 2026-11-17 | gen2 风暴面 PASS (§6.4 结算); 残余长停顿=宿主内存竞争 (Hermes/qodercli/codex ~1.3GB on 3.5GB, swap 752MB), 非 GC 调参; 探针在途 GC 归因反例实证; P1 探针读_stack / P2 reporter+VmSwap / P3 trim 门 env 校准 / P4 运维裁 |
 | [DEB-20261106-market-risk-switch-review](DEB-20261106-market-risk-switch-review.md) | 系统性风险价格门复核与日内 Event Intelligence 事件智能实现方案 | **R0/R1+抽样R2b/R3离线原型已实施；生产零变更，方向价值未证** | 2026-11-06 | §17 实测 as-of/迟到修订、共享双LLM简报、日内指令与失效保护；AMD双模型新增970 tokens达标，delta全局prompt与51个未选簇仍待优化。同prompt控制SHORT/SHORT/BUY，单次方向变化不归因；不接RISK_OFF、不恢复UE直接入场、不接Playbook。 |
 | [DEB-20261106-da-election-reasoning-audit](DEB-20261106-da-election-reasoning-audit.md) | DA 双 LLM 对选后指数反弹、AI 硬件重挫与板块轮动的捕捉及指令审计 | **只读复核完成；生产零变更** | 2026-11-06 | 36 只中 22 只原始材料含选举文本、7 只核心产物提及、4 只进入主因果链；18 只 bridge 仅 TSLA 由选举主因驱动。AMD/NVDA/SNDK 等回避主要靠破位门，HCA 合理识别利好已定价；不改 prompt/gate，共享宏观简报仅留作用户批准后的离线 A/B。 |
 | [DEB-20261105-da-claim-traceability](DEB-20261105-da-claim-traceability.md) | DA 双 LLM 理由分类、挑战记录与跨表溯源 | **DA→Playbook 生产验收完成** | 2026-11-05 | 修复已发布候选 claims 被 upsert 覆盖；11-05 共 36/36 富对象，17 条实际合并全保留 claims，EPAM/TIC 双 cohort 完整。221 tests + 冒烟 7/7，不改历史数据或交易阈值。 |

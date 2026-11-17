@@ -156,3 +156,22 @@ def test_hook_never_raises(fresh, monkeypatch):
     gc_guard._on_gc("stop", {"generation": "bad"})    # 脏输入
     gc_guard._on_gc("start", {})                       # 缺字段
     assert isinstance(gc_guard.get_status(), dict)
+
+
+def test_stall_message_in_flight_gc_attributes_gc(fresh, monkeypatch):
+    """在途 GC 实证反例 (2026-11-16 23:31): 探针不得再说「非 GC 所致」。"""
+    monkeypatch.setattr(gc_guard.time, "perf_counter", lambda: 1000.0)
+    msg = gc_guard._build_stall_message(22.1, 5.0, [0, 0, 0], [(1, 998.0)])
+    assert "GC 正在进行" in msg and "gen=1" in msg and "已 2000ms" in msg
+    assert "非 GC 所致" not in msg
+
+
+def test_stall_message_empty_stack_keeps_non_gc_hint(fresh):
+    msg = gc_guard._build_stall_message(22.1, 5.0, [0, 0, 0], [])
+    assert "非 GC 所致" in msg
+    assert "GC 正在进行" not in msg
+
+
+def test_stall_message_completed_gc_delta_present(fresh):
+    msg = gc_guard._build_stall_message(22.1, 5.0, [0, 1, 0], [])
+    assert "gen1=+1" in msg and "采样间隔 22.1s" in msg

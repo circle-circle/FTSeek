@@ -2,6 +2,24 @@
 
 > **写入约定（2026-11-11 起）**：每条交接必须带三件可核凭据 —— `**凭据**`（commit sha / 改动文件数，`git show --stat` 可核）、`**验证**`（可复跑命令 + 日志路径，不写“已通过”）、`**未验证**`（显式列出没验的部分，无则写“无”）。自述≠事实，这三行是给下一个人核的。
 
+## 2026-11-17 16:3x CST · GC 护栏 P1 探针在途归因修正（观测级，已重启·冒烟 7/7；P2–P4 待裁）
+
+- **结论**（用户「继续」⇒ 执行 DEB-20261117 P1）：修 StallProbe 在途 GC 归因反例（11-16 23:31 探针报「gen 全+0⇒非 GC」，260ms 后被 20972ms gen1 WARNING 打脸）。根因=get_stats() 只计已完成回收，在途 GC 不计增量。修法=抽 `_build_stall_message(elapsed, interval_s, d_collections, stack_snapshot)` 纯函数，采样时取 `list(_stack)` 快照，非空即报「停摆期间 GC 进行中 gen=X 已 Yms…归因 GC」，空栈保留原「非 GC」提示；在途时长用 perf_counter（_stack 存 perf_counter，探针主体 monotonic，两钟不混）。**零交易语义**，探针文案不在 open_health_report 解析面（其只解析汇总/停顿/gen2 行）⇒ 不破解析器。
+- **凭据**：HEAD `691ea4882`；本批 **2 文件**（运行时 `app/observability/gc_guard.py`：+_build_stall_message/探针调用点/docstring 例外注；测试 `tests/observability/test_gc_guard.py` +3 hermetic 例）；**未提交**（待裁；app/ 仅此 1 运行时改动，scripts/ 另 agent 未跟踪 WIP verdict_outcomes_ledger.py 经 rg 实证 app/零引用，重启未顺带上线）。
+- **验证**：`pytest tests/observability/test_gc_guard.py tests/observability/test_round_timer.py` **20 passed**（gc_guard 11=8+3 / round_timer 9）；`py_compile` OK；`check_undefined_names.py` rc=0；重启前核 exit_ledger exit_intents/exit_legs **0 行**、8 sim/0 live；`systemctl restart ftseek-us` → MainPID **3260934**（16:33:43 CST），`startup_smoke_check.py --wait 90` **7/7 exit=0**；重启后 [GC] 阈值 178x/冻结行已出（16:33:50/16:34:05）、0 ERROR/CRITICAL/Traceback、8 sim 仓恢复、gc_guard.py mtime 16:32:44 早于进程启动（跑的是新码）。
+- **未验证**：探针在途归因的盘中实证（需一次自然长停顿或注入，当前休市无自然样本）；P2（reporter+VmSwap）/P3（trim 门 env）/P4（宿主内存运维裁）未实施。
+- **下一步**：①P2 分批（reporter 追加 VmSwap，保 open_health_report 子串兼容）；②P3 env 待裁；③P4 运维裁；④本批+P0 待用户裁提交切分。
+
+## 2026-11-17 16:0x CST · GC 护栏完成度诊断落档（P0，纯 .md 零重启；P1–P4 待裁）
+
+- **结论**（用户「读取系统日志 [GcReporter]…确认逻辑和合理性」→「功能是否完成/是否弃用或优化」→「下一步」）：gc_guard **功能已完成设计使命，不弃用**；残余 gen1 长停顿（11-16 23:31 盘中 **20972ms** / 11-17 05:01 EOD **11322ms collected=0**）根因 = **宿主内存竞争**（交易进程 RSS 仅 ~60MB=1.6%，Hermes ~605MB/qodercli ~412MB/codex ~250MB 同驻 3.5GB 宿主，swap 752MB，VmSwap 62MB/majflt 6967）⇒ 冷页换出 → GC 扫描缺页，非 GC 调参可治。两处模块自身校准缺口：①StallProbe 归因反例（23:31:22,489 报「gen 全+0⇒非 GC」，260ms 后被 GC WARNING 打脸；get_stats 只计已完成回收，在途 GC 不可见）；②trim/RSS 告警门（600/2200MB）按旧 1.4GB 堆 calibrate，现 RSS≤285MB 全休眠（零「归还空闲堆」行；MALLOC_ARENA_MAX=2 已限 arena）。
+- **本批改动（P0，纯 .md，零运行时码/零重启/零交易语义）**：新 `docs/debates/DEB-20261117-gc-guard-completion-swap-pause.md`（诊断+证据+取舍+P1–P4 提案）；`DEB-20261103-open-freeze-and-perf-hotfix-review.md` §6.4 结算（gen2 面 PASS，新面 opened 转新 DEB）；`docs/debates/README.md` 索引行；本条。
+- **待裁执行批（未动 app/）**：P1 探针读 `_stack` 修在途归因（观测级~10 行+3 hermetic 测试）；P2 reporter 追加 VmSwap（保 open_health_report 子串兼容）+RSS 门重校准；P3 `FTSEEK_GC_TRIM_RSS_MB` env 降至 ~150–200MB（可逆，收益有限）；P4 运维裁宿主内存（dev agent 迁出/加内存/EOD 错峰，收益最大）。**部署 P1 须单独裁**：当前 `git status -- app/ scripts/` 有另 agent 未跟踪 WIP `scripts/verdict_outcomes_ledger.py`（混合署名树），重启不许顺带上线。
+- **凭据**：HEAD `691ea4882`；本批 **4 文件**（新 DEB 1 + DEB-20261103 §6.4 + README 索引 + handoff 本条），**未提交**（待裁）；零 app/ 改动（`git status --porcelain -- app/` 空）。
+- **验证**：`tests/observability/test_gc_guard.py` 实跑 **8 passed**；证据复算 `grep -n "20972\|11322" logs/ftseek_us.log*`、`grep -n "非 GC 所致" logs/ftseek_us.log-20261117`（:3715 vs :3716 相隔 260ms）、`awk '{print $12}' /proc/3235787/stat`=6967、`ps aux --sort=-rss | head`、`systemctl cat ftseek-us`（MALLOC_ARENA_MAX=2，无 FTSEEK_GC_* 覆盖）。
+- **未验证**：P1/P2/P3 未实施（待裁）；宿主内存竞争根因未裁（P4）；DEB-20261103 §6.1–6.3 仍待盘中复核；探针在途归因修复需一次自然长停顿或注入实证。
+- **下一步**：①用户裁 P1（观测批，单独文件切分重启）；②P2 分批；③P3 env 待裁；④P4 运维裁。
+
 ## 2026-11-16 20:0x ET · 收盘全链路核查 + 四项分诊 + 对账日志真实性修复（待裁重启生效）
 
 - **结论**（用户「今日美股已收盘 请核查整个链路和流程」→「按建议优化 确保有效」）：交易日 11-16 ET 全链路核查 + 建议落地四批。**核查基线**：13 成交（L9/S4，全 09:45–10:41）/14 出场净 −$512.65（盘中 11 笔全正 +$154.89；亏损全部 = 3 笔旧仓规则2深亏止损 ASML −317.16/BA −186.27/HON −164.11）；sim 8 仓=open_positions 8 账实一致、live 0 仓 0 成交、未决簿记 0/outbox 全 BOOKED/exit ledger 0 在途；主日志 0 ERROR/CRITICAL/Traceback；DB 锁仅盘前 2 次盘中零复发；影子 s1_real_kill_shadow 124 行 0 degraded；注册表 n=119 无 dup；BWXT 唯一 PENDING 空头指令全可归因（VWAP 证伪×16+禁追线+after_cutoff，正常拦截）；S1 前瞻 cohort 收盘重算 **n=4 净 +$79.72（+52.5bps）> 历史参照 +30.75bps**，KEEP_SAMPLING 4/40（`scripts/s1_short_after_open_cohort.py` 正常产物重写）。
