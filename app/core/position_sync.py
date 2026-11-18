@@ -68,8 +68,9 @@ def _reconcile_pending_sync_status(cursor, symbol: str, db_info: Dict) -> bool:
     return cursor.rowcount > 0
 
 
-def _align_open_position_stops(conn, symbol: str, sl: float, tp: float) -> int:
-    """[RFC-195] 把 open_positions 的止损对齐到**指令真值** (仅限恢复路径合成的旧值).
+def _align_open_position_stops(conn, symbol: str, sl: float, tp: float, *,
+                               playbook_owned: bool = False) -> int:
+    """[RFC-195] 把 open_positions 的止损/止盈对齐到**指令真值** (仅限恢复路径合成的旧值).
 
     病灶 (2026-11-09 实测 US.LLY): `_sync_to_position_store_locked` 在 playbook 落库前抢先建仓,
     用 ATR×mult→`max_loss_pct` 2% 硬底合成 SL (1351.79 = −2%); 31s 后
@@ -79,7 +80,32 @@ def _align_open_position_stops(conn, symbol: str, sl: float, tp: float) -> int:
 
     CAS 语义 (防松掉已收紧的止损): 只更新 initial_sl 与「current_sl 仍等于旧 initial_sl
     的行」(即从未被 trailing 收紧过); current_sl 已被 trail 抬高/压低的行保持原值。
-    tp 只在原值为空时补, 不覆盖。
+
+    [DEB-20261117 P1] 补掉原实现留下的三个覆盖洞 (11-17 夜盘日志 + 生产库复算实证):
+      ① tp 原先「只在原值为空时补」⇒ 发现路径 (`:2077-2112`) 已写入的固定 5% 合成 TP
+         永远对不上真值 (BWXT 114.18 vs 真值 110.48; ELV 现存行 493.22 vs 475.73)。
+         现改为 **真值>0 且偏差>0.005 即覆盖** — tp 无 trailing 语义, 不存在"松掉活止盈"。
+      ③ WHERE 原先只判 SL 漂移 ⇒ "SL 已对齐但 TP 还是合成值"的行连 UPDATE 都进不去,
+         ① 的修复会被旧 WHERE 一并吃掉。现改为 OR(SL 漂移, TP 漂移)。
+         实证 A/B (ELV, 生产库副本): 旧代码 rowcount=0 (TP 永久卡死), 新代码 rowcount=1
+         且 TP→475.73, SL 与标签均未动。
+      ② WHERE 原先用 `strategy_id LIKE 'playbook%'` 当归属判据 ⇒ 标签被抢先写成
+         `auto_main` 的行永远匹配不到。归属 SSOT 是 trade_records 而非 open_positions
+         自报的标签 (DEB-20261027 A / `is_playbook_open_position` 同口径), 故补
+         `playbook_owned`: **仅**在调用方刚刚成功补录了一条未平 PLAYBOOK trade_record
+         (归属已被证明) 时传 True, 放宽该过滤; 默认 False = 完全等同旧行为。
+         证据强度: CAT 11-17 的 `auto_main` 是会话内直接观测 (该行已于平仓时清理, 现库
+         不可复核); 旁证 = CAT 补录成功且 SL 有漂移却无对齐日志行 (BWXT/ELV 同周期都有),
+         以及 `:2342-2353` 既有注释已把"旧逻辑标 auto_main → 双重管理"登记为历史实锤。
+         反例已排除: 现存 US.OXY 的 `extended_hours_entry` 是正当标签 (盘后入场、无指令
+         链接、两表 SL 零分叉), 不构成误标实例。
+
+    刻意不做: 不回写 strategy_id/owner_strategy。改标签会经 ADR-015 的
+    `owner_strategy → source_type` 派生表影响 order_executor 放行判定, 属行为变更,
+    不在测量完整性批次内 (见 DEB-20261117)。
+
+    量纲: sl / tp 为**绝对价格** (USD), 与 open_positions 既有列同口径; 0.005 为价格
+    绝对容差 (非 bps), 沿用原实现。
 
     返回受影响行数; 任何异常只告警不外抛。
     """
@@ -91,16 +117,26 @@ def _align_open_position_stops(conn, symbol: str, sl: float, tp: float) -> int:
             _ts = _now_et_align().isoformat()
         except Exception:
             _ts = datetime.now(timezone.utc).isoformat()
+        _sl = float(sl)
+        _tp = float(tp or 0)
+        _ownership = "" if playbook_owned else " AND strategy_id LIKE 'playbook%'"
         cur = conn.execute(
             "UPDATE open_positions SET "
-            "  initial_sl = ?, "
-            "  initial_tp = CASE WHEN COALESCE(initial_tp,0)=0 THEN ? ELSE initial_tp END, "
-            "  current_sl = CASE WHEN ABS(COALESCE(current_sl,0)-COALESCE(initial_sl,0))<1e-6 "
+            "  initial_sl = CASE WHEN COALESCE(initial_sl,0)>0 "
+            "                     AND ABS(COALESCE(initial_sl,0)-?)>0.005 "
+            "                    THEN ? ELSE initial_sl END, "
+            "  current_sl = CASE WHEN COALESCE(initial_sl,0)>0 "
+            "                     AND ABS(COALESCE(initial_sl,0)-?)>0.005 "
+            "                     AND ABS(COALESCE(current_sl,0)-COALESCE(initial_sl,0))<1e-6 "
             "                    THEN ? ELSE current_sl END, "
+            "  initial_tp = CASE WHEN ?>0 AND ABS(COALESCE(initial_tp,0)-?)>0.005 "
+            "                    THEN ? ELSE initial_tp END, "
             "  updated_at = ? "
-            "WHERE symbol=? AND COALESCE(initial_sl,0)>0 "
-            "  AND ABS(initial_sl-?)>0.005 AND strategy_id LIKE 'playbook%'",
-            (float(sl), float(tp or 0), float(sl), _ts, symbol, float(sl)),
+            "WHERE symbol=? AND ("
+            "        (COALESCE(initial_sl,0)>0 AND ABS(COALESCE(initial_sl,0)-?)>0.005)"
+            "     OR (?>0 AND ABS(COALESCE(initial_tp,0)-?)>0.005)"
+            "      )" + _ownership,
+            (_sl, _sl, _sl, _sl, _tp, _tp, _tp, _ts, symbol, _sl, _tp, _tp),
         )
         return int(cur.rowcount or 0)
     except Exception as e:
@@ -990,13 +1026,25 @@ class USPositionSync:
                                 from app.utils.timezone import now_et
                                 # [RFC-195] 补录用的是指令真值 SL/TP ⇒ 同步对齐 open_positions,
                                 #   消除恢复路径抢先写入的合成止损 (LLY 11-09: 2% vs 5%)。
+                                # [DEB-20261117 P1] playbook_owned=True: 归属此刻已由上面这次
+                                #   成功补录证明, 不再拿 open_positions 自报的 strategy_id 当判据
+                                #   (CAT 11-17 被抢先标成 auto_main ⇒ 旧 WHERE 恒不匹配, SL/TP 全留合成值)。
                                 _aligned = _align_open_position_stops(
                                     conn, row['symbol'], float(row['stop_loss'] or 0),
-                                    float(row['take_profit'] or 0))
+                                    float(row['take_profit'] or 0), playbook_owned=True)
                                 if _aligned:
                                     logger.info(
-                                        "[US Sync] %s open_positions 止损对齐指令真值 sl=%.2f (行数=%d)",
-                                        row['symbol'], float(row['stop_loss'] or 0), _aligned)
+                                        "[US Sync] %s open_positions SL/TP 对齐指令真值 sl=%.2f tp=%.2f (行数=%d)",
+                                        row['symbol'], float(row['stop_loss'] or 0),
+                                        float(row['take_profit'] or 0), _aligned)
+                                    # 不依赖后续 mark_execution_booked 顺带 commit:
+                                    #   对齐结果必须自己落盘, 否则 conn.close() 时被回滚。
+                                    try:
+                                        conn.commit()
+                                    except Exception as _commit_err:
+                                        logger.warning(
+                                            "[US Sync] %s open_positions 对齐提交失败: %s",
+                                            row['symbol'], _commit_err)
                                 pdb.mark_execution_booked(
                                     iid, attempt, execution_price=observation['price'],
                                     execution_time=row['execution_time'] or now_et().isoformat(),
@@ -1004,6 +1052,22 @@ class USPositionSync:
                                 _record_recovered_queue_candidate(
                                     instruction=row, order_snapshot=snapshot,
                                     now_et_value=now_et())
+                                # [DEB-20261117 P1] 迟成交证据回灌: 本笔成交的收口发生在
+                                #   下单轮之后, auto_execute_flow 那两份影子账本只写到
+                                #   submitted_unconfirmed / fill_price=null ⇒ gate_ledger
+                                #   低估执行率、execution_tca_report 少 2/3 滑点样本。
+                                #   纯追加, 不改写历史行, 失败只 warn。
+                                try:
+                                    from app.playbook.late_fill_evidence import record_late_fill
+                                    record_late_fill(
+                                        row, fill_price=observation['price'],
+                                        dealt_qty=observation['dealt_qty'],
+                                        execution_ts=row['execution_time'],
+                                        evidence_source='sync_reconcile')
+                                except Exception as _late_fill_err:
+                                    logger.warning(
+                                        "[US Sync] %s 迟成交证据回灌失败 (不影响交易): %s",
+                                        row['symbol'], _late_fill_err)
                             break
                         if observation['zero_terminal']:
                             pdb.unlock_execution_if_zero_fill_terminal(

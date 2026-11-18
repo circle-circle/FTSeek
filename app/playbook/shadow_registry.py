@@ -1393,7 +1393,15 @@ REGISTRY: list[ShadowItem] = [
               "4/8 计划锚偏离>1%; 墓地单(MFE<0.3%, 24 笔)承担几乎全部亏损 — 先量成交层缺口。"
               "边界: SIM 成交不可直接外推实盘; book proxy 行 spread_bps=None 单列; "
               "只覆盖已过全部闸门的尝试(选择偏差); 计划锚缺失不反推。"
-              "回滚: execution_tca_shadow_enabled=false + 重启; 数据保留。",
+              "回滚: execution_tca_shadow_enabled=false + 重启; 数据保留。"
+              "第二写方 (DEB-20261117 P1, 2026-11-17): app/playbook/late_fill_evidence.py — "
+              "SUBMITTED 后由 PositionSync 补录的迟成交, 原写方只到 fill_price=null 就收口, "
+              "11-17 当日 6 笔成交漏 4 笔 (report 只取 success=True ⇒ 样本缺 67%)。回灌行带 "
+              "late_fill=true + fill_evidence_source, quote_source='late_fill_no_arrival_quote' "
+              "且 bid/ask/spread/quote_age 一律 None (到达报价无从追溯, 禁止事后伪造) ⇒ "
+              "点差/报价年龄分桶不受影响, 只补 planned_to_fill/exec_to_fill 两列。"
+              "count_mode=where:success=True 从此含两个写方, 分来源读数须按 late_fill 切。"
+              "同一 config_key 关闸即同时停两个写方。",
     ),
     # ── 既有影子 (Phase 0 / 7月) — 代表性事项, 非穷举 ──
     ShadowItem(
@@ -3496,7 +3504,14 @@ REGISTRY: list[ShadowItem] = [
         eval_script=None,
         created="2026-07-17",
         notes="补登 (2026-09-26 RFC-109②): 看板段9 自带结局回填/两窗方向合成读数 (9/23 批)。"
-              "写方无条件落盘 (审计面, 非假设攒样)。",
+              "写方无条件落盘 (审计面, 非假设攒样)。"
+              "第二写方 (DEB-20261117 P1, 2026-11-17): app/playbook/late_fill_evidence.py — "
+              "下单轮只写到 action='submitted_unconfirmed'、成交证据稍后由 PositionSync 从券商"
+              "回执补录的指令, 补一行 action='executed' (extra.late_fill=true + evidence_source "
+              "+ execution_price/dealt_qty/execution_time), 否则 gate_ledger.py:106 按 "
+              "'executed' in actions 判终局会低估执行率 (11-17 实证 2/6 而非 6/6)。"
+              "entry/size/notional 沿用指令计划值 (与同指令 submitted_unconfirmed 行同口径), "
+              "真实成交只进 extra ⇒ 不污染以这三列为分母的既有统计。按 inst_id 去重, 只追加不改写。",
         no_adjudication_reason="PERMANENT_MEASURE: 审计留痕面, 无毕业门 (edge 门 DEPRECATED-SHADOW, DEB-20260723 C-1)",
     ),
     ShadowItem(

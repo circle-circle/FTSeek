@@ -265,8 +265,12 @@ def finalize_and_record(
     row: Optional[Dict[str, Any]],
     result: Optional[Dict[str, Any]] = None,
     error: Optional[str] = None,
+    path: Optional[Path] = None,
 ) -> bool:
-    """收口执行结果并追加 JSONL。永不上抛。"""
+    """收口执行结果并追加 JSONL。永不上抛。
+
+    path 仅用于测试/回灌注入 (默认 `_TCA_PATH`); 生产调用点不传。
+    """
     if not isinstance(row, dict):
         return False
     try:
@@ -297,14 +301,15 @@ def finalize_and_record(
             row["success"] = False
             row["executed"] = False
             row["error"] = str(error or "no_result")[:500]
-        _append_row(row)
+        _append_row(row, path)
         return True
     except Exception as _error:
         logger.warning(f"[TCA] 收口写盘失败 (不影响交易): {_error}", exc_info=True)
         return False
 
 
-def _append_row(row: Dict[str, Any]) -> None:
-    _TCA_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(_TCA_PATH, "a", encoding="utf-8") as target:
-        target.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
+def _append_row(row: Dict[str, Any], path: Optional[Path] = None) -> None:
+    target = Path(path) if path else _TCA_PATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")

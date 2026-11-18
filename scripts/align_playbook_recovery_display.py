@@ -3,7 +3,10 @@
 
 默认只报告；--apply 才写入，并先落 data/audits/playbook_recovery_display_<ts>.jsonl。
 严格 CAS：仅处理未平 Playbook 仓、initial_sl/current_sl 仍相等（未被 trailing 收紧）、
-initial_tp 与 trade_records 真值不一致且 take_profit_json 为空/[] 的恢复污染行。
+**SL 或 TP 至少一腿**与 trade_records 真值不一致（>0.005 绝对价）、且 take_profit_json
+为空/[] 的恢复污染行；无分叉的那一腿原样保留。
+（2026-11-17 DEB-20261117 P1：原先要求 SL **也**分叉，导致 RFC-195 运行时已修好 SL、
+TP 仍是合成值的行永远进不了候选 — 实测 US.ELV 报 "无需对齐 (0 行)"。）
 出场链读 trade_records.metadata_json，本脚本只修展示/旧风控取值面，不改交易行为。
 """
 from __future__ import annotations
@@ -64,9 +67,13 @@ def find_rows(conn: sqlite3.Connection) -> List[Dict[str, object]]:
             continue
         if abs(old_current_sl - old_sl) >= TRAIL_EPSILON:
             continue
-        if abs(old_sl - truth_sl) <= SL_EPSILON:
-            continue
-        if abs(old_tp - truth_tp) <= SL_EPSILON:
+        # [DEB-20261117 P1] 洞③ 同源修复: 原先要求 SL **也**分叉才算候选 ⇒ RFC-195 运行时
+        #   对齐已把 SL 修好、TP 却仍是发现路径合成值 (cost×(1∓5%)) 的行永远进不了候选。
+        #   2026-11-17 实测 US.ELV: SL 420.28 已与 trade_records 真值同源, TP 493.22 vs
+        #   真值 475.73, 本脚本却报 "无需对齐 (0 行)"。改为 OR(SL 分叉, TP 分叉)。
+        sl_drift = abs(old_sl - truth_sl) > SL_EPSILON
+        tp_drift = abs(old_tp - truth_tp) > SL_EPSILON
+        if not (sl_drift or tp_drift):
             continue
         if not _tp_json_empty(row["take_profit_json"]):
             continue
@@ -81,13 +88,16 @@ def find_rows(conn: sqlite3.Connection) -> List[Dict[str, object]]:
             "old_take_profit_json": row["take_profit_json"],
             "truth_sl": truth_sl,
             "truth_tp": truth_tp,
-            "new_initial_sl": truth_sl,
-            "new_current_sl": truth_sl,
-            "new_initial_tp": truth_tp,
-            "new_take_profit_json": json.dumps(
+            # 无分叉的腿原样保留, 不制造"改了但其实没改"的审计噪声
+            "new_initial_sl": truth_sl if sl_drift else old_sl,
+            "new_current_sl": truth_sl if sl_drift else old_current_sl,
+            "new_initial_tp": truth_tp if tp_drift else old_tp,
+            "new_take_profit_json": (json.dumps(
                 [{"ratio": 1.0, "price": truth_tp}], ensure_ascii=False
-            ),
-            "reason": "recovery_sl_tp_pollution",
+            ) if tp_drift else row["take_profit_json"]),
+            "reason": ("recovery_sl_tp_pollution" if sl_drift and tp_drift
+                       else "recovery_tp_pollution" if tp_drift
+                       else "recovery_sl_pollution"),
         })
     return candidates
 
