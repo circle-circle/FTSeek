@@ -300,6 +300,9 @@ _PRODUCTION_DATA_SEAMS = (
     ("app.analysis.signal_ic_tracker", "_get_db_path", "callable", "signal_snapshots.db"),
     # RFC-203 早期风险影子：候选事件属于生产判据样本，测试必须隔离。
     ("app.playbook.early_risk_shadow", "DEFAULT_PATH", "path", "early_risk_shadow.jsonl"),
+    # R5/R7 承接失败影子：出场全链测试不得把 TEST pivot/决策写进正式样本。
+    ("app.playbook.thesis_manager_shadow", "DEFAULT_PATH", "path", "thesis_management_shadow.jsonl"),
+    ("app.playbook.thesis_manager_shadow", "FORWARD_PATH", "path", "thesis_management_path.jsonl"),
     # 2026-10-16 (巡检 P1-5): 看板推送 episode 去重状态 — shadow_board 推送侧读写。
     ("scripts.shadow_board", "_PUSH_STATE", "path",
      "shadow_board_push_state.json"),

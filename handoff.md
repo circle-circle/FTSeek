@@ -2,6 +2,128 @@
 
 > **写入约定（2026-11-11 起）**：每条交接必须带三件可核凭据 —— `**凭据**`（commit sha / 改动文件数，`git show --stat` 可核）、`**验证**`（可复跑命令 + 日志路径，不写“已通过”）、`**未验证**`（显式列出没验的部分，无则写“无”）。自述≠事实，这三行是给下一个人核的。
 
+## 2026-11-18 15:2x CST · 【R14 裁决落档】用户裁「按建议执行」：名额等 11-21 自然腾位，不豁免不停采；EOD/LLM/灰度关卡预注册（零行为变更）
+
+- **结论**：DEB 追加 R14 作为裁决 SSOT。①名额不豁免不停采，等 11-21 DEAD_SIGNAL 结算腾位后 thesis 影子顺位补入；②预注册 fallback：11-21 结算不了 ⇒ 限时豁免至 12-02 或退役最弱轨道 RFC-155，届时看报告再裁；③EOD 第二切片 12-02 复核前不开；④LLM 零预算；⑤灰度定位为机制研究（ITT 天花板 $0.6–0.9/笔），过门也不必然值得灰度；⑥主线仍是方案 A 正确性 + §12.4 Kill/Pivot。注册表 notes（R12 WIP）不改，由本裁决满足其腾位要求。顺手归位 handoff R10/R12 排序（最新在上）。
+- **凭据**：HEAD `6f7b5fac3`；本批 2 个纯 Markdown 文件（DEB R14 节、本条 handoff + R10/R12 块序归位），未提交；`app/`·`scripts/`·`config/` 零改动，不触发 G-02、不需重启。
+- **验证**：`git diff --check -- handoff.md docs/debates/` 通过；R14 为裁决落档，无新增事实断言。
+- **未验证**：无（本批无代码/数据断言）。
+- **下一步**：①今晚 21:30 CST 开盘后观察决策+路径落行并跑 `scripts/thesis_management_shadow_report.py`（自动，无需干预）；②11-21 DEAD_SIGNAL 结算 ⇒ 腾位；结算不了触发 R14.1-2 fallback 裁决；③12-02 thesis 复核。
+
+## 2026-11-18 15:0x CST · 【R13 再核查】R12 修正批验证通过：P1-1/P1-2 复现确认已修，无新增阻塞问题（零代码改动）
+
+- **结论**：DEB 追加 R13。①P1-1 复现通过：entry 09:36:10 ⇒ bar1.end 09:45（污染窗 09:40 被整窗排除）；②P1-2 头两根语义复现通过：晚段失败形态 ⇒ WAIT，滚动不再出信号；③前向 1m 路径/真 quote_age（SSOT `_measured_quote_age_ms`）/blocked CENSORED/注册表复核日 2026-12-02+KR4 名额均落地核实。三条非阻塞观察：censored 无 archetype 过滤（可接受）、错过观测窗 ⇒ 永久 stale_5m 属可测覆盖损失、handoff R10/R12 排序小疵下次顺手归位。**待用户事项：12-02 复核前实验名额腾位或明示豁免（注册表已如实声明超编）。**
+- **凭据**：HEAD `6f7b5fac3`；本批 2 个纯 Markdown 文件（DEB R13 节、本条 handoff），未提交；`app/`·`scripts/`·`config/` 零改动，R12 WIP 未触碰，不触发 G-02、不需重启。
+- **验证**：`pytest tests/test_thesis_management_shadow.py -q` → 16 passed；两段纯函数离线复现（边界排除/滚动抑制）输出见 R13.1；`systemctl show` MainPID=3377559/14:51:05 与 R12 一致；`logs/ftseek_us.log` 14:51 后错误计数 0；休市两影子文件无行。
+- **未验证**：真实 RTH 触发率/提前量/误伤/paired Δ（休市无前向数据）；前向路径真实落行形态待下一 RTH 观察。
+- **下一步**：①21:30 CST 开盘后观察决策+路径落行，跑 `scripts/thesis_management_shadow_report.py`；②12-02 复核前裁名额腾位/豁免；③任何灰度/EOD/LLM 另裁。
+
+## 2026-11-18 14:51 CST · 【R12 修正部署】用户裁 fill 后头两根；边界+前向路径+quote age+CENSORED 已落地
+
+- **结论**：R10/R11 两项实锤已修并重启生效。P1-1整窗排除fill所属5m；P1-2按用户裁改`windows[0:2]`头两根，滚动/非连续/超龄不再出信号。补前向1m `thesis_management_path.jsonl`（实际known_at+metadata游标+path_only持久化）、真实quote_age_ms/SSOT、blocked `CENSORED`、注册表复核日2026-12-02与KR4归属。仍只record-only。
+- **凭据**：本批在R9未提交WIP上增量修改 `pullback_failure.py`/`thesis_manager_shadow.py`/exit_monitor/注册表/报表/隔离与测试，并更新DEB R12、README、本条；未提交。其他verdict_outcomes WIP未触碰。
+- **验证**：新影子16 passed；最终联合回归 **115 passed**；undefined-names/py_compile/diff-check通过。重启前5 SIM/0 LIVE/exit_intents未决0；14:51:05重启 MainPID=3377559，冒烟 **7/7 exit=0**，配置enabled=true、5仓不变。决策与前向路径文件均0行（休市）。
+- **未验证**：真实触发/提前量/误伤/paired Δ仍未测；棘轮既有late_fill/position_sync日志栈与except:pass红点仍存，非全绿；无真实EXIT/EOD/LLM授权或实现。
+- **下一步**：下一RTH观察决策与前向路径落行，跑 `scripts/thesis_management_shadow_report.py`；任何灰度另裁。
+
+## 2026-11-18 14:1x CST · 【R10 查漏审计】R9 落地批：record-only 安全面合格，但 2 处判定问题须开盘前处理（零代码改动）
+
+- **结论**：对 R9 已部署影子批做只读查漏，落档 DEB「R10」。**P1-1 已复现**：`pullback_failure.py` 用窗口 end 比 `entry+1min`，entry=09:36:10 时 end=09:40 窗（含完全早于 fill 的 09:36 标签 bar）被接为 bar1，违反 R5.3-3，检测最多提前 ~5min 且 bar1 被入场前数据污染；现有测试测不到该边界。**P1-2 语义偏离须裁**：实现是滚动最近两窗（`windows[-2:]`），R5.3/R7.3 预注册是 fill 后头两根；滚动版对 97 盈利仓误伤面更大，推荐改回头两根或明示修订预注册。另 3 缺口：前向 1m 路径无记录方（阻塞 paired Δ 结算，不阻塞观测）、quote_age_s 仅 cached_fallback 有值、blocked 冻结窗无 censored 标记；治理小项：注册表缺决策日期与 ≤5 名额口径。
+- **合格项**：无执行路径/REVIEW_ONLY/异常隔离/默认 false；完整窗聚合、前缀不变性、重启去重等 12 测试实跑 passed；K 线 NONE 口径与 `_track_bar_peak_trough` 同源属实、latency_sensitive 不阻塞快环；服务 active MainPID=3374726，重启后主日志 ERROR/CRITICAL/Traceback=0；休市 0 影子行符合预期。
+- **凭据**：HEAD `6f7b5fac3`；本批 2 个纯 Markdown 文件（DEB R10 节、本条 handoff），未提交；`app/`·`scripts/`·`config/` 零改动，R9 WIP 未触碰，不触发 G-02、不需重启。
+- **验证**：`./venv/bin/python -m pytest tests/test_thesis_management_shadow.py -q` → 12 passed；P1-1 纯函数离线复现（entry 09:36:10 → bar1.end 09:40，输出 FAILED_RECLAIM）；`systemctl show` MainPID/ActiveEnter 与 R9 一致；`logs/ftseek_us.log` 13:58 后错误计数 0。
+- **未验证**：真实 RTH 落行/覆盖率/触发率（休市）；P1-2 两种语义的实际触发率差异（无前向数据）；前向路径补法未实现。
+- **下一步**：①用户裁 P1-2 语义（推荐头两根）并授权 P1-1 最小修复（纯函数+2 测试+重启两核+冒烟，21:30 CST 开盘前）；②首次结算宣称前补前向 1m 路径记录；③quote_age/blocked censored/注册表日期随下一批顺手。
+
+## 2026-11-18 · 【R11 边界复核】R10 两项判定问题均独立复现；P1-2 待裁，生产样本仍 0 行
+
+- **结论**：另一 Agent 的 R10 查漏成立。①entry=09:36:10 时当前实现用09:40窗作bar1，混入fill前tick；②当前`windows[-2:]`是滚动最近两窗，入场数小时后仍可FAILED_RECLAIM，不是预注册的fill后头两根。主会话已追加R11，推荐改回头两根以贴合预注册/降低误伤；若保留滚动须重写人群与主终点另裁。
+- **缺口确认**：首次paired Δ前必须补前向1m路径；batch/push/single的quote_age_s不能伪填0需真时间戳；blocked窗需censored；注册表补决策日/KR4归属。当前生产影子0行，没有受污染真实样本。
+- **凭据**：本R11批3个纯Markdown文件（DEB R11、README、本条），未改代码/config、未重启；服务active/MainPID=3374726。
+- **验证**：独立边界复现 MID_WINDOW=FAILED(bar1=09:40/bar2=09:45)；ROLLING_HOURS_LATER=FAILED(15:40/15:45)。`data/shadow/thesis_management_shadow.jsonl`仍不存在。
+- **未验证**：修复尚未实施，头两根vs滚动尚未用户裁；真实触发/收益仍未测。
+- **下一步**：用户裁P1-2后，一并修P1-1、补边界测试与前向路径/quote age/censored/决策日，再做重启两核+冒烟；仍只record-only。
+
+## 2026-11-18 13:58 CST · 【R9 已部署】PULLBACK_LIMIT 承接失败 record-only 上线观测（无真实 EXIT/LLM）
+
+- **结论**：用户裁「核查更新的DEB，请执行」，R5/R7 最小切片已实施并重启生效。纯函数只做完整1m→5m、fill-pivot≤1% ACTIVE、LONG/SHORT承接失败、跨日/超龄/缺bar ABSTAIN；影子只写 `data/shadow/thesis_management_shadow.jsonl` 与 metadata 去重态，**没有任何真实 EXIT/TIGHTEN、EOD或LLM调用**。
+- **落地**：`pullback_failure.py` + `thesis_manager_shadow.py` + `invalidation_contract.compile_pullback_failure_rule` + `exit_monitor_flow.py:871` 旁路；`config:1854 enabled=true`；注册表 `shadow_registry.py:4415` + 只读报表 `scripts/thesis_management_shadow_report.py`；conftest/offline双隔离、CONTROL-LOOP P13。未来若另裁灰度仍复用DualBroker/ExitLifecycle，不在本批实现。
+- **凭据**：本批 **14 文件**（app 5、config 1、scripts 1、tests 3、docs 4），未提交；其他 `scripts/verdict_outcomes_ledger.py`及测试WIP未触碰。DEB R9 已写实现/验证/边界，README同步。
+- **验证**：最终联合回归 **111 passed**；离线全链18 passed；新文件12 passed；真实UBER 1915临时演练 FAILED_RECLAIM 且生产文件未创建；`check_undefined_names`/py_compile/diff-check通过。棘轮家族 **60 passed/2 failed**，本批W6已修，剩余既有 late_fill/position_sync日志栈与except:pass 899→900，**非全绿且未改基线**。重启前5 SIM/0 LIVE/exit_intents未决0；13:58:12 CST重启 MainPID=3374726，启动冒烟 **7/7 exit=0**，配置实读enabled=true、5仓不变。
+- **未验证**：当前休市生产影子0行，真实覆盖率/触发率/提前量/97赢家误伤/paired Δ全部未测；未批准任何真实交易行为，不能宣称收益改善。既有棘轮两项红点未归本批修复。
+- **下一步**：下一RTH只观察真实落行并跑 `scripts/thesis_management_shadow_report.py`；若ACTIVE覆盖不足、触发过少/过高、误伤或paired Δ为负即停，不网格救参。EOD第二切片、FADE、LLM和任何灰度均另裁，不同批扩展。
+
+## 2026-11-18 · 【复核 R8】确认 R7 收敛：97 笔赢家口径逐值核实，讨论关闭，仅剩开工裁决（零行为变更）
+
+- **结论**：DEB 追加 R8 短确认轮。R7.2 修正实跑核实：ACTIVE 臂 125 笔中实际盈利 97 笔（BE 45/48、trail 41/41、DEAD 8/13、PRE_CLOSE 3/3），误伤监测用 `pnl_net>0` 人群；延迟预算非严格上界、迟到即 ABSTAIN。确认 R7.1 改序与 R7.3 五步底稿。**无新增设计点，本议题设计讨论收敛**；待用户裁仅一项：是否按 R5.4 最小面开工（默认 off、record-only）。
+- **凭据**：HEAD `6f7b5fac3`；本批 2 个纯 Markdown 文件（DEB R8 节、本条 handoff），未提交；`app/`·`scripts/`·`config/` 零改动，不触发 G-02、不需重启。
+- **验证**：`sqlite3 -readonly data/ftseek_us.db` 臂级赢家 SQL 实跑，输出与 R7.2 逐值一致（97/86、净 -1082.57）。
+- **未验证**：无新增断言；前向触发率/误伤/提前量仍待影子开工后测量。
+- **下一步**：①用户裁开工与否；②若开工，预注册先写臂级天花板（ITT $0.6–0.9/笔，只可能过机制门）与 97 笔赢家误伤口径，再注册单影子。
+
+## 2026-11-18 · 【复核 R6】确认 R4/R5 收敛；新证据：PULLBACK ACTIVE 臂 74.6% 毛亏在 OGS，建议第二切片改 EOD 论点复核（零行为变更）
+
+- **结论**：对更新后 DEB 的 R4/R5 再复核，落档「R6」节。R5.1 表逐值复现（272/125、86/19、6/2）；R5.5 执行链函数实存；K 线缓存实为 60s（`futu_lv3_provider.py:399`）非 300s。**新证据**：ACTIVE 臂 125 笔全 LONG，净 -$1,082.57，其中 OGS 10 笔 -$2,538.46（占毛亏 74.6%，平均 ~68h 多夜持有），早期失败池仅 SL_INITIAL 10 笔 -$864（avg 48.3min 出场）、EARLY_TIGHT 0 笔 ⇒ ①首切片天花板 ≈ITT $0.6–0.9/笔，预注册须写明只可能过机制门；②R5.7 第二切片「FADE_SHORT 镜像」（≤1% 臂仅 19 笔、+$101，无池）建议让位给 PULLBACK_LIMIT EOD 论点复核（record-only、只收紧，另裁）；③机制主终点定为对 SL_INITIAL/DEAD_SIGNAL 的提前量分布 + 89 笔赢家误杀率。另三小点：限价 fill 基率风险前置披露、重启即 censored、quote_age_s 随决策行落账；覆盖披露 76 笔无 inst_id（-$417.85）不在 archetype 分析内。**除此之外不再补充设计。**
+- **凭据**：HEAD `6f7b5fac3`；本批 **2 个纯 Markdown 文件**（DEB 追加 R6 节、本条 handoff），未提交；`app/`·`scripts/`·`config/` 零改动，不触发 G-02、不需重启。
+- **验证**：三段只读 SQL 实跑（`sqlite3 -readonly data/ftseek_us.db`，联接/臂分解/覆盖），数字见 R6.1–R6.2 表；`rg` 实核 `_playbook_exit_decision`/`_book_playbook_exit_result`（exit_monitor_flow.py:468,490）与 `_kline_cache_ttl=60`。
+- **未验证**：FAILED_RECLAIM 触发率/误杀率/提前量均需前向 5m bar 才能测（历史无前向快照，不得回填冒充）；OGS 10 笔是否全属 W_WEEK 水下豁免未逐笔核（仅持仓时长形态一致）；R6 全部为复核与建议，无实现。
+- **下一步**：①用户裁是否按 R5.4 最小面开工（默认 off、record-only）；②若裁可，一并裁 R5.7 扩展顺序是否按 R6.2 改序；③预注册写臂级天花板与机制主终点后再注册影子。
+
+## 2026-11-18 · 【复核 R3】RFC-213/出场审计 DEB 独立批判复核：前提错位、收益门欠功效、数据地基缺失（零行为变更）
+
+- **结论**：按 R2.12 十问完成另一 Agent 批判复核，追加为 `docs/debates/DEB-20261118-exit-profitability-full-chain-audit.md`「R3」节（R2 原文未动）。三条高危批评：①设计前提与数据错位——赢家本就来自 trail/BE，SL_INITIAL MFE 中位 0.05% 说明 early-tight 是保护性的，TREND 结构 trailing 应降 P2，FAILED/时间止损/论点隔夜升 P1；②收益门结构性欠功效——可寻址池仅 7.5%–12%，ITT 预期效应个位数 $/笔 << MDE $25–30，n≥120 永远「不可分辨」，主终点应改机制门+ITT 护栏（稀释算术已落档）；③`app/playbook/` 无任何 K_5M/15M/60M 消费方（盘中只聚合 K_1M×800），多时间级别结构缺数据地基，新增 Slice -1 只读覆盖率审计（<95% 不开工）。另：状态机实为 7 态、WATCH/ARMED 属入场侧应删；TradePlan 应扩展既有 `invalidation_contract.py` 而非新建平行语法；reprice 补 STALE 语义+±30% 距离门；SHORT 借券成本/召回、blocked_exits 冻结窗 censored、论点隔夜只许收紧不许扩权；Slice 1 拆 1a 纯确定性/1b LLM 以干净归因；OKR ≤5 实验名额账须注册前明示。
+- **凭据**：HEAD `6f7b5fac3`；本批 **2 个纯 Markdown 文件**（DEB 追加 R3 节、本条 handoff），未提交；`app/`·`scripts/`·`config/`·Hermes prompt 零改动，不触发 G-02、不需重启、零 LLM 成本。
+- **验证**：代码锚点逐一实核——`rg K_5M|K_15M|K_60M app/playbook/` 零命中；`intraday_indicators.py:243,518` K_1M count=800；`futu_lv3_provider.py:1426,1566,1616,1729` 配额与回填路径；`invalidation_contract.py` 既有 REVIEW_ONLY 契约+±30% 文本价门+消费者；`exit_monitor_flow.py:267-279` blocked 冻结；`exit_engine.py` BE 几何退化遥测与净保本限价地板。量化读数全部引自 DEB 第 1/2 轮与 OKR-2026-11，未新跑判分器。
+- **未验证**：R3 全部为设计批评与修订建议，无实现、无历史/前瞻读数；A2 的 n≈520 功效算术是近似估算（2.8×σ/√n，未做日聚类膨胀修正）；5m/15m/60m 覆盖率未实测（正是 Slice -1 要做的）；LLM 增量、FAILED 提前量均只能前向测量。
+- **下一步**：①用户裁是否按收缩后 Slice -1（只读覆盖率审计）/ Slice 0（2 新文件+1 处扩展）开工；②注册 `thesis_management_shadow` 前先裁实验名额账（DEAD_SIGNAL 11-21 结算可腾位）；③方案 A 正确性修复与 §12.4 Kill/Pivot 节奏不受本批影响，仍是关键路径。
+
+## 2026-11-18 · 【R7 复核确认】R6 切片改序成立：先 PULLBACK 承接失败，再 EOD 论点复核；两点口径修正
+
+- **结论**：另一 Agent 追加 R6 后，主会话独立复跑确认：PULLBACK ACTIVE 125笔净-$1,082.57，OGS 10笔-$2,538.46占主要毛亏74.6%且全LONG，支持第二切片由FADE镜像改为EOD论点复核。R7已落最终执行顺序：承接失败影子→EOD只收紧复核（另裁）→FADE镜像→LLM ABSTAIN；一次一变量。
+- **两点修正**：①89笔是BE/trail利润保护出场，其中86笔实际盈利；ACTIVE全部实际盈利仓=97笔，机制误伤门按pnl_net>0的97笔而非exit_reason。②60s缓存+10s环是典型延迟预算非严格上界，决策必须写实际known_at，迟到/state_hash不符即ABSTAIN。
+- **凭据**：本R7批3个纯Markdown文件（DEB R7、README、本条），未提交；app/scripts/config零改动，不触发G-02、不需重启、零LLM调用。
+- **验证**：只读SQL复现各exit_reason×direction净额/平均持仓/ winners、76笔无instruction_id净-$417.85；实读Futu `_kline_cache_ttl=60`及push K_1M最近300根。R6其他执行链与R5一致。
+- **未验证**：FAILED_RECLAIM触发率/提前量/误伤/paired Δ仍未测；OGS 74.6%是亏损占比不是EOD可拯救比例；ACTIVE臂SHORT=0只能做代码对称性；未批准任何灰度。
+- **下一步**：按R7先做默认off的PULLBACK承接失败record-only，四门=覆盖/提前量/97笔实际赢家误伤/扣费paired Δ；若不过即停，不网格救参。EOD与LLM不得同批开工。
+
+## 2026-11-18 · 【R5 落地收敛】首实验改为 PULLBACK_LIMIT 承接失败：现有 pivot+1m 聚合，不造完整理论引擎
+
+- **结论**：用户认可尝试但要求说明判断→决策→执行、避免无法实现的轮子。实查 archetype 覆盖后，**不做 BREAKOUT 主实验**（9月以来仅12指令/6已平），改做 **PULLBACK_LIMIT**（597指令/272已平，净-$1,200.59）。272笔全部有 confirmation.pivot；fill距pivot≤1%=125、≤2%=205、≤5%=267。完整垂直切片已追加到 DEB R5。
+- **最小方案**：仅用 raw_instruction_json 的 archetype/confirmation.price_level + 现有 K_1M 聚合5m + invalidation_contract。LONG=首根5m收pivot下，次根仍收下方且high<pivot、low<首根low ⇒ FAILED_RECLAIM；SHORT镜像。输出 FAILED_RECLAIM/WAIT/STALE，现行出场不变。暂不做60m、完整market_structure、TREND trailing、隔夜扩权或LLM。
+- **代码/执行面**：2新文件（pullback_failure纯函数+thesis_manager_shadow）+1契约扩展+1 exit_monitor旁路钩子；不需要新DB/券商适配器/订单类型/推送。未来若另裁灰度，仍走 `_playbook_exit_decision→DualBrokerAdapter.close_position→ExitLifecycle→_book_playbook_exit_result`，blocked/stale/报价异常=ABSTAIN+censored，绝不直接调Futu。
+- **凭据**：本 R5 批 **3 个纯 Markdown 文件**（DEB R5、README、本条），未提交；`app/`·`scripts/`·`config/` 零改动，不触发G-02、不需重启、零LLM调用。
+- **验证**：只读 SQL 复现 archetype指令/已平/净额及fill-pivot 1/2/5%覆盖；实读 entry_routing.parse_raw_semantics、execution_tca pivot来源、DualBroker.close_position durable接口和现有metadata（pivot需从指令表取，不能用SL/TP反推key_levels冒充）。`git diff --check` 待本批复跑。
+- **未验证**：FAILED_RECLAIM 规则尚无触发率/提前量/误杀/paired Δ；1%主臂是沿用re-anchor尺不是收益最优门；5m聚合、影子成交假设和生产代码均未实现，未批准灰度。
+- **下一步**：若按R5实施，先写纯函数与LONG/SHORT/no-lookahead/STALE测试，再接默认off的record-only；若ACTIVE覆盖不足、几乎不触发或paired Δ为负即停止，不网格救方案，不继续造完整理论引擎。
+
+## 2026-11-18 · 【R4 独立复核】另一 Agent 的 RFC-213 批判稿有条件确认：三处更正 + 两项边界
+
+- **结论**：另一 Agent 已在 `docs/debates/DEB-20261118-exit-profitability-full-chain-audit.md` 追加 R3。主会话独立重跑数据后确认其主要收缩方向可用：FAILED/时间失效/论点隔夜=P1、TREND trailing=P2；Slice1a 纯确定性先于 1b LLM；4+1 持仓态；复用 invalidation_contract；STALE/fill 1R；W_WEEK 只收紧不扩权；机制终点与 ITT 护栏分离。**R3 原文保留，R4 更正已追加，须合并阅读。**
+- **三处更正**：①主窗是 **55 个 ET 交易日**非 78；②early-tight 家族 hold-close delta 约 **-$925**（SL_INITIAL -$1,117 / EARLY_TIGHT_SL +$192），**-$2,157 是全部出场规则总效果**，不可挪用；③LLM **5s 硬超时无实测支撑**，改为 compact StatePacket 延迟探针 + p95<TTL + state_hash 迟到丢弃。两项边界：`n≈520` 仅功效示意非正式样本门；覆盖率<95%阻止真实数据影子接线，但不阻止纯函数/合成测试开发。
+- **凭据**：本 R4 批 **3 个纯 Markdown 文件**（DEB 追加 R4、README 索引、本条 handoff），未提交；`app/`·`scripts/`·`config/` 零改动，不触发 G-02、不需重启、零新增 LLM 调用。他人 R3 原文未改。
+- **验证**：只读 SQL 复现 n=494/55日/净-$2,309.31及左尾池；`./venv/bin/python -I /tmp/exit_audit5.py` 复现 478/494 配对与分出场 hold-close delta；`rg` 实核 app/playbook 无 K_5M/K_15M/K_60M 消费方、K_1M count=800及历史K配额；实读 `invalidation_contract.py` REVIEW_ONLY/±30%门；handoff 实证 qwen4 全量 DA 358.7–501.2s/timeout900（仅作5s无依据参照，不冒充compact延迟）。
+- **未验证**：compact LLM 管理调用延迟/成本、结构算法、多时间级别覆盖率、任何收益读数均未测；early-tight保护性方向统计不显著；R3的 n≈520 没有 paired decision-level 方差支撑。
+- **下一步**：仍只待裁是否实施 R3+R4 收缩后的 Slice -1/0（纯确定性、record-only）；Slice1b LLM 和任何灰度另裁，不动现役入出场/尺寸/qwen4。
+
+## 2026-11-18 · 【策略设计 R2】RFC-213 结构识别 + 论点驱动 TradePlan / 持仓状态机（单影子提案，零交易行为）
+
+- **结论**：承上一条出场审计，用户要求跳出固定百分比并借鉴缠论/利弗莫尔等理论、充分利用 LLM 盯盘。设计 `docs/decisions/RFC-213-thesis-driven-position-management.md`；**应用户要求，完整设计正文与供另一 Agent 批判复核的 12 个开放问题已写入 `docs/debates/DEB-20261118-exit-profitability-full-chain-audit.md` R2，后续以该 DEB 逐轮追加为权威记录**。方案不是叠加理论信号，而是统一为「60m regime → 15m setup → 5m trigger → 1m 执行」+ TradePlan v1 + 状态机。缠论提供结构/回踩/背驰，利弗莫尔提供领头羊/关键点/趋势跟踪，Wyckoff/拍卖理论提供假突破与接受/拒绝；Van Tharp 用 R 判分。
+- **可落地路径**：复用 DA 现有 `entry_archetype` 和 `invalidation_triggers`、Playbook `invalidation_shadow` 与出场监控，不新建下单管线。Slice0 先做无未来函数 market_structure、TradePlan schema、position_state_machine 和 thesis_manager_shadow；Slice1 现有仓 record-only；机制与收益分门后才议灰度。LLM 仅事件触发并输出 HOLD/TIGHTEN/EXIT/ABSTAIN，禁止加仓/放宽/反手，故障回退旧规则；10s 灾难止损不等待模型。
+- **隔夜与形态边界**：新臂按论点有效性而非盈亏决定隔夜，不直接替换 W_WEEK，不重开 C14/C17；archetype 只决定管理语义，不用于准入过滤或配额。首发仅 BREAKOUT 与 PULLBACK/FADE 两类管理模板，bar 数/0.2ATR 均为影子假设非生产参数。
+- **凭据**：HEAD `6f7b5fac3`；本 R2 批 **4 个纯 Markdown 文件**（新 RFC-213、上一条 DEB 追加 R2、README 索引更新、本条 handoff），未提交；`app/`·`scripts/`·`config/`·Hermes prompt 零改动，不触发 G-02、不需重启、零 LLM 调用成本。
+- **验证**：已核 `invalidation_shadow.py` Stage2b 预留契约、DA `llm_synth.py:1340-1418` 现有 archetype/invalidation 输出、`adaptive_trailing.py` MFE 比例逻辑及 Playbook 出场埋点；RFC 内含工程/机制/收益三层判据、only-tighten、as-of/no-lookahead、回滚与样本门。`git diff --check` 待本批统一复跑。
+- **未验证**：新结构算法尚未实现，无历史或前瞻收益读数；bar 数、0.2ATR、状态转换均未证；LLM 事件调用频率/成本只设计上限未实测；不得把 RFC 当已批准交易行为或盈利承诺。
+- **下一步**：①用户裁是否按 Slice0 实施纯确定性契约与单影子注册；②若实施，先写 no-lookahead/LONG/SHORT/reprice/故障回退契约测试，再接 record-only；③现役 qwen4/入出场/尺寸不动，不同时叠加其他行为变更。
+
+## 2026-11-18 · 【只读审计】出场/止损止盈与全链路净期望：不调出场参数，优先正确性与既有前瞻轨道
+
+- **结论**：完成代码路径、9 月以来 SIM 量化结果、历史裁决三路只读审计，落档 `docs/debates/DEB-20261118-exit-profitability-full-chain-audit.md`。11 月 DA n=109：毛 **-9.25bps** / 费 9.27 / 净 **-18.52bps**；9 月以来利润来自 trail/BE，左尾来自 early-tight/OGS。固定 TP 几乎不可达，实际 SL_INITIAL 多由 early-tight 触发；取消隔夜、放宽 SL、runner、ATR、$80 风险帽等已有反证 ⇒ **不建议改任何 SL/TP/BE/trail/隔夜参数**。qwen4 post 仅 n=5，不得宣称转正。
+- **可执行建议**：保留 RFC-155 开盘尺寸、RFC-188 比例保护、RFC-209 降频、DEAD_SIGNAL 关停反事实的既有预注册节奏，不提前转正、不新增同轴门。P3 合成 SL/TP、LIVE 券商 STOP 不随 effective SL 上移、EOD/ETH 只扫 sim 库属正确性/live 前置；当前 PLAYBOOK_LIVE=0，不冒充今日 SIM 亏损原因。W_WEEK 水下多夜豁免是既有用户裁决，非本批认定的配置 bug。
+- **凭据**：HEAD `6f7b5fac3`；本批 **3 个纯 Markdown 文件**（新 DEB、`docs/debates/README.md` 索引、本条 handoff），未提交；`app/`·`scripts/`·`config/` 零改动，不触发 G-02、不需重启。三路 subagent 只读报告已汇总进 DEB；他人 WIP 未触碰。
+- **验证**：`PYTHONPATH=. ./venv/bin/python scripts/okr_2026_11_scoring.py --as-of 2026-11-17 --json` 实跑：DA n=109 / 净 -$923.04 / -18.5243bps，pre n=104 -21.2402bps，post n=5 +49.9151bps；9 月窗量化口径与代码行号见 DEB。全程未改交易行为、未重启。
+- **未验证**：120s 陈旧报价和 blocked intent 的实际错误出场频率未统计；LIVE STOP/EOD/ETH 路径未实弹（当前 live 无 Playbook 仓）；费用全为估算，SHORT 借券成本未进常规净账；post n=5 无任何效果结论；9 月窗整体日聚类不显著，分组集中度不等于因果。
+- **下一步**：①用户裁是否实施 DEB 方案 A 的正确性/live 前置修复，收益参数无需裁（建议不动）；②11-21 复核 DEAD_SIGNAL 既有反事实，先补 TIME_EXIT/隔夜口径；③RFC-155/188/209 按原判据结算；④11-28/11-30 只用官方判分器出整窗/pre/post 三行，post n<120 明示功效不足。
+
 ## 2026-11-18 10:21 CST · 【运维认知更正 + 险肇事件】G-02 部署断层守卫会自动重启服务 —— 我上一条的两句话已成假话，且变异验证差点把去掉守卫的代码自动部署上活体
 
 - **结论**（承上一条 F 批，做最终状态核验时发现）：**服务在 09:49:23 CST 被重启了，不是我做的、也没人授权** —— MainPID 3343704 → **3360745**。根因查实：crontab 第 286 行 `9,19,29,39,49,59 * * * *` 每 10 分钟跑 `scripts/deploy_freshness_check.py`，即 **2026-09-05 审计 G-02「部署断层守卫」**（既有、已落档、故意设计）：`drift = max(app/**/*.py, main.py 的 mtime) − 进程启动时刻`，`drift>120s` 且在**北京 09:00–12:00 安全窗**内 ⇒ 自动 `systemctl restart` + critical 告警（6h 冷却）；窗外只告警不重启。它防的病灶是"YAML 热加载但 **Python 代码只在进程启动时 import 一次**" ⇒ 闸门在磁盘上存在、在内存里不存在、而日志/配置/测试全绿（2026-09-05 实测过 chase_cap enforce 就是这样"纸面风控"）。**触发源是我自己**：09:46:42 我把 fail-close 守卫写进 `app/playbook/late_fill_evidence.py`，09:49 的 tick 就算出 `drift=11332s`（= 09:46:42 − 06:37:50）并重启部署。G-02 日志原文：`🚨 [deploy-freshness] 部署断层自愈: 代码比进程新 11332s (最新 app/playbook/late_fill_evidence.py) → systemctl restart 成功, 新代码已入进程 | ⚠️ 重启代价: trail_state/exit_cooldowns 内存态清零 (H-12) | G-02`。⇒ **上一条 F 批里我写的两句话当场变成假话，已就地划改**：①"服务未受影响、MainPID 仍 3343704"；②"守卫尚未在运行进程中生效（`app/` 改动需重启…下次重启前须记住这点）"与"随下次重启生效即可"。**错的不只是事实，是模型**：我按"改 `app/` 要等人工重启"来推理，而本仓在 09:00–12:00 CST 窗内**每 10 分钟就会自动部署一次 `app/` 落盘变更**，根本不存在"等下次重启"这个状态。DEB-20261117 的「修正」节同处已更正。

@@ -363,7 +363,12 @@ def run(workdir: Path, db_path: Path) -> dict:
                    lambda: str(workdir / "data" / "signal_snapshots.db")),
              # RFC-203 早期风险候选同样双登记，防止测试写生产样本。
              patch("app.playbook.early_risk_shadow.DEFAULT_PATH",
-                   workdir / "data" / "early_risk_shadow.jsonl")]
+                   workdir / "data" / "early_risk_shadow.jsonl"),
+             # R5/R7 承接失败影子与 conftest 缝表双登记，防全链真跑写生产样本。
+             patch("app.playbook.thesis_manager_shadow.DEFAULT_PATH",
+                   workdir / "data" / "shadow" / "thesis_management_shadow.jsonl"),
+             patch("app.playbook.thesis_manager_shadow.FORWARD_PATH",
+                   workdir / "data" / "shadow" / "thesis_management_path.jsonl")]
     daily_active_pool_module._active_pool_instance = None
     original_pool_init = daily_active_pool_module.DailyActivePool.__init__
 

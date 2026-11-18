@@ -306,6 +306,38 @@ def _earliest_deadline(rules: Iterable[Mapping[str, Any]]) -> Optional[str]:
     return deadlines[0] if deadlines else None
 
 
+def compile_pullback_failure_rule(
+    *, direction: Any, pivot: Any, known_at: Any, timeframe: str = "5m",
+) -> Dict[str, Any]:
+    """Compile the R5 pullback-reclaim rule without changing legacy contract hashes.
+
+    This standalone compiler is deliberately REVIEW_ONLY.  It gives the shadow a
+    deterministic rule representation while leaving ``compile_invalidation_contract``
+    and its existing source/hash semantics untouched.
+    """
+    value = _finite_float(pivot)
+    direction_text = str(direction or "").upper()
+    if value is None or value <= 0:
+        raise ValueError("pivot must be a positive finite price")
+    if direction_text not in ("LONG", "BUY", "SHORT", "SELL_SHORT", "SELL"):
+        raise ValueError("unsupported direction")
+    if not known_at:
+        raise ValueError("known_at is required")
+    is_short = direction_text in ("SHORT", "SELL_SHORT", "SELL")
+    return {
+        "rule_id": "structure:pullback_reclaim_failed:0",
+        "source": "structure",
+        "metric": "reclaim_failed",
+        "operator": ">" if is_short else "<",
+        "value": value,
+        "unit": "price",
+        "timeframe": timeframe,
+        "price_basis": "bar_close",
+        "known_at": str(known_at),
+        "action": ACTION_REVIEW_ONLY,
+    }
+
+
 def compile_invalidation_contract(
     *,
     invalidation: Any,

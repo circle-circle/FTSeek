@@ -276,6 +276,15 @@ def monitor_playbook_exits(
                         logger.warning(
                             "[playbook dual] blocked-exit 影子写入失败 (不影响监控): %s",
                             _blocked_shadow_err, exc_info=True)
+                    try:
+                        from app.playbook.thesis_manager_shadow import record_censored as _thesis_censored
+                        _thesis_censored(
+                            conn=conn, row=r, blocked=blocked_exits[(_row_target, r["symbol"])],
+                            observed_at=now_et,
+                        )
+                    except Exception as _thesis_censored_err:
+                        logger.warning("[thesis-shadow] blocked/censored 记录异常（不影响恢复）: %s",
+                                       _thesis_censored_err, exc_info=True)
                     continue
                 symbol = r["symbol"]
                 direction = r["direction"]
@@ -868,6 +877,36 @@ def monitor_playbook_exits(
                 #   与 quote 版 peak_price/trough_price 方向语义对齐, 否则 SHORT 对比数据失真.
                 _bar_track_new = _track_bar_peak_trough(meta, data_router, symbol, r["entry_time"] or "", direction)
 
+                # R5/R7 PULLBACK_LIMIT 承接失败影子（record-only，默认关）。
+                # 只复用本轮回填/推送已到达的 K_1M，不产生 EXIT/TIGHTEN；失败绝不影响原规则。
+                _thesis_shadow_new = False
+                try:
+                    from app.playbook.thesis_manager_shadow import record as _thesis_record
+                    _thesis_quote_age = None
+                    if isinstance(quote, dict):
+                        _quote_age_ms = quote.get("quote_age_ms")
+                        if _quote_age_ms is not None:
+                            _thesis_quote_age = float(_quote_age_ms) / 1000.0
+                        elif quote.get("update_time"):
+                            # 复用既有交易所 update_time → age SSOT，绝不自写时区解析。
+                            from app.data.futu_lv3_provider import _measured_quote_age_ms
+                            _measured_age = _measured_quote_age_ms(quote.get("update_time"))
+                            if _measured_age is not None:
+                                _thesis_quote_age = float(_measured_age) / 1000.0
+                    if _thesis_quote_age is None and _quote_src == "cached_fallback":
+                        _thesis_quote_age = max(0.0, time_module.time() - float(
+                            _PB_EXIT_PRICE_CACHE_TS.get(symbol, 0.0)))
+                    _thesis_row = _thesis_record(
+                        conn=conn, row=r, meta=meta, data_router=data_router,
+                        current_price=current_price, quote_source=_quote_src,
+                        quote_age_s=_thesis_quote_age, old_exit_reason=exit_reason,
+                        observed_at=now_et,
+                    )
+                    _thesis_shadow_new = _thesis_row is not None
+                except Exception as _thesis_err:
+                    logger.warning("[thesis-shadow] 钩子异常（不影响退出）: %s",
+                                   _thesis_err, exc_info=True)
+
                 # 退出参数影子 (record-only) — 仅在非退出轮评估 (退出轮无意义).
                 _exit_shadow_new = False
                 if not exit_reason:
@@ -918,7 +957,7 @@ def monitor_playbook_exits(
                 # 2026-08-13: + _pe_armed_now/等待轮 — patient_exit 状态必须持久化 (重启安全,
                 #   否则重启后等待态丢失, 仓位回正常规则链被 DEAD_SIGNAL_EXIT 重复 arm).
                 _pe_state_changed = _pe_armed_now or bool(_pe_state)
-                if peak_price != float(meta.get("peak_price", 0)) or _cur_mfe > 0 or _cur_mae > 0 or _trough != _trough_old or _inval_shadow_new or _exit_shadow_new or _bar_track_new or _pe_state_changed:
+                if peak_price != float(meta.get("peak_price", 0)) or _cur_mfe > 0 or _cur_mae > 0 or _trough != _trough_old or _inval_shadow_new or _exit_shadow_new or _bar_track_new or _pe_state_changed or _thesis_shadow_new:
                     # 2026-08-05: _high_atr_stall_shadow_pts 已改 JSON-safe list (门B跨轮去重需持久), 不再 pop
                     for _k in ("_log_tag", "_symbol", "_skip_allowed"):
                         meta.pop(_k, None)

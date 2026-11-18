@@ -4412,6 +4412,32 @@ REGISTRY: list[ShadowItem] = [
               "预注册判据在模块 docstring 与本字段各存一份, 改判据须两处同改并留痕。",
     ),
     ShadowItem(
+        id="thesis_management_shadow",
+        name="PULLBACK_LIMIT 承接失败结构影子 (R5/R7, record-only)",
+        status=ShadowStatus.OBSERVING,
+        description="只使用原指令 confirmation.price_level + 现有 K_1M 聚合完整 5m，识别连续在 "
+                    "pivot 不利侧被接受且 reclaim 失败。写方 app/playbook/thesis_manager_shadow.py，"
+                    "纯函数 app/playbook/pullback_failure.py，旁路 exit_monitor_flow.py；"
+                    "无 LLM、无真实 EXIT/TIGHTEN、无新订单/账本。预注册与臂级收益天花板见模块 docstring。",
+        data_path="data/shadow/thesis_management_shadow.jsonl",
+        config_key="playbook.thesis_management_shadow.enabled",
+        min_n=30,
+        count_mode="distinct_where:decision=FAILED_RECLAIM",
+        graduation_criteria="机制门：≥30 个 FAILED_RECLAIM 独立仓且 ≥10 ET 日；先报 ACTIVE 覆盖率/触发率、"
+                            "相对 early-tight/DEAD_SIGNAL 提前量、实际盈利仓误伤，再报 paired Δ。"
+                            "本切片早期失败池仅 SL_INITIAL 10 笔 -$864.48，合理窗收益门不可达，"
+                            "禁止用受影响子集 t 值宣称盈利。触发过少/过高、覆盖不足、误伤或 paired Δ<0 ⇒ KILLED；"
+                            "禁止网格改 pivot/bar 数救参。任何真实 EXIT/TIGHTEN 灰度须用户另裁。",
+        eval_script="scripts/thesis_management_shadow_report.py",
+        eval_on_demand=True,
+        stale_expected=True,
+        created="2026-11-18",
+        notes="2026-11-18 用户裁「核查更新的DEB，请执行」批准 record-only 实施；未批准真实交易行为。"
+              "决策/复核日期=2026-12-02（首个 RTH 后约 10 ET 日）。KR4 归属：本项计 1 个实验名额；"
+              "存量注册表已超编的事实不被本项掩盖，复核前须完成腾位或用户明示豁免。"
+              "第二切片 PULLBACK_LIMIT EOD 论点复核须另裁，不与本项同批扩展。",
+    ),
+    ShadowItem(
         id="post_ca4487",
         name="post_ca4487 清洁观测窗 (KR1 换版后, DEB-20261009 §28.11)",
         status=ShadowStatus.OBSERVING,

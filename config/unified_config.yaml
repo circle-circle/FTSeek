@@ -1847,6 +1847,14 @@ playbook:
     dd_pct: 0.4              # 峰值回撤多少即锁 (现役 drawdown_from_peak=0.8)
     dd_min_peak_pct: 0.3     # dd 起算门 — 与 BE 解耦 (现役 dd 被 BE 门锁在 ≥0.4)
     min_interval_s: 300      # 同仓同阶段最小落盘间隔, 防 10s 轮询刷盘
+  # ── R5/R7 PULLBACK_LIMIT 承接失败影子 (2026-11-18, record-only) ──
+  #   仅复用原指令 confirmation.price_level + 现有 K_1M 聚合完整 5m；
+  #   输出 FAILED_RECLAIM/WAIT/STALE，绝不产生真实 EXIT/TIGHTEN，零 LLM 调用。
+  #   生效需重启加载 app 代码；之后 enabled 热重载可停采。预注册见 thesis_manager_shadow.py。
+  thesis_management_shadow:
+    enabled: true             # 仅影子; 关 = 置 false。任何灰度执行须另裁。
+    max_plan_gap_pct: 1.0     # fill 距 DA pivot >1% ⇒ STALE/ABSTAIN（沿用 re-anchor 尺）
+    max_bar_age_minutes: 15.0 # 最新完整 5m 超龄 ⇒ ABSTAIN，不拿旧 bar 做新决策
   admission:
     enabled: true
     enforce: true
