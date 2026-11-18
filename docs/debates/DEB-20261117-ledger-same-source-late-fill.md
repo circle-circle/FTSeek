@@ -4,8 +4,11 @@
 
 - [ ] 进行中
 - [ ] 待决策
-- [x] 已决策（P1 两变量 + 离线工具洞③ 已落地并**重启生效**）
-- [ ] 已验证（待重启后首个交易日核账本收口；存量分叉已清零）
+- [x] 已决策（P1 两变量 + 离线工具洞③ 已落地并**重启生效**；2026-11-18 追加
+      `audit_path` fail-close 守卫 —— 见「事故记录」节，该守卫在生产是空操作、不需紧急重启）
+- [ ] 已验证（待重启后首个交易日核账本收口；存量分叉已清零；**2026-11-18 09:30 CST 进度**：
+      重启后 reconcile 零触发、三态待处理合计 0 行 ⇒ 零触发是正确行为，首次生产验证须等
+      11-18 ET session）
 - [ ] 已关闭
 
 ## 背景
@@ -245,14 +248,121 @@ TP 那条腿永远进不了 UPDATE。这是**可复现的实证**，不是推导
       注册表面 `-k "shadow_registry or registry"` 85 passed。
 - [x] `scripts/check_undefined_names.py` 三个改动文件 exit=0（pre-commit §5.5 同一门禁）。
 - [x] 离线干跑：4 笔真实指令回灌后数值与手工复算一致（见「数据与实证」表）。
+      **口径更正（2026-11-18）**：该干跑的**审计侧是 monkeypatch 捕获的调用**，不是真写文件
+      （故当时"未触碰生产 jsonl"成立，但成立的原因是打桩、不是 `audit_path`）；TCA 侧才是
+      真写盘落 tmp。正因审计侧从未真写过，`audit_path` 是半个缝这件事当时无从暴露 ——
+      见「事故记录」节。
+- [x] **（2026-11-18 补）调用点对象形状静态证明**：`row` 来自
+      `SELECT * FROM playbook_instructions`（实测 74 列），回灌读的 7 个键
+      （`atr_pct/direction/entry_price/id/position_size/symbol/vol_bucket`）全部在列 ⇒
+      不存在 KeyError 被 `except` 吞成静默失败的路径；`observation['price']/['dealt_qty']`
+      由既有生产代码 `position_sync.py:1012` 已在用 ⇒ 形状已被生产证明。
+- [x] **（2026-11-18 补）`execution_time` 格式普查**：882 条非空样本 = tz-aware 837（94.9%）
+      + naive 45（5.1%）；**naive 全部落在 2026-06-22→07-20 此后绝迹**，11-17 四笔全为
+      `-05:00` ⇒ 第 1 轮的负偏移修复是承重的（否则这四笔 100% 退化成 `now_et()`），
+      而拒绝 naive 的回落路径对现役数据属休眠。
+- [x] **（2026-11-18 补）行为面证明 + 由此暴露的事故与修正**：用真实 `SELECT *` 的
+      sqlite3.Row 驱动回灌，TCA 侧 4 行全部正确（`planned_to_fill_bps` = BWXT +33.9967 /
+      ELV +148.2679 / CAT +176.7205 / UBER +2.9155，`ts_et` 保住真实成交时刻，
+      `atr_pct` 百分数尺度，`quote_source='late_fill_no_arrival_quote'`）；audit 侧暴露
+      `audit_path` 陷阱并误写生产 4 行 ⇒ 已按用户授权截除 + 备份 + 留痕，并加 fail-close
+      守卫与 5 例钉子（`test_late_fill_evidence` 25 → **30 passed**，其中 2 例经变异验证）。
+      详见「事故记录」节。
 - [ ] 重启后首个交易日核：`exec_gate_audit` 中 `submitted_unconfirmed` 指令是否都拿到
       配对的 `executed`(late_fill=true) 行；`execution_tca` 中 `success=true` 行数
       是否等于当日真实成交笔数。
+      **进度（2026-11-18 09:30 CST）**：重启后 reconcile **零次触发** —— 06:38:00 启动对账
+      `Futu: 5 | playbook自管: 5 | 一致性: ✓`，09:03:59 即 `Market closed, sync paused`；
+      且当前 `UNKNOWN/SUBMITTED/FILLED_UNBOOKED` 三态**合计 0 行** ⇒ 无可回灌对象，
+      零触发是正确行为、不是路径坏了。首次生产验证须等 11-18 ET  session。
 - [ ] 核 `open_positions` 与 `trade_records.metadata_json` 的 SL/TP 对每笔未平 PLAYBOOK 仓
       逐笔相等（`tests/test_open_position_sl_tp_contract.py` 的生产库回归例已覆盖 SL，
       TP 侧靠本批新例 + 人工核一次）。
+      **进度（2026-11-18）**：ELV 存量分叉已于 06:54 CST 经批准的
+      `align_playbook_recovery_display.py --apply` 清零（TP→475.73，留痕
+      `data/audits/playbook_recovery_display_20261117T225411Z.jsonl`），5 笔未平仓两表逐笔一致；
+      但**前瞻性运行时路径**（reconcile 确认分支里的对齐调用）仍未经生产实跑。
 - [ ] 何时关闭：连续 5 个 ET 交易日两处账本零分叉，且 `execution_tca_report` 的 filled
       样本数 = 当日实际成交数。
+
+## 事故记录（2026-11-18）：本批的 `audit_path` 是半个缝，验证脚本因此误写生产账本
+
+**这是本批自己引入的缺陷，由本批的验证动作暴露。**
+
+### 病灶
+
+`_backfill_audit` 接受 `audit_path` 参数，但下游
+`app/playbook/pipeline_parts/risk_gates.py:433` 的 `_emit_exec_gate_audit(inst, *, action,
+entry, size, notional, extra)` **没有 path 参数** —— `output_path` 由 `module_file` 推导
+（`parents[2]/data/shadow/exec_gate_audit.jsonl`），结构上不可能指向别处。于是：
+
+| 面 | `audit_path` 是否生效 |
+|---|---|
+| 去重读 `_tail_rows(path)` | ✅ 生效 |
+| 写入 `_emit_exec_gate_audit(...)` | ❌ **恒落生产** |
+
+⇒ 传 `audit_path=tmp` 而不同时 monkeypatch 模块常量 `_AUDIT_PATH`，得到的是
+「去重读空文件（永不去重）+ 写生产」的**静默陷阱**。对比：TCA 侧的
+`execution_tca_shadow.finalize_and_record(row, path=...)` 是本批真加的缝，读写同源 ⇒ 没中招
+（实测生产 `execution_tca.jsonl` 0 命中、mtime 02:57 CST 未动）。
+
+**原 25 例为什么没抓到**：它们整体 monkeypatch 了 `pipeline._emit_exec_gate_audit`
+（`audit_calls` 夹具），所以从未验证 `audit_path` 是否真被 honored —— 桩把缝的存在性一起桩掉了。
+
+### 实际发生的事
+
+2026-11-18 09:30:19 CST 一次行为面验证（用真实 `SELECT *` 的 sqlite3.Row 驱动回灌，
+目的是证明调用点对象形状不会 KeyError）向生产 `data/shadow/exec_gate_audit.jsonl` 末尾
+追加了 **4 行**：
+
+- 行号 8839–8842 / 共 8842（污染前 8838），连续在文件末尾；
+- `action=executed`、`late_fill=true`、`evidence_source='verify_real_row'`（我临时造的标签）、
+  `ts=2026-11-17T20:30:19-05:00` = `now_et()` 于发出时刻（09:30:19 CST 11-18），**不是** reconcile 时刻；
+- inst_id 5654 BWXT / 5647 ELV / 5650 CAT / 5652 UBER。
+
+**内容逐值核过是对的**：`entry/size/notional/atr_pct` 与该指令原 `submitted_unconfirmed` 行
+完全相同（ELV 440.08×9=3960.72 / CAT 578.07×7=4046.49 / UBER 68.64×56=3843.84 /
+BWXT 120.41×31=3732.71），也等于指令表 `entry_price`/`position_size`。错的是**出处与时点**。
+
+**对读数的影响**：`scripts/gate_ledger.py:106` 按 `if "executed" in actions` 判终局
+⇒ 11-17 执行率会从诚实的 **2/6** 读成 **6/6**。成交本身是真的（四笔全 BOOKED 且有真实
+`execution_price`），所以 6/6 在事实上不算假数；但任何按 `evidence_source='sync_reconcile'`
+过滤的人会读到 0，从而错误地判定"生产回灌从未触发"——**两个方向都会误导**。
+另：这四笔已 BOOKED，而 reconcile 只选 `UNKNOWN/SUBMITTED/FILLED_UNBOOKED`
+⇒ 真回灌对它们永远不会再触发，这 4 行会成为唯一记录并占掉去重位。
+
+### 处置（用户 2026-11-18 授权「截掉末 4 行 + 备份 + 写审计留痕」）
+
+按**行 bytes 过滤**后 `os.replace` 原子替换（保留行未经 json 重序列化 ⇒ 字节级原样；坏行不趁机改）：
+
+- 备份：`/tmp/exec_gate_audit.backup-20261118T014102Z.jsonl`（4,781,249 bytes，字节级相同，
+  sha256 `b36170f37bf9c902…`）；另有一份更早的 `…T013818Z.jsonl` 同内容；
+- 留痕：`data/audits/exec_gate_audit_excision_20261118T014102Z.jsonl`（含被删 4 行完整原值、
+  行号、原因、备份路径与 sha256、一行回滚命令）；
+- 结果：8842 → **8838 行**、0 坏行、`verify_real_row` 残留 0、末行回到原有的
+  `2026-11-17T13:57:32-05:00 US.META skipped_fail`；
+- **读数已复原**：11-17 `executed` 只剩 inst 5649/5658，四笔回到 `submitted_unconfirmed`
+  ⇒ 执行率重新读成 **2/6**；
+- 回滚：`cp /tmp/exec_gate_audit.backup-20261118T014102Z.jsonl data/shadow/exec_gate_audit.jsonl`。
+
+写入方是 per-write `open("a")` + `with` 自动关闭（无长持句柄）⇒ `os.replace` 不会丢并发追加；
+且脚本按标签过滤而非按快照截断，即便期间有追加也会保留。当时 09:03:59 CST 已
+`Market closed, sync paused`，无并发写入。
+
+### 修正（已实施）
+
+`_backfill_audit` 开头加 **fail-close 守卫**：`Path(path).resolve() != Path(_AUDIT_PATH).resolve()`
+即打 WARNING 并 `return False`，把静默陷阱变成**响亮空操作**。
+
+- **生产是空操作**：调用点不传 `audit_path` ⇒ `audit_target = _AUDIT_PATH` ⇒ 守卫直接放行
+  ⇒ 生产行为逐字节不变，**不需紧急重启**（随下次重启生效即可）。
+- 离线要跑通写入面，必须 monkeypatch 模块常量 `_AUDIT_PATH`（测试夹具正是如此），使读与写同源。
+- **刻意不改 `risk_gates.py`**：给 `_emit_exec_gate_audit` 加 path 缝虽能让离线真写，但那要动
+  交易主路径文件；守卫方案零主路径改动即消除陷阱。已加根因钉子
+  `test_downstream_emitter_really_has_no_path_parameter`——若哪天 emitter 真支持了 path 注入，
+  该例先红，提示把守卫改成透传。
+- 新增 5 例（25 → **30 passed**），其中 2 例经**变异验证**：把守卫短路成 `if False:` 后
+  恰好这 2 例红（`{'audit': True} != {'audit': False}`），还原后 30 全绿、0 残留标记。
 
 ## 回滚
 
@@ -272,3 +382,28 @@ TP 那条腿永远进不了 UPDATE。这是**可复现的实证**，不是推导
   该缺陷属行为变更，已从本批剔除并登记为独立提案，避免"顺手修"把测量批次变成行为批次。
 - Qoder（自查反驳）：初版 `_fill_instant` 只认 `+` 偏移与 `Z`，把 ET 冬令时的 `-05:00`
   误判成 naive ⇒ 回灌行时间戳退化成 reconcile 时刻。已由参数化钉子测试（正/负/Z 三形态）锁死。
+
+### 第 2 轮（2026-11-18，提交后验证）
+
+- Qoder：提交归账后回头清"未验证"项。重启（06:37 CST）后 09:03:59 即 `Market closed,
+  sync paused` ⇒ reconcile 零次，回灌路径**生产零触发**，所以那一项现在验不了；改为验
+  "它会不会静默失败"。
+- Qoder：`row` 来自 `SELECT * FROM playbook_instructions`（74 列），逐一核对回灌读的
+  7 个键（`atr_pct/direction/entry_price/id/position_size/symbol/vol_bucket`）全部在列 ⇒
+  无 KeyError 被 `except` 吞掉的风险；`observation['price']/['dealt_qty']` 由既有生产代码
+  `:1012` 已在用 ⇒ 形状已被证明。
+- Qoder：**`execution_time` 格式普查出关键事实** —— 882 条非空样本里 837 条（94.9%）tz-aware、
+  45 条（5.1%）naive，而 **naive 全部落在 2026-06-22→07-20，此后绝迹**；11-17 那四笔全是
+  `-05:00`。⇒ ①第 1 轮那个负偏移修复是**承重的**（没有它这四笔 100% 退化成 `now_et()`）；
+  ②`_fill_instant` 拒绝 naive 的回落路径对现役数据属**休眠**（最后一条 naive 距今约 4 个月）。
+  另：那 5 条 in-era naive 里的 TTE/E/UBER 07-20 正是 trace_id 家族归因中 P3 分叉的三笔
+  —— 时间窗重叠，**非因果声明**。
+- Qoder（自查，事故）：为做上述行为面证明，用真实 `SELECT *` 的 Row 驱动了一次回灌并传
+  `audit_path=/tmp/...`，结果 **audit 侧返回 True 却产出 0 行**。追查即本文件「事故记录」节的
+  陷阱：`audit_path` 只管去重读、写恒落生产 ⇒ 4 行进了生产账本末尾。**TCA 侧未中招**
+  （缝是真的）。已按用户授权截除 + 备份 + 留痕，并加 fail-close 守卫与 5 例钉子（含变异验证）。
+- Qoder（方法论反省）：这次事故的成因与第 1 轮的 `_fill_instant` 同型 —— **桩把要验的东西
+  一起桩掉了**。`audit_calls` 夹具 monkeypatch 整个 emitter，于是"缝是否真生效"这个问题
+  在测试里根本无法被问到。教训：给只写生产的下游加"可注入路径"时，必须有一例
+  **不打桩、只给 tmp 路径**的测试来证明注入真的改变了落点；否则那个参数只是看起来可注入。
+  本批 TCA 侧有这样的例（走真实写盘落 tmp），audit 侧没有 ⇒ 差异正好对应中没中招。

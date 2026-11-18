@@ -172,6 +172,18 @@ def _backfill_audit(inst: Dict[str, Any], path: Path, *, entry: float, size: flo
                     evidence_source: str, fill: float, qty: float,
                     execution_ts: Any, inst_id: Any) -> bool:
     try:
+        # [2026-11-18 事故修正] fail-close: 下游 `_emit_exec_gate_audit` (risk_gates.py:433)
+        # **无 path 参数** (output_path 由 module_file 推导) ⇒ 写恒落生产账本。本函数的 path
+        # 只作用于去重读, 故"path 指向别处"≠"写到别处", 放行会变成「去重读空文件(永不去重)
+        # + 写生产」的静默陷阱 —— 已实证误写 4 行, 截除留痕见
+        # data/audits/exec_gate_audit_excision_20261118T014102Z.jsonl。
+        # 离线要跑通写入面必须 monkeypatch 模块常量 _AUDIT_PATH, 使去重读与写入面同源。
+        if Path(path).resolve() != Path(_AUDIT_PATH).resolve():
+            logger.warning(
+                "[LateFill] audit_path=%s 与本模块生产路径 _AUDIT_PATH=%s 不一致 ⇒ **拒绝**回灌审计侧 "
+                "(下游 emitter 无 path 参数, 继续会写进生产账本)。离线验证请 monkeypatch "
+                "late_fill_evidence._AUDIT_PATH。inst=%s", path, _AUDIT_PATH, inst_id)
+            return False
         already = any(row.get("action") == "executed" and row.get("inst_id") == inst_id
                       for row in _tail_rows(path))
         if already:

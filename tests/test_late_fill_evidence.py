@@ -292,3 +292,87 @@ def test_reconcile_call_site_wires_late_fill():
            / "position_sync.py").read_text(encoding="utf-8")
     assert "from app.playbook.late_fill_evidence import record_late_fill" in src
     assert "evidence_source='sync_reconcile'" in src
+
+
+# --- audit_path 陷阱守卫 (2026-11-18 事故修正) -------------------------------
+#
+# 病灶: 下游 `_emit_exec_gate_audit` (risk_gates.py:433) 无 path 参数, output_path 由
+# module_file 推导 ⇒ 写恒落生产。而 `_backfill_audit` 的 path 只管去重读 ⇒ 传 tmp 而不动
+# 模块常量, 等于「去重读空 + 写生产」。实证: 2026-11-18 09:30 CST 一次离线验证因此把 4 行
+# evidence_source='verify_real_row' 追加进生产 exec_gate_audit.jsonl 末尾 (8839-8842/8842),
+# 已按用户授权截除, 留痕 data/audits/exec_gate_audit_excision_20261118T014102Z.jsonl。
+# 原 25 例未抓到: 它们整体 monkeypatch 了 emitter, 从未验证 audit_path 是否真被 honored。
+
+
+def test_audit_backfill_refuses_when_path_diverges_from_module_constant(
+        audit_calls, tmp_path, monkeypatch, tca_path):
+    """传了 audit_path 但没 monkeypatch _AUDIT_PATH ⇒ 必须拒绝, 且不碰 emitter。
+
+    无守卫时本例会红: _backfill_audit 会照常调 emitter 并返回 True (写落"生产")。
+    """
+    prod_like = tmp_path / "prod" / "exec_gate_audit.jsonl"
+    divergent = tmp_path / "verifier_thinks_this_is_tmp.jsonl"
+    monkeypatch.setattr(lfe, "_AUDIT_PATH", prod_like)
+
+    out = lfe.record_late_fill(_bwxt_instruction(), fill_price=120.19, dealt_qty=31,
+                               execution_ts="2026-11-17T09:51:40.167509-05:00",
+                               audit_path=divergent, tca_path=tca_path)
+
+    assert out["audit"] is False, "路径分叉时必须拒绝回灌审计侧"
+    assert audit_calls == [], "拒绝就不得触达 emitter (否则写会落生产)"
+    assert not divergent.exists(), "被拒的 audit_path 不应产生任何文件"
+
+
+def test_audit_guard_leaves_tca_side_working(audit_calls, tmp_path, monkeypatch, tca_path):
+    """守卫只作用于审计侧 —— TCA 的 path 缝是真生效的, 故 tca 仍应写盘。
+
+    这条钉子把两侧的**不对称**钉住: execution_tca_shadow.finalize_and_record 有 path 参数
+    (DEB-20261117 P1 加的缝), 而 _emit_exec_gate_audit 没有。别把守卫复制到 TCA 侧。
+    """
+    monkeypatch.setattr(lfe, "_AUDIT_PATH", tmp_path / "prod" / "exec_gate_audit.jsonl")
+
+    out = lfe.record_late_fill(_bwxt_instruction(), fill_price=120.19, dealt_qty=31,
+                               execution_ts="2026-11-17T09:51:40.167509-05:00",
+                               audit_path=tmp_path / "divergent.jsonl", tca_path=tca_path)
+
+    assert out == {"audit": False, "tca": True}
+    rows = _read(tca_path)
+    assert len(rows) == 1 and rows[0]["success"] is True
+    assert rows[0]["fill_price"] == 120.19
+
+
+def test_audit_guard_is_noop_when_paths_agree(audit_calls, audit_path, tca_path):
+    """audit_path 与 _AUDIT_PATH 同源 (测试夹具即如此) ⇒ 守卫不得改变既有行为。"""
+    out = lfe.record_late_fill(_bwxt_instruction(), fill_price=120.19, dealt_qty=31,
+                               execution_ts="2026-11-17T09:51:40.167509-05:00",
+                               audit_path=audit_path, tca_path=tca_path)
+
+    assert out["audit"] is True
+    assert len(audit_calls) == 1
+    assert audit_calls[0]["action"] == "executed"
+    assert audit_calls[0]["extra"]["late_fill"] is True
+
+
+def test_audit_guard_tolerates_equivalent_path_spelling(audit_calls, tmp_path,
+                                                        monkeypatch, tca_path):
+    """同一文件的不同拼法 (相对/../ 绕路) 不算分叉, 否则守卫会误杀正当调用。"""
+    prod_like = tmp_path / "prod" / "exec_gate_audit.jsonl"
+    monkeypatch.setattr(lfe, "_AUDIT_PATH", prod_like)
+    same_file_other_spelling = tmp_path / "prod" / "subdir" / ".." / "exec_gate_audit.jsonl"
+
+    out = lfe.record_late_fill(_bwxt_instruction(), fill_price=120.19, dealt_qty=31,
+                               execution_ts="2026-11-17T09:51:40.167509-05:00",
+                               audit_path=same_file_other_spelling, tca_path=tca_path)
+
+    assert out["audit"] is True, "resolve() 后同一文件应视为同源"
+    assert len(audit_calls) == 1
+
+
+def test_downstream_emitter_really_has_no_path_parameter():
+    """根因钉子: 若哪天 emitter 加了 path 参数, 守卫就该改成透传而非拒绝 —— 让本例先红。"""
+    import inspect
+    from app.playbook.pipeline_parts import risk_gates
+
+    params = inspect.signature(risk_gates._emit_exec_gate_audit).parameters
+    assert "path" not in params and "output_path" not in params, (
+        "下游已支持 path 注入 ⇒ _backfill_audit 的 fail-close 守卫应改为把 path 透传下去")
