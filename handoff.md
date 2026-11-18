@@ -5,7 +5,7 @@
 ## 2026-11-18 15:2x CST · 【R14 裁决落档】用户裁「按建议执行」：名额等 11-21 自然腾位，不豁免不停采；EOD/LLM/灰度关卡预注册（零行为变更）
 
 - **结论**：DEB 追加 R14 作为裁决 SSOT。①名额不豁免不停采，等 11-21 DEAD_SIGNAL 结算腾位后 thesis 影子顺位补入；②预注册 fallback：11-21 结算不了 ⇒ 限时豁免至 12-02 或退役最弱轨道 RFC-155，届时看报告再裁；③EOD 第二切片 12-02 复核前不开；④LLM 零预算；⑤灰度定位为机制研究（ITT 天花板 $0.6–0.9/笔），过门也不必然值得灰度；⑥主线仍是方案 A 正确性 + §12.4 Kill/Pivot。注册表 notes（R12 WIP）不改，由本裁决满足其腾位要求。顺手归位 handoff R10/R12 排序（最新在上）。
-- **凭据**：HEAD `6f7b5fac3`；本批 2 个纯 Markdown 文件（DEB R14 节、本条 handoff + R10/R12 块序归位），未提交；`app/`·`scripts/`·`config/` 零改动，不触发 G-02、不需重启。
+- **凭据**：已提交 **`cd540c00e`**（15 文件 +2459/-2，含 R9/R12 实现批与 R3–R14 全部文档；全钩子通过，yaml enabled 确认按 RFC-213/用户已批部署应答 y；SSOT 快照无 diff 未变）。他人 WIP（verdict_outcomes_ledger 及测试、ops/hermes、obsidian_vault）未带入。R14 落档本身为零代码改动，不触发 G-02、不需重启。
 - **验证**：`git diff --check -- handoff.md docs/debates/` 通过；R14 为裁决落档，无新增事实断言。
 - **未验证**：无（本批无代码/数据断言）。
 - **下一步**：①今晚 21:30 CST 开盘后观察决策+路径落行并跑 `scripts/thesis_management_shadow_report.py`（自动，无需干预）；②11-21 DEAD_SIGNAL 结算 ⇒ 腾位；结算不了触发 R14.1-2 fallback 裁决；③12-02 thesis 复核。
