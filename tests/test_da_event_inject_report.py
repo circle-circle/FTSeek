@@ -436,6 +436,87 @@ def test_control_rate_drop_above_5pp_fails_canary(sandbox, capsys, tmp_path):
     assert comparison["direction_matched"] == 1
 
 
+def test_control_v3_input_arms_require_explicit_selection_and_never_mix(tmp_path):
+    control = tmp_path / "control.jsonl"
+    rows = [
+        {"model": "qwen4-max", "input_mode": "full", "day": DATE,
+         "symbol": "US.NVDA", "direction": "BUY", "valid_card": True,
+         "research_complete": True},
+        {"model": "qwen4-max", "input_mode": "legacy", "day": DATE,
+         "symbol": "US.NVDA", "direction": "BUY", "valid_card": False,
+         "research_complete": False},
+    ]
+    control.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    manifest = {
+        "production_settings": {"model": "qwen4-max"},
+        "input_modes": ["full", "legacy"],
+        "summary": {
+            "qwen4-max|full": {"n": 1, "valid_card_rate": 1.0,
+                               "research_complete_rate": 1.0},
+            "qwen4-max|legacy": {"n": 1, "valid_card_rate": 0.0,
+                                 "research_complete_rate": 0.0},
+        },
+    }
+    control.with_suffix(".manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="multiple input modes"):
+        report.load_control(control)
+    full = report.load_control(control, input_mode="full")
+    legacy = report.load_control(control, input_mode="legacy")
+    assert full["record_count"] == 1
+    assert full["valid_card_rate"] == 1.0
+    assert full["input_mode"] == "full"
+    assert legacy["record_count"] == 1
+    assert legacy["valid_card_rate"] == 0.0
+
+
+def test_control_v3_manifest_only_uses_exact_model_input_key(tmp_path):
+    control = tmp_path / "control.json"
+    control.write_text(json.dumps({
+        "production_settings": {"model": "qwen4-max"},
+        "input_modes": ["full", "legacy"],
+        "summary": {
+            "qwen4-max|full": {"n": 2, "valid_card_rate": 1.0,
+                               "research_complete_rate": 1.0},
+            "qwen4-max|legacy": {"n": 3, "valid_card_rate": 0.25,
+                                 "research_complete_rate": 0.5},
+        },
+    }), encoding="utf-8")
+    selected = report.load_control(control, input_mode="legacy")
+    assert selected["record_count"] == 3
+    assert selected["valid_card_rate"] == 0.25
+    assert selected["research_complete_rate"] == 0.5
+
+
+def test_control_empty_arm_or_missing_production_model_fails_closed(tmp_path):
+    legacy = tmp_path / "legacy.jsonl"
+    legacy.write_text(json.dumps({
+        "model": "qwen4-max", "symbol": "US.NVDA", "direction": "BUY",
+        "valid_card": True, "research_complete": True,
+    }) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="do not declare input_mode"):
+        report.load_control(legacy, input_mode="full")
+
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({
+        "production_settings": {"model": "qwen4-max"},
+        "input_modes": ["full"],
+        "summary": {"qwen4-max|legacy": {"n": 1, "valid_card_rate": 1.0}},
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="zero usable records"):
+        report.load_control(manifest, input_mode="full")
+
+    wrong_model = tmp_path / "wrong.jsonl"
+    wrong_model.write_text(json.dumps({
+        "model": "qwen3.7-max", "input_mode": "full", "symbol": "US.NVDA",
+        "direction": "BUY", "valid_card": True, "research_complete": True,
+    }) + "\n", encoding="utf-8")
+    wrong_model.with_suffix(".manifest.json").write_text(json.dumps({
+        "production_settings": {"model": "qwen4-max"}, "input_modes": ["full"],
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="zero usable records"):
+        report.load_control(wrong_model, input_mode="full")
+
+
 # ---------------------------------------------------------------------------
 # 5. event_role=NONE may not attribute event IDs
 # ---------------------------------------------------------------------------

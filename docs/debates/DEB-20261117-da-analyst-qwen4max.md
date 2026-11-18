@@ -187,3 +187,56 @@ workers 8 只提速）——即**单行回滚完整恢复旧模型行为**。
   数据段变长不影响契约前缀缓存，但 user_tail 之后全文变长）。
 - 质量优劣: 仍无离线证据，交前瞻样本（OKR 主 KR，n<30 不下结论）。
 - 挑战者侧未动（其数据视图截断仍在）— 若主分析质量提升后挑战者成为短板，另立轮次。
+
+---
+
+## R3. P0 测量与归因执行批（2026-11-17 第3轮，用户裁「按建议优化完善执行落地」）
+
+> 状态：**测量工具已实施并验证；零生产交易行为变更、零付费模型调用、零重启。**
+> 本批不证明 qwen4-max / 全量输入 / 无帽思考具有费后 edge；首夜生产与前瞻 cohort 仍按 R2.4 验收。
+
+### R3.1 范围与落地
+
+| 工具 | 落地 | 关键防误读契约 |
+|---|---|---|
+| `scripts/da_model_ab_replay.py` | v3：模型 × `frozen/full/legacy` 输入臂 × repeats；实读 qwen4-max 无帽 `max_tokens=131072`、timeout=900；qwen3.7 历史思考臂 8192/16192 | full/legacy 只从同一 `raw.collected` 重建，不补采、不注动态历史/EventContext；记录实际 shape/摘要长度/hash。旧 raw 不满足 20/12/10 采集数量时 WARNING，不冒充当前生产全量采集。API 失败不参与稳定性；空分母=`null/n/a` |
+| `scripts/da_scope_confidence_audit.py first-night` | checkpoint/bridge/DB/schedule 四层首夜健康 JSON + exit code | 模型错配、主降级、非 stop、未修复契约、缺 bridge/DB/schema、分析数/缺股/指令数不符、超时收尾、越 08:57 ET = FAIL；缺预期分析数不猜；缺 reasoning 时 `cap_check=unknown`；日志缺失/空文件=`unknown`，429/timeout 只作观测 |
+| `scripts/da_chain_contract_audit.py` | 每决策串起模型/Prompt/as-of → gate → planned/effective/fill → fees/net/exit outcome | 复用严格 trade-instruction resolver；decision_id 先按 symbol 收窄；同标的歧义多组成交隔离不合并；多 fill 逐笔 RR/gap/TP；`exit_price=0` 保持 open；CLI 显示 symbol_unique/ambiguous/fill_events/归因来源 |
+| `scripts/da_event_inject_report.py` | 兼容 v3 控制组：`--control-input-mode=frozen/full/legacy` | 多输入臂未指定即 ERROR；只读 `model|input_mode` 精确摘要；空臂、缺声明生产模型、零可用记录 fail-closed，禁止 full/legacy 或其他模型混算 |
+
+未改：`app/`、`config/`、生产 Prompt、信号门、Playbook、仓位、carrier、cron、通知、EventContext canary。未触碰他人未跟踪 WIP `scripts/verdict_outcomes_ledger.py` 及其测试。
+
+### R3.2 独立审查与反例闭环
+
+三轮 Kimi 独立审查 + 一轮 GLM 定向实证复核，修复了以下测量假象：
+
+1. 首夜缺 bridge/DB/schema/预期分析数/遥测时假 PASS；缺 reasoning 假 `no_hit`；主输出非 stop 仅警告。
+2. 重复 decision_id 跨 symbol 合并盈亏；同 symbol 多歧义组成交被汇总；多 fill 只算首笔 TP/RR/gap；`exit_price=0` 被当已平。
+3. full/legacy 控制组混算、空控制组 `pass=True`、缺生产模型时借用其他模型胜率。
+4. API 全失败却 `stable_direction_rate=1.0`、SKIP-only `price_geometry_rate=0.0`、空分母被写成零。
+5. qwen3.7 非生产模型 `--no-thinking` 错用 16192 而非 3000；full 标签未披露旧 raw 只有 10/6/5。
+
+GLM 最终定向复核：五个剩余 blocker 全不复现；四文件套件 **79 passed**；独立 probe 验证空臂 raise、失败总体 `None`、跨 symbol PnL/成交分离、多 fill 全量汇总；零文件改动、零付费 API。
+
+### R3.3 验证
+
+- 聚焦四套件：`tests/test_da_model_ab_replay.py` + `test_da_scope_confidence_audit.py` + `test_da_chain_contract_audit.py` + `test_da_event_inject_report.py` = **79 passed**。
+- 相邻回归（上述 + repeatability/citation/instruction attribution/main carrier/ledger）= **137 passed**。
+- `py_compile` 四脚本 ✓；`check_undefined_names.py` rc=0；`git diff --check` rc=0。
+- 交叉矩阵 dry-run（AMD 2026-11-16，frozen/full/legacy × qwen4/qwen3.7 × repeats2）：计划 12 次调用，**实调用 0、写文件 0**；生产参数=qwen4-max/无帽/131072/900；旧 raw shape=10/6/5，full 臂明确 WARNING。
+- 首夜工具旧批实跑（2026-11-16，预期 qwen3.7-max/budget8192）：32 checkpoint、预期 32、bridge/DB 24/24、模型三层一致、08:31:48 ET 完成、cap no_hit；准确判 **FAIL=`unresolved_contract:1`**，空日志=`unknown`，不是健康通过。
+- 决策归因旧批实跑（2026-11-16）：24 指令、13 fill、13/13 metadata 精确归属、模型 mismatch=0、歧义=0；计划 vs fill RR 漂移 12 条、TP swallowed 2；输入版本旧数据=`None`，未伪造 full 标记。
+
+### R3.4 未验证与下一步
+
+- **未验证**：11-17 qwen4-max 首夜生产（本批实施时仍未发车）；付费模型×输入矩阵真实 API 接受度/成本/质量；任何费后 edge、死单率改善或 live readiness。
+- 今晚 DA 后执行：
+
+```bash
+PYTHONPATH=. ./venv/bin/python scripts/da_scope_confidence_audit.py first-night \
+  --date 2026-11-17 --expected-model qwen4-max --thinking-budget 0
+PYTHONPATH=. ./venv/bin/python scripts/da_chain_contract_audit.py \
+  --date 2026-11-17 --json
+```
+
+- 付费交叉回放只在另行明确执行预算后运行；dry-run 已给出调用矩阵与输入 shape，不以离线工具落地冒充质量结论。

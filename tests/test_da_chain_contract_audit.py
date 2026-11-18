@@ -136,31 +136,60 @@ def test_compare_memory_flags_pseudo_window_gross_net_and_old_era():
     assert r["true_window_n_sum"] == 1
 
 
+def test_checkpoint_audit_preserves_model_prompt_and_as_of_lineage(tmp_path):
+    (tmp_path / "US.AMD.raw.json").write_text(json.dumps({
+        "symbol": "US.AMD", "user_prompt": "frozen prompt",
+        "saved_at": "2026-11-17T08:00:00-05:00",
+        "input_version": "full-v1",
+        "event_context": {"as_of": "2026-11-17T12:30:00+00:00",
+                          "injection_hash": "event123"},
+        "collected": {"snapshot": {}, "kline": []},
+    }), encoding="utf-8")
+    (tmp_path / "US.AMD.json").write_text(json.dumps({
+        "symbol": "US.AMD", "_ckpt_model": "qwen4-max",
+        "_ic_decision_id": "DA-amd",
+        "_llm_output": {"direction": "SKIP", "_model_reported": "qwen4-max",
+                        "_prompt_hash": "prompt-v3"},
+    }), encoding="utf-8")
+    result = M.audit_checkpoints(tmp_path, "2026-11-17")
+    row = result["analyses"]["US.AMD"]
+    assert row["checkpoint_model"] == "qwen4-max"
+    assert row["reported_model"] == "qwen4-max"
+    assert row["prompt_hash"] == "prompt-v3"
+    assert row["input_version"] == "full-v1"
+    assert row["event_as_of"] == "2026-11-17T12:30:00+00:00"
+    assert row["user_prompt_chars"] == len("frozen prompt")
+    assert len(row["user_prompt_sha256"]) == 64
+
+
 def _make_stage_db(path: Path):
     conn = sqlite3.connect(path)
     conn.execute("""
         CREATE TABLE playbook_instructions (
             id INTEGER PRIMARY KEY, date TEXT, symbol TEXT, direction TEXT,
             entry_price REAL, stop_loss REAL, take_profit REAL, risk_reward REAL,
-            decision_id TEXT, execution_state TEXT, execution_price REAL)
+            decision_id TEXT, execution_state TEXT, execution_price REAL,
+            model_used TEXT, skip_reason TEXT)
     """)
     conn.execute("""
         CREATE TABLE trade_records (
             id INTEGER PRIMARY KEY, trade_date TEXT, symbol TEXT, direction TEXT,
             entry_price REAL, quantity REAL, realized_pnl REAL, pnl_net REAL,
-            metadata_json TEXT, decision_id TEXT)
+            fees_est REAL, fees_source TEXT, exit_time TEXT, exit_price REAL,
+            exit_reason TEXT, metadata_json TEXT, decision_id TEXT)
     """)
     conn.execute(
         "INSERT INTO playbook_instructions VALUES "
         "(1,'2026-10-22','US.SNDK','BUY',1330.64,1264.11,1430.44,2.45,"
-        "'DA-x','BOOKED',1331.673)")
+        "'DA-x','BOOKED',1331.673,'qwen4-max',NULL)")
     meta = {"playbook_instruction_id": 1, "stop_loss": 1264.11,
             "take_profit": 1430.44,
             "_tp_rr_gate": {"initial_sl": 1264.11, "tp": 1430.44,
                             "rr_at_execution": 1.46185, "swallowed": True}}
     conn.execute(
         "INSERT INTO trade_records VALUES "
-        "(2,'2026-10-22','US.SNDK','LONG',1331.673,2,15.07,11.01,?,'DA-x')",
+        "(2,'2026-10-22','US.SNDK','LONG',1331.673,2,15.07,11.01,4.06,'est',"
+        "'2026-10-22T15:00:00-04:00',1430.0,'SL_TRAIL_LOCK',?,'DA-x')",
         (json.dumps(meta),))
     conn.commit()
     conn.close()
@@ -173,7 +202,11 @@ def test_stage_audit_keeps_plan_submitted_filled_distinct(tmp_path):
         "decision_id": "DA-x", "direction": "BUY", "score": 8,
         "plan": {"entry_price": 1315.0, "stop_loss_price": 1260.0,
                  "take_profit_price": 1450.0},
-        "gate": {},
+        "gate": {"decision": "PASS", "reasons": ["test"]},
+        "checkpoint_model": "qwen4-max", "reported_model": "qwen4-max",
+        "prompt_hash": "prompt-v3", "user_prompt_sha256": "abc123",
+        "raw_saved_at": "2026-10-22T08:00:00-04:00",
+        "event_as_of": "2026-10-22T12:00:00+00:00",
     }}
     r = M.stage_audit(analyses, db, "2026-10-22")
     assert r["status"] == "ok"
@@ -182,8 +215,141 @@ def test_stage_audit_keeps_plan_submitted_filled_distinct(tmp_path):
     assert row["submitted"]["rr"] == round(99.8 / 66.53, 6)
     assert row["filled"]["rr"] == round(98.767 / 67.563, 6)
     assert row["filled"]["tp_swallowed"] is True
+    assert row["model_mismatch"] is False
+    assert row["prompt"]["production_hash"] == "prompt-v3"
+    assert row["as_of"]["event_as_of"] == "2026-10-22T12:00:00+00:00"
+    assert row["gate"]["decision"] == "PASS"
+    assert row["outcome"] == {
+        "fill_count": 1, "closed_count": 1, "open_count": 0,
+        "realized_pnl": 15.07, "pnl_net": 11.01, "fees_est": 4.06,
+        "fees_sources": ["est"], "exit_reasons": ["SL_TRAIL_LOCK"],
+        "attribution_sources": ["metadata"], "trade_ids": [2],
+    }
+    assert r["trade_attribution"]["metadata"] == 1
     assert r["plan_vs_filled_rr_mismatch_gt_0_05"] == 1
     assert r["tp_swallowed"] == 1
+
+
+def test_stage_audit_marks_duplicate_decision_ambiguous_but_keeps_exact_fill_outcome(tmp_path):
+    db = tmp_path / "t.db"
+    _make_stage_db(db)
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "INSERT INTO playbook_instructions VALUES "
+        "(2,'2026-10-22','US.SNDK','BUY',1330.64,1264.11,1430.44,2.45,"
+        "'DA-x','BOOKED',1331.673,'qwen4-max',NULL)")
+    conn.commit()
+    conn.close()
+    analyses = {"US.SNDK": {
+        "decision_id": "DA-x", "direction": "BUY",
+        "plan": {"entry_price": 1315.0, "stop_loss_price": 1260.0,
+                 "take_profit_price": 1450.0},
+        "checkpoint_model": "qwen4-max", "reported_model": "qwen3.7-max",
+    }}
+    result = M.stage_audit(analyses, db, "2026-10-22")
+    row = result["rows"][0]
+    assert row["match"] == "ambiguous"
+    assert row["candidate_instruction_ids"] == [1, 2]
+    assert row["model_mismatch"] is True
+    assert row["outcome"]["pnl_net"] == 11.01
+    assert row["outcome"]["attribution_sources"] == ["metadata"]
+    assert result["ambiguous"] == 1
+    assert result["model_mismatch"] == 1
+
+
+def test_stage_audit_duplicate_decision_id_is_narrowed_by_symbol(tmp_path):
+    db = tmp_path / "t.db"
+    _make_stage_db(db)
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "INSERT INTO playbook_instructions VALUES "
+        "(2,'2026-10-22','US.AMD','BUY',100,95,110,2.0,"
+        "'DA-x','BOOKED',101,'qwen4-max',NULL)")
+    meta = {"playbook_instruction_id": 2, "stop_loss": 95, "take_profit": 110}
+    conn.execute(
+        "INSERT INTO trade_records VALUES "
+        "(3,'2026-10-22','US.AMD','LONG',101,1,3.0,2.0,1.0,'est',"
+        "'2026-10-22T15:00:00-04:00',105,'SL_TRAIL_LOCK',?,'DA-x')",
+        (json.dumps(meta),))
+    conn.commit()
+    conn.close()
+    analyses = {
+        "US.SNDK": {"decision_id": "DA-x", "direction": "BUY", "plan": {}},
+        "US.AMD": {"decision_id": "DA-x", "direction": "BUY", "plan": {}},
+    }
+    result = M.stage_audit(analyses, db, "2026-10-22")
+    rows = {row["symbol"]: row for row in result["rows"]}
+    assert rows["US.SNDK"]["outcome"]["pnl_net"] == 11.01
+    assert rows["US.AMD"]["outcome"]["pnl_net"] == 2.0
+    assert rows["US.SNDK"]["outcome"]["trade_ids"] == [2]
+    assert rows["US.AMD"]["outcome"]["trade_ids"] == [3]
+    assert result["matched"] == 2
+    assert result["ambiguous"] == 0
+
+
+def test_stage_audit_multi_fill_summaries_cover_every_fill(tmp_path):
+    db = tmp_path / "t.db"
+    _make_stage_db(db)
+    conn = sqlite3.connect(db)
+    original = conn.execute("SELECT metadata_json FROM trade_records WHERE id=2").fetchone()[0]
+    meta = json.loads(original)
+    meta["_tp_rr_gate"]["swallowed"] = False
+    conn.execute("UPDATE trade_records SET metadata_json=? WHERE id=2", (json.dumps(meta),))
+    second = {
+        "playbook_instruction_id": 1, "stop_loss": 1264.11, "take_profit": 1430.44,
+        "_tp_rr_gate": {"initial_sl": 1264.11, "tp": 1430.44,
+                        "rr_at_execution": 1.1, "swallowed": True},
+    }
+    conn.execute(
+        "INSERT INTO trade_records VALUES "
+        "(3,'2026-10-22','US.SNDK','LONG',1340,1,3.0,2.0,1.0,'est',"
+        "'2026-10-22T15:30:00-04:00',1430,'SL_TRAIL_LOCK',?,'DA-x')",
+        (json.dumps(second),))
+    conn.commit()
+    conn.close()
+    analyses = {"US.SNDK": {
+        "decision_id": "DA-x", "direction": "BUY",
+        "plan": {"entry_price": 1315.0, "stop_loss_price": 1260.0,
+                 "take_profit_price": 1450.0},
+    }}
+    result = M.stage_audit(analyses, db, "2026-10-22")
+    row = result["rows"][0]
+    assert row["outcome"]["fill_count"] == 2
+    assert row["outcome"]["pnl_net"] == 13.01
+    assert len(row["fills"]) == 2
+    assert row["fills"][1]["entry_gap_pct"] is not None
+    assert result["fill_events"] == 2
+    assert result["tp_swallowed"] == 1
+    assert result["plan_vs_filled_rr_mismatch_gt_0_05"] == 2
+
+
+def test_stage_audit_zero_exit_price_remains_open_not_closed(tmp_path):
+    db = tmp_path / "t.db"
+    _make_stage_db(db)
+    conn = sqlite3.connect(db)
+    conn.execute("UPDATE trade_records SET exit_time=NULL,exit_price=0,"
+                 "realized_pnl=NULL,pnl_net=NULL,fees_est=NULL,exit_reason=NULL WHERE id=2")
+    conn.commit()
+    conn.close()
+    result = M.stage_audit({"US.SNDK": {
+        "decision_id": "DA-x", "direction": "BUY", "plan": {},
+    }}, db, "2026-10-22")
+    outcome = result["rows"][0]["outcome"]
+    assert outcome["open_count"] == 1
+    assert outcome["closed_count"] == 0
+    assert outcome["pnl_net"] is None
+
+
+def test_stage_audit_symbol_unique_fallback_has_explicit_count(tmp_path):
+    db = tmp_path / "t.db"
+    _make_stage_db(db)
+    result = M.stage_audit({"US.SNDK": {
+        "decision_id": "DA-missing", "direction": "BUY", "plan": {},
+    }}, db, "2026-10-22")
+    assert result["matched"] == 0
+    assert result["symbol_unique"] == 1
+    assert result["ambiguous"] == 0
+    assert result["no_instruction"] == 0
 
 
 def _feedback_row(rid=1, **changes):

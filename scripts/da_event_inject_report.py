@@ -1297,8 +1297,8 @@ def _read_jsonl(path: Path) -> Tuple[List[Dict[str, Any]], int]:
     return records, errors
 
 
-def load_control(path: Path) -> Dict[str, Any]:
-    """Parse a control JSONL and/or its sibling ``.manifest.json``."""
+def load_control(path: Path, input_mode: Optional[str] = None) -> Dict[str, Any]:
+    """Parse one explicit model/input arm; never mix v3 replay input modes."""
     p = Path(path)
     if not p.is_file():
         raise ValueError(f"control file not found: {p}")
@@ -1347,14 +1347,30 @@ def load_control(path: Path) -> Dict[str, Any]:
         if isinstance(settings, dict):
             production_model = str(settings.get("model") or "").strip() or None
 
+    available_modes = {str(record.get("input_mode")) for record in records if record.get("input_mode")}
+    if manifest and isinstance(manifest.get("input_modes"), list):
+        available_modes.update(str(mode) for mode in manifest["input_modes"] if mode)
+    if input_mode and records and not available_modes:
+        raise ValueError("control records do not declare input_mode; cannot select an input arm")
+    if input_mode and available_modes and input_mode not in available_modes:
+        raise ValueError(f"control input mode {input_mode} not in {sorted(available_modes)}")
+    if not input_mode:
+        if len(available_modes) == 1:
+            input_mode = next(iter(available_modes))
+        elif len(available_modes) > 1:
+            raise ValueError(
+                "control contains multiple input modes; pass --control-input-mode explicitly"
+            )
+
     rated_rows = records
-    if production_model and records and any(
-        str(record.get("model") or "") == production_model for record in records
-    ):
+    if production_model and records:
         rated_rows = [
             record for record in records
             if str(record.get("model") or "") == production_model
         ]
+    if input_mode:
+        rated_rows = [record for record in rated_rows
+                      if record.get("input_mode") == input_mode]
 
     valid_rate: Optional[float] = None
     research_rate: Optional[float] = None
@@ -1372,9 +1388,10 @@ def load_control(path: Path) -> Dict[str, Any]:
     elif manifest:
         summary = manifest.get("summary") or {}
         row: Optional[Dict[str, Any]] = None
-        if production_model and isinstance(summary.get(production_model), dict):
-            row = summary[production_model]
-        elif isinstance(summary, dict) and summary:
+        summary_key = f"{production_model}|{input_mode}" if production_model and input_mode else production_model
+        if summary_key and isinstance(summary.get(summary_key), dict):
+            row = summary[summary_key]
+        elif not input_mode and isinstance(summary, dict) and summary:
             first_key = sorted(summary)[0]
             if isinstance(summary.get(first_key), dict):
                 row = summary[first_key]
@@ -1382,6 +1399,11 @@ def load_control(path: Path) -> Dict[str, Any]:
             valid_rate = row.get("valid_card_rate")
             research_rate = row.get("research_complete_rate")
             record_count = int(row.get("n") or 0)
+    if record_count <= 0:
+        raise ValueError(
+            "control selection has zero usable records for "
+            f"model={production_model or 'any'} input_mode={input_mode or 'legacy_untagged'}"
+        )
 
     day_symbol_dirs: Dict[Tuple[str, str], set] = collections.defaultdict(set)
     symbol_dirs: Dict[str, set] = collections.defaultdict(set)
@@ -1398,7 +1420,7 @@ def load_control(path: Path) -> Dict[str, Any]:
     return {
         "path": _display_path(p),
         "format": "+".join(dict.fromkeys(formats)),
-        "production_model": production_model,
+        "production_model": production_model, "input_mode": input_mode,
         "record_count": record_count,
         "valid_card_rate": _round_rate(valid_rate),
         "research_complete_rate": _round_rate(research_rate),
@@ -1472,6 +1494,7 @@ def _compare_control(
         "path": control.get("path"),
         "format": control.get("format"),
         "production_model": control.get("production_model"),
+        "input_mode": control.get("input_mode"),
         "record_count": control.get("record_count"),
         "threshold_pp": CONTROL_DROP_PP,
         "rates": checks,
@@ -1495,6 +1518,7 @@ def _build_report(
     brief_path: Path,
     control_path: Optional[Path],
     baseline_hash: Optional[str],
+    control_input_mode: Optional[str] = None,
 ) -> Dict[str, Any]:
     samples = discover_checkpoints(checkpoint_dir)
     if not samples:
@@ -1532,7 +1556,7 @@ def _build_report(
 
     control = None
     if control_path is not None:
-        control = load_control(control_path)
+        control = load_control(control_path, input_mode=control_input_mode)
     control_comparison = _compare_control(details, control, date_et=date_et)
 
     canary_issues: List[str] = []
@@ -1800,6 +1824,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="ET checkpoint date YYYY-MM-DD (default: latest available)")
     parser.add_argument("--control", default="",
                         help="optional da_model_ab_replay JSONL or manifest JSON")
+    parser.add_argument("--control-input-mode", choices=("frozen", "full", "legacy"),
+                        default=None, help="v3 多输入臂必须显式选择，禁止混算")
     parser.add_argument("--out-root", type=Path, default=DEFAULT_OUT_ROOT,
                         help="canary output root (latest.json + <date>/<content_hash>.json)")
     parser.add_argument("--latest-path", type=Path, default=None,
@@ -1849,6 +1875,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             brief_path=Path(args.brief_latest),
             control_path=Path(args.control) if args.control else None,
             baseline_hash=baseline_prompt_hash(),
+            control_input_mode=args.control_input_mode,
         )
         report = write_report(content, out_root=Path(args.out_root), latest_path=latest_path)
     except Exception as exc:  # noqa: BLE001 - report must fail visibly, never write

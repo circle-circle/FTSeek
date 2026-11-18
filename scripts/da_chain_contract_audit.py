@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import sys
 import json
 import re
@@ -382,6 +383,7 @@ def audit_checkpoints(ckpt_dir: Path, trade_date: str) -> Dict[str, Any]:
 
     price: Dict[str, Dict[str, Any]] = {}
     sources: Dict[str, Dict[str, Any]] = {}
+    raw_context: Dict[str, Dict[str, Any]] = {}
     for raw_path in raw_files:
         raw = _read_json(raw_path) or {}
         collected = raw.get("collected") or {}
@@ -390,6 +392,16 @@ def audit_checkpoints(ckpt_dir: Path, trade_date: str) -> Dict[str, Any]:
         kline = collected.get("kline") or []
         price[symbol] = classify_price_basis(snap, kline, trade_date)
         sources[symbol] = source_stats(collected, trade_date)
+        user_prompt = str(raw.get("user_prompt") or "")
+        event = raw.get("event_context") or raw.get("_event_context") or {}
+        raw_context[symbol] = {
+            "raw_saved_at": raw.get("saved_at"),
+            "event_as_of": event.get("as_of"),
+            "event_injection_hash": event.get("injection_hash"),
+            "input_version": raw.get("input_version") or raw.get("_input_version"),
+            "user_prompt_sha256": hashlib.sha256(user_prompt.encode("utf-8")).hexdigest(),
+            "user_prompt_chars": len(user_prompt),
+        }
 
     debates: Dict[str, Dict[str, Any]] = {}
     analyses: Dict[str, Dict[str, Any]] = {}
@@ -405,6 +417,12 @@ def audit_checkpoints(ckpt_dir: Path, trade_date: str) -> Dict[str, Any]:
                 "score": llm.get("score"),
                 "plan": llm.get("execution_plan") or {},
                 "gate": obj.get("_signal_gate") or {},
+                "checkpoint_model": obj.get("_ckpt_model"),
+                "reported_model": llm.get("_model_reported"),
+                "prompt_hash": llm.get("_prompt_hash"),
+                **raw_context.get(symbol, {}),
+                "event_as_of": (raw_context.get(symbol, {}).get("event_as_of")
+                                or (obj.get("_event_context") or {}).get("as_of")),
             }
         if llm:
             available = bool(debate) and bool(debate.get("challenger_direction"))
@@ -470,101 +488,184 @@ def stage_audit(
     db_path: Path,
     trade_date: str,
 ) -> Dict[str, Any]:
+    from app.playbook.instruction_attribution import (
+        count_sources, resolve_trade_instruction_ids,
+    )
+
     conn = _db_ro(db_path)
     if conn is None:
         return {"status": "db_missing_or_unreadable", "db": str(db_path)}
     try:
         inst_rows = [dict(r) for r in conn.execute(
             "SELECT id, date, symbol, direction, entry_price, stop_loss, take_profit, "
-            "risk_reward, decision_id, execution_state, execution_price "
-            "FROM playbook_instructions WHERE date=? AND direction IN ('BUY','SELL_SHORT')",
+            "risk_reward, decision_id, execution_state, execution_price, model_used, skip_reason "
+            "FROM playbook_instructions WHERE date=? AND decision_id LIKE 'DA-%' ORDER BY id",
             (trade_date,),
         )]
-        by_decision = {r["decision_id"]: r for r in inst_rows if r.get("decision_id")}
+        by_decision: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for inst in inst_rows:
+            if inst.get("decision_id"):
+                by_decision[inst["decision_id"]].append(inst)
         by_id = {r["id"]: r for r in inst_rows}
 
         trade_rows = []
         for r in conn.execute(
             "SELECT id, trade_date, symbol, direction, entry_price, quantity, "
-            "realized_pnl, pnl_net, metadata_json, decision_id "
-            "FROM trade_records WHERE trade_date=?",
+            "realized_pnl, pnl_net, fees_est, fees_source, exit_time, exit_price, exit_reason, "
+            "metadata_json, decision_id FROM trade_records WHERE trade_date=? ORDER BY id",
             (trade_date,),
         ):
             row = dict(r)
             try:
                 row["_meta"] = json.loads(row.get("metadata_json") or "{}")
-            except Exception:
+            except (TypeError, ValueError):
                 row["_meta"] = {}
             trade_rows.append(row)
-        by_inst = {}
-        for tr in trade_rows:
-            iid = (tr["_meta"] or {}).get("playbook_instruction_id")
-            if iid is not None:
-                by_inst[int(iid)] = tr
     finally:
         conn.close()
+
+    attribution_sources: List[str] = []
+    resolved = resolve_trade_instruction_ids(trade_rows, inst_rows, attribution_sources)
+    by_inst: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+    da_sources = []
+    for tr, iid, source in zip(trade_rows, resolved, attribution_sources):
+        tr["_attribution_source"] = source
+        linked = isinstance(iid, int) and iid in by_id
+        if linked:
+            by_inst[iid].append(tr)
+        if linked or str(tr.get("decision_id") or "").startswith("DA-"):
+            da_sources.append(source)
+
+    def fill_view(tr):
+        meta = tr.get("_meta") or {}
+        tp_gate = meta.get("_tp_rr_gate") or {}
+        f_entry = _f(tr.get("entry_price"))
+        f_sl = _f(tp_gate.get("initial_sl")) or _f(meta.get("stop_loss"))
+        f_tp = _f(tp_gate.get("tp")) or _f(meta.get("take_profit"))
+        return {
+            "trade_id": tr.get("id"), "entry": f_entry, "sl": f_sl, "tp": f_tp,
+            "rr": compute_rr(tr.get("direction"), f_entry, f_sl, f_tp),
+            "tp_swallowed": bool(tp_gate.get("swallowed")),
+            "tp_rr_at_execution": _f(tp_gate.get("rr_at_execution")),
+            "qty": _f(tr.get("quantity")),
+            "attribution_source": tr.get("_attribution_source"),
+        }
+
+    def outcome_view(fills):
+        closed = [tr for tr in fills
+                  if tr.get("exit_time") or (_f(tr.get("exit_price")) or 0) > 0]
+
+        def complete_sum(key):
+            values = [_f(tr.get(key)) for tr in fills]
+            return round(sum(values), 6) if values and all(v is not None for v in values) else None
+
+        return {
+            "fill_count": len(fills), "closed_count": len(closed),
+            "open_count": len(fills) - len(closed),
+            "realized_pnl": complete_sum("realized_pnl"),
+            "pnl_net": complete_sum("pnl_net"), "fees_est": complete_sum("fees_est"),
+            "fees_sources": sorted({str(tr.get("fees_source") or "unknown") for tr in fills}),
+            "exit_reasons": sorted({str(tr.get("exit_reason")) for tr in closed}),
+            "attribution_sources": sorted({tr.get("_attribution_source") for tr in fills}),
+            "trade_ids": [tr.get("id") for tr in fills],
+        }
 
     rows = []
     for symbol, a in analyses.items():
         plan = a.get("plan") or {}
-        inst = by_decision.get(a.get("decision_id"))
-        if not inst:
-            # 兜底: 同日唯一同标的指令; 多指令时保持 ambiguous
-            cands = [r for r in inst_rows if r["symbol"] == symbol]
-            inst = cands[0] if len(cands) == 1 else None
+        did = a.get("decision_id")
+        decision_matches = [r for r in (by_decision.get(did, []) if did else [])
+                            if r.get("symbol") == symbol]
+        candidate_insts = decision_matches
+        match = "no_instruction"
+        inst = None
+        if len(decision_matches) == 1:
+            inst, match = decision_matches[0], "decision_id"
+        elif len(decision_matches) > 1:
+            match = "ambiguous"
+        else:
+            candidates = [r for r in inst_rows if r["symbol"] == symbol]
+            candidate_insts = candidates
+            if len(candidates) == 1:
+                inst, match = candidates[0], "symbol_unique"
+            elif len(candidates) > 1:
+                match = "ambiguous"
         entry = _f(plan.get("entry_price"))
         sl = _f(plan.get("stop_loss_price"))
         tp = _f(plan.get("take_profit_price"))
-        plan_rr = compute_rr(a.get("direction"), entry, sl, tp)
+        models = {
+            "checkpoint": a.get("checkpoint_model"),
+            "reported": a.get("reported_model"),
+            "instruction": inst.get("model_used") if inst else None,
+        }
+        known_models = {str(value) for value in models.values() if value}
         row: Dict[str, Any] = {
-            "symbol": symbol,
-            "decision_id": a.get("decision_id"),
+            "symbol": symbol, "decision_id": did,
             "analyst_direction": _norm_dir(a.get("direction")),
-            "instruction_id": inst.get("id") if inst else None,
-            "match": "decision_id" if inst and inst.get("decision_id") == a.get("decision_id")
-                     else ("ambiguous" if inst else "no_instruction"),
-            "plan": {"entry": entry, "sl": sl, "tp": tp, "rr": plan_rr},
-            "submitted": None,
-            "filled": None,
+            "instruction_id": inst.get("id") if inst else None, "match": match,
+            "candidate_instruction_ids": ([r["id"] for r in candidate_insts]
+                                           if match == "ambiguous" else []),
+            "models": models, "model_mismatch": len(known_models) > 1,
+            "prompt": {
+                "production_hash": a.get("prompt_hash"),
+                "user_prompt_sha256": a.get("user_prompt_sha256"),
+                "user_prompt_chars": a.get("user_prompt_chars"),
+                "input_version": a.get("input_version"),
+            },
+            "as_of": {"raw_saved_at": a.get("raw_saved_at"),
+                      "event_as_of": a.get("event_as_of"),
+                      "event_injection_hash": a.get("event_injection_hash")},
+            "gate": {"decision": (a.get("gate") or {}).get("decision"),
+                     "reasons": (a.get("gate") or {}).get("reasons") or []},
+            "plan": {"entry": entry, "sl": sl, "tp": tp,
+                     "rr": compute_rr(a.get("direction"), entry, sl, tp)},
+            "submitted": None, "filled": None, "fills": [], "outcome": None,
+            "ambiguous_outcomes": [],
         }
         if inst:
             sub = {
-                "entry": _f(inst.get("entry_price")),
-                "sl": _f(inst.get("stop_loss")),
-                "tp": _f(inst.get("take_profit")),
-                "rr_db": _f(inst.get("risk_reward")),
-                "state": inst.get("execution_state"),
+                "entry": _f(inst.get("entry_price")), "sl": _f(inst.get("stop_loss")),
+                "tp": _f(inst.get("take_profit")), "rr_db": _f(inst.get("risk_reward")),
+                "state": inst.get("execution_state"), "direction": inst.get("direction"),
+                "skip_reason": inst.get("skip_reason"),
             }
             sub["rr"] = compute_rr(inst.get("direction"), sub["entry"], sub["sl"], sub["tp"])
             row["submitted"] = sub
-            tr = by_inst.get(int(inst["id"]))
-            if tr:
-                meta = tr.get("_meta") or {}
-                tp_gate = meta.get("_tp_rr_gate") or {}
-                f_entry = _f(tr.get("entry_price"))
-                f_sl = _f(tp_gate.get("initial_sl")) or _f(meta.get("stop_loss"))
-                f_tp = _f(tp_gate.get("tp")) or _f(meta.get("take_profit"))
-                row["filled"] = {
-                    "trade_id": tr.get("id"),
-                    "entry": f_entry,
-                    "sl": f_sl,
-                    "tp": f_tp,
-                    "rr": compute_rr(tr.get("direction"), f_entry, f_sl, f_tp),
-                    "tp_swallowed": bool(tp_gate.get("swallowed")),
-                    "tp_rr_at_execution": _f(tp_gate.get("rr_at_execution")),
-                    "qty": _f(tr.get("quantity")),
-                }
-                if f_entry and sub.get("entry"):
-                    row["entry_gap_pct"] = round((sub["entry"] - f_entry) / f_entry * 100.0, 4)
+            trades = by_inst.get(int(inst["id"]), [])
+            row["fills"] = [fill_view(tr) for tr in trades]
+            if trades:
+                row["filled"] = row["fills"][0]
+                row["outcome"] = outcome_view(trades)
+                for fill in row["fills"]:
+                    f_entry = fill["entry"]
+                    if f_entry and sub.get("entry"):
+                        fill["entry_gap_pct"] = round((sub["entry"] - f_entry) / f_entry * 100.0, 4)
+                row["entry_gap_pct"] = row["fills"][0].get("entry_gap_pct")
+        elif match == "ambiguous":
+            trade_groups = [(candidate, by_inst.get(int(candidate["id"]), []))
+                            for candidate in candidate_insts]
+            trade_groups = [(candidate, trades) for candidate, trades in trade_groups if trades]
+            if len(trade_groups) == 1:
+                trades = trade_groups[0][1]
+                row["fills"] = [fill_view(tr) for tr in trades]
+                row["filled"] = row["fills"][0]
+                row["outcome"] = outcome_view(trades)
+            elif len(trade_groups) > 1:
+                row["ambiguous_outcomes"] = [{
+                    "instruction_id": candidate["id"],
+                    "fills": [fill_view(tr) for tr in trades],
+                    "outcome": outcome_view(trades),
+                } for candidate, trades in trade_groups]
         rows.append(row)
 
     filled = [r for r in rows if r.get("filled")]
-    gaps = [abs(r["entry_gap_pct"]) for r in filled if r.get("entry_gap_pct") is not None]
+    fills = [fill for r in rows for fill in r.get("fills", [])]
+    gaps = [abs(fill["entry_gap_pct"]) for fill in fills if fill.get("entry_gap_pct") is not None]
     rr_mismatch = [
-        r for r in rows
+        fill for r in rows for fill in r.get("fills", [])
         if (r.get("plan") or {}).get("rr") is not None
-        and (r.get("filled") or {}).get("rr") is not None
-        and abs(r["plan"]["rr"] - r["filled"]["rr"]) > 0.05
+        and fill.get("rr") is not None
+        and abs(r["plan"]["rr"] - fill["rr"]) > 0.05
     ]
     db_rr_mismatch = [
         r for r in rows
@@ -574,20 +675,23 @@ def stage_audit(
     ]
     actionable = [r for r in rows if r["analyst_direction"] in ("BUY", "SELL_SHORT")]
     return {
-        "status": "ok",
-        "instructions": len(inst_rows),
+        "status": "ok", "instructions": len(inst_rows),
         "matched": sum(1 for r in rows if r["match"] == "decision_id"),
+        "symbol_unique": sum(1 for r in rows if r["match"] == "symbol_unique"),
         "ambiguous": sum(1 for r in rows if r["match"] == "ambiguous"),
         "no_instruction": sum(1 for r in rows if r["match"] == "no_instruction"),
         "actionable_analyses": len(actionable),
         "actionable_without_instruction": sum(
             1 for r in actionable if r["match"] == "no_instruction"),
-        "filled": len(filled),
+        "filled": len(filled), "fill_events": len(fills),
+        "ambiguous_outcome_groups": sum(len(r["ambiguous_outcomes"]) for r in rows),
+        "model_mismatch": sum(r["model_mismatch"] for r in rows),
+        "trade_attribution": count_sources(da_sources),
         "entry_gap_gt_1pct": sum(1 for g in gaps if g > 1.0),
         "entry_gap_median_pct": round(sorted(gaps)[len(gaps) // 2], 4) if gaps else None,
         "plan_vs_filled_rr_mismatch_gt_0_05": len(rr_mismatch),
         "db_rr_vs_geometry_mismatch_gt_0_05": len(db_rr_mismatch),
-        "tp_swallowed": sum(1 for r in filled if r["filled"].get("tp_swallowed")),
+        "tp_swallowed": sum(bool(fill.get("tp_swallowed")) for fill in fills),
         "rows": rows,
     }
 
@@ -991,8 +1095,9 @@ def main(argv: Optional[List[str]] = None) -> int:
           "(canonical state is challenger_verdict_state)")
     if stages.get("status") == "ok":
         print("stages:", json.dumps({k: stages.get(k) for k in (
-            "instructions", "matched", "ambiguous", "no_instruction",
-            "actionable_analyses", "actionable_without_instruction", "filled",
+            "instructions", "matched", "symbol_unique", "ambiguous", "no_instruction",
+            "actionable_analyses", "actionable_without_instruction", "filled", "fill_events",
+            "ambiguous_outcome_groups", "model_mismatch", "trade_attribution",
             "entry_gap_gt_1pct", "entry_gap_median_pct",
             "plan_vs_filled_rr_mismatch_gt_0_05",
             "db_rr_vs_geometry_mismatch_gt_0_05", "tp_swallowed")}, ensure_ascii=False))
