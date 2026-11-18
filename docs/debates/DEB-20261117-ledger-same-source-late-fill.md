@@ -246,6 +246,11 @@ TP 那条腿永远进不了 UPDATE。这是**可复现的实证**，不是推导
       `test_open_position_sl_tp_contract`、`test_position_sync_queue_shadow` — 66 passed；
       关键词面 `-k "position_sync or tca or rfc195 or late_fill or exec_gate or sl_tp"` 223 passed；
       注册表面 `-k "shadow_registry or registry"` 85 passed。
+      **口径更正（2026-11-18）**：上面那个 **223 请读作「约 223，差 1 未归因」** —— 追加
+      fail-close 守卫的 5 例后同命令实测 **229**，剔除这 5 例得 **224**（≠223）。已排除他人 WIP
+      测试文件、`test_okr_2026_11_scoring`、四个 `test_da_*`、按 `docs/debates` 取数的两文件
+      （均 0 命中），40 个匹配文件里也无数据驱动的动态参数化 ⇒ 差 1 出在当初那个聚合数本身。
+      0 失败、无测试丢失。要引用请直接用命令重跑，不要抄这个数。详见 handoff 2026-11-18 09:51 CST 条。
 - [x] `scripts/check_undefined_names.py` 三个改动文件 exit=0（pre-commit §5.5 同一门禁）。
 - [x] 离线干跑：4 笔真实指令回灌后数值与手工复算一致（见「数据与实证」表）。
       **口径更正（2026-11-18）**：该干跑的**审计侧是 monkeypatch 捕获的调用**，不是真写文件
