@@ -726,7 +726,7 @@ def render_lines(block):
     if not block or block.get("error"):
         return [f"⚠️ OKR-2026-09 判分不可用: {(block or {}).get('error')}"]
     st = block.get("settlement") or {}
-    lines = [f"🎯 OKR-2026-09 (已结算历史块 · 窗口 {block.get('window')}; 现行=OKR-2026-10 见 okr_status 10 块) — 与上方 8 月旧块**并列不替代**",
+    lines = [f"🎯 OKR-2026-09 (已结算历史块 · 窗口 {block.get('window')}; 现行=OKR-2026-11 见 okr_status 11 块; OKR-2026-10 为历史块) — 与上方 8 月旧块**并列不替代**",
              f"  结算状态: {st.get('status')} — {st.get('why')}"]
     for kr in ("KR1", "KR2", "KR3", "KR4", "KR5"):
         b = (block.get("krs") or {}).get(kr) or {}

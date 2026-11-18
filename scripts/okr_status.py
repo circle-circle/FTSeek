@@ -336,7 +336,7 @@ def calc_okr_score():
 
 overall_score, kr_scores = calc_okr_score()
 
-# ─── 6b. OKR-2026-09 KR 集 (已结算历史块, 与上方 8 月旧块**并列不替代**; 现行=OKR-2026-10 见 6c) ───
+# ─── 6b. OKR-2026-09 KR 集 (已结算历史块, 与上方 8 月旧块**并列不替代**; 现行=OKR-2026-11 见 6d, OKR-2026-10 见 6c 为历史块) ───
 # 病灶 (修尺子批③, 2026-09-06 用户裁「需要」): 上方 calc_okr_score 判的是 **OKR-2026-08 的
 # KR 集** (win_rate 55% / weekly_pnl $1000 / sample 30 / IC(T+3) 0.05 / trigger 50%), 而
 # docs/OKR-2026-08.md 已于 2026-08-23 **提前结算为 SUPERSEDED**; 现行判据是
@@ -404,23 +404,63 @@ _okr10["note"] = ("判分模块 okr_2026_10_scoring 未建 (OKR-2026-10 落地�
                   "本块=权威读数指针, 结算判据以 docs/OKR-2026-10.md 为准")
 
 
+# ─── 6d. OKR-2026-11 现行判分块 (2026-11-18 接线) ───
+# 病灶: 本脚本此前只到 OKR-2026-10 且自注「判分模块 okr_2026_10_scoring 未建」, 而
+# AGENT.md 自 2026-11-01 起现行判据已是 **OKR-2026-11** ⇒ 主 KR (DA-only 净 bps/笔 >0)
+# 与 KR2 死单率在面板上**零读数**, 只能手工复算 (本会话实测手算错过两次: 交易日数漏感恩节/
+# 周六, 合成 TP 记错值)。判分逻辑拆到 scripts/okr_2026_11_scoring.py (纯函数, 可单测钉死,
+# 同 okr_2026_09_scoring 的理由: 本脚本是模块级执行体, import 即跑 SQL, 契约测试钉不到)。
+# 只读: 判分模块自己开 sqlite `mode=ro` 连接, **不复用本脚本的连接** (避免口径串味)。
+# §12.3 预注册要求整窗/pre/post 三行并列, 缺一即 KR5 WARNING — 由判分模块内部保证。
+_OKR11_UNAVAILABLE = "⚠️ OKR-2026-11 判分不可用: "
+try:
+    from scripts.okr_2026_11_scoring import collect_and_score as _collect_2026_11
+    from scripts.okr_2026_11_scoring import fetch_rows as _fetch_2026_11
+    from scripts.okr_2026_11_scoring import render_lines as _render_2026_11
+    from scripts.okr_2026_11_scoring import resolve_era_where as _era_where_2026_11
+    from app.utils.timezone import now_et as _now_et_11
+    _db11 = Path('/opt/ftseek/FTSeek-US/data/ftseek_us.db')
+    _era11 = _era_where_2026_11(_db11)          # A10 SSOT 谓词 (缺列 fail-open 返回空串)
+    _rows11 = _fetch_2026_11(_db11, a9=True, a10=True, era_where=_era11)
+    # A9/A10 双口径并列 (判据字典 A9 律 + KR5「缺一即 WARNING」)
+    _rows11_no_a9 = _fetch_2026_11(_db11, a9=False, a10=True, era_where=_era11)
+    _rows11_no_a10 = _fetch_2026_11(_db11, a9=True, a10=False, era_where="")
+    okr_2026_11 = _collect_2026_11(
+        _rows11, _rows11_no_a9, _rows11_no_a10,
+        # as_of 必须是 **ET 交易日**, 不是服务器 CST 日 — 否则 post 子窗的已实现交易日数
+        # 会差一天, 达标日外推跟着偏 (§12.2 的日历纪律)。
+        as_of=_now_et_11().date().isoformat(),
+        era_where=_era11,
+    )
+    okr_2026_11_lines = _render_2026_11(okr_2026_11)
+except Exception as _okr11_err:  # 显性留痕 (同 09 块纪律): 判分炸了必须看得见, 不静默降级
+    okr_2026_11 = {"error": f"{type(_okr11_err).__name__}: {_okr11_err}"}
+    okr_2026_11_lines = [_OKR11_UNAVAILABLE + okr_2026_11["error"]]
+
+
 # ─── OUTPUT ───
 print("=" * 65)
 print("  OKR STATUS REPORT — " + datetime.now().strftime('%Y-%m-%d %H:%M'))
 print("=" * 65)
 
 print(f"\n🎯 OVERALL PROGRESS: {overall_score:.0f}%  "
-      f"← OKR-**2026-08** KR 集 (2026-08-23 已 SUPERSEDED, 仅续算; 现行判据=OKR-2026-10 见最下方 10 块)")
+      f"← OKR-**2026-08** KR 集 (2026-08-23 已 SUPERSEDED, 仅续算; 现行判据=**OKR-2026-11** 见下方 11 块)")
 for kr, score in kr_scores.items():
     bar = "█" * int(score/5) + "░" * (20 - int(score/5))
     print(f"  {kr:<20} {bar} {score:.0f}%")
+
+print()
+# OKR-2026-11 现行判分块 (2026-11-18 接线; 判据以 docs/OKR-2026-11.md 为准)
+for _line11 in okr_2026_11_lines:
+    print(_line11)
 
 print()
 for _line09 in okr_2026_09_lines:
     print(_line09)
 
 # OKR-2026-10 现行状态块 (只读指针, 见 6c 注释)
-print(f"\n🎯 OKR-2026-10 (现行, 窗 {_okr10['window']}, as_of {_okr10['as_of']})")
+print(f"\n🎯 OKR-2026-10 (历史块 · 窗 {_okr10['window']} 已于 10-31 结束; "
+      f"2026-11-01 起现行=OKR-2026-11, as_of {_okr10['as_of']})")
 for _k in ("KR1", "KR2", "KR3", "KR4"):
     _v = _okr10.get(_k) or {}
     print(f"  {_k}: {_v.get('status') or _v.get('error')}")
@@ -573,9 +613,11 @@ output = {
     # 口径声明 (军规: 新落库字段带单位/来源声明): 旧块是 SUPERSEDED OKR 的续算值, 不是现行判据
     "kr_scores_caliber": ("OKR-2026-08 KR 集 (win_rate/weekly_pnl/sample/ic_t3/trigger), "
                           "该 OKR 2026-08-23 提前结算为 SUPERSEDED ⇒ 本块仅续算以保 "
-                          "okr_query.py 消费面与 okr_history.jsonl 时序连续; **现行判据见 okr_2026_09**"),
+                          "okr_query.py 消费面与 okr_history.jsonl 时序连续; "
+                          "**现行判据见 okr_2026_11** (2026-11-01 起; okr_2026_09/10 为已结算/历史块)"),
     "okr_2026_09": okr_2026_09,
     "okr_2026_10": _okr10,
+    "okr_2026_11": okr_2026_11,
     "pipeline": {
         "total": total, "skip": skip_count, "active": non_skip,
         "with_entry": with_entry, "triggered": triggered, "executed": executed,
