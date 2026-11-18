@@ -360,7 +360,19 @@ BWXT 120.41×31=3732.71），也等于指令表 `entry_price`/`position_size`。
 即打 WARNING 并 `return False`，把静默陷阱变成**响亮空操作**。
 
 - **生产是空操作**：调用点不传 `audit_path` ⇒ `audit_target = _AUDIT_PATH` ⇒ 守卫直接放行
-  ⇒ 生产行为逐字节不变，**不需紧急重启**（随下次重启生效即可）。
+  ⇒ 生产行为逐字节不变，**不需紧急重启**。~~（随下次重启生效即可）~~
+  **【2026-11-18 10:21 更正】不是"随下次重启"，而是已经自动生效**：本仓有 G-02 部署断层守卫
+  （`scripts/deploy_freshness_check.py`，crontab 每 10 分钟），`drift = max(app/**/*.py mtime)
+  − 进程启动时刻 > 120s` 且在北京 09:00–12:00 安全窗内即自动 `systemctl restart`。
+  本守卫代码 09:46:42 落盘 ⇒ **09:49:23 CST 被自动部署**（MainPID 3343704 → 3360745，
+  G-02 日志 `🚨 部署断层自愈: 代码比进程新 11332s (最新 app/playbook/late_fill_evidence.py)
+  → systemctl restart 成功, 新代码已入进程`）。启动冒烟 **7/7 全绿**、重启后
+  ERROR/CRITICAL/Traceback 计数 **0**、启动对账 `Futu: 5 | playbook自管: 5 | 一致性 ✓`、
+  5 笔仓正确恢复且被主线跳过、ELV `initial_tp=475.73`（授权修复挺过重启）。
+  **G-02 声明的重启代价实测为零**：ELV `trail_state_json` 的 `highest_price=439.42` **恰等于
+  cost** ⇒ 清零是空操作；其余 4 笔 `trail_state_json` 为空；5 笔全部 `current_sl == initial_sl`
+  （无收紧过的止损可丢）；且当时 `Market closed, sync paused` ⇒ 无在途订单/出场决策被打断
+  （正是 G-02 安全窗的设计用途）。
 - 离线要跑通写入面，必须 monkeypatch 模块常量 `_AUDIT_PATH`（测试夹具正是如此），使读与写同源。
 - **刻意不改 `risk_gates.py`**：给 `_emit_exec_gate_audit` 加 path 缝虽能让离线真写，但那要动
   交易主路径文件；守卫方案零主路径改动即消除陷阱。已加根因钉子
