@@ -4,7 +4,7 @@ status: deployed_v1_legacy_repair_complete
 created: 2026-11-19
 driver: US.ELV 2026-11-18 intent 78076759a08e4f6dacd8f4f91fddbd65（已于 2026-11-19 经 V1 + 审计化历史实例处置后由 RFC-157 释放归档）
 related: RFC-157（RTH 零成交自动释放）、RFC-146（2026-10-17 审计批）、INCIDENT-002、INCIDENT-003、RFC-128、RFC-127
-deploy_state: **V1 已部署**（2026-11-19 13:28 CST，冒烟 7/7）；ELV 旧腿已备份审计后标为 FAILED/dealt=0，RFC-157 已释放归档；V2 blocked_exits 上界仍未实施。
+deploy_state: **V1 已部署**（R18/R19，2026-11-19 13:28→14:28 CST）；**R20 核查补强（`_error_text` 等）已受控部署**（2026-11-19 17:15:09 CST，MainPID 3488322，冒烟 7/7，H-12 双向 0，drift 归负）；ELV 旧腿已备份审计后标为 FAILED/dealt=0，RFC-157 已释放归档；V2 blocked_exits 上界仍未实施。
 ---
 
 # RFC-214 — 出场提交结果契约
