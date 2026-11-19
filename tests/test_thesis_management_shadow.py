@@ -223,6 +223,24 @@ def test_disabled_or_non_pullback_never_writes(monkeypatch, tmp_path):
     assert shadow.record(**kwargs) is None
 
 
+def test_failed_reclaim_is_latched_through_missing_data_and_restart(monkeypatch, tmp_path):
+    monkeypatch.setattr(shadow, "get_config", lambda: {"enabled": True, "max_plan_gap_pct": 1.0,
+                                                        "max_bar_age_minutes": 15.0})
+    kwargs = _manager_kwargs(tmp_path)
+    assert shadow.record(**kwargs)["decision"] == "FAILED_RECLAIM"
+    # 数据缺失不得把 FAILED 重新打开成 ABSTAIN（R17 首日重复 15 行根因）。
+    kwargs["bars_1m"] = []
+    assert shadow.record(**kwargs) is None
+    # 新数据到达仍只续路径，不新增第二个 FAILED 决策行。
+    kwargs["bars_1m"] = _long_bars() + _window(
+        "2026-11-18 10:15", high=99.90, low=99.40, close=99.50)
+    kwargs["observed_at"] = "2026-11-18T10:17:00-05:00"
+    path_only = shadow.record(**kwargs)
+    assert path_only and path_only.get("path_only") is True
+    assert len((tmp_path / "shadow.jsonl").read_text().splitlines()) == 1
+    assert len((tmp_path / "path.jsonl").read_text().splitlines()) == 15
+
+
 def test_forward_path_appends_only_new_post_fill_bars_and_persists_marker(monkeypatch, tmp_path):
     monkeypatch.setattr(shadow, "get_config", lambda: {"enabled": True, "max_plan_gap_pct": 1.0,
                                                         "max_bar_age_minutes": 15.0})

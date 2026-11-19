@@ -108,6 +108,37 @@ def test_full_backfill_writes_inherited_regime_when_on(tmp_path, monkeypatch, se
     assert json.loads(meta)["regime_source"] == "instruction"
 
 
+def test_full_backfill_writes_instruction_stops_and_source(tmp_path, monkeypatch, sealed_backfill):
+    db_path = tmp_path / "ftseek_test.db"
+    RealTradeStore(str(db_path))
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE playbook_instructions (id INTEGER, market_regime TEXT, stop_loss REAL, take_profit REAL)")
+    conn.execute("INSERT INTO playbook_instructions VALUES (77,'risk_off',669.47,757.56)")
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(ps, "_get_db_path", lambda: str(db_path))
+    monkeypatch.setattr(ps, "_fetch_entry_vix_for_backfill", lambda: None)
+    monkeypatch.setattr(pconfig, "get_playbook_config", lambda: _FakeConfig(True))
+    ok = ps.USPositionSync._backfill_playbook_trade_record(
+        _inst(), symbol="US.TEST", direction="LONG", qty=100, entry=705.0,
+        sl=690.90, tp=972.64, trace_id="test-stop-truth", broker_env="sim",
+        futu_order_id="REG-STOP-1",
+        order_evidence={'confirmed': True, 'order_id': 'REG-STOP-1', 'dealt_qty': 100, 'price': 705.0},
+        broker_position={'qty': 100, 'direction': 'LONG'}, instruction_id=77)
+    assert ok is True
+    conn = sqlite3.connect(db_path)
+    try:
+        raw = conn.execute("SELECT metadata_json FROM trade_records").fetchone()[0]
+    finally:
+        conn.close()
+    meta = json.loads(raw)
+    assert meta["stop_loss"] == pytest.approx(669.47)
+    assert meta["take_profit"] == pytest.approx(757.56)
+    assert meta["stop_loss_source"] == "instruction"
+    # 真值选定后才计算 ATR 代理：|705−669.47|，而非沿用合成 SL 690.90。
+    assert meta["atr"] == pytest.approx(abs(705.0 - 669.47))
+
+
 def test_full_backfill_keeps_range_when_off(tmp_path, monkeypatch, sealed_backfill):
     db_path = tmp_path / "ftseek_test.db"
     RealTradeStore(str(db_path))

@@ -144,6 +144,33 @@ def _align_open_position_stops(conn, symbol: str, sl: float, tp: float, *,
         return 0
 
 
+def _instruction_stop_truth(db_path: str, instruction_id, fallback_sl: float,
+                            fallback_tp: float):
+    """P3 恢复补录 SL/TP 真源：可反查指令用真值，否则保留合成值。
+
+    返回 ``(sl, tp, stop_loss_source)``。价格单位均为 USD；source 枚举为
+    ``instruction|synthetic``。只有指令 SL>0 才允许覆盖，TP=0 是指令无固定 TP 的合法值。
+    """
+    if instruction_id in (None, ""):
+        return fallback_sl, fallback_tp, "synthetic"
+    try:
+        conn = safe_sqlite_connect(db_path, timeout=5)
+        try:
+            row = conn.execute(
+                "SELECT stop_loss, take_profit FROM playbook_instructions WHERE id=?",
+                (int(instruction_id),),
+            ).fetchone()
+        finally:
+            conn.close()
+        if row and row[0] is not None and float(row[0]) > 0:
+            return float(row[0]), float(row[1] or 0), "instruction"
+        logger.warning("[US Sync·P3] 指令 %s 无有效 SL，保留合成止损", instruction_id, exc_info=True)
+    except Exception as exc:
+        logger.warning("[US Sync·P3] 指令 %s SL/TP 反查失败，保留合成值: %s",
+                       instruction_id, exc, exc_info=True)
+    return fallback_sl, fallback_tp, "synthetic"
+
+
 def _playbook_position_fields(cursor, symbol: str):
     """算 Playbook SIM 仓位的 open_positions 写入值 (initial_sl / initial_tp / entry_time)。
 
@@ -862,7 +889,6 @@ class USPositionSync:
                 from zoneinfo import ZoneInfo
                 now_iso = datetime.now(ZoneInfo("America/New_York")).isoformat()
             # early-tight 使用 0.5×ATR；代理必须与 PlaybookService 的完整 SL 距离同量纲
-            atr_guess = _proxy_atr_from_stop(entry, sl)
             # [RFC-169 复查 2026-10-27] entry_time/entry_session 以**入场时刻**为准:
             #   券商订单 updated_time(成交) → create_time(建单) 依次取值; 两者都缺失
             #   才回退 now_et(既有行为) 记 entry_time, 但 entry_session 落 "" (unknown),
@@ -880,9 +906,13 @@ class USPositionSync:
             #   entry_price_source='sync_recovery_backfill' 过滤或单独分层。
             _entry_vix_p3 = _fetch_entry_vix_for_backfill()
             _regime_p3, _regime_source_p3 = self._resolve_backfill_regime(instruction_id, db_path)
+            # P3 真源：可反查指令时必须使用指令 SL/TP；只有反查不到/无有效 SL 才保留合成值。
+            sl, tp, _stop_source_p3 = _instruction_stop_truth(db_path, instruction_id, sl, tp)
+            atr_guess = _proxy_atr_from_stop(entry, sl)
             _meta_p3 = {
                 "stop_loss": sl,
                 "take_profit": tp,
+                "stop_loss_source": _stop_source_p3,
                 "atr": atr_guess,
                 "peak_price": entry,
                 "trough_price": entry,

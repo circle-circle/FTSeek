@@ -48,6 +48,32 @@ def held(error, *, intent=None, owner=None, decision=None, state='HELD'):
             'broker_qty_after': None}
 
 
+def _error_text(error, limit):
+    # 不可写 `error or ''`: 券商失败路径今日返回 str, 但 `place_order` 成功路径返回
+    # DataFrame, 而 `bool(DataFrame)` 抛 "truth value is ambiguous" ⇒ 会在拒单处置里
+    # 二次抛错, 把"明确拒单"退回成永久认领 (RFC-214 要消除的那个死锁本身)。
+    if error is None:
+        return ''
+    return str(error)[:limit]
+
+
+def _push_submit_rejected(intent, error):
+    """RFC-214 可观测输出（走 push hub，禁止静默终态化）。"""
+    try:
+        from app.push import get_push_hub
+        from app.push.message import Category, Level
+        get_push_hub().push_text(
+            f"⚠️ [出场提交拒单] {intent['symbol']} {intent['direction']} "
+            f"qty={intent['quantity']}：券商明确拒单且未创建订单，"
+            f"已按 RFC-214 标记 FAILED/dealt=0，等待 RFC-157 复核。{_error_text(error, 240)}",
+            level=Level.HIGH,
+            category=Category.RISK_ALERT,
+        )
+    except Exception as exc:
+        logger.warning('exit_submit_reject_push_failed intent=%s: %s',
+                       intent.get('intent_id'), exc, exc_info=True)
+
+
 class ExitLedger:
     def __init__(self, path):
         self.path = str(path)
@@ -281,6 +307,25 @@ class ExitLedger:
                                    "updated_at=? WHERE intent_id=? AND sequence=? AND version=? "
                                    "AND state IN ('ACTIVE','CANCEL_REQUESTED')",
                                    (now, leg['intent_id'], leg['sequence'], leg['version'])).rowcount)
+
+    def mark_submit_rejected(self, leg, now, *, error):
+        """RFC-214: broker explicitly rejected a never-accepted submit (zero fill).
+
+        Narrow CAS only: PREPARED + NULL order_id + NULL dealt_qty + matching version.
+        Any other state/evidence must remain claimed (UNKNOWN), never forced terminal.
+        """
+        message = _error_text(error, 500)
+        with self.transaction() as db:
+            changed = db.execute(
+                "UPDATE exit_legs SET state='TERMINAL',broker_status='FAILED',"
+                "dealt_qty=0,dealt_amount=0.0,last_error=?,version=version+1,updated_at=? "
+                "WHERE intent_id=? AND sequence=? AND version=? "
+                "AND state='PREPARED' AND order_id IS NULL AND dealt_qty IS NULL",
+                (message, now, leg['intent_id'], leg['sequence'], leg['version'])).rowcount
+            if changed:
+                db.execute('UPDATE exit_intents SET version=version+1,updated_at=? WHERE intent_id=?',
+                           (now, leg['intent_id']))
+            return bool(changed)
 
     def result(self, intent_id, now, error='exit_order_pending', state='PENDING'):
         with self.transaction() as db:
@@ -730,13 +775,40 @@ class ExitLifecycle:
                 raise ValueError('exit_unowned_active_order')
         return abs(signed)
 
+    def _position_qty_or_unknown(self, intent, ctx, scope, lock):
+        """Return broker quantity, or None when evidence is unavailable/conflicting."""
+        try:
+            with lock:
+                ret, positions = ctx.position_list_query(**scope)
+            if ret != 0 or positions is None:
+                return None
+            matches = [r for r in positions.to_dict('records')
+                       if r.get('code') == intent['symbol']
+                       and str(r.get('code', '')).startswith('US.')]
+            if not matches:
+                return 0.0
+            if len(matches) != 1:
+                return None
+            row = matches[0]
+            signed = float(row.get('qty'))
+            if not math.isfinite(signed):
+                return None
+            side = token(row.get('position_side', 'SHORT' if signed < 0 else 'LONG'))
+            if (side != intent['direction'] or (side == 'LONG' and signed < 0)
+                    or ('acc_id' in row and str(row['acc_id']) != intent['account_id'])
+                    or ('trd_env' in row and token(row['trd_env']) != token(scope['trd_env']))):
+                return None
+            return abs(signed)
+        except Exception:
+            return None
+
     def send(self, intent, leg, ctx, scope, lock):
-        from futu import TrdSide, OrderType, TimeInForce, Session
+        from futu import TrdSide, OrderType, TimeInForce, Session, RET_OK
         order_session = Session.RTH if intent['session'] == 'RTH' else Session.ETH
         try:
             # R04: durable exit orders explicitly declare the claimed session and DAY TIF.
             with lock:
-                _ret, data = ctx.place_order(price=leg['price'], qty=leg['quantity'],
+                ret, data = ctx.place_order(price=leg['price'], qty=leg['quantity'],
                     code=intent['symbol'], trd_side=TrdSide.SELL if intent['direction'] == 'LONG' else TrdSide.BUY,
                     order_type=OrderType.NORMAL if leg['kind'] == 'LIMIT' else OrderType.MARKET,
                     time_in_force=TimeInForce.DAY, session=order_session,
@@ -745,16 +817,31 @@ class ExitLifecycle:
             # The committed PREPARED leg also represents a lost send response.
             logger.warning('Exit submit response unknown intent=%s', intent['intent_id'], exc_info=True)
             return
+        order_id = ''
         if data is not None and hasattr(data, 'to_dict'):
-            rows = data.to_dict('records')
-            if len(rows) == 1:
-                row = rows[0]
-                order_id = str(row.get('order_id') or '').strip()
-                if order_id.lower() not in ('', 'none', 'nan'):
-                    if not self.identity_matches(intent, leg, row):
-                        raise ValueError('exit_submit_identity_conflict')
-                    self.ledger.attach_order(leg, order_id, self.clock.time())
-        # Even explicit rejection stays claimed until order evidence proves its outcome.
+            for row in data.to_dict('records'):
+                candidate = str(row.get('order_id') or '').strip()
+                if candidate.lower() in ('', 'none', 'nan'):
+                    continue
+                if not self.identity_matches(intent, leg, row):
+                    raise ValueError('exit_submit_identity_conflict')
+                order_id = candidate
+                self.ledger.attach_order(leg, order_id, self.clock.time())
+                break
+        # RFC-214: only a definitive rejection with no order id and no fill evidence
+        # may become TERMINAL/FAILED. Unknown responses remain claimed as before.
+        if ret != RET_OK and not order_id:
+            broker_qty = self._position_qty_or_unknown(intent, ctx, scope, lock)
+            if broker_qty is not None and broker_qty >= intent['quantity']:
+                if self.ledger.mark_submit_rejected(leg, self.clock.time(), error=data):
+                    _push_submit_rejected(intent, data)
+            else:
+                # Position dropped or query failed ⇒ possible fill/unknown ⇒ fail closed.
+                # 无 exc_info: 此分支不在异常上下文里, 带上会多打一行 "NoneType: None"。
+                logger.warning(
+                    'Exit submit reject downgraded to UNKNOWN intent=%s broker_qty=%s',
+                    intent['intent_id'], broker_qty)
+        # UNKNOWN stays claimed until order evidence proves its outcome.
 
     def resume(self, intent_id, *, allow_submit=True):
         intent = self.ledger.get(intent_id)

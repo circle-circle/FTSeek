@@ -9,6 +9,7 @@
 - ACTIVE 臂内早期失败池仅 SL_INITIAL 10 笔 -$864.48；即便减少 30%–50%，
   约 $5–8/日、ITT $0.6–0.9/笔 ⇒ 本切片只允许机制结论，不允许盈利宣称。
 - 触发过少/过高、覆盖不足、误伤或 paired Δ 为负即停止，不网格救参。
+- R17：FAILED_RECLAIM 每仓只记一次终态；后续缺数据不得重新打开，前向路径照记。
 
 开关：playbook.thesis_management_shadow.enabled（代码默认 false）。
 """
@@ -247,6 +248,14 @@ def record(
             )
         decision_key = f"{result['decision']}:{result['reason']}"
         previous = meta.get("_thesis_shadow_last")
+        # R17：FAILED_RECLAIM 是每仓终态，不因后续缺 bar/stale/WAIT 重新打开。
+        # 数据在完整/缺失间振荡时仍续记前向路径，但绝不再发第二个决策行。
+        if isinstance(previous, dict) and previous.get("decision_key", "").startswith(
+                f"{FAILED_RECLAIM}:"):
+            if path_changed:
+                return {"execution": "RECORD_ONLY", "path_only": True,
+                        "trade_id": row["id"], "state_hash": structure_hash}
+            return None
         if isinstance(previous, dict) and previous.get("decision_key") == decision_key:
             if path_changed:
                 return {"execution": "RECORD_ONLY", "path_only": True,
