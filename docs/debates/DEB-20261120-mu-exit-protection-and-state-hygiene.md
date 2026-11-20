@@ -353,5 +353,9 @@ systemctl restart ftseek-us && PYTHONPATH=. ./venv/bin/python scripts/startup_sm
 - 5文件mtime 12:26:49 < 启动14:13:17 ⇒ 源头修复确在运行进程内；`find app main.py -newermt 14:13:21` 为空 ⇒ **G-02 drift归负**，明早安全窗不自动重启。
 - 市场已收盘，`[US Sync] Market closed, sync paused` 属正常。
 
-**边界**：MU自此由原Playbook BE/adaptive trailing宿主按原参数管理（peak759.57起点），但**下一RTH自然移动/回撤止盈尚未发生**（今晚22:30 CST开盘后首验），不得称实盘出场已验证；已回吐利润不可挽回。UNKNOWN无有效回执仍保锁属设计。本批未提交推送（HEAD仍cfe5c8209），是否提交由用户裁。任务#3至此完成。
+**边界**：MU自此由原Playbook BE/adaptive trailing宿主按原参数管理（peak759.57起点），但**下一RTH自然移动/回撤止盈尚未发生**（今晚22:30 CST开盘后首验），不得称实盘出场已验证；已回吐利润不可挽回。UNKNOWN无有效回执仍保锁属设计。任务#3至此完成。
+
+### 12.1 凭据归账（用户裁「请提交推送」）
+
+代码批提交 **`1c7cc31bc`**（6文件 +580/−14：3 app + 2 tests + 本DEB），已推送 `origin/rfc-060-phase1-hotfixes`（cfe5c8209..1c7cc31bc）。推送前用户选择运行 **L3 深度安全审查：0 findings**。README/handoff 含他会话未提交条目，**未带入本批**（其工作树更新仍在，归各自批次）；本归账节随后续纯文档提交落账。生产运行进程即此代码（14:13重启验收），提交不改变任何运行行为。
 
