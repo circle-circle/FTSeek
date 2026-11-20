@@ -1040,8 +1040,8 @@ class PlaybookDB:
             "execution_state = ?, updated_at = ? "
             "WHERE id = ? "
             "  AND COALESCE(broker_order_id, '') = '' "
-            "  AND COALESCE(execution_state, 'PENDING') NOT IN "
-            "      ('SUBMITTED', 'FILLED_UNBOOKED', 'BOOKED')",
+            "  AND COALESCE(execution_state, 'PENDING') IN "
+            "      ('PENDING', 'SKIPPED_EXISTING_POSITION')",
             (observed_at, ALREADY_HELD_OUTCOME, EXISTING_POSITION_STATE,
              now_utc().isoformat(), instruction_id),
         )

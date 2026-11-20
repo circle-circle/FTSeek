@@ -317,7 +317,8 @@ class DualBrokerAdapter:
                 _broker_status = ""
 
             if ret != RET_OK and not _accepted_id:
-                return {"success": False, "submit_state": "DEFINITIVE_REJECT",
+                # A failed response after submission does not prove zero execution.
+                return {"success": False, "submit_state": "UNKNOWN",
                         "broker_order_status": _broker_status,
                         "error": f"place_order 失败: {data}", "futu_order_id": ""}
             if not _accepted_id:

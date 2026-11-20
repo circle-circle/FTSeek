@@ -124,6 +124,18 @@ def test_mark_existing_position_never_touches_rows_with_a_broker_order():
     assert tuple(row) == (407.57, "win", "FILLED_UNBOOKED")
 
 
+@pytest.mark.parametrize("state", ["UNKNOWN", "SUBMITTED", "FILLED_UNBOOKED", "BOOKED", "LEGACY_LOCKED"])
+def test_existing_position_preserves_execution_claim_without_order_id(state):
+    conn = _conn()
+    _insert(conn, id=1, executed=1, execution_price=0, outcome=None,
+            broker_order_id=None, execution_state=state, execution_attempt=1,
+            execution_time="original")
+    before = conn.execute("SELECT * FROM playbook_instructions WHERE id=1").fetchone()
+
+    assert not PlaybookDB(conn=conn).mark_instruction_existing_position(1, "later")
+    assert conn.execute("SELECT * FROM playbook_instructions WHERE id=1").fetchone() == before
+
+
 @pytest.mark.parametrize("row,expected", [
     ({"outcome": "already_held", "execution_price": 0}, True),
     ({"outcome": "already_held", "execution_price": None}, True),

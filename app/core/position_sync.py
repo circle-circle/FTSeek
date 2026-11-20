@@ -1019,13 +1019,20 @@ class USPositionSync:
                         if order_id:
                             kwargs['order_id'] = order_id
                         ret, data = ctx.order_list_query(**kwargs)
-                        if ret != 0 or data is None or data.empty:
+                        if ret != 0 or data is None:
                             break
-                        if not order_id:
-                            if 'remark' not in data:
+                        identity_key = 'order_id' if order_id else 'remark'
+                        identity_value = order_id or f'pb_{iid}_{env}_{attempt}'
+                        if identity_key not in data:
+                            break
+                        data = data[data[identity_key].astype(str) == identity_value]
+                        if data.empty:
+                            # The daily list no longer contains receipts after an overnight restart.
+                            ret, data = ctx.history_order_list_query(
+                                start=row['date'], end=row['date'], trd_env=trd_env)
+                            if ret != 0 or data is None or identity_key not in data:
                                 break
-                            remark = f'pb_{iid}_{env}_{attempt}'
-                            data = data[data['remark'].astype(str) == remark]
+                            data = data[data[identity_key].astype(str) == identity_value]
                         if len(data) != 1:
                             break
                         snapshot = data.iloc[0].to_dict()
@@ -1075,10 +1082,12 @@ class USPositionSync:
                                         logger.warning(
                                             "[US Sync] %s open_positions 对齐提交失败: %s",
                                             row['symbol'], _commit_err)
+                                fill_time = _parse_entry_ts(_pick_order_ts(snapshot))
+                                execution_time = (fill_time.isoformat() if fill_time is not None
+                                                  else row['execution_time'] or now_et().isoformat())
                                 pdb.mark_execution_booked(
                                     iid, attempt, execution_price=observation['price'],
-                                    execution_time=row['execution_time'] or now_et().isoformat(),
-                                    outcome='holding')
+                                    execution_time=execution_time, outcome='holding')
                                 _record_recovered_queue_candidate(
                                     instruction=row, order_snapshot=snapshot,
                                     now_et_value=now_et())
@@ -1092,7 +1101,7 @@ class USPositionSync:
                                     record_late_fill(
                                         row, fill_price=observation['price'],
                                         dealt_qty=observation['dealt_qty'],
-                                        execution_ts=row['execution_time'],
+                                        execution_ts=execution_time,
                                         evidence_source='sync_reconcile')
                                 except Exception as _late_fill_err:
                                     logger.warning(

@@ -10,6 +10,7 @@ import pytest
 from app.core.position_sync import USPositionSync
 from app.execution.dual_broker import DualBrokerAdapter
 from app.playbook.db import PlaybookDB
+from app.storage.trade_store import TradeStore as RealTradeStore
 from tests.playbook.test_exit_compensation import compensation_case
 
 
@@ -323,12 +324,29 @@ def _order():
     )
 
 
-def test_dual_broker_explicit_reject_is_definitive():
-    adapter, _ = _adapter_with_ctx((1, "rejected"))
+@pytest.mark.parametrize("error", ["rejected", "integrated_us_order_new_err", "timeout"])
+def test_dual_broker_failed_submit_response_is_unknown(error):
+    adapter, ctx = _adapter_with_ctx((1, error))
     result = adapter.submit_order(_order(), "sim")
     assert result["success"] is False
-    assert result["submit_state"] == "DEFINITIVE_REJECT"
+    assert result["submit_state"] == "UNKNOWN"
     assert result["futu_order_id"] == ""
+    assert ctx.place_order.call_count == 1
+    assert ctx.place_order.call_args.kwargs["remark"] == "pb_1_sim_1"
+
+
+def test_dual_broker_preflight_reject_is_definitive():
+    adapter, ctx = _adapter_with_ctx((1, "unused"))
+    adapter._notional_sanity_check.return_value = False
+    result = adapter.submit_order(_order(), "sim")
+    assert result["submit_state"] == "DEFINITIVE_REJECT"
+    ctx.place_order.assert_not_called()
+
+
+def test_dual_broker_submit_exception_is_unknown():
+    adapter, ctx = _adapter_with_ctx((1, "unused"))
+    ctx.place_order.side_effect = TimeoutError("lost response")
+    assert adapter.submit_order(_order(), "sim")["submit_state"] == "UNKNOWN"
 
 
 def test_dual_broker_non_success_with_order_id_is_accepted():
@@ -364,3 +382,172 @@ def test_order_status_query_refreshes_broker_identity_and_cumulative_receipt():
     result = adapter.query_order_status('OID-Q', 'sim')
     assert result['success'] and result['dealt_qty'] == 4 and result['dealt_avg_price'] == 101.5
     ctx.order_list_query.assert_called_once_with(order_id='OID-Q', trd_env='SIMULATE', refresh_cache=True)
+
+
+@pytest.mark.parametrize("known_id", [False, True])
+def test_recovery_uses_exact_historical_identity_and_fill_time(tmp_path, monkeypatch, known_id):
+    path = tmp_path / "historical.sqlite"
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    db, _ = _new_db(conn)
+    iid = _instruction(db)
+    attempt = db.try_claim_execution(iid)
+    db.observe_execution_order(iid, attempt, "", "sim", {
+        "order_id": "", "code": "US.B1", "qty": 10,
+        "order_status": "SUBMITTING", "dealt_qty": None,
+    }, requested_qty=10)
+    if known_id:
+        db.mark_execution_submitted(iid, attempt, "HIST-1", "sim")
+    conn.execute("UPDATE playbook_instructions SET execution_time='wrong-later-time' WHERE id=?", (iid,))
+    conn.commit()
+    ctx = MagicMock()
+    receipt = {"order_id": "HIST-1", "remark": f"pb_{iid}_sim_{attempt}",
+               "code": "US.B1", "qty": 10, "trd_side": "BUY",
+               "order_status": "FILLED_ALL", "dealt_qty": 10, "dealt_avg_price": 100.25,
+               "updated_time": "2026-09-10 10:01:02"}
+    ctx.order_list_query.return_value = (0, pd.DataFrame(columns=receipt))
+    ctx.history_order_list_query.return_value = (0, pd.DataFrame([
+        {**receipt, "order_id": "UNRELATED", "remark": "other-attempt"}, receipt]))
+    sync = USPositionSync.__new__(USPositionSync)
+    sync._backfill_playbook_trade_record = MagicMock(return_value=True)
+    monkeypatch.setattr("app.core.position_sync._get_db_path", lambda: str(path))
+
+    sync._reconcile_playbook_execution_states(ctx, "SIMULATE", "sim", {})
+    row = _row(conn, iid)
+    assert row["execution_state"] == "BOOKED"
+    assert row["broker_order_id"] == "HIST-1"
+    assert row["execution_time"] == "2026-09-10T10:01:02-04:00"
+    ctx.history_order_list_query.assert_called_once_with(
+        start="2026-09-10", end="2026-09-10", trd_env="SIMULATE")
+    sync._reconcile_playbook_execution_states(ctx, "SIMULATE", "sim", {})
+    assert sync._backfill_playbook_trade_record.call_count == 1
+    ctx.place_order.assert_not_called()
+    conn.close()
+
+
+@pytest.mark.parametrize("case", ["empty", "wrong_remark", "ambiguous", "query_error", "wrong_symbol", "wrong_qty"])
+def test_history_without_unique_valid_receipt_keeps_claim(tmp_path, monkeypatch, case):
+    path = tmp_path / "no-proof.sqlite"
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    db, _ = _new_db(conn)
+    iid = _instruction(db)
+    attempt = db.try_claim_execution(iid)
+    db.observe_execution_order(iid, attempt, "", "sim", {
+        "order_id": "", "code": "US.B1", "qty": 10, "order_status": "SUBMITTING",
+    }, requested_qty=10)
+    receipt = {"order_id": "HIST-1", "remark": f"pb_{iid}_sim_{attempt}",
+               "code": "US.B1", "qty": 10, "order_status": "FILLED_ALL",
+               "dealt_qty": 10, "dealt_avg_price": 100.25}
+    rows = [receipt]
+    if case == "empty":
+        rows = []
+    elif case == "wrong_remark":
+        rows = [{**receipt, "remark": "other-attempt"}]
+    elif case == "ambiguous":
+        rows = [receipt, {**receipt, "order_id": "HIST-2"}]
+    elif case == "wrong_symbol":
+        rows = [{**receipt, "code": "US.OTHER"}]
+    elif case == "wrong_qty":
+        rows = [{**receipt, "qty": 11, "dealt_qty": 11}]
+    ctx = MagicMock()
+    ctx.order_list_query.return_value = (0, pd.DataFrame(columns=receipt))
+    ctx.history_order_list_query.return_value = (
+        -1 if case == "query_error" else 0, pd.DataFrame(rows, columns=receipt))
+    sync = USPositionSync.__new__(USPositionSync)
+    sync._backfill_playbook_trade_record = MagicMock(return_value=True)
+    monkeypatch.setattr("app.core.position_sync._get_db_path", lambda: str(path))
+
+    sync._reconcile_playbook_execution_states(ctx, "SIMULATE", "sim", {})
+    row = _row(conn, iid)
+    assert row["execution_state"] in ("UNKNOWN", "FILLED_UNBOOKED")
+    assert row["executed"] == 1
+    assert db.try_claim_execution(iid) is None
+    sync._backfill_playbook_trade_record.assert_not_called()
+    ctx.place_order.assert_not_called()
+    conn.close()
+
+
+def test_history_proven_zero_fill_terminal_unlocks(tmp_path, monkeypatch):
+    path = tmp_path / "zero-proof.sqlite"
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    db, _ = _new_db(conn)
+    iid = _instruction(db)
+    attempt = db.try_claim_execution(iid)
+    receipt = {"order_id": "HIST-1", "remark": f"pb_{iid}_sim_{attempt}",
+               "code": "US.B1", "qty": 10, "order_status": "FAILED",
+               "dealt_qty": 0, "dealt_avg_price": 0}
+    ctx = MagicMock()
+    ctx.order_list_query.return_value = (0, pd.DataFrame(columns=receipt))
+    ctx.history_order_list_query.return_value = (0, pd.DataFrame([receipt]))
+    sync = USPositionSync.__new__(USPositionSync)
+    sync._backfill_playbook_trade_record = MagicMock(return_value=True)
+    monkeypatch.setattr("app.core.position_sync._get_db_path", lambda: str(path))
+
+    sync._reconcile_playbook_execution_states(ctx, "SIMULATE", "sim", {})
+    assert _row(conn, iid)["execution_state"] == "PENDING"
+    assert _row(conn, iid)["executed"] == 0
+    sync._backfill_playbook_trade_record.assert_not_called()
+    ctx.place_order.assert_not_called()
+    conn.close()
+
+
+def test_failed_response_real_service_recovers_one_playbook_trade(compensation_case, tmp_path, monkeypatch):
+    import sys
+    import json
+    real_store = RealTradeStore
+    case = compensation_case
+    adapter, ctx = _adapter_with_ctx((-1, "integrated_us_order_new_err"))
+    case.broker.submit_order.side_effect = adapter.submit_order
+    result = case.service.execute_instruction(case.iid, acknowledge_risk=True)
+    assert result["success"] is False
+    assert _row(case.conn, case.iid)["execution_state"] == "UNKNOWN"
+    case.unlock.assert_not_called()
+    assert not case.db.mark_instruction_existing_position(case.iid, "later")
+    assert not case.service.execute_instruction(case.iid, acknowledge_risk=True)["success"]
+    assert ctx.place_order.call_count == 1
+    assert case.db.try_claim_execution(case.iid) is None
+
+    path = tmp_path / "recovered.sqlite"
+    disk = sqlite3.connect(path)
+    case.conn.backup(disk)
+    disk.close()
+    monkeypatch.setattr(sys.modules["app.storage.trade_store"], "TradeStore", real_store)
+    real_store(str(path))
+    monkeypatch.setattr("app.core.position_sync._get_db_path", lambda: str(path))
+    receipt = {"order_id": "LATE-FILL", "remark": f"pb_{case.iid}_sim_1",
+               "code": "US.COMP", "qty": 10, "trd_side": "BUY",
+               "order_status": "FILLED_ALL", "dealt_qty": 10, "dealt_avg_price": 100.25,
+               "updated_time": "2026-09-10 10:01:02"}
+    ctx.order_list_query.return_value = (0, pd.DataFrame(columns=receipt))
+    ctx.history_order_list_query.return_value = (0, pd.DataFrame([receipt]))
+    sync = USPositionSync.__new__(USPositionSync)
+    positions = {"US.COMP": {"qty": 10, "cost": 100.25, "direction": "LONG"}}
+    late_fill = MagicMock()
+    monkeypatch.setattr("app.playbook.late_fill_evidence.record_late_fill", late_fill)
+    sync._reconcile_playbook_execution_states(ctx, "SIMULATE", "sim", positions)
+    sync._reconcile_playbook_execution_states(ctx, "SIMULATE", "sim", positions)
+    disk = sqlite3.connect(path)
+    disk.row_factory = sqlite3.Row
+    assert _row(disk, case.iid)["execution_state"] == "BOOKED"
+    trades = disk.execute("SELECT * FROM trade_records").fetchall()
+    assert len(trades) == 1
+    trade = trades[0]
+    assert trade["source_type"] == "PLAYBOOK_SIM"
+    assert trade["futu_order_id"] == "LATE-FILL"
+    assert trade["quantity"] == 10
+    assert trade["entry_price"] == 100.25
+    assert trade["entry_time"] == "2026-09-10T10:01:02-04:00"
+    late_fill.assert_called_once()
+    assert late_fill.call_args.kwargs["execution_ts"] == trade["entry_time"]
+    meta = json.loads(trade["metadata_json"])
+    assert meta["stop_loss"] == 95
+    assert meta["take_profit"] == 110
+    assert meta["playbook_instruction_id"] == case.iid
+    from app.playbook.pipeline import is_playbook_open_position
+    monkeypatch.setattr("app.core.paths.get_trade_records_db", lambda: path)
+    assert is_playbook_open_position("US.COMP") is True
+    assert ctx.place_order.call_count == 1
+    case.broker.close_position.assert_not_called()
+    disk.close()
