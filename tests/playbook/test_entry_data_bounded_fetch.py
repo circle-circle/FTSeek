@@ -503,7 +503,9 @@ def test_real_auto_execute_never_submits_after_entry_input_timeout_or_late_compl
         [{"code": "US.AAPL", "qty": 1}, {"code": "US.NEXT ", "qty": 1}],
     ]),
 ])
-def test_broker_failure_evidence_is_not_empty_positions(env, response):
+def test_broker_failure_evidence_is_not_empty_positions(env, response, monkeypatch):
+    # Input validation must not depend on the timeout tests' 40 ms scheduling margin.
+    monkeypatch.setattr(env.fetch, "DEFAULT_ENTRY_DATA_TIMEOUT_S", 0.2)
     # Every malformed row must defer all instructions before any partial processing.
     env.rows.append({**env.row, "id": 2, "symbol": "US.NEXT"})
     original = copy.deepcopy(env.rows)

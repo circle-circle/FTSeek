@@ -14,6 +14,11 @@ from app.risk.account_circuit_breaker import AccountCircuitBreaker
 
 @pytest.fixture
 def breaker(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from app.core import config_container
+
+    monkeypatch.setattr(config_container, "get_config", lambda: SimpleNamespace(
+        get_dotted=lambda key, default=None: default))
     db = tmp_path / "trade_records.db"
     conn = sqlite3.connect(db)
     conn.execute("""

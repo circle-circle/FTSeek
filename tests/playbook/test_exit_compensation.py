@@ -145,6 +145,24 @@ def compensation_case(monkeypatch, tmp_path):
     from app.playbook.config import get_playbook_config
     from app.playbook.db import PlaybookDB
     from app.core import db_utils, paths
+    from app.risk import sim_entry_budget
+
+    monkeypatch.setattr(paths, "get_data_dir", lambda: tmp_path / "budget-data")
+
+    # The isolated ledger has no account state; admission is a mocked boundary here.
+    def budget_preflight(owner, **kwargs):
+        return {"allowed": True, "quantity": kwargs["quantity"],
+                "account_id": "SIM-1", "source": kwargs["source"],
+                "symbol": kwargs["symbol"], "stop_loss": kwargs["stop_loss"],
+                "reference_price": kwargs["entry_price"],
+                "signed_qty": kwargs["quantity"] * (1 if kwargs["direction"] == "LONG" else -1)}
+
+    def budget_finished(owner, **kwargs):
+        sim_entry_budget._guard().clear_marker()
+        return True
+
+    monkeypatch.setattr(sim_entry_budget, "sim_entry_preflight", budget_preflight)
+    monkeypatch.setattr(sim_entry_budget, "finish_sim_submission", budget_finished)
 
     monkeypatch.setattr(service_module, "now_et", lambda: datetime.fromisoformat("2026-09-10T10:00:00-04:00"))
     monkeypatch.setattr(service_module, "_SYMBOL_LOCK_DIR", tmp_path / "symbol-locks")

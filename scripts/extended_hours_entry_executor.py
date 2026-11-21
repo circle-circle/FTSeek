@@ -854,6 +854,25 @@ def _save_state(s, state_path=None):
     os.replace(tmp, state_path)
 
 
+def _release_sim_presend_attempt(state, attempts, attempt_key, result, results):
+    """Keep proven pre-send deferrals retryable without releasing uncertain sends."""
+    if (result.get("sim_entry_budget_deferred") is not True
+            or result.get("submission_not_sent") is not True or result.get("ok")
+            or attempts.get(attempt_key, {}).get("status") != "reserved"
+            or any(result.get(key) for key in ("buy_order_id", "order_id", "broker_order_id", "submit_state"))):
+        return False
+    try:
+        dealt = float(result.get("filled_qty", 0))
+    except (TypeError, ValueError, OverflowError):
+        return False
+    if not math.isfinite(dealt) or dealt != 0:
+        return False
+    attempts.pop(attempt_key)
+    results.append(result)
+    _save_state(state)
+    return True
+
+
 @contextlib.contextmanager
 def _state_lock(state_path=None):
     lock_path = (state_path or STATE).with_suffix(".lock")
@@ -2062,6 +2081,8 @@ def _research_pass_real(
         result["gate_mode"] = RESEARCH_GATE_MODE
         result["research_source"] = source
         result["late_premarket"] = _is_late_premarket(session)
+        if _release_sim_presend_attempt(state, attempts, attempt_key, result, results):
+            continue
         attempts[attempt_key] = {
             "status": "opened" if result.get("ok") else "failed",
             "session": session, "trade_date": today,
@@ -3593,6 +3614,8 @@ def collect(session, dry=False):
                     _audit(result)
                 result["symbol"] = symbol
                 result["session"] = session
+                if _release_sim_presend_attempt(state, attempts, attempt_key, result, results):
+                    continue
                 attempts[attempt_key] = {
                     "status": "opened" if result.get("ok") else "failed",
                     "session": session,
@@ -3850,6 +3873,22 @@ def _execute(
     position_usd=None, grade="B", structure=None, gate_mode="strict",
     side="LONG",
 ):
+    from app.risk.sim_entry_budget import sim_entry_account_guard, defer
+    target_env = "real" if _mode().is_live else "sim"
+    with sim_entry_account_guard(target_env) as guard:
+        if guard is not None and not guard.acquired:
+            return {"symbol": symbol, **defer(guard.reason)}
+        return _execute_account_locked(
+            symbol, qty, price, session, chg, vol, earn, dry,
+            position_usd=position_usd, grade=grade, structure=structure,
+            gate_mode=gate_mode, side=side)
+
+
+def _execute_account_locked(
+    symbol, qty, price, session, chg, vol, earn, dry,
+    position_usd=None, grade="B", structure=None, gate_mode="strict",
+    side="LONG",
+):
     """SIM 真下单: 买入→等成交→写 open_positions(含 initial_sl 规则引擎兜底). 用户裁方案1.
     SIM 无券商STOP, 止损靠 ①开盘 monitor_playbook_sim_exits 读 initial_sl ②盘前 tighten exit executor.
     gate_mode (2026-09-22 研究臂): "strict"=财报门严格臂(默认, 缺省不打标即严格臂);
@@ -3933,6 +3972,33 @@ def _execute(
             # 富途官方语义: 下单入参只有 BUY/SELL; SELL_SHORT/BUY_BACK 只出现在
             # 查询/回报侧 (DEB-20260923 §4.3)。开空 = SELL, 平空 = BUY (exit_lifecycle 已如此)。
             trd_side = TrdSide.SELL
+        if not _mode().is_live:
+            from app.risk.sim_entry_budget import (
+                sim_entry_preflight, begin_sim_submission, reject_sim_submission, defer,
+            )
+            # Reserve STOP_PCT before send without changing the fill-based stop.
+            try:
+                _budget_stop = round(float(price) * (
+                    1 + float(STOP_PCT) / 100 * (1 if side == "LONG" else -1)), 2)
+            except (TypeError, ValueError, OverflowError):
+                return {**rec, **defer("ext_presubmit_stop_unavailable")}
+            _sim_budget = sim_entry_preflight(
+                None, source="extended_hours_entry", symbol=symbol,
+                quantity=qty, entry_price=price, stop_loss=_budget_stop, direction=side,
+                expected_account_id=acc_id, db_path=DB, apply_daily_reduce=True)
+            if not _sim_budget.get("allowed"):
+                return {**rec, **_sim_budget}
+            qty = _sim_budget["quantity"]
+            rec["qty"] = qty
+            try:
+                begin_sim_submission(_sim_budget)
+            except Exception as _marker_error:
+                # This branch has not invoked place_order; only our marker may clear.
+                try:
+                    reject_sim_submission(submit_state="DEFINITIVE_REJECT", dealt_qty=0)
+                except Exception:
+                    pass
+                return {**rec, **defer(f"submission_marker_not_durable:{_marker_error}")}
         ret, data = tctx.place_order(price=price, qty=qty, code=symbol, trd_side=trd_side,
                                      order_type=OrderType.NORMAL, trd_env=env, acc_id=acc_id,
                                      time_in_force=TimeInForce.DAY, session=Session.ETH, remark="ext_entry")
@@ -3944,6 +4010,13 @@ def _execute(
             return rec
         buy_oid = str(data["order_id"].values[0]) if data is not None else ""
         rec["buy_order_id"] = buy_oid
+        if not _mode().is_live:
+            from app.risk.sim_entry_budget import observe_sim_submission
+            # Never let a marker update failure erase an already accepted order.
+            try:
+                observe_sim_submission(buy_oid)
+            except Exception as _marker_error:
+                rec["sim_budget_marker_error"] = str(_marker_error)
 
         # 等成交；部分成交则撤掉剩余并等待券商确认终态。
         fill = wait_order_fill(tctx, env, acc_id, buy_oid, qty, price)
@@ -4008,6 +4081,10 @@ def _execute(
             return rec
         rec["position_id"] = pos_id
         rec["ok"] = True
+        if not _mode().is_live:
+            from app.risk.sim_entry_budget import finish_sim_submission
+            rec["sim_budget_marker_cleared"] = finish_sim_submission(
+                None, db_path=DB)
         _audit(rec)
         _push_filled(symbol, fqty, fpx, price, session, earn, chg, vol, rec, pos_id)
         return rec

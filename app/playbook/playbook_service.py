@@ -1459,12 +1459,16 @@ class PlaybookService:
         #   生产 min_notional_usd=2500; 当前顺序按缩放前名义复核, 避免风险降仓二次拒绝)。
         #   已知代价 (与两处先例同源): admission 的 fee_bps 判据评的是缩放前的名义,
         #   若将来启用 min_profit_fee_ratio 须把缩放移到复核之前, 否则判据与实际下单不符。
+        _sim_acb_reduce_applied = (_risk_scale <= 0.5)
         if _risk_scale < 1.0 and position_size and position_size > 1:
             _ps_before_risk = int(position_size)
             position_size = max(1, int(position_size * _risk_scale))
             logger.warning(
                 f"[playbook] {symbol} 风控分级复权: 仓位 {_ps_before_risk} → {position_size} "
                 f"(scale={_risk_scale}) — 半仓观察, 非停新开")
+
+        # Ephemeral evidence for the final fresh SIM daily recheck; never persisted.
+        inst = dict(inst, _sim_acb_reduce_applied=_sim_acb_reduce_applied)
 
         # 方向映射
         # DEB-20260904 #180: 白名单校验 — 旧逻辑 direction==BUY→LONG 其余一律 SHORT,
@@ -1625,6 +1629,20 @@ class PlaybookService:
             return _lk
 
     def _execute_via_dual_broker(
+        self, inst, instruction_id, symbol, direction, entry_price, stop_loss,
+        take_profit, position_size, mos_direction, matched_decision_id, target_env,
+        archetype_route=None, reprice_from=None,
+    ):
+        from app.risk.sim_entry_budget import sim_entry_account_guard, defer
+        with sim_entry_account_guard(target_env) as guard:
+            if guard is not None and not guard.acquired:
+                return defer(guard.reason)
+            return self._execute_via_dual_broker_symbol_locked(
+                inst, instruction_id, symbol, direction, entry_price, stop_loss,
+                take_profit, position_size, mos_direction, matched_decision_id, target_env,
+                archetype_route=archetype_route, reprice_from=reprice_from)
+
+    def _execute_via_dual_broker_symbol_locked(
         self, inst, instruction_id, symbol, direction, entry_price, stop_loss,
         take_profit, position_size, mos_direction, matched_decision_id, target_env,
         archetype_route=None, reprice_from=None,
@@ -2095,6 +2113,16 @@ class PlaybookService:
             "reference_price": float(entry_price or 0),
         }
 
+        if not _is_live:
+            from app.risk.sim_entry_budget import sim_entry_preflight
+            _sim_budget = sim_entry_preflight(
+                self, source="playbook", symbol=symbol, quantity=_order.quantity,
+                entry_price=float(_route["limit_price"]) if _route else entry_price,
+                stop_loss=stop_loss, direction=mos_direction,
+                reduce_applied=bool(inst.get("_sim_acb_reduce_applied")))
+            if not _sim_budget.get("allowed"):
+                return _sim_budget
+
         # B1-lite: claim 原子进入 UNKNOWN 并返回 attempt；所有后续状态写均 CAS。
         _attempt = self.db.try_claim_execution(instruction_id)
         if _attempt is None:
@@ -2107,6 +2135,26 @@ class PlaybookService:
                 'order_status': 'SUBMITTING', 'dealt_qty': None, 'dealt_avg_price': None,
         }, requested_qty=_order.quantity) is None:
             return {"success": False, "message": "提交前订单身份持久化冲突，未下单"}
+
+        if not _is_live:
+            from app.risk.sim_entry_budget import begin_sim_submission, reject_sim_submission, defer
+            try:
+                # Fsync before the SDK call. Any sent/uncertain result retains the slot.
+                begin_sim_submission(
+                    _sim_budget, client_order_id=_order.client_order_id,
+                    instruction_id=instruction_id)
+            except Exception as _marker_error:
+                # This control path proves submit_order has not been invoked.
+                try:
+                    reject_sim_submission(submit_state="DEFINITIVE_REJECT", dealt_qty=0)
+                except Exception:
+                    pass
+                try:
+                    self.db.unlock_execution_if_zero_fill_terminal(
+                        instruction_id, _attempt, "DEFINITIVE_REJECT", dealt_qty=0)
+                except Exception:
+                    pass
+                return defer(f"submission_marker_not_durable:{_marker_error}")
 
         try:
             _dual = get_dual_broker()
@@ -2121,6 +2169,12 @@ class PlaybookService:
         _submit_state = str(_result.get("submit_state") or
                             ("ACCEPTED" if _result.get("success") else "UNKNOWN"))
         _futu_id = str(_result.get("futu_order_id") or "")
+        if not _is_live:
+            from app.risk.sim_entry_budget import observe_sim_submission
+            try:
+                observe_sim_submission(_futu_id)
+            except Exception as _marker_error:
+                logger.critical("[SIM_ENTRY_BUDGET] accepted identity marker update failed: %s", _marker_error)
         _broker_status = str(_result.get("broker_order_status") or "ACCEPTED")
         try:
             _submit_has_fill = float(_result.get("filled_qty") or 0) > 0
@@ -2131,6 +2185,13 @@ class PlaybookService:
         if _submit_state == "DEFINITIVE_REJECT" and not _submit_has_fill:
             self.db.unlock_execution_if_zero_fill_terminal(
                 instruction_id, _attempt, "DEFINITIVE_REJECT", dealt_qty=0)
+            if not _is_live:
+                from app.risk.sim_entry_budget import reject_sim_submission
+                try:
+                    reject_sim_submission(
+                        submit_state="DEFINITIVE_REJECT", dealt_qty=_result.get("filled_qty", 0))
+                except Exception as _marker_error:
+                    logger.error("[SIM_ENTRY_BUDGET] definitive reject marker retention: %s", _marker_error)
             logger.error(f"[playbook] {_mode_label} 下单明确拒绝 {symbol}: {_result.get('error')}")
             return {"success": False, "message": f"{_mode_label} 下单失败: {_result.get('error')}"}
         if _submit_state != "ACCEPTED" or not _futu_id:
@@ -2564,6 +2625,10 @@ class PlaybookService:
             )
 
         # mark_execution_booked 已在同一事务内消费 Outbox 意图；这里不另开提交点。
+        if not _is_live and _bk_failed is None:
+            from app.risk.sim_entry_budget import finish_sim_submission
+            if not finish_sim_submission(self):
+                logger.warning("[SIM_ENTRY_BUDGET] %s fill/book returned; account marker retained pending exact reconciliation", symbol)
 
         _env_desc = "实盘真实成交" if _is_live else "模拟盘真实成交"
         logger.info(f"Playbook {_mode_label} executed: {symbol} {direction} @ ${_fill} ({_env_desc}, futu_id={_futu_id})")

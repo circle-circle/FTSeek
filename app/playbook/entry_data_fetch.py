@@ -14,6 +14,7 @@ _STATE_INIT_LOCK = threading.Lock()
 _READ_ONLY_METHODS = frozenset({"get_full_market_context", "get_quote", "query_positions"})
 _REGIME_FACTORY_METHOD = "_market_regime_assess"
 _BROKER_POSITIONS_FACTORY_METHOD = "_broker_positions_query"
+_SIM_BUDGET_FACTORY_METHOD = "_sim_entry_budget_snapshot"
 
 
 class EntryDataUnavailable(RuntimeError):
@@ -39,6 +40,9 @@ class _QueryState:
         self.flight: _Flight | None = None
 
 
+_SIM_BUDGET_QUERY_STATE = _QueryState()
+
+
 def _scheduler_state(scheduler: Any) -> _QueryState:
     with _STATE_INIT_LOCK:
         state = getattr(scheduler, "_entry_data_query_state", None)
@@ -52,7 +56,11 @@ def fetch_entry_data(scheduler: Any, query_label: str, source: Any, method: str,
                      *args: Any, timeout_s: float | None = None,
                      **kwargs: Any) -> Any:
     """Return an on-time input or defer while retaining any stalled worker's slot."""
-    fixed_factory = (source is None and not args and not kwargs
+    budget_factory = (source is None and method == _SIM_BUDGET_FACTORY_METHOD
+                      and len(args) == 1 and isinstance(args[0], (list, tuple))
+                      and set(kwargs) <= {"expected_account_id", "marker_receipt"}
+                      and (kwargs.get("marker_receipt") is None or isinstance(kwargs["marker_receipt"], dict)))
+    fixed_factory = budget_factory or (source is None and not args and not kwargs
                      and method in {_REGIME_FACTORY_METHOD, _BROKER_POSITIONS_FACTORY_METHOD})
     if method not in _READ_ONLY_METHODS and not fixed_factory:
         raise EntryDataUnavailable(query_label, "not_read_only")
@@ -64,7 +72,8 @@ def fetch_entry_data(scheduler: Any, query_label: str, source: Any, method: str,
     except (TypeError, ValueError, OverflowError) as error:
         raise EntryDataUnavailable(query_label, "invalid_timeout") from error
 
-    state = _scheduler_state(scheduler)
+    # Recreating a service must not create another worker behind a hung SIM read.
+    state = _SIM_BUDGET_QUERY_STATE if budget_factory else _scheduler_state(scheduler)
     flight = _Flight()
     with state.lock:
         if state.flight is not None:
@@ -77,7 +86,10 @@ def fetch_entry_data(scheduler: Any, query_label: str, source: Any, method: str,
         # SDK completion can outlive this flight; cache cleanup would race ordinary reads.
         cache_policy_token = DATA_CACHE_PUBLICATION_ALLOWED.set(False)
         try:
-            if fixed_factory and method == _REGIME_FACTORY_METHOD:
+            if budget_factory:
+                from app.risk.sim_entry_budget import read_sim_budget_snapshot
+                value = read_sim_budget_snapshot(*args, **kwargs)
+            elif fixed_factory and method == _REGIME_FACTORY_METHOD:
                 # Lazy constructors can block before the first query.
                 from app.playbook.market_regime import MarketRegimeGate
                 value = MarketRegimeGate().assess(publish_cache=False)
@@ -141,3 +153,13 @@ def fetch_entry_broker_positions(scheduler: Any, *, timeout_s: float | None = No
     """Bound broker initialization plus fixed SIM positions query, never orders."""
     return fetch_entry_data(scheduler, "broker_positions", None,
                             _BROKER_POSITIONS_FACTORY_METHOD, timeout_s=timeout_s)
+
+
+def fetch_entry_sim_budget_snapshot(owner: Any, symbols: list[str], *,
+                                    expected_account_id=None, marker_receipt=None,
+                                    timeout_s: float | None = None) -> Any:
+    """Fixed SIM account/orders/positions/quotes read, including lazy construction."""
+    return fetch_entry_data(owner, "sim_entry_budget", None,
+                            _SIM_BUDGET_FACTORY_METHOD, symbols,
+                            expected_account_id=expected_account_id, marker_receipt=marker_receipt,
+                            timeout_s=timeout_s)

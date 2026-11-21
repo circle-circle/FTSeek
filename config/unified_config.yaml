@@ -2191,6 +2191,8 @@ risk:
     enabled: false
   account:
     max_daily_drawdown: 0.03
+    sim:
+      max_peak_drawdown: 0.05
     # max_total_drawdown 已删除 (2026-08-24 全仓清理): 总回撤门 8/23 随死门删除
     # (DEB-20260823, ffafea48), 此键仅剩日志输出消费 = 死链. 总回撤防护现由
     # capital_safety 水位承担.
