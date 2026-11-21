@@ -256,8 +256,9 @@ def _run_auto_execute(monkeypatch, instruction, now_et_dt, now_sequence=None,
         data_router = FakeRouter()
 
     class FakeBroker:
-        def get_positions(self, target_env):
-            return []
+        def query_positions(self, target_env):
+            assert target_env == "sim"
+            return {"success": True, "positions": [], "error": ""}
 
     fake_db = FakeDB()
     service = FakeService()

@@ -105,12 +105,15 @@ class TestGetDailyKlineGate:
         assert calls == []
         assert out == bars[-30:]
 
-    def test_phase_fresh_cache_skips_request_and_quota(self, provider):
+    def test_phase_fresh_cache_skips_request_and_quota(self, provider, monkeypatch):
         """[RFC-171] 相位新鲜 (末端=上一交易日) 的缓存: 既不打 OpenD 也不耗配额。
 
         这是盘前 09:0x 62 只候选批次的零点: 缓存落盘后重启进程仍命中 ⇒ 配额窗口
         不被 62 连发打穿 ⇒ TwelveData 回退与 10-30s 等待从路径上消失。
         """
+        from app.utils import timezone as _timezone
+        phase_now = _timezone.now_et().replace(hour=9, minute=0, second=0, microsecond=0)
+        monkeypatch.setattr(_timezone, "now_et", lambda: phase_now)
         from datetime import timedelta as _td
         from app.utils.timezone import now_et as _now_et_test
         # [RFC-171 补] 必须用 ET 日期而非服务器 CST 日期: CST 00:00-12:00 期间 CST 日期
@@ -183,6 +186,9 @@ class TestGetDailyKlineGate:
         from datetime import timedelta as _td
         disk = tmp_path / "daily_kline_v1.json"
         monkeypatch.setattr(_fp, "_DAILY_DISK_PATH", str(disk))
+        from app.utils import timezone as _timezone
+        phase_now = _timezone.now_et().replace(hour=9, minute=0, second=0, microsecond=0)
+        monkeypatch.setattr(_timezone, "now_et", lambda: phase_now)
         from app.utils.timezone import now_et as _now_et_test
         # [RFC-171 补] 必须用 ET 日期而非服务器 CST 日期: CST 00:00-12:00 期间 CST 日期
         #   已比 ET 日期早一天 (对应 ET 12:00-24:00), date.today() 会把「ET 今日」当成

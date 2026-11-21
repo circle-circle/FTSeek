@@ -1,13 +1,44 @@
 """RFC-131: explicit SIM/LIVE lanes and the 1-share C-lite contract."""
 
 import inspect
+import json
+from datetime import timedelta
 from types import SimpleNamespace
+
+import pytest
 
 from app.playbook import pipeline
 from app.playbook.db import PlaybookDB
 from app.core.paths import get_trade_records_db_for_arm
 from app.playbook.db import route_playbook_db
 from app.playbook.live_arm_gate import evaluate_live_arm_gate
+
+
+@pytest.fixture(autouse=True)
+def isolate_default_pdt_db(monkeypatch, tmp_path):
+    from app.core import db_utils
+    from app.risk import pdt_guard
+
+    monkeypatch.setattr(db_utils, "get_main_db", lambda: tmp_path / "pdt.sqlite")
+    monkeypatch.setattr(pdt_guard, "_guard", None)
+
+
+@pytest.fixture(autouse=True)
+def isolate_live_operational_files(monkeypatch, tmp_path):
+    from app.playbook import live_arm_gate
+    from app.utils.timezone import now_et
+
+    waiver = tmp_path / "live_probe_lock_waiver.json"
+    waiver.write_text(json.dumps({
+        "waiver_id": "TEST-WAIVER",
+        "authorization_id": "TEST-AUTH",
+        "granted": "2026-10-06",
+        "granted_by": "test fixture, not production authorization",
+        "locks_waived": {"ALLOW_REAL_TRADING": "true"},
+        "expires": (now_et() + timedelta(days=3650)).isoformat(timespec="seconds"),
+    }), encoding="utf-8")
+    monkeypatch.setattr(live_arm_gate, "_WAIVER_FILE", waiver)
+    monkeypatch.setattr(live_arm_gate, "_HALT_FILE", tmp_path / "live_arm_halt.json")
 
 
 _ARM_CONFIG = {

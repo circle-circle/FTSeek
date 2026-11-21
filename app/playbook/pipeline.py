@@ -2090,13 +2090,14 @@ def _mirror_instruction_to_live_if_allowed(inst: Dict[str, Any], live_db):
     )
 
 
-def _auto_execute_preflight(today: str, *, logger=None):
+def _auto_execute_preflight(today: str, *, logger=None, entry_data_owner=None):
     """[阶段 7] 本体迁 risk_gates; 注入日亏回调保 monkeypatch 缝。"""
     from app.playbook.pipeline_parts import risk_gates as _rg
     return _rg._auto_execute_preflight(
         today,
         check_daily_loss_circuit=_check_daily_loss_circuit,
         logger=logger or globals()["logger"],
+        entry_data_owner=entry_data_owner,
     )
 
 
@@ -2125,7 +2126,8 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
         INVALIDATED_SKIP_REASONS=INVALIDATED_SKIP_REASONS,
         _CC_NORM_LOGGED=_CC_NORM_LOGGED,
         _CC_NORM_LOGGED_MAX=_CC_NORM_LOGGED_MAX,
-        _auto_execute_preflight=_auto_execute_preflight,
+        _auto_execute_preflight=lambda today, logger=None: _auto_execute_preflight(
+            today, logger=logger, entry_data_owner=scheduler),
         _chase_cap_round_bump=_chase_cap_round_bump,
         _check_bridge_health_and_alert=_check_bridge_health_and_alert,
         _check_intraday_trigger=_check_intraday_trigger,
