@@ -303,6 +303,28 @@ def test_missing_dual_caliber_raises_kr5_warning():
     assert any("era_clean_where" in w for w in block["warnings"])
 
 
+def test_disclosure_separates_estimators_as_of_and_fee_coverage():
+    rows = [_row(trade_date="2026-11-03", qty=100, gross=13.0, fees=4.0),
+            _row(symbol="US.B", trade_date="2026-11-04", entry=10.0, qty=10,
+                 gross=3.0, fees=4.0)]
+    block = scoring.collect_and_score(rows, rows, rows, as_of="2026-11-20",
+                                      era_where="AND 1=1")
+    caliber = block["caliber"]
+    assert "不设 trade_date 上界" in caliber["sample_scope"]
+    assert "不是历史快照" in caliber["sample_scope"]
+    assert caliber["net_bps_estimator"] == "10000 × Σ净额 / Σ入场名义额 (名义加权)"
+    assert "日等权" in caliber["day_cluster_estimator"]
+    assert "不是名义加权净 bps 的严格区间" in caliber["day_cluster_estimator"]
+    assert "估算" in caliber["fee_coverage"]
+    assert "不得重复扣" in caliber["fee_coverage"]
+    primary = block["kr1"]["primary"]
+    assert primary["net_bps"] == pytest.approx(7.9208)
+    assert primary["day_clustered_mean_bps"] == pytest.approx(-45.5)
+    assert primary["ci80_lower_bps"] == pytest.approx(-115.3472)
+    assert primary["ci80_upper_bps"] == pytest.approx(24.3472)
+    assert primary["ci80_contains_zero"] is True
+
+
 def test_a9_a10_exclusion_counts_are_reported():
     rows = [_row(), _row(symbol="US.B")]
     block = scoring.collect_and_score(rows, rows + [_row(symbol="US.C")],
@@ -326,6 +348,31 @@ def test_post_window_underpowered_blocks_pivot_trigger():
     assert "功效不足" in pivot["note"] and "一字未动" in pivot["note"]
 
 
+@pytest.mark.parametrize("daily_nets,expected_net,expected_ci,expected_trigger", [
+    ([6, -16], -50.0, True, True),
+    ([-10, -20], -150.0, False, False),
+    ([-10], -100.0, None, False),
+    ([6, 16], 110.0, False, False),
+])
+def test_post_pivot_requires_nonpositive_net_and_ci_containing_zero(
+        daily_nets, expected_net, expected_ci, expected_trigger):
+    rows = []
+    for day_index, net in enumerate(daily_nets):
+        for row_index in range(120 // len(daily_nets)):
+            rows.append(_row(symbol=f"US.P{day_index}.{row_index}",
+                             decision_id=f"DA-pivot-{day_index}-{row_index}",
+                             trade_date=f"2026-11-{17 + day_index:02d}",
+                             gross=net + 4.0, fees=4.0))
+    block = scoring.collect_and_score(rows, rows, rows, as_of="2026-11-20",
+                                      era_where="AND 1=1")
+    pivot = block["section12"]["pivot_evaluation"]
+    assert pivot["post_n"] == 120 and pivot["post_gate_met"] is True
+    assert pivot["net_bps"] == expected_net
+    assert pivot["ci_contains_zero"] is expected_ci
+    assert pivot["triggered"] is expected_trigger
+    assert "不自动停单" in pivot["note"]
+
+
 def test_render_lines_includes_all_three_windows_and_pivot():
     rows = [_row(trade_date=f"2026-11-{d:02d}", decision_id=f"DA-r{i}",
                  symbol=f"US.S{i}") for i, d in enumerate(range(2, 14))]
@@ -334,7 +381,8 @@ def test_render_lines_includes_all_three_windows_and_pivot():
     text = "\n".join(scoring.render_lines(block))
     for token in ("OKR-2026-11", "KR1 DA", "KR2 DA 死单率", "§12.3 三窗并列",
                   "whole", "pre", "post", "§6 Kill/Pivot", "§5 结算日",
-                  "达标日双速率外推"):
+                  "达标日双速率外推", "不设 trade_date 上界", "日等权",
+                  "不是名义加权净 bps 的严格区间", "不得重复扣"):
         assert token in text, f"缺 {token}"
 
 

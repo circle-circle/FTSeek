@@ -2,6 +2,40 @@
 
 > **写入约定（2026-11-11 起）**：每条交接必须带三件可核凭据 —— `**凭据**`（commit sha / 改动文件数，`git show --stat` 可核）、`**验证**`（可复跑命令 + 日志路径，不写“已通过”）、`**未验证**`（显式列出没验的部分，无则写“无”）。自述≠事实，这三行是给下一个人核的。
 
+## 2026-11-22 CST · 【DEB全链R5】F5只读盘点完成，KEEP5占满+超编候选/UNKNOWN待裁；零写入/零退役/零交易变更
+
+- **结论**：F5后台agent原仓AST+crontab+Hermes43jobs+systemd+产物mtime只读盘点完成，主线程复核计数与id存在。120项=66 OBSERVING/48 KILLED/2 GRADUATED/4 SUPERSEDED；66中26不可裁理由(19永久+7冻结/门)，约38有毕业门。KEEP5（DEB-20261114§8用户已批）占满5名额；超编在采候选entry_confirm_forward/be_half_at_arm_d/s1_short_after_open/thesis_management_shadow/exit_session_window归属待用户路由；A类~24闭轴仍采未路由不能算腾位；UNKNOWN da_event_prompt_canary注入开记录停须查，4产物缺失为设计休眠非断采。
+- **凭据**：本批仅3既有MD（DEB§14/README/handoff）；F5零写入/零退役/零采集器。GLM另独立验证F1/F2护栏21 passed且生产config/state/db跑前跑后零变化（worktree副本同步非生产）。
+- **验证**：主线程AST复核total120/66/26及KEEP5/候选/UNKNOWN id均存在；DEB链接/编号/格式/diff-check通过。F5证据为只读盘点，不等同六面零引用或消费方路由完成。
+- **未验证/边界**：不能据此裁KR4或退役；逐项六面零引用未跑、消费方路由未定、current_n恒0须refresh_counts、mtime只证写方活不证判据可裁；KEEP5之外名额归属须用户裁。F1预算/F2自动处置/F3自然链/F4完整成本版本分段仍未实施。
+- **下一步**：用户裁KEEP5之外名额归属与A类闭轴路由；da_event_prompt_canary注入/记录分裂另查；F1/F2具体风险政策经原线程预注册；F3下一RTH仅观察自然合格信号。提交/推送另裁。**最后更新：2026-11-22 CST。**
+
+## 2026-11-22 CST · 【DEB全链R4】通俗解释后落地F1/F2测试护栏，21例通过；F5只读盘点中，零交易行为变更
+
+- **结论**：用户要求通俗解释逻辑/收益后再落地。已说明F4/F6是“少误判”而非直接增利（当前DA仍负，不承诺转正）；随后落地F1/F2 test-only护栏：F1累计止损tripped早退不重写CFG/STATE、未触线静默、隔离tmp触线写路径；F2年龄告警record-only不释放/不记账。不改监控脚本/pipeline/配置/state/交易行为；F1预算/F2自动处置仍待裁。
+- **凭据**：本批1新test（F1 3例）+1既有test增1例（F2）+3既有MD（DEB§12/README/handoff）；未提交/推送。F5只读盘点由后台agent执行，不新增采集器/不退役/不写状态。
+- **验证**：`python -P`原仓路径+`--noconftest`，两份test文件 **21 passed/1.64s/exit0**，日志 `/tmp/deb20261122-f1-f2-full-pytest.log`； targeted 7 passed日志 `/tmp/deb20261122-f1-f2-guard-pytest.log`。AST/diff-check通过；生产监控脚本/pipeline/配置/state未改（pipeline/config的M为既有WIP，非本批）。
+- **未验证**：F1具体预算/期限/再暂停/责任、F2自动核证/恢复/解锁未裁；F3自然链/完整SDK有界性未发生/未证；F5全调度核名进行中；F4完整成本/版本分段未做。测试护栏不等于收益改善或自然链验收。
+- **下一步**：F5盘点结果回写后判KR4名额证据；F1/F2须用户给具体风险政策并经原线程预注册；F3下一RTH仅观察自然合格信号。提交/推送另裁。**最后更新：2026-11-22 CST。**
+
+## 2026-11-22 CST · 【DEB全链scoped落地】F4口径披露+F6判分展示修复，原仓46例通过，零交易行为变更
+
+- **结论**：用户裁「请基于deb分析检查 确认无问题请落地」。核查后仅落地F4只读披露与新发现F6既有展示缺陷；F6旧逻辑把post NOT_MET直接当§6触发，现严格按已裁OKR「n≥120且净bps≤0且CI含0」，CI None不触发、报告不自动停单。不改KR1/KR2、SQL/公式/阈值/schema/日期、A9/A10/A11、四锁或交易配置；F1/F2/F3/F5不拿默认值/模拟事件冒充落地。
+- **凭据**：本批2既有Python/test（评分脚本+对应测试，79增6删）+4既有MD（DEB续写、debates索引、OKR仅测试计数41→46、handoff本条）；未提交/推送。未改app/config/cron/订单/UNKNOWN/peak/tripped或交易daemon，不需要重启；旧worktree同名副本不是交付/部署源，未删除他人文件。
+- **验证**：改前隔离41 passed `/tmp/deb20261122-f4-baseline-pytest.log`；最终以python -P预加载并断言 `SCORING_MODULE=/opt/ftseek/FTSeek-US/scripts/okr_2026_11_scoring.py` 后跑 `--noconftest` **46 passed/0.50s/exit0**，日志 `/tmp/deb20261122-f4-f6-original-module-pytest.log`。基线语义 `/tmp/deb20261122-f4-f6-semantic-equivalence.log`：SQL/常量/评分函数AST不变，去六披露键后合成block相同、旧输出兼容，旧负净CI不含0误触发True→False且KR1/KR2相同。真实只读CLI `/tmp/deb20261122-f4-f6-readonly-scoring.log` exit0：n131/-31.5021bps/KR1 NOT_MET/KR2 MET/post n24触发False保持，新增口径可见。
+- **独立复核/过程纠错**：Kimi按原仓路径与HEAD diff复核并独立复算四分支及F4算术，无阻断/必须修改项，仅限披露与判分展示；GLM另报原仓46 passed及只读CLI一致。F4名义/CI夹具、F6零方差/单日样本的过程红均已修正，不改生产公式；未跑全仓或带conftest套件，不以旧worktree测试结果归账。
+- **未验证**：F4完整成本/版本分段未做；F1预算/期限/再暂停/责任、F2自动核证/恢复/解锁未裁；F3自然entry→claim→send→fill→BOOKED→唯一宿主→exit/净账与完整SDK有界性未发生/未证；F5全调度核名未做。判分修复不等于收益改善、长期正期望或自然链验收，as_of仍非历史快照。
+- **下一步**：F1/F2须用户给具体风险政策并经原线程预注册；F3下一RTH仅观察自然合格信号，不造单；F5另核调度/消费者后才判名额。11-30 §5结算不顺延，§6不因本修复新增自动动作；提交/推送另裁。**最后更新：2026-11-22 CST。**
+
+## 2026-11-22 CST · 【交易系统全链路建议落档】DEB立案完成，政策与实施待裁，纯文档零交易变更
+
+- **结论**：用户要求将全链建议写入DEB/RFC，已落 `docs/debates/DEB-20261122-trading-system-full-chain-and-survival-review.md`：修订“稳定盈利/永不下牌桌”保证式表述，记录八环审查、四项具体缺口与F1–F6优先级。当前定位为执行闭环补强、长期经济优势未证；落档不是批准实施，不改现行11月OKR/判据或开启新实验。
+- **凭据**：本批仅3份MD：1新DEB+2既有（debates索引单行、handoff本条）追加，未提交/推送；保留原有WIP。不改Python/config/state，不下单/付费LLM/重启，11-21 SIM5%已部署不重复上线。
+- **验证**：主线程已实际跑 `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. ./venv/bin/python scripts/okr_2026_11_scoring.py --as-of 2026-11-20` exit0（本会话工具stdout，无落盘日志），DA whole/pre/post n=131/107/24、净-31.5021/-27.0715/-55.2618bps，KR1 NOT_MET、KR2 29/131=22.1374% MET。查询当前已平库，SQL无trade_date<=as_of上界，as_of在取数后用于评估/外推，非截至11-20成交切片或历史快照；后续正常新已平成交也会进入重跑。CI/MDE为日等权对象，不是名义加权净bps的严格CI。GLM另只读复算、Kimi独立事实核对记录已入DEB，不冒称复现部署动作。
+- **文档核对**：本会话只读Python检查11个相对链接/草案front-matter/表格行/围栏/新文档尾空格通过，AST再算120项=48 KILLED+66 OBSERVING+2 GRADUATED+4 SUPERSEDED，OBSERVING中显式不可裁理由26；未import生产模块。剥离本批索引单行与本条后，两既有MD SHA256分别恢复到改前92889099…225fd9、7ed7ca3f…5c00fc，证明保留已有WIP。`git diff --check -- docs/debates/README.md handoff.md docs/debates/DEB-20261122-trading-system-full-chain-and-survival-review.md` exit0；新DEB未跟踪，另由前述Python检查其格式；日志为本会话工具stdout，无落盘日志。Kimi成品复核发现as-of无成交SQL上界与SIM5%部署DEB误指，主线程亲读后已修正；实际凭据为docs/debates/DEB-20261119-da-reasoning-chain-audit.md §11.14。最终12相对链接/两项更正/1+9行差集保留检查通过、diff-check exit0；其静态复核未复现三窗经济值或部署/测试。
+- **未验证**：F1–F6政策/工具未实施；自然entry→claim→send→fill→BOOKED→唯一宿主→exit/净账、完整SDK/send/close有界性、输入修复增益、完整成本后正期望均未证；120注册/66 OBSERVING不等于主动实验数，尚未全调度普查。不清UNKNOWN、不reset peak/tripped、不插R2队、不改A9/A10/A11/四锁。
+- **下一步**：下一RTH仅承接原执行线程自然链观察，不保证成交、不造单；F1恢复后预算/期限/责任、F2核证升级与F4工具/输入/教训scope须分别裁，主动实验名额先核后申请。11-30 §5结算不顺延，§6按原方案B；本轮文档完成不关闭原前向验收任务。**最后更新：2026-11-22 CST。**
+
 ## 2026-11-19 17:15 CST · 【R20 核查 R18/R19 + 残余加固 + 受控部署】用户裁「按建议执行」+「现在人工受控重启」：RFC-214 V1 核实合格（我预注册的 T1–T14 全落实）、广域回归 2908 passed、加固已入进程（冒烟 7/7、H-12 双向 0）
 
 - **结论**：对 R18/R19 做对抗性核查，**未采信自述**。①**实现合格**：`mark_submit_rejected` 的四处窄约束（`state='PREPARED' AND order_id IS NULL AND dealt_qty IS NULL AND version=?`）与 RFC-214 §3.3 逐字一致；`_position_qty_or_unknown` 的 fail-closed 方向正确（查询失败/持仓下降 ⇒ 降级 UNKNOWN 保持认领）；§8「明确不做」五条**全部遵守**（未动 `observe()`、未放宽 `_unsafe_legs`、未新建释放机制、未加 override 旗标、未新增 `TERMINAL_STATUSES` 常量）；**我预注册的 T1–T14 十四条全部实现**，另加 2 条。②**结果属实**：MU 已对齐指令真值 `669.47/757.56`（原合成 `690.9/972.64`）、`strategy_id` 未变，且 `_proxy_atr_from_stop` 被**正确移到真值覆盖之后**（ATR 代理应从真 SL 推，不是合成值）；ELV 已释放归档、intents=0、释放后 blocked 告警 **0 条**、归回 playbook 自管；两份备份 sha256 **逐字符匹配**审计记录 ⇒ 回滚路径可用。③**核查中发现 8 项问题，本批修掉 4 项**（见下），其余 4 项如实登记。④**我自己跑的广域回归 2677 passed / 1 skipped / 0 failed**（exit·broker·position_sync·playbook·intent·lifecycle·thesis·zero_fill·blocked 全族，290s），**远超 R18 声称的 390**。⑤**我先前怀疑的 `str(error or '')` 对 DataFrame 崩溃，核实后确认在生产的拒单路径上不可达**（futu SDK `open_trade_context.py:617-618` 失败时 `return RET_ERROR, msg`，`msg` 是 str，DataFrame 只在成功路径构造）——疑点如实撤回，但作为**潜在**脆弱点仍已加固（见下 A）。

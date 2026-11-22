@@ -419,6 +419,14 @@ def collect_and_score(rows_a9: Sequence[Dict[str, Any]],
     disclosure = three_window_disclosure(da, as_of)
     post_stats = disclosure["windows"]["post"]
     post_gate = kr1_verdict(post_stats)
+    post_gate_met = (post_stats["n"] or 0) >= KR1_GATE_N
+    post_net_bps = post_stats.get("net_bps")
+    post_ci_contains_zero = post_stats.get("ci80_contains_zero")
+    post_pivot_triggered = bool(
+        post_gate_met
+        and post_net_bps is not None and post_net_bps <= 0
+        and post_ci_contains_zero is True
+    )
 
     projection = disclosure["post_projection"]
     pivot_date = (projection.get("gate_date_planning")
@@ -433,6 +441,13 @@ def collect_and_score(rows_a9: Sequence[Dict[str, Any]],
             "a9_excluded_n": (len(rows_no_a9) - len(rows_a9)) if rows_no_a9 is not None else None,
             "a10_excluded_n": (len(rows_no_a10) - len(rows_a9)) if rows_no_a10 is not None else None,
             "source_type": "PLAYBOOK_SIM", "exit_price_gt_0": True,
+            "sample_scope": ("当前数据库已平行; cohort 仅设 trade_date 下界, as_of 仅供评估/外推, "
+                             "不设 trade_date 上界, 不是历史快照; 新已平行进入重跑"),
+            "net_bps_estimator": "10000 × Σ净额 / Σ入场名义额 (名义加权)",
+            "day_cluster_estimator": ("每日净额/每日名义额后日等权; CI80/MDE 描述日等权均值, "
+                                      "不是名义加权净 bps 的严格区间"),
+            "fee_coverage": ("fees_est 为佣金/监管费估算; 借券/资金/数据/模型运营成本未统一计入, "
+                             "成交价已含滑点不得重复扣"),
         },
         "kr1": {
             "title": "KR1 主 KR: DA 主通道净 bps/笔 > 0",
@@ -453,14 +468,19 @@ def collect_and_score(rows_a9: Sequence[Dict[str, Any]],
             "pivot_evaluation": {
                 "population": "post",
                 "post_n": post_stats["n"],
-                "post_gate_met": (post_stats["n"] or 0) >= KR1_GATE_N,
+                "post_gate_met": post_gate_met,
                 "post_verdict": post_gate,
-                "triggered": bool(post_gate.get("verdict") == "NOT_MET"),
+                "net_bps": post_net_bps,
+                "ci_contains_zero": post_ci_contains_zero,
+                "triggered": post_pivot_triggered,
                 "deferred_to": pivot_date,
                 "note": ("§12.5: post n<120 ⇒ 判「功效不足」, 本次不触发 Kill/Pivot, "
                          "判日顺延至 post n≥120 或 12 月开跑会取先到者; §6 判据文字与 "
-                         "n≥120 样本门一字未动" if not post_gate.get("gate_met")
-                         else "post n≥120 ⇒ 按 §6 原文判"),
+                         "n≥120 样本门一字未动" if not post_gate_met else
+                         "post n≥120, 净 bps≤0 且日等权 CI 含 0 ⇒ 按 §6 呈裁 Kill/Pivot; "
+                         "本报告不自动停单" if post_pivot_triggered else
+                         "post n≥120, 但未同时满足净 bps≤0 且日等权 CI 含 0 "
+                         "(含 CI 不可算) ⇒ 本次不触发 Kill/Pivot; 只报实测, 不自动停单"),
             },
             "settlement": {
                 "date": SETTLEMENT_DATE,
@@ -480,6 +500,10 @@ def render_lines(block: Dict[str, Any]) -> List[str]:
     if not isinstance(block, dict) or "kr1" not in block:
         return ["[OKR-2026-11] 判分不可用 (block 缺 kr1)"]
     lines = [f"🎯 OKR-2026-11 (现行, 窗 ≥{COHORT_START}, as_of {block.get('as_of')})"]
+    caliber = block.get("caliber", {})
+    for key in ("sample_scope", "net_bps_estimator", "day_cluster_estimator", "fee_coverage"):
+        if caliber.get(key):
+            lines.append(f"  口径: {caliber[key]}")
     primary = block["kr1"]["primary"]
     verdict = block["kr1"]["verdict"]
     lines.append(
@@ -568,7 +592,8 @@ def resolve_era_where(db_path: Path) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--db", default=str(ROOT / "data" / "ftseek_us.db"))
-    parser.add_argument("--as-of", default=None, help="评估基准日 YYYY-MM-DD (默认今天)")
+    parser.add_argument("--as-of", default=None,
+                        help="评估/外推基准日 YYYY-MM-DD (默认今天; 不限制已平取数上界)")
     parser.add_argument("--json", action="store_true", help="输出完整 JSON")
     parser.add_argument("--out", default=None, help="显式写 JSON 报告路径 (默认不写)")
     args = parser.parse_args()

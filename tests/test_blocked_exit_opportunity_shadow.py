@@ -272,6 +272,19 @@ def test_age_alert_never_raises_without_created_at(push_recorder):
     assert push_recorder.calls == []
 
 
+def test_age_alert_is_record_only_no_release_or_book(monkeypatch, push_recorder):
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("age alert must not release or book exits")
+
+    monkeypatch.setattr(pipeline, "_release_eth_held_exit_for_rth_takeover", _boom)
+    monkeypatch.setattr(pipeline, "_book_playbook_exit_result", _boom)
+    intent = {"intent_id": "i-1", "symbol": "US.ACN", "target_env": "sim",
+              "created_at": 1_000.0}
+    result = {"exit_state": "HELD"}
+    pipeline._alert_blocked_exit_age(intent, result, now_ts=1_000.0 + 31 * 60)
+    assert len(push_recorder.calls) == 1
+
+
 def test_resume_returns_blocked_detail_for_oldest_intent(monkeypatch):
     old = {"intent_id": "i-old", "symbol": "US.ACN", "target_env": "sim",
            "state": "HELD", "created_at": 1_000.0, "last_error": "held"}
