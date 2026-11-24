@@ -421,6 +421,8 @@ class FutuLV3Provider:
         self._daily_disk_loaded = False
         self._daily_disk_dirty = False
         self._daily_disk_last_flush = 0.0
+        self._daily_disk_next_probe = 0.0
+        self._daily_disk_mtime_ns: Optional[int] = None
         self._daily_disk_lock = threading.Lock()
         # 2026-06-30: 过期K线标记缓存 — 避免反复fallback到TwelveData导致429
         self._stale_kline_notified: Dict[str, float] = {}  # futu_symbol -> last_notified_ts
@@ -1483,27 +1485,49 @@ class FutuLV3Provider:
             logger.warning("[FutuLV3] %s K 线后台刷新启动失败", symbol, exc_info=True)
 
     def _daily_disk_load(self) -> None:
-        """[RFC-171] 一次性把落盘日K装载进内存缓存 (失败静默, 退化为纯内存行为)。"""
-        if self._daily_disk_loaded:
+        """[RFC-171] 装载落盘日K；文件更新时热加载，但不接受较旧快照回写。
+
+        原实现只在进程首次调用时读一次：长期运行进程看不到盘后任务随后写入的
+        上一交易日定稿 bar，次日盘中会无谓等待 OpenD 日K配额。按 mtime 节流探测，
+        且逐 symbol 比较 fetched_at；磁盘 hydration 不属于 SDK 迟到结果发布。
+        """
+        now = time.time()
+        if self._daily_disk_loaded and now < self._daily_disk_next_probe:
             return
         with self._daily_disk_lock:
-            if self._daily_disk_loaded:
+            now = time.time()
+            if self._daily_disk_loaded and now < self._daily_disk_next_probe:
                 return
-            self._daily_disk_loaded = True
+            self._daily_disk_next_probe = now + _DAILY_DISK_FLUSH_SEC
+            try:
+                mtime_ns = os.stat(_DAILY_DISK_PATH).st_mtime_ns
+            except FileNotFoundError:
+                self._daily_disk_loaded = True
+                self._daily_disk_mtime_ns = None
+                return
+            if self._daily_disk_loaded and mtime_ns == self._daily_disk_mtime_ns:
+                return
             try:
                 import json as _json
                 with open(_DAILY_DISK_PATH, "r", encoding="utf-8") as fh:
                     payload = _json.load(fh)
             except FileNotFoundError:
+                self._daily_disk_loaded = True
+                self._daily_disk_mtime_ns = None
                 return
             except Exception as exc:
+                # 保留上次成功 mtime，下个探测窗重试；不能让一次半截读取永久禁载。
+                self._daily_disk_loaded = True
                 logger.warning(f"[FutuLV3·DailyK] 落盘缓存读取失败 (忽略): {exc}", exc_info=True)
                 return
             loaded = 0
             for sym, entry in (payload.get("symbols") or {}).items():
                 bars = entry.get("bars") or []
-                ts = float(entry.get("fetched_at") or 0)
-                if not bars or ts <= 0 or sym in self._daily_kline_cache:
+                try:
+                    ts = float(entry.get("fetched_at") or 0)
+                except (TypeError, ValueError, OverflowError):
+                    continue
+                if not bars or ts <= 0 or ts <= self._daily_kline_cache_time.get(sym, 0):
                     continue
                 # 半截当日 bar 不装载 (旧文件可能残留; 见 _session_final_bar 注释)
                 from app.utils.timezone import now_et as _now_et_ld
@@ -1513,8 +1537,10 @@ class FutuLV3Provider:
                 self._daily_kline_cache[sym] = bars
                 self._daily_kline_cache_time[sym] = ts
                 loaded += 1
+            self._daily_disk_loaded = True
+            self._daily_disk_mtime_ns = mtime_ns
             if loaded:
-                logger.info(f"[FutuLV3·DailyK] 落盘日K缓存装载 {loaded} 只 "
+                logger.info(f"[FutuLV3·DailyK] 落盘日K缓存热加载 {loaded} 只 "
                             f"({_DAILY_DISK_PATH})")
 
     def _daily_disk_save(self, force: bool = False) -> None:

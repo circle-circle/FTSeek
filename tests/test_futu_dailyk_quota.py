@@ -211,6 +211,61 @@ class TestGetDailyKlineGate:
         assert calls == []
         assert out == bars[-30:]
 
+    def test_daily_disk_hot_reload_accepts_only_newer_snapshot(self, provider, tmp_path, monkeypatch):
+        """盘后任务更新落盘缓存后，长寿进程无需重启即可读到；旧快照不得回写。"""
+        import json
+        import os
+        import app.data.futu_lv3_provider as _fp
+        from datetime import timedelta as _td
+        from app.utils import timezone as _timezone
+        from app.utils.timezone import now_et as _now_et_test
+
+        disk = tmp_path / "daily_kline_v1.json"
+        monkeypatch.setattr(_fp, "_DAILY_DISK_PATH", str(disk))
+        phase_now = _now_et_test().replace(hour=9, minute=0, second=0, microsecond=0)
+        monkeypatch.setattr(_timezone, "now_et", lambda: phase_now)
+        prev = phase_now.date() - _td(days=1)
+        while prev.weekday() >= 5:
+            prev -= _td(days=1)
+
+        def bars(close):
+            return [{"time": f"{prev.isoformat()} 00:00:00", "open": close,
+                     "high": close + 1, "low": close - 1, "close": close,
+                     "volume": 1000, "turnover": close * 1000} for _ in range(40)]
+
+        fetched = phase_now.timestamp() - 3600
+        disk.write_text(json.dumps({"version": 1, "symbols": {
+            "US.PAL": {"bars": bars(10.0), "fetched_at": fetched}}}))
+        calls = []
+
+        class Ctx:
+            def request_history_kline(self, **kw):
+                calls.append(kw)
+                return 0, None, None
+
+        self._make_live(provider, 0, Ctx())
+        first = provider.get_daily_kline("US.PAL", count=30)
+        assert first[-1]["close"] == 10.0
+
+        # 模拟另一进程在收盘后写入更新快照；文件 mtime 与 fetched_at 均推进。
+        disk.write_text(json.dumps({"version": 1, "symbols": {
+            "US.PAL": {"bars": bars(20.0), "fetched_at": fetched + 60}}}))
+        newer_mtime = disk.stat().st_mtime_ns + 1_000_000_000
+        os.utime(disk, ns=(newer_mtime, newer_mtime))
+        provider._daily_disk_next_probe = 0.0
+        second = provider.get_daily_kline("US.PAL", count=30)
+        assert second[-1]["close"] == 20.0
+
+        # 即便文件 mtime 再变，较旧 fetched_at 也不得把新值覆盖回去。
+        disk.write_text(json.dumps({"version": 1, "symbols": {
+            "US.PAL": {"bars": bars(5.0), "fetched_at": fetched - 60}}}))
+        older_mtime = newer_mtime + 1_000_000_000
+        os.utime(disk, ns=(older_mtime, older_mtime))
+        provider._daily_disk_next_probe = 0.0
+        third = provider.get_daily_kline("US.PAL", count=30)
+        assert third[-1]["close"] == 20.0
+        assert calls == []
+
     def test_quota_free_path_fetches_and_caches(self, provider, tmp_path, monkeypatch):
         # [RFC-171 补] 生产落盘缓存 data/cache/daily_kline_v1.json 已含 US.GOOG 上一交易日
         #   定稿 bar ⇒ _daily_disk_load 命中后会直接返回缓存, OpenD 一次都不打 (非产品 bug,
