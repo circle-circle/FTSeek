@@ -320,7 +320,7 @@ class MarketRegimeGate:
                 _vix_smooth_20_22 = bool(get_playbook_config().get(
                     "market_regime_vix_20_22_smoothing_enabled", False))
             except Exception as _vix_cfg_err:
-                logger.warning(f"[Regime] VIX连续计分开关读取失败，沿用旧阶梯: {_vix_cfg_err}")
+                logger.warning(f"[Regime] VIX连续计分开关读取失败，沿用旧阶梯: {_vix_cfg_err}", exc_info=True)
         if vix_uncertain:
             logger.debug("[Regime] VIX uncertain, 跳过 VIX 评分")
         else:
