@@ -2,6 +2,31 @@
 
 > **写入约定（2026-11-11 起）**：每条交接必须带三件可核凭据 —— `**凭据**`（commit sha / 改动文件数，`git show --stat` 可核）、`**验证**`（可复跑命令 + 日志路径，不写“已通过”）、`**未验证**`（显式列出没验的部分，无则写“无”）。自述≠事实，这三行是给下一个人核的。
 
+
+## 2026-11-25 00:0x CST · 【RFC-216 VIX连续计分】20–22线性过渡已部署；自然RISK_OFF+BABA解堵+MSFT/BABA BOOKED；收益未证
+
+- **结论**：用户裁「按照建议修复调整」，一次一变量只修VIX 20附近`+1→-2`的3分跳变，20<VIX<22改为`1-1.5×(VIX-20)`，两端及区间外旧值不变；不改方向权限/SPY项/regime分档/VIX源/其他门。独立回滚=`playbook.execution_parameters.market_regime_vix_20_22_smoothing_enabled=false`（热载恢复旧阶梯）。只读回放7条20–22评估均为当前实例no_trade→risk_off，只证影响面窄不证收益。部署后自然日志VIX20.34→score-4.51/risk_off，18候选恢复评估；日K热加载701只，BABA不再超时并完成reprice+确认；MSFT指令5752 **BOOKED/FILLED_ALL** SHORT8@494.15、trade1943、LateFill audit/tca=true；BABA指令5757随后亦 **BOOKED/FILLED_ALL** SHORT45@83.525、trade1944；退出监控接管，入场在途0，SIM LLY/BA/MSFT/BABA、LIVE无仓。**连续计分与缓存自然链路验证成立，盈利/命中率/死单率未证，部署后须按新执行regime子cohort切分，不与qwen post混算。**详`docs/decisions/RFC-216-market-regime-vix-continuous-boundary.md`。
+- **凭据**：本批2生产文件（`app/playbook/market_regime.py` SHA256 `cab268399c1d1a5b9004f1187d440c2160584efeda8f106ea3f646e6ec787b2f` + `config/unified_config.yaml`）+1新测试+RFC+本条，未提交/推送，其他WIP未触碰。重启前SIM两仓/LIVE无仓/入场在途0/出场账本未决0，进程后仅本批regime源码新改。
+- **验证**：regime+配置测试 **87 passed/1 warning**（带conftest清类级cache）；配置普查组合 **1 failed/34 passed**，只列既存`default_method/simulated_mode_force_options/reasoning_effort`，本RFC新键已引用，未动无关基线。`systemctl restart ftseek-us`后新PID4064204，启动冒烟 **7/7 exit0**（`/tmp/rfc216-startup-smoke-20261125.log`）。自然日志：BABA reprice/EntryConfirm通过、MSFT/BABA均BOOKED/FILLED_ALL与trade1943/1944均实查。
+- **未验证**：未证明新阈值正收益或VIX门有edge；RFC-190代理漂移仍在，LONG/SHORT差异权限未改，收益与死单率待前向样本。首轮曾误用--noconftest致10个共享cache失败，按正常conftest复跑87全过；配置普查无关失败未掩盖。
+- **下一步**：观察新子cohort与MSFT退出，若异常放大/数据异常/归因不清则配置改false回滚，不叠加方向调整；后续评估VIX代理与方向权限须另案。**最后更新：2026-11-25 00:0x CST。**
+
+## 2026-11-24 23:3x CST · 【开盘零成交根因修复】日K磁盘缓存热加载已部署；当前NO_TRADE属正常风控；自然验证待可交易窗
+
+- **结论**：09:45→10:07 ET零新开并非无信号/预算不足，而是每轮最高confidence的BABA `trigger_context: timeout`、其余16候选同flight `busy`，全未进reprice/确认/下单。BABA每次实际等日K配额约30s且迟到结果不发布，下一轮重复。直接可持续根因=运行进程自11-22起只在启动时读一次日K磁盘缓存，盘后任务已写入BABA等11-23定稿bar却不可见。最小修复=`futu_lv3_provider._daily_disk_load`按mtime每30s节流热加载+逐symbol `fetched_at`只进不退+半截bar拒载；保留3s超时、单flight、迟到结果保护、Futu配额和全部交易门，未把超时简单改35s。**重启后新情况**：10:23/10:27实时VIX20.17/score-7→NO_TRADE，preflight正常跳过，当前不成交是硬门生效，不能放宽阈值制造成交；BABA自然执行验证待可交易窗，不冒称已恢复成交。详`docs/debates/DEB-20261124-entry-data-stale-cache-starvation.md`。
+- **凭据**：本批1生产源+1测试（`app/data/futu_lv3_provider.py` SHA256 `5603aee983b4a7de0316b36ed89d5df7316166cda1764a9c0e669c99c113d2bc`、`tests/test_futu_dailyk_quota.py`）+3MD（新DEB/README/handoff），未提交/推送；其他WIP未触碰。重启前mtime审查进程启动后仅本批生产源变化；SIM LLY/BA两仓、LIVE无仓、入场在途0、`exit_ledger`空/playbook_exits全终态。
+- **验证**：定向`test_futu_dailyk_quota.py` **13 passed**、`test_entry_context_cache_boundary.py` **57 passed**；真实BABA磁盘读取`HOT_DISK_READ_OK` 60根/末端11-23且配额路径未触。扩展组合曾**14 failed/235 passed**，集中既有40ms时序夹具；`test_query_exception...`及4项preflight/broker单例复跑通过，未改测试、未冒称全绿。已执行`systemctl restart ftseek-us`，新PID4060355，`scripts/startup_smoke_check.py --wait 90` **7/7 exit0**（日志`/tmp/da-entry-cache-startup-smoke-20261124.log`），LLY/BA原样保留。
+- **未验证**：NO_TRADE后尚未再进BABA trigger_context，自然reprice/确认/成交未证；未做收益归因，未验证profit/命中率；扩展全套存在负载时序不稳定另账，非本批全绿。后台观察任务已停止，无手动/测试订单。
+- **下一步**：后续regime回可交易档时核BABA不再每轮冷等约30s、其余候选进入各自风控；不放宽VIX/regime/价格门，不新增同轴实验。**最后更新：2026-11-24 23:3x CST。**
+
+## 2026-11-24 CST · 【连续六日DA方向/指令只读核查】产出格式正常但端到端语义不完全一致；11-23旧市场判断追加更正；咨询/严格计划待裁
+
+- **结论**：核查11-17/18/19/20/23/24共213份qwen4-max checkpoint、DB与生产日志。全部stop、action=direction、价格几何有效；11-17→23已平n=31净-$491.10（LONG n13 -$688.03 / SHORT n18 +$196.93，小样本且执行混杂，不裁砍多/放空）。方向集中11-20最终22S1B、11-23为14S1B，组合guardrail多次would-skip不拦。**P1语义**：MU明写当日16:00前平仓但adapter硬编码`A=日内可隔夜`且valid_until无live消费，实际持至11-20净-$260.79；AMD明写456.20才空，reprice+确认后439.50成交净-$101.45。75条非SKIP中44条entry偏计划>1%、64条止损变宽，说明系统性语义差异，不等于reprice负收益。**11-23旧条更正**：DA原始SPY/QQQ盘前为+2.645%/+3.591%、VIX22.06；689.81→相对715.87的-3.64%是11-20常规日跌幅，不是11-23盘前，旧“VIX36/周末利空防御日”不可采用。生成no_trade→09:45实时risk_off后放行非绕门，成交regime标签存在混合时点。官方评分whole n138净-29.8836bps KR1未达，post n31净-41.551bps功效不足不触发Kill/Pivot。完整证据`docs/debates/DEB-20261124-da-multiday-direction-and-instruction-audit.md`。
+- **凭据**：本批仅3个Markdown（新DEB+README索引+本条handoff），未提交/推送；零代码/config/prompt/DB/订单变更、零付费、零重启，其他WIP未触碰。原始凭据为checkpoint/raw JSON、只读SQLite、`logs/ftseek_us.log-20261124`与`adapter.py:257-322,380-389`、`auto_execute_flow.py:1205-1225`、`entry_confirm_gate.py:556-582`。
+- **验证**：实际运行`env -C /tmp PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/opt/ftseek/FTSeek-US /opt/ftseek/FTSeek-US/venv/bin/python /opt/ftseek/FTSeek-US/scripts/okr_2026_11_scoring.py --as-of 2026-11-24` exit0；checkpoint/价格几何/reprice/净额统计与日志行号见DEB§2–§7，SQLite均mode=ro+query_only。无代码改动故未跑代码测试。
+- **未验证**：11-24未收盘不日终结算；未外联网逐条核新闻、未做保留原价/止损的反事实成交，不宣称必然少亏；LONG/SHORT差异不具统计结论。旧11-23条目保留原文，仅以本DEB+本条追加更正。
+- **下一步**：用户裁DA文字为“咨询/thesis”还是“严格可执行计划”；未裁前不改adapter/reprice/RFC-141/EOD、不开方向偏斜硬闸、不新增同轴影子。后续盘前核查必须同时打印prev_close/pre_price/pre_chg_pct/snapshot_time；执行时regime只做附加披露另提度量批。**最后更新：2026-11-24 CST。**
+
 ## 2026-11-22 CST · 【DEB全链R5】F5只读盘点完成，KEEP5占满+超编候选/UNKNOWN待裁；零写入/零退役/零交易变更
 
 - **结论**：F5后台agent原仓AST+crontab+Hermes43jobs+systemd+产物mtime只读盘点完成，主线程复核计数与id存在。120项=66 OBSERVING/48 KILLED/2 GRADUATED/4 SUPERSEDED；66中26不可裁理由(19永久+7冻结/门)，约38有毕业门。KEEP5（DEB-20261114§8用户已批）占满5名额；超编在采候选entry_confirm_forward/be_half_at_arm_d/s1_short_after_open/thesis_management_shadow/exit_session_window归属待用户路由；A类~24闭轴仍采未路由不能算腾位；UNKNOWN da_event_prompt_canary注入开记录停须查，4产物缺失为设计休眠非断采。
