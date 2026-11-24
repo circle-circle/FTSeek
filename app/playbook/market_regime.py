@@ -43,7 +43,7 @@ class RegimeContext:
     spy_ma50: float
     spy_ma200: float
     spy_change_pct: float
-    score: int  # -10 到 +10 的评分
+    score: float  # 综合评分；VIX 20–22 连续过渡开启时可含小数
     
     # 影响后续流程的参数
     top_n: int  # Screener 筛选数量
@@ -55,7 +55,7 @@ class RegimeContext:
     #   影子字段双算"若用盘前 pre_price 会怎样", 攒 5-10 个交易日后裁决是否 enforce。
     spy_price_basis: str = "kline_last_close"   # kline_last_close | pre_price(仅遥测标注, 主判定不变)
     spy_pre_price: float = 0.0                  # 盘前时段快照 pre_price (0=不可用)
-    score_shadow: Optional[int] = None          # 用 pre_price 重算的 score (None=无双算/无差异)
+    score_shadow: Optional[float] = None        # 用 pre_price 重算的 score (None=无双算/无差异)
     regime_shadow: Optional[str] = None         # score_shadow 对应的 regime 值
 
     def to_dict(self) -> Dict[str, Any]:
@@ -97,7 +97,24 @@ def shadow_score_delta(spy_price: float, spy_pre_price: float,
     return delta
 
 
-def score_to_regime_value(score: int, vix_uncertain: bool = False) -> str:
+def vix_score(vix: float, *, smooth_20_22: bool = False) -> float:
+    """VIX 分项；可选在 20–22 连续过渡，消除边界 3 分跳变。
+
+    旧阶梯完整保留在开关关闭侧：15/20/30 阈值不变。开启侧仅把
+    20<VIX<22 改为 +1 → -2 的线性插值，两端及区间外逐值等于旧规则。
+    """
+    if vix < 15:
+        return 3
+    if vix <= 20:
+        return 1
+    if smooth_20_22 and vix < 22:
+        return 1.0 - 1.5 * (float(vix) - 20.0)
+    if vix < 30:
+        return -2
+    return -5
+
+
+def score_to_regime_value(score: float, vix_uncertain: bool = False) -> str:
     """[DEB-20260924 F5] 纯函数: score → regime 值 (镜像 assess() 主路径映射, 仅供影子遥测)。
 
     ⚠️ 阈值与主路径 (>=5 RISK_ON / >=0 CAUTIOUS / >=-5 RISK_OFF / else NO_TRADE) 及
@@ -164,7 +181,7 @@ class MarketRegimeGate:
         - SPY < MA200: -1 (长期趋势向下)
         - VIX < 15: +3 (低波动，市场平静)
         - VIX 15-20: +1 (正常波动)
-        - VIX 20-30: -2 (高波动，市场紧张)
+        - VIX 20-30: -2 (高波动，市场紧张；RFC-216 开关开启时 20–22 连续 +1→-2)
         - VIX > 30: -5 (极高波动，市场恐慌)
         
         Regime 映射：
@@ -294,20 +311,27 @@ class MarketRegimeGate:
         
         # 4. 波动率 (VIX)
         # RFC-060: VIX 不确定时跳过 VIX 评分 — 兜底 20.0 会给 -2 误判 CAUTIOUS.
+        # RFC-216: 可选 20–22 连续过渡，避免 VIXY 代理在 20 附近微小抖动造成
+        #   +1 → -2 的 3 分跳变及 RISK_OFF → NO_TRADE 硬翻转。缺键/读取失败=旧规则。
+        _vix_smooth_20_22 = False
+        if not vix_uncertain:
+            try:
+                from app.playbook.config import get_playbook_config
+                _vix_smooth_20_22 = bool(get_playbook_config().get(
+                    "market_regime_vix_20_22_smoothing_enabled", False))
+            except Exception as _vix_cfg_err:
+                logger.warning(f"[Regime] VIX连续计分开关读取失败，沿用旧阶梯: {_vix_cfg_err}")
         if vix_uncertain:
             logger.debug("[Regime] VIX uncertain, 跳过 VIX 评分")
-        elif vix < 15:
-            score += 3
-            logger.debug(f"[Regime] VIX < 15: +3")
-        elif vix <= 20:
-            score += 1
-            logger.debug(f"[Regime] VIX 15-20: +1")
-        elif vix < 30:
-            score -= 2
-            logger.debug(f"[Regime] VIX 20-30: -2")
         else:
-            score -= 5
-            logger.debug(f"[Regime] VIX > 30: -5")
+            _vix_points = vix_score(vix, smooth_20_22=_vix_smooth_20_22)
+            score += _vix_points
+            logger.debug(
+                f"[Regime] VIX分项={_vix_points:+.2f} "
+                f"(smooth_20_22={_vix_smooth_20_22})")
+
+        if _vix_smooth_20_22 and 20 < vix < 22:
+            score = round(score, 4)
 
         # Regime 映射
         if score >= 5:

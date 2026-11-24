@@ -1149,6 +1149,11 @@ playbook:
   enabled: true
   execute_mode: futu_simulate
   execution_parameters:
+    # RFC-216（2026-11-24 用户裁「按照建议修复调整」）：VIX 20–22 由 +1→-2 的
+    # 离散跳变改为线性连续计分，避免 VIXY×0.85 代理在 20 附近微抖直接翻转
+    # RISK_OFF↔NO_TRADE。区间外与旧规则逐值相同；方向/SPY/其余阈值不变。
+    # 回滚：本键改 false（热载恢复旧阶梯；初始代码部署仍需重启）。
+    market_regime_vix_20_22_smoothing_enabled: true
     # [RFC-196 2026-11-10] 盘前全量生成最晚启动时点 (ET HHMM) — 单轮实测 300-400s 且
     #   单步不可中断, 09:20 之后再启动必跨开盘, 卡住同轮入场执行 (11-09 实证: 18 轮/94min,
     #   首单拖到 09:40)。过期即不启动 (人工应急可 force=True 重跑)。
