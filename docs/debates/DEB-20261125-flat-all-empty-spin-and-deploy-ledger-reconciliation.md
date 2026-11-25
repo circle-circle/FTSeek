@@ -1,0 +1,71 @@
+# 议题：11-24 交易链路诊断落地 —— 组合止损空转降噪 + 已部署代码归账
+
+## 状态
+
+- [x] 进行中（修复与归账完成，待重启冒烟与自然日志验证）
+- [ ] 待决策
+- [ ] 已决策
+- [ ] 已验证
+- [ ] 已关闭
+
+## 1. 背景：11-24 全日诊断结论（只读实查）
+
+2026-11-25 上午对 11-24（周一）美股交易链路做只读诊断（SQLite mode=ro + `logs/ftseek_us.log-20261125` + OKR 评分脚本），结论：
+
+- **结果**：新开 6 笔全 SHORT（11:01 ET 后，RFC-216 部署生效窗口），名义 $22,638.62；当日平 6 笔毛 +$78.30 / 费 $25.41 / 净 +$52.89，退出全为保护性（4×SL_BREAKEVEN + 2×DEAD_SIGNAL_EXIT，零 TP）。在仓 4 SHORT 盘前浮亏 ≈ -$260，距止损 2.5%–4.4%。OKR whole n=142 净 -28.86bps，KR1 NOT_MET / KR2 MET，单日小正不改负期望结论。
+- **链路**：09:45–10:07 ET 缓存饥饿（已修）→ 10:23–10:30 VIX 硬门 NO_TRADE（正常风控）→ 11:01 起 RFC-216 放行；outbox 21 全 BOOKED、退出账本 6/6 TERMINAL、零 Traceback。
+- **三项异常**（本批处理前两项，第三项登记）：
+  - **A 组合止损空转**：legacy PositionMonitorLoop 账户级回撤 3.23%>3% 持续 tripped，`positions=[]`（Playbook 自管仓经 R-7c 排除），全天 **1231 轮 × 2 条 CRITICAL**（「触发 FLAT_ALL」+「0 仓中 0 成功/0 失败」）+ 每轮 trigger WARNING / 账户级 INFO，无任何动作。
+  - **B 提交/部署漂移**：入场链路核心 `app/playbook/entry_data_fetch.py` 未跟踪、`market_regime.py` 的 `publish_cache` 片段与 SIM 5% 键 `risk.account.sim.max_peak_drawdown: 0.05` 只在 worktree；对应提交 `fff29129a`（入场取数有界）与 `a365e64ca`（SIM 5% 预算）在分支 `sim5-budget-release-20261121`，**不是当前分支祖先**。从 HEAD 干净重部署会 ImportError 或 SIM 预算静默回退 3%。
+  - **C 今晨 09:09 CST 重启无 handoff 记录、无冒烟日志**（journal 实证 PID 4106323）；本批不追责，补冒烟并登记，执行方自认。
+
+## 2. 修复 A：空仓段告警去重（仅日志，零交易行为变更）
+
+用户指令「请按照建议合理优化修复，确保可正常交易」。**不接 tripped 进 Playbook 入场门**（那会停新仓，与用户指令相悖，且属 DEB-20261122 F1 待裁政策），只消空转噪声：
+
+`app/risk/position_exit_monitor.py` 三处：
+
+1. `__init__` 新增 `_flat_all_empty_episode_notified` 段标志。
+2. `scan_positions` FLAT_ALL 分支：`managed_positions` 为空时 → 每状态段一条 WARNING（非 CRITICAL）后 `return closed`（与旧实现空循环后 return [] 的净效果逐字一致）；回撤解除（action≠FLAT_ALL）或持仓恢复时标志复位，重新计段。有仓时 CRITICAL/平仓/冷却锁存语义不动。
+3. `_check_portfolio_drawdown`：空 managed 集时账户级 INFO 降 debug、trigger WARNING 抑制（由执行分支段告警承载）；有仓时原样。
+
+**不变量**：`_check_portfolio_drawdown` 返回值不变；冷却锁存条件不变（空仓本就不锁存）；REDUCE_50/WARN 路径不动；不新增/删除任何交易门。
+
+**验证**：`tests/risk/test_portfolio_flat_all_empty_dedup.py` 6 例（段内只告警一次/解除后重新计段/空仓不锁存不阻塞后续有仓执行/有仓 CRITICAL+冷却保留/部分失败重试保留/空仓 trigger 日志抑制）+ 既有 `test_position_exit_monitor_flat_all.py` 3 例 = **9 passed**（正常 conftest，存量豁免 2 次 pdt_guard 主库写为既有登记项）。
+
+**遗留（不在本批）**：tripped 状态对 Playbook 时代实质空转的结构性问题（账户级熔断看不到唯一活跃管线的仓位）仍归 DEB-20261122 F1 预算/政策待用户裁；本批只降噪，不改变「tripped 不重置、人工盯盘+其他闸门兜底」的 11-20 已裁现状。
+
+## 3. 修复 B：已部署代码归账（零运行时变更）
+
+**方法**：不 cherry-pick（共享 worktree 脏、两分支在同批文件上分叉），改为把**已在生产运行**的 worktree 内容精确提交归账。
+
+**文件集**：`fff29129a ∪ a365e64ca` 的 app/scripts/config/tests 文件 + `app/playbook/entry_routing.py`（RFC-145 B1 纯函数 +25 行，auto_execute_flow 的 import 依赖）。共 39 文件。
+
+**逐文件一致性验证**（三方比对 base=f296a3491 / ours=HEAD / theirs=a365e64ca）：
+- 33 文件 worktree == a365e64ca 精确匹配；
+- 2 文件（market_regime.py、test_futu_dailyk_quota.py）== 干净三方合并 union；
+- 3 文件 worktree = union + 已部署的额外批次，逐行人工核：
+  - `futu_lv3_provider.py`：+DEB-20261118 §R16 快照 'N/A' 脏行逐行隔离（`_safe_float`）；
+  - `auto_execute_flow.py`：+RFC-145 B1 chase_cap_anchor_headroom record-only 影子；
+  - `unified_config.yaml`：+11-20 恢复注释 4 行（纯注释）。
+- **import 闭包 AST 检查**：归账集对 HEAD+集内模块的 from-import 全部可解析（初查 7 缺口均为检查器 AnnAssign/命名空间包误报，逐一实证排除）。
+
+**验证**：归账集关键回归 `test_sim_entry_budget_wiring + test_account_circuit_breaker_sim_budget + test_entry_data_bounded_fetch + test_futu_dailyk_quota + test_entry_context_cache_boundary` = **278 passed**（正常 conftest）。
+
+**边界**：其余脏生产文件（scheduler_core / shadow_registry / daily_review / lesson_injector / trailing_stop / trail_state_store / position_monitor / da_* 脚本等）属其他批次在途 WIP，**本批不带入**，归各自 owner 归账；position_exit_monitor.py 的 DEB-20261120 §R2 enforcing_stop 既有 WIP 同样保留未提交，本批 A 修复用 hunk 级分离只提交自己的改动。
+
+## 4. 修复 C：补冒烟与登记
+
+09:09 重启后无冒烟记录。本批 A 部署重启后按军规跑 `scripts/startup_smoke_check.py --wait 90`，同时覆盖当前进程健康验收；09:09 重启的执行方归属待自认，本批不重置任何风控状态。
+
+## 5. 部署与回滚
+
+- 重启前核：在途出场 SQL + 09:09 后源码 mtime（实测为空，重启只带本批 A 改动）。
+- 回滚：A 为纯日志改动，回滚 = revert 对应 commit；无配置开关、无交易行为可回滚。
+- 一次一变量：本批运行时变化仅 A 的日志分支；B 归账零运行时差异（提交内容 == 运行中内容）。
+
+## 6. 未验证
+
+- A 的自然日志验证待下一 tripped 空转轮（预期：段首一条 WARNING，后续轮静默）；
+- 收益/命中率与本批无关，不宣称任何盈利改善；
+- 干净 checkout 全量重部署演练未做（闭包检查为 AST 级，非全仓 import 演练）。

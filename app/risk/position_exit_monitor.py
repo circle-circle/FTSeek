@@ -242,6 +242,9 @@ class ExitMonitor:
         self._flat_all_last_triggered_ts: float = 0.0
         self._warn_last_triggered_ts: float = 0.0  # 2026-06-30: WARN 冷却
         self._reduce_50_last_triggered_ts: float = 0.0  # REDUCE_50 冷却
+        # FLAT_ALL 空仓段去重: tripped 长期存续且 managed 为空时每轮 2 条 CRITICAL 空转
+        # (实测 2026-11-24 共 1231 轮), 改为每状态段一条 WARNING
+        self._flat_all_empty_episode_notified: bool = False
         # 接近止损预警去重: {symbol: last_alert_ts}
         self._approaching_stop_alerts: Dict[str, float] = {}
         # Task #24 (2026-05-27): 财报退出去重集合，防止同一标的在同一批财报计划下被重复触发
@@ -641,7 +644,9 @@ class ExitMonitor:
             if _cs_peak > 0 and _cs_equity > 0:
                 _broker_drawdown = (_cs_peak - _cs_equity) / _cs_peak
                 if _broker_drawdown > drawdown:
-                    logger.info(
+                    # 空 managed 集时段内每轮重复, 降为 debug; 有仓时保持 INFO 遥测
+                    _bd_log = logger.info if positions else logger.debug
+                    _bd_log(
                         f"[组合止损·账户级] broker_drawdown={_broker_drawdown*100:.2f}% "
                         f"> managed_drawdown={_managed_drawdown*100:.2f}%, FLAT_ALL用账户级"
                     )
@@ -658,7 +663,8 @@ class ExitMonitor:
             action = "WARN"
 
         # P0-3 (2026-05-19): 触发时打印具体浮亏 + 持仓清单, 便于追溯
-        if action is not None:
+        # 空 managed 集的 FLAT_ALL 由执行分支按状态段告警一次, 此处不再每轮重复
+        if action is not None and not (action == "FLAT_ALL" and not positions):
             try:
                 detail = ", ".join(
                     f"{getattr(p,'symbol','?')}@{getattr(p,'avg_entry_price',0):.2f}×{int(getattr(p,'size',0))}"
@@ -806,7 +812,23 @@ class ExitMonitor:
                 )
                 portfolio_action = None  # 降级为不执行
 
+        if portfolio_action != "FLAT_ALL":
+            self._flat_all_empty_episode_notified = False
+
         if portfolio_action == "FLAT_ALL":
+            if not managed_positions:
+                # 账户级回撤超限但无可平的 legacy managed 仓 (Playbook 自管仓经 R-7c 排除)。
+                # 平仓/冷却/返回值语义与旧实现一致 (旧实现也是空循环后 return []),
+                # 仅把每轮 2 条 CRITICAL 降为每状态段一条 WARNING。
+                if not self._flat_all_empty_episode_notified:
+                    self._flat_all_empty_episode_notified = True
+                    logger.warning(
+                        "[组合止损] FLAT_ALL 触发但 managed 持仓为空, 无可平对象 "
+                        "(Playbook 自管仓不在本层); 本状态段仅告警一次, "
+                        "持仓恢复或回撤解除后重新计段"
+                    )
+                return closed
+            self._flat_all_empty_episode_notified = False
             logger.critical("[组合止损] 触发 FLAT_ALL, 全平所有持仓")
             _flat_fail = 0
             for p in managed_positions:
