@@ -5,7 +5,7 @@
 触发阈值时采取递减式风控：
   - 单日亏损 ≥1%: 减仓 50%
   - 单日亏损 ≥2%: 停止新开仓
-  - 单日亏损 ≥3% 或 最大回撤 ≥3%: LIQUIDATE 档
+  - 单日亏损 ≥3% 或 历史回撤达账户限额: LIQUIDATE 档 (LIVE 3%, SIM 独立配置)
 
 2026-08-28 声明纠偏 (行为零改动): LIQUIDATE 档自建立起从未接线强制平仓 —
 四个消费方 (order_executor/playbook_service/orb.engine/本文件用法示例) 全部
@@ -41,6 +41,7 @@ DEB-20260823 daemon_heartbeat 死表同族。是否真接线账户级全平属�
 from __future__ import annotations
 
 import logging
+import math
 import sqlite3
 from dataclasses import dataclass
 from typing import Optional
@@ -49,6 +50,23 @@ from app.core.paths import get_trade_records_db_for_arm
 from app.utils.timezone import _et_trade_date, now_et
 
 logger = logging.getLogger(__name__)
+
+
+def get_peak_drawdown_threshold(target_env: str, live_threshold: float = 0.03) -> float:
+    env = str(target_env).strip().lower()
+    if env in {"real", "live"}:
+        return live_threshold
+    if env != "sim":
+        raise ValueError("unknown account environment")
+    from app.core.config_container import get_config
+
+    value = get_config().get_dotted("risk.account.sim.max_peak_drawdown", live_threshold)
+    if isinstance(value, bool):
+        raise ValueError("SIM peak drawdown must be a fraction")
+    threshold = float(value)
+    if not math.isfinite(threshold) or not 0 < threshold < 1:
+        raise ValueError("SIM peak drawdown must be finite and between zero and one")
+    return threshold
 
 
 @dataclass(frozen=True)
@@ -84,15 +102,17 @@ class AccountCircuitBreaker:
         Returns:
             CircuitResult
         """
-        if current_equity <= 0:
+        if (isinstance(current_equity, bool)
+                or not math.isfinite(current_equity) or current_equity <= 0):
             return CircuitResult(
                 action="LIQUIDATE",
-                reason="当前权益 <= 0 (LIQUIDATE 档, 同 HALT 仅拒新仓)",
+                reason="当前权益无效 (LIQUIDATE 档, 同 HALT 仅拒新仓)",
                 daily_pnl_pct=0.0,
                 peak_equity=0.0,
                 current_equity=current_equity,
             )
 
+        target_env = str(target_env).strip().lower()
         today = _et_trade_date(now_et())
         daily_pnl = self._get_daily_pnl(today, target_env)
         # 2026-06-26: peak_equity 不用 trade_records 的 max(notional) — ETF 大批量交易
@@ -105,26 +125,42 @@ class AccountCircuitBreaker:
             else:
                 from app.risk.capital_safety import get_capital_safety_system
                 peak_equity = get_capital_safety_system()._state.peak_equity
-            if peak_equity <= 0:
-                peak_equity = current_equity
-        except Exception:
-            peak_equity = current_equity
-        daily_pnl_pct = daily_pnl / current_equity if current_equity else 0.0
-        dd_pct = (peak_equity - current_equity) / peak_equity if peak_equity > 0 else 0.0
+            if (isinstance(peak_equity, bool)
+                    or not math.isfinite(peak_equity) or peak_equity <= 0):
+                raise ValueError("account peak equity unavailable")
+            peak_threshold = get_peak_drawdown_threshold(target_env, self.liquidate_threshold)
+        except Exception as error:
+            return CircuitResult(
+                action="HALT",
+                reason=f"账户回撤检查不可用，暂缓新仓: {error}",
+                daily_pnl_pct=daily_pnl / current_equity,
+                peak_equity=0.0,
+                current_equity=current_equity,
+            )
+        daily_pnl_pct = daily_pnl / current_equity
+        if math.isnan(daily_pnl_pct) or daily_pnl_pct == float("inf"):
+            return CircuitResult(
+                action="HALT",
+                reason="账户日盈亏不可用，暂缓新仓",
+                daily_pnl_pct=daily_pnl_pct,
+                peak_equity=peak_equity,
+                current_equity=current_equity,
+            )
+        dd_pct = (peak_equity - current_equity) / peak_equity
 
-        # 优先判断 liquidation (最严格)
-        if daily_pnl_pct <= -self.liquidate_threshold or dd_pct >= self.liquidate_threshold:
+        if (daily_pnl <= -self.liquidate_threshold * current_equity
+                or current_equity <= peak_equity * (1 - peak_threshold)):
             action = "LIQUIDATE"
             reason = (
-                f"账户熔断触发: 日亏损={daily_pnl_pct:.2%}, "
-                f"回撤={dd_pct:.2%} ≥ {self.liquidate_threshold:.0%}"
+                f"账户熔断触发: 日盈亏={daily_pnl_pct:.2%} (日亏限{self.liquidate_threshold:.0%}), "
+                f"回撤={dd_pct:.2%} ({target_env} 回撤限{peak_threshold:.0%})"
             )
-        elif daily_pnl_pct <= -self.halt_threshold:
+        elif daily_pnl <= -self.halt_threshold * current_equity:
             action = "HALT"
             reason = (
                 f"停止新仓: 日亏损={daily_pnl_pct:.2%} ≥ {self.halt_threshold:.0%}"
             )
-        elif daily_pnl_pct <= -self.reduce_threshold:
+        elif daily_pnl <= -self.reduce_threshold * current_equity:
             action = "REDUCE_50"
             reason = (
                 f"减仓 50%: 日亏损={daily_pnl_pct:.2%} ≥ {self.reduce_threshold:.0%}"

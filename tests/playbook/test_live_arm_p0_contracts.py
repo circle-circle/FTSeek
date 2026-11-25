@@ -24,6 +24,15 @@ from app.playbook.playbook_service import PlaybookService
 from app.storage.trade_store import TradeStore
 
 
+@pytest.fixture(autouse=True)
+def isolate_default_pdt_db(monkeypatch, tmp_path):
+    from app.core import db_utils
+    from app.risk import pdt_guard
+
+    monkeypatch.setattr(db_utils, "get_main_db", lambda: tmp_path / "pdt.sqlite")
+    monkeypatch.setattr(pdt_guard, "_guard", None)
+
+
 _ARM_CONFIG = {
     "enabled": True,
     "mode": "engineering_probe",

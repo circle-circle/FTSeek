@@ -348,7 +348,7 @@ def test_blackout_shadow_writes_liveness_when_all_quotes_fail(monkeypatch, froze
     cycle = got[0]
     assert cycle["kind"] == "cycle" and cycle["status"] == "QUOTE_UNAVAILABLE"
     assert cycle["n_eligible"] == 1 and cycle["n_priced"] == 0
-    assert cycle["n_quote_error"] >= 1 and cycle["n_price_invalid"] == 1
+    assert cycle["n_quote_error"] == 1 and cycle["n_price_invalid"] == 0
 
 
 def test_blackout_shadow_writes_no_router_heartbeat(monkeypatch, frozen, tmp_path):
@@ -368,7 +368,7 @@ def test_blackout_shadow_uses_production_quote_fallback(monkeypatch, frozen, tmp
 
     class _FallbackRouter:
         def get_full_market_context(self, symbol):
-            raise RuntimeError("context unavailable")
+            return {}
 
         def get_quote(self, symbol):
             return {"last": 99.5}
@@ -380,6 +380,34 @@ def test_blackout_shadow_uses_production_quote_fallback(monkeypatch, frozen, tmp
     got = _shadow_rows(tmp_path)
     hits = [r for r in got if r["kind"] == "hit"]
     assert len(hits) == 1 and hits[0]["quote_source"] == "quote_fallback"
+
+
+def test_blackout_shadow_context_error_never_uses_quote_fallback(monkeypatch, frozen, tmp_path):
+    rows = [_inst(1, "US.AAA", "BUY", 100.0)]
+    _wire_shadow(monkeypatch, tmp_path, rows, {})
+    frozen(2026, 11, 12, 9, 40)
+    calls = []
+
+    class _FailedContextRouter:
+        def get_full_market_context(self, symbol):
+            calls.append(("context", symbol))
+            raise RuntimeError("context unavailable")
+
+        def get_quote(self, symbol):
+            calls.append(("quote", symbol))
+            return {"last": 99.5}
+
+    class _Sched:
+        data_router = _FailedContextRouter()
+
+    aef.emit_blackout_shadow(_Sched(), "2026-11-12", frozen.now_dt, LOG, set(), 945)
+    assert calls == [("context", "US.AAA")]
+    got = _shadow_rows(tmp_path)
+    assert len(got) == 1
+    cycle = got[0]
+    assert cycle["kind"] == "cycle" and cycle["status"] == "QUOTE_UNAVAILABLE"
+    assert cycle["n_eligible"] == 1 and cycle["n_priced"] == 0
+    assert cycle["n_quote_error"] == 1 and cycle["n_price_invalid"] == 0
 
 
 def test_blackout_shadow_retries_hit_after_write_failure(monkeypatch, frozen, tmp_path):

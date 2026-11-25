@@ -186,8 +186,8 @@ def env(tmp_path, monkeypatch):
 
     # Empty package search paths prevent importing unreviewed application
     # bootstrap code or optional live adapters through a transitive import.
-    for name in ("app", "app.playbook", "app.core", "app.execution", "app.risk",
-                 "app.us_pipeline", "app.web_dashboard", "app.web_dashboard.routes",
+    for name in ("app", "app.playbook", "app.core", "app.data", "app.execution", "app.risk",
+                 "app.observability", "app.us_pipeline", "app.web_dashboard", "app.web_dashboard.routes",
                  "app.utils"):
         module(name, __path__=[])
     futu = module("futu")
@@ -207,7 +207,7 @@ def env(tmp_path, monkeypatch):
         return {"success": True, "fees": fees, "rows": []}
 
     broker = SimpleNamespace(
-        get_positions=Mock(return_value=[]),
+        query_positions=Mock(return_value={"success": True, "positions": [], "error": ""}),
         query_order_fees=query_order_fees,
     )
     capital = SimpleNamespace(get_available_budget_for_auto=lambda: 80000.0,
@@ -219,7 +219,7 @@ def env(tmp_path, monkeypatch):
                              RISK_OFF="RISK_OFF", NO_TRADE="NO_TRADE")
     regime_ctx = SimpleNamespace(regime=regime.RISK_ON, vix=15.0)
     module("app.playbook.market_regime", MarketRegime=regime, RegimeContext=SimpleNamespace,
-           MarketRegimeGate=lambda: SimpleNamespace(assess=lambda: regime_ctx))
+           MarketRegimeGate=lambda: SimpleNamespace(assess=lambda *, publish_cache=True: regime_ctx))
     module("app.us_pipeline.risk_state_machine",
            RiskState=SimpleNamespace(RISK_OFF="RISK_OFF", HALT="HALT"),
            RiskStateMachine=lambda: SimpleNamespace(get_state=lambda: "NORMAL"))
@@ -255,6 +255,11 @@ def env(tmp_path, monkeypatch):
         return mod
 
     (tmp_path / "data").mkdir()
+    monkeypatch.setenv("FTSEEK_PROGRESS_FILE", str(tmp_path / "progress-main"))
+    load("app.observability.progress_beat", "app/observability/progress_beat.py")
+    load("app.observability.round_timer", "app/observability/round_timer.py")
+    load("app.data.quote_cache_policy", "app/data/quote_cache_policy.py")
+    load("app.playbook.entry_data_fetch", "app/playbook/entry_data_fetch.py")
     data = load("app.playbook.data_collector", "app/playbook/data_collector.py")
     load("app.playbook.condition_taxonomy", "app/playbook/condition_taxonomy.py")
     generator = load("app.playbook.instruction_generator", "app/playbook/instruction_generator.py")
@@ -289,6 +294,15 @@ def env(tmp_path, monkeypatch):
     # 否则 overnight_cleanup / trigger_flow 的懒 import 在空 __path__ 下消失。
     load("app.playbook.pilot_policy", "app/playbook/pilot_policy.py")
     load("app.playbook.open_blackout", "app/playbook/open_blackout.py")
+    load("app.playbook.price_ledger", "app/playbook/price_ledger.py")
+    load("app.playbook.s1_arm", "app/playbook/s1_arm.py")
+    load("app.playbook.close_alert_state", "app/playbook/close_alert_state.py")
+    load("app.playbook.pipeline_parts.live_stop_guard",
+         "app/playbook/pipeline_parts/live_stop_guard.py")
+    load("app.playbook.pipeline_parts.auto_execute_flow",
+         "app/playbook/pipeline_parts/auto_execute_flow.py")
+    load("app.playbook.pipeline_parts.close_flow",
+         "app/playbook/pipeline_parts/close_flow.py")
     pipeline = load("app.playbook.pipeline", "app/playbook/pipeline.py")
     monkeypatch.setattr(pipeline, "_now_et", lambda: timezone.utc)
     monkeypatch.setattr(pipeline, "_today_et_str", lambda: "2026-09-10")
@@ -446,7 +460,22 @@ def test_unavailable_market_context_never_falls_back_to_stale_db_order(env, dire
             "bad-price": {"price": "bad", "atr": 3.0},
         }[case]
     assert env.run()["executed"] == 0
-    assert_paused(env, row)
+    if case == "raises":
+        assert env.submissions == [] and env.db.rows[row["id"]] == row
+        assert env.db.updates == []
+        deferred = [call for call in env.audit.call_args_list
+                    if call.kwargs.get("action") == "deferred_entry_data_unavailable"]
+        assert len(deferred) == 1
+        assert deferred[0].kwargs["extra"]["query_label"] == "reprice_context"
+        assert deferred[0].kwargs["extra"]["why"] == "query_failed"
+        assert deferred[0].kwargs["extra"]["transient"] is True
+        env.router.get_full_market_context.side_effect = None
+        env.router.get_full_market_context.return_value = {"price": 101.0, "atr": 3.0}
+        assert env.run()["executed"] == 1
+        assert len(env.submissions) == 1
+        assert env.submissions[0]["custom_params"]["entry_price"] == 101.0
+    else:
+        assert_paused(env, row)
 
 
 @pytest.mark.parametrize("direction,price", [("BUY", 95.0), ("SELL_SHORT", 105.0)])

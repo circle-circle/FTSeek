@@ -64,6 +64,10 @@ def env(tmp_path, monkeypatch):
     (thread-local cache handles safety)。漏掉它会在跨线程读库时抛
     ProgrammingError, 而生产不会 ⇒ 探针假红。
     """
+    from app.risk import capital_safety
+
+    capital = capital_safety.CapitalSafetySystem(db_path=str(tmp_path / "capital.sqlite"))
+    monkeypatch.setattr(capital_safety, "_capital_instance", capital)
     conn = sqlite3.connect(str(tmp_path / "probe.sqlite"), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     db = PlaybookDB(conn=conn)

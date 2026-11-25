@@ -42,6 +42,7 @@ from app.data.futu_lv3_provider import FutuLV3Provider
 from app.data.twelvedata_provider import TwelveDataProvider
 from app.data.finnhub_provider import FinnhubProvider
 from app.data.alphavantage_provider import AlphaVantageProvider
+from app.data.quote_cache_policy import DATA_CACHE_PUBLICATION_ALLOWED
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +217,8 @@ class MarketDataRouter:
                 bars = self.futu.get_daily_kline(symbol, count=fetch_count)
                 bars = self._normalize_bar_times(bars)
                 if bars:
-                    self._daily_bars_cache[symbol] = (bars, _time.time())
+                    if DATA_CACHE_PUBLICATION_ALLOWED.get():
+                        self._daily_bars_cache[symbol] = (bars, _time.time())
                     return bars[-_count:]
             except Exception as e:
                 logger.warning(f"[Router] get_daily_bars {symbol} Futu 失败, 尝试 TwelveData: {e}")
@@ -228,7 +230,8 @@ class MarketDataRouter:
                 bars = self.td.get_daily_bars(symbol, count=fetch_count)
                 if bars:
                     logger.info(f"[Router] get_daily_bars {symbol} 走 TwelveData fallback: {len(bars)} bars")
-                    self._daily_bars_cache[symbol] = (bars, _time.time())
+                    if DATA_CACHE_PUBLICATION_ALLOWED.get():
+                        self._daily_bars_cache[symbol] = (bars, _time.time())
                     return bars[-_count:]
             except Exception as e:
                 logger.warning(f"[Router] get_daily_bars {symbol} TwelveData fallback 失败: {e}")
@@ -1098,8 +1101,9 @@ class MarketDataRouter:
                         #   闸门以一把错误的尺子判定。MA200 必须 ≥200 根, 不足则不产出。
                         if len(closes) >= 200:
                             ma200 = sum(closes[-200:]) / 200
-                            self._spy_ma200_cache = ma200
-                            self._spy_ma200_cache_time = now
+                            if DATA_CACHE_PUBLICATION_ALLOWED.get():
+                                self._spy_ma200_cache = ma200
+                                self._spy_ma200_cache_time = now
                             result["spy_ma200"] = ma200
                             logger.info(
                                 f"[Router] SPY MA200 已计算: {ma200:.2f} "
@@ -1112,11 +1116,13 @@ class MarketDataRouter:
                         # P0 (2026-07-03): 顺带计算 MA20/MA50, 避免依赖 AlphaVantage (免费 API 25次/天限流)
                         if len(closes) >= 20:
                             ma20 = sum(closes[-20:]) / 20
-                            self._spy_ma20_cache = ma20
+                            if DATA_CACHE_PUBLICATION_ALLOWED.get():
+                                self._spy_ma20_cache = ma20
                             result["spy_ma20"] = ma20
                         if len(closes) >= 50:
                             ma50 = sum(closes[-50:]) / 50
-                            self._spy_ma50_cache = ma50
+                            if DATA_CACHE_PUBLICATION_ALLOWED.get():
+                                self._spy_ma50_cache = ma50
                             result["spy_ma50"] = ma50
                     else:
                         logger.debug(f"[Router] SPY MA200 history_kline 失败: ret={ret}")

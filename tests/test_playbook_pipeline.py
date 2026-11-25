@@ -621,6 +621,7 @@ class TestCheckIntradayTrigger:
     def _make_scheduler(self, price, day_high, day_low):
         """构造一个返回固定 SymbolContext 的 mock scheduler."""
         scheduler = MagicMock()
+        scheduler._entry_data_query_state = None
         scheduler.data_router.get_full_market_context.return_value = {
             "price": price,
             "day_high": day_high,
@@ -848,6 +849,7 @@ class TestEntryOpenBlackoutGate:
 
     def _make_scheduler(self, price, day_high, day_low):
         scheduler = MagicMock()
+        scheduler._entry_data_query_state = None
         scheduler.data_router.get_full_market_context.return_value = {
             "price": price,
             "day_high": day_high,

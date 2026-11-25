@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, Optional
 
+from app.playbook.entry_data_fetch import EntryDataUnavailable, fetch_entry_data
+
 
 def check_intraday_trigger(
     scheduler,
@@ -247,22 +249,37 @@ def check_intraday_trigger(
     day_low = None
     vol_ratio = None
     ctx = None  # 2026-07-15: 预置, 供 _emit_entry_shadow 安全引用 (取数异常时保持 None)
+    def _defer_entry_input(error: EntryDataUnavailable) -> bool:
+        logger.warning(f"[playbook] {symbol} 入场取数暂不可用 (下轮复评): {error}")
+        # Temporary reasons must not enter the terminal instruction skip_reason.
+        _emit_trigger_miss("deferred_entry_data_unavailable", None, {
+            "query_label": error.query_label, "why": error.reason,
+            "transient": True,
+            "skip_reason": f"temporary_entry_data_unavailable({error})"})
+        return False
+
     try:
-        ctx = data_router.get_full_market_context(symbol)
+        ctx = fetch_entry_data(
+            scheduler, "trigger_context", data_router, "get_full_market_context", symbol)
         if ctx and isinstance(ctx, dict):
             current_price = float(ctx.get("price", 0) or 0)
             day_high = float(ctx.get("day_high", 0) or ctx.get("high_price", 0) or 0)
             day_low = float(ctx.get("day_low", 0) or ctx.get("low_price", 0) or 0)
             vol_ratio = float(ctx.get("volume_5d_avg_ratio", 0) or ctx.get("volume_ratio", 0) or 0)
+    except EntryDataUnavailable as error:
+        return _defer_entry_input(error)
     except Exception:
         pass
 
-    # fallback: 用 get_quote 取价格
+    # fallback: 正常无价响应仍用 quote；超时/失败不再尝试另一条在途查询。
     if not current_price or current_price <= 0:
         try:
-            quote = data_router.get_quote(symbol)
+            quote = fetch_entry_data(
+                scheduler, "trigger_quote", data_router, "get_quote", symbol)
             if quote and isinstance(quote, dict):
                 current_price = float(quote.get("last", 0) or quote.get("price", 0) or 0)
+        except EntryDataUnavailable as error:
+            return _defer_entry_input(error)
         except Exception:
             pass
 

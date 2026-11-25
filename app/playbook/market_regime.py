@@ -168,9 +168,11 @@ class MarketRegimeGate:
             except Exception as e:
                 logger.warning(f"Failed to create AlphaVantageProvider: {e}")
     
-    def assess(self) -> RegimeContext:
+    def assess(self, *, publish_cache: bool = True) -> RegimeContext:
         """
         评估当前市场环境
+
+        publish_cache=False prevents late publication without refreshing cached reads.
         
         评分逻辑：
         - SPY > MA20: +2 (短期趋势向上)
@@ -421,5 +423,6 @@ class MarketRegimeGate:
             score_shadow=score_shadow,
             regime_shadow=regime_shadow,
         )
-        MarketRegimeGate._assess_cache = (_now_mono, ctx)
+        if publish_cache:
+            MarketRegimeGate._assess_cache = (_now_mono, ctx)
         return ctx

@@ -10,6 +10,7 @@
 - 告警走 critical_alerts 多通道
 """
 from __future__ import annotations
+import faulthandler
 import logging
 import threading
 import time
@@ -131,6 +132,10 @@ class Watchdog:
     def _alert_stale(self, name: str, elapsed: float, threshold: float):
         msg = f"⚠️ Watchdog: 主循环 {name} 已 {elapsed:.0f}s 无心跳 (阈值 {threshold:.0f}s)"
         logger.error(msg)
+        try:
+            faulthandler.dump_traceback(all_threads=True)
+        except Exception as error:
+            logger.warning("[Watchdog] 卡顿线程栈记录失败: %s", error, exc_info=True)
         try:
             from app.utils.critical_alerts import send_critical
             send_critical(msg, async_mode=True)

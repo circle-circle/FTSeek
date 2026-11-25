@@ -445,8 +445,10 @@ def test_bar_tracker_never_retries_legacy_signature():
 
 @pytest.mark.parametrize("mode", ["cache", "type_error", "blocked_sdk"])
 def test_high_atr_shadow_uses_raw_nonblocking_bars(provider, workers, monkeypatch, mode):
-    from app.playbook import config, exit_engine
+    from app.playbook import config, exit_engine, exit_staging_shadow
     from app.data import market_data_router
+
+    monkeypatch.setattr(exit_staging_shadow, "get_config", lambda: {"enabled": False})
 
     cfg = SimpleNamespace(get={}.get, get_horizon_top=lambda key, default: default,
                           get_horizon_params=lambda horizon: {})

@@ -14,6 +14,11 @@ from app.risk.account_circuit_breaker import AccountCircuitBreaker
 
 @pytest.fixture
 def breaker(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from app.core import config_container
+
+    monkeypatch.setattr(config_container, "get_config", lambda: SimpleNamespace(
+        get_dotted=lambda key, default=None: default))
     db = tmp_path / "trade_records.db"
     conn = sqlite3.connect(db)
     conn.execute("""
@@ -132,6 +137,47 @@ def test_db_failure_fail_close(breaker, monkeypatch):
         "app.risk.account_circuit_breaker.get_trade_records_db_for_arm",
         lambda target_env: "/nonexistent_dir_xyz/trade_records.db")
     assert breaker._get_daily_pnl("2026-08-27") == float("-inf")
+
+
+@pytest.mark.parametrize("equity,action", [(96889.835, "LIQUIDATE"), (97000.0, "NORMAL")])
+def test_verified_peak_drawdown_remains_protected(breaker, monkeypatch, equity, action):
+    from types import SimpleNamespace
+    from app.risk import capital_safety
+
+    state = SimpleNamespace(peak_equity=99999.496)
+    monkeypatch.setattr(capital_safety, "get_capital_safety_system",
+                        lambda: SimpleNamespace(_state=state))
+    monkeypatch.setattr(breaker, "_get_daily_pnl", lambda today, target_env: -260.79)
+    result = breaker.check(equity, target_env="sim")
+    assert result.action == action
+    assert result.peak_equity == 99999.496
+    assert result.current_equity == equity
+    assert result.daily_pnl_pct == pytest.approx(-260.79 / equity)
+    assert state.peak_equity == 99999.496
+
+
+def test_peak_and_daily_pnl_use_requested_arm(breaker, monkeypatch):
+    from types import SimpleNamespace
+    from app.risk import capital_safety
+
+    seen = []
+    monkeypatch.setattr(capital_safety, "get_capital_safety_system",
+                        lambda: SimpleNamespace(_state=SimpleNamespace(peak_equity=99999.496)))
+
+    def real_state(arm):
+        seen.append(("peak", arm))
+        return SimpleNamespace(_state=SimpleNamespace(peak_equity=79087.01))
+
+    def daily_pnl(today, arm):
+        seen.append(("daily", arm))
+        return 0.0
+
+    monkeypatch.setattr(capital_safety, "get_capital_safety_system_for_arm", real_state)
+    monkeypatch.setattr(breaker, "_get_daily_pnl", daily_pnl)
+    result = breaker.check(79000.0, target_env="real")
+    assert result.action == "NORMAL"
+    assert result.peak_equity == 79087.01
+    assert seen == [("daily", "real"), ("peak", "real")]
 
 
 # ── LIQUIDATE 档声明契约 (2026-08-28 纠偏) ─────────────────────────────── #

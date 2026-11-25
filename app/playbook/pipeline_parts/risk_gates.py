@@ -195,8 +195,9 @@ def _auto_execute_preflight(
     *,
     check_daily_loss_circuit: Callable[[str], Optional[Dict[str, Any]]],
     logger,
+    entry_data_owner=None,
 ) -> Optional[Dict[str, Any]]:
-    """auto_execute 前置 kill/regime/risk/日亏闸; 返回跳口结果或 None 放行。"""
+    """auto_execute 前置闸；只有入口 owner 路径有界化只读 regime 输入。"""
     try:
         from app.us_pipeline.emergency_interceptor import check_kill_switch
         if check_kill_switch():
@@ -212,9 +213,25 @@ def _auto_execute_preflight(
         }
 
     try:
-        from app.playbook.market_regime import MarketRegime, MarketRegimeGate
+        if entry_data_owner is None:
+            # Existing non-entry/direct callers retain their original behavior.
+            from app.playbook.market_regime import MarketRegimeGate
+            regime_ctx = MarketRegimeGate().assess()
+        else:
+            from app.playbook.entry_data_fetch import (
+                EntryDataUnavailable, fetch_entry_market_regime)
+            try:
+                regime_ctx = fetch_entry_market_regime(entry_data_owner)
+            except EntryDataUnavailable as error:
+                # Never feed this through SIM's generic risk fail-open branch.
+                # Kill switch, risk-state mutation and daily-loss remain caller work.
+                logger.warning(f"[playbook] 入场 regime 取数暂不可用，本轮暂缓: {error}")
+                return {"date": today, "executed": 0, "skipped": 0,
+                        "reason": "entry_data_unavailable",
+                        "skipped_reason": "entry_data_unavailable",
+                        "query_label": error.query_label}
+        from app.playbook.market_regime import MarketRegime
         from app.us_pipeline.risk_state_machine import RiskStateMachine, RiskState
-        regime_ctx = MarketRegimeGate().assess()
         if regime_ctx.regime == MarketRegime.NO_TRADE:
             logger.warning(
                 f"[playbook] 当前 regime=NO_TRADE (VIX={regime_ctx.vix:.2f}), 跳过 auto_execute"

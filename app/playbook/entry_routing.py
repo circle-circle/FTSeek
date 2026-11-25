@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -131,6 +132,30 @@ def chase_cap_violated(direction: str, price: float, cap: Optional[float]) -> bo
         return False
     direction = str(direction).upper()
     return (p > c) if direction in ("BUY", "LONG") else (p < c)
+
+
+def chase_cap_anchor_headroom_pct(direction: str, generated_anchor, cap) -> Optional[float]:
+    """RFC-145 B1 record-only: cap 相对**生成锚**的方向感知余量，单位为百分比。
+
+    BUY/LONG 的 cap 是上限，余量 = cap/anchor - 1；SHORT 的 cap 是下限，
+    余量 = 1 - cap/anchor。倒挂 cap 得负余量，保留病灶而不是先归一化掩盖。
+    输入无效/非有限/非正价或方向未知时返回 None，不参与机检。纯函数、无 I/O。
+    返回值 4.0 表示 4%，不是比例 0.04，也不是“百分点差”。
+    """
+    try:
+        anchor = float(generated_anchor)
+        cap_price = float(cap)
+    except (TypeError, ValueError):
+        return None
+    if (not math.isfinite(anchor) or not math.isfinite(cap_price)
+            or anchor <= 0 or cap_price <= 0):
+        return None
+    d = str(direction or "").upper()
+    if d in ("BUY", "LONG"):
+        return (cap_price / anchor - 1.0) * 100.0
+    if d in ("SHORT", "SELL_SHORT"):
+        return (1.0 - cap_price / anchor) * 100.0
+    return None
 
 
 def chase_cap_enforce_enabled(cfg: Optional[Dict[str, Any]] = None) -> bool:

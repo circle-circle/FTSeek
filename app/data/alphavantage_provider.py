@@ -24,6 +24,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env.us")
 
 from app.utils.log_sanitize import scrub_secrets  # noqa: E402
+from app.data.quote_cache_policy import DATA_CACHE_PUBLICATION_ALLOWED  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -663,8 +664,9 @@ class AlphaVantageProvider:
                 except (KeyError, TypeError, ValueError, OSError):
                     as_of = None
                 result = {"vix": vix_est, "source": "finnhub_vixy", "as_of": as_of}
-                self.cache[cache_key] = result
-                self.cache_time[cache_key] = datetime.now()
+                if DATA_CACHE_PUBLICATION_ALLOWED.get():
+                    self.cache[cache_key] = result
+                    self.cache_time[cache_key] = datetime.now()
                 self._vix_probe_fail_ts = 0.0     # 成功 ⇒ 清冷却
                 logger.info(f"[Finnhub] VIX (VIXY代理): VIXY=${fh_price:.2f} → VIX≈{vix_est:.2f}")
                 return vix_est
@@ -684,8 +686,9 @@ class AlphaVantageProvider:
                 as_of, vix = latest_valid_observation(response.text)
                 if as_of is not None and vix is not None and vix > 0:
                     result = {"vix": vix, "source": "fred", "as_of": as_of}
-                    self.cache[cache_key] = result
-                    self.cache_time[cache_key] = datetime.now()
+                    if DATA_CACHE_PUBLICATION_ALLOWED.get():
+                        self.cache[cache_key] = result
+                        self.cache_time[cache_key] = datetime.now()
                     logger.info(f"[FRED] 获取 VIX 成功: {vix:.2f} (as of {as_of})")
                     return vix
         except Exception as fred_e:

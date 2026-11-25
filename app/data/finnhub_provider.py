@@ -19,6 +19,7 @@ from typing import Dict, Any, Optional, List
 import requests
 
 from app.utils.timezone import now_utc
+from app.data.quote_cache_policy import DATA_CACHE_PUBLICATION_ALLOWED
 # 2026-10-28: Finnhub 配额 SSOT — 进程级共享令牌桶（按 key，不按实例）。
 #   原实现每 new 一个 FinnhubProvider 就多一份 60/min 的额度视图, 而 fundamental_provider
 #   与 premarket_enrichment 的 SDK 客户端各自另一份/无限速 ⇒ 盘前 76 只批次打出 ~96 次 429。
@@ -243,7 +244,8 @@ class FinnhubProvider:
                 "timestamp": float(data.get("t") or 0) or time.time(),
                 "source": "finnhub",
             }
-            self._set_cache(cache_key, quote)
+            if DATA_CACHE_PUBLICATION_ALLOWED.get():
+                self._set_cache(cache_key, quote)
             # P1 (2026-05-02): 非交易时段降级日志级别，避免 INFO 刷屏
             if phase_str in ("WEEKEND", "OVERNIGHT"):
                 logger.debug(f"[Finnhub] {symbol} ${price:.2f} ({change_pct:+.2%})")

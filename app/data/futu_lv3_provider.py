@@ -25,6 +25,7 @@ Phase 1 实现: 通过 Futu OpenD 获取美股实时行情 (LV3)
 """
 import atexit
 import logging
+import math
 import os
 import socket
 import threading
@@ -35,8 +36,11 @@ from typing import Dict, Any, Optional, List
 from futu import CurKlineHandlerBase
 
 from app.utils.symbol_utils import to_dotted_class_share
+from app.data.quote_cache_policy import DATA_CACHE_PUBLICATION_ALLOWED
 
 logger = logging.getLogger("ftseek_us.futu_lv3")
+
+_QUOTE_READY_TIMEOUT_SEC = 3.0
 
 # ── [RFC-171] 日K磁盘缓存 + 会话感知新鲜度 ────────────────────────────────
 # 病灶 (2026-10-26 实测): 日K缓存只在进程内存 (24h TTL) ⇒ 进程重建后 09:0x 的
@@ -292,6 +296,19 @@ def _push_exchange_stamp(row: Dict[str, Any]) -> str:
     if data_date and data_time:
         return f"{data_date} {data_time}"
     return str(row.get("update_time", "") or "")
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    """富途快照数值字段的容错转换: 'N/A'/None/''/NaN/inf → default。
+
+    富途对缺数据返回字符串 'N/A' (契约同 app/data/earnings_calendar.py:428),
+    实测 2026-11-18 出现在权证 US.TACOW/US.FACTW 的快照行上。
+    """
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return default
+    return out if math.isfinite(out) else default
 
 
 # 2026-10-22 (P0 冻结族): K 线生病窗时长 — 时敏调用方在窗内跳过 HTTP 兜底。
@@ -559,6 +576,24 @@ class FutuLV3Provider:
         t.start()
         logger.info("[FutuLV3][Watchdog] 后台健康守护已启动 (30s 间隔)")
 
+    def _open_ready_quote_context(self):
+        from futu import OpenQuoteContext
+
+        # 同步构造会永久重试，READY 超时必须在第一次查询前设置。
+        ctx = OpenQuoteContext(host=self.host, port=self.port, is_async_connect=True)
+        try:
+            ctx.set_sync_query_connect_timeout(_QUOTE_READY_TIMEOUT_SEC)
+            ret, data = ctx.get_global_state()
+            if ret != 0:
+                raise RuntimeError(f"OpenD READY 检查失败: {data}")
+            return ctx
+        except Exception:
+            try:
+                ctx.close()
+            except Exception as error:
+                logger.warning("[FutuLV3] 未就绪候选连接关闭失败: %s", error)
+            raise
+
     def _ensure_connected(self) -> bool:
         """确保已连接到 Futu OpenD
 
@@ -590,7 +625,7 @@ class FutuLV3Provider:
                 self._connected = False
 
             try:
-                from futu import OpenQuoteContext, SysConfig, SubType
+                from futu import SysConfig
 
                 # 2026-06-26 修复: 连接 OpenD 前先做端口探测, 不可达时快速失败,
                 # 避免 OpenQuoteContext 在 OpenD 不可达时无限阻塞。
@@ -610,7 +645,7 @@ class FutuLV3Provider:
                 SysConfig.enable_proto_encrypt(False)
 
                 logger.info(f"[FutuLV3] 正在连接 OpenD {self.host}:{self.port}...")
-                self._quote_ctx = OpenQuoteContext(host=self.host, port=self.port)
+                self._quote_ctx = self._open_ready_quote_context()
 
                 self._connected = True
                 self._last_connect_time = time.time()
@@ -1188,8 +1223,9 @@ class FutuLV3Provider:
                             "delay_ms": "unmeasured",
                             "quote_age_ms": _measured_quote_age_ms(row.get("update_time")),
                         }
-                        self._cache[cache_key] = result
-                        self._cache_time[cache_key] = time.time()
+                        if DATA_CACHE_PUBLICATION_ALLOWED.get():
+                            self._cache[cache_key] = result
+                            self._cache_time[cache_key] = time.time()
                         self._success_count += 1
                         return result
             except Exception as e:
@@ -1248,8 +1284,9 @@ class FutuLV3Provider:
                             "quote_age_ms": _measured_quote_age_ms(row.get("update_time")),
                         }
 
-                        self._cache[cache_key] = result
-                        self._cache_time[cache_key] = time.time()
+                        if DATA_CACHE_PUBLICATION_ALLOWED.get():
+                            self._cache[cache_key] = result
+                            self._cache_time[cache_key] = time.time()
                         self._success_count += 1
 
                         return result
@@ -1278,8 +1315,9 @@ class FutuLV3Provider:
                     #   覆写为抓取时间会把 15min 延迟报价"洗白"成新鲜 → 新鲜度门失效. 仅缺失时兜底.
                     if not quote.get("timestamp"):
                         quote["timestamp"] = time.time()
-                    self._cache[cache_key] = quote
-                    self._cache_time[cache_key] = time.time()
+                    if DATA_CACHE_PUBLICATION_ALLOWED.get():
+                        self._cache[cache_key] = quote
+                        self._cache_time[cache_key] = time.time()
                     logger.info(
                         f"[FutuLV3] 🔄 降级: {symbol} 从 Finnhub 获取报价 "
                         f"${quote['price']:.2f}"
@@ -1366,33 +1404,51 @@ class FutuLV3Provider:
             if ret == 0 and data is not None and len(data) > 0:
                 for _, row in data.iterrows():
                     symbol_code = row.get("code", "")
-                    last_price = row.get("last_price", 0)
+                    # 2026-11-18 根因修复 (DEB-20261118 §R16): 逐行隔离 —
+                    #   权证/薄票 (实测 US.TACOW $0.32 / US.FACTW $0.15) 的快照行含字符串
+                    #   'N/A', 原实现 float() 抛 ValueError 被下方整批 except 捕获, 而
+                    #   results.update(snapshot_results) 在循环之后 ⇒ 一只脏票连带丢弃同批
+                    #   已解析的主板票, 整批退化到逐只 get_quote (主板票失去 LV3 pre_price,
+                    #   即 2026-08-25 那次「盘前锚定门全判无现价 → 0 条注入」的同款机制)。
+                    #   与 8/25 的 ret=-1 修复同病灶不同分支: 那次修整批拒绝, 这次修行解析
+                    #   异常 ⇒ 脏行只杀自己。
+                    try:
+                        last_price = _safe_float(row.get("last_price", 0))
+                        if last_price <= 0:
+                            continue
 
-                    if last_price > 0:
-                        prev_close = row.get("prev_close_price", last_price)
+                        prev_close = _safe_float(
+                            row.get("prev_close_price", last_price), last_price
+                        )
                         change_pct = (
                             (last_price - prev_close) / prev_close * 100
                             if prev_close > 0 else 0
                         )
 
                         snapshot_results[symbol_code] = {
-                            "price": float(last_price),
-                            "open": float(row.get("open_price", last_price)),
-                            "high": float(row.get("high_price", last_price)),
-                            "low": float(row.get("low_price", last_price)),
-                            "prev_close": float(prev_close),
-                            "volume": float(row.get("volume", 0)),
-                            "turnover": float(row.get("turnover", 0)),
+                            "price": last_price,
+                            "open": _safe_float(row.get("open_price", last_price), last_price),
+                            "high": _safe_float(row.get("high_price", last_price), last_price),
+                            "low": _safe_float(row.get("low_price", last_price), last_price),
+                            "prev_close": prev_close,
+                            "volume": _safe_float(row.get("volume", 0)),
+                            "turnover": _safe_float(row.get("turnover", 0)),
                             "change_percent": float(change_pct),
                             # 2026-08-11 (LIF/UE 同款盘前盲点修复): 加法式补盘前字段 —
                             #   盘前时段 last_price=昨收, 真实可交易价在 pre_price。
                             #   现有读 price/last_price 的调用方零感知; 消费方按需读取。
-                            "pre_price": float(row.get("pre_price", 0) or 0),
-                            "pre_change_rate": float(row.get("pre_change_rate", 0) or 0),
+                            "pre_price": _safe_float(row.get("pre_price", 0) or 0),
+                            "pre_change_rate": _safe_float(row.get("pre_change_rate", 0) or 0),
                             "data_source": "futu_lv3",
                             "update_time": str(row.get("update_time", "") or ""),
                             "timestamp": time.time(),
                         }
+                    except Exception as row_e:
+                        logger.warning(
+                            f"[FutuLV3] 快照行解析失败 (只跳过 {symbol_code}): "
+                            f"{type(row_e).__name__}: {row_e}"
+                        )
+                        continue
 
                 self._success_count += 1
                 logger.debug(
@@ -1635,6 +1691,8 @@ class FutuLV3Provider:
 
     def _set_cached_kline(self, symbol: str, data: list):
         """将K线数据写入持久化缓存"""
+        if not DATA_CACHE_PUBLICATION_ALLOWED.get():
+            return
         futu_sym = self._to_futu_symbol(symbol)
         with self._kline_cache_lock:
             self._kline_data_cache[futu_sym] = {"data": data, "ts": time.time()}
@@ -1783,7 +1841,7 @@ class FutuLV3Provider:
                     logger.warning(f"[FutuLV3] {symbol} history kline 无当日数据 (today={today_et}, ktype={ktype}), 返回 None")
                     return None
                 # Push ring 只收 QFQ K_1M; 持久化缓存按 symbol|autype|ktype 分 key。
-                if autype == "QFQ" and ktype == "K_1M":
+                if DATA_CACHE_PUBLICATION_ALLOWED.get() and autype == "QFQ" and ktype == "K_1M":
                     with self._push_kline_cache_lock:
                         self._push_kline_cache[futu_symbol] = klines
                 self._set_cached_kline(_cache_sym, klines)
@@ -1966,11 +2024,12 @@ class FutuLV3Provider:
                     pass  # 日期解析失败不阻断
 
                 # 写入缓存 (只在数据新鲜时写入)
-                self._daily_kline_cache[futu_symbol] = klines
-                self._daily_kline_cache_time[futu_symbol] = time.time()
-                # [RFC-171] 落盘 (节流 30s) — 供下次进程重建后盘前批次直接复用
-                self._daily_disk_dirty = True
-                self._daily_disk_save()
+                if DATA_CACHE_PUBLICATION_ALLOWED.get():
+                    self._daily_kline_cache[futu_symbol] = klines
+                    self._daily_kline_cache_time[futu_symbol] = time.time()
+                    # [RFC-171] 落盘 (节流 30s) — 供下次进程重建后盘前批次直接复用
+                    self._daily_disk_dirty = True
+                    self._daily_disk_save()
                 return klines[-count:]
             else:
                 # 2026-08-27: 透出 OpenD retMsg (此前 `_` 吞掉 → 频控/权限/无数据都只见 "ret=-1", 病灶查了10天)
@@ -2104,30 +2163,29 @@ class FutuLV3Provider:
 
     def _connect_for_historical(self) -> bool:
         """盘后/非交易时段连接OpenD (仅用于request_history_kline等API调用, 不订阅实时行情)."""
-        if self._connected and self._quote_ctx is not None and self._verify_connection_alive():
-            return True
-        try:
-            # 2026-06-26 修复: OpenQuoteContext 在 OpenD 不可达时会无限阻塞,
-            # 先用 socket 探测端口, 不可达时快速失败。
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(2.0)
-            result = sock.connect_ex((self.host, self.port))
-            sock.close()
-            if result != 0:
-                logger.debug(f"[FutuLV3·历史] OpenD {self.host}:{self.port} 不可达, 跳过连接")
-                return False
+        with self._lock:
+            if self._connected and self._quote_ctx is not None and self._verify_connection_alive():
+                return True
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(2.0)
+                result = sock.connect_ex((self.host, self.port))
+                sock.close()
+                if result != 0:
+                    logger.debug(f"[FutuLV3·历史] OpenD {self.host}:{self.port} 不可达, 跳过连接")
+                    return False
 
-            from futu import OpenQuoteContext, SysConfig
-            SysConfig.enable_proto_encrypt(False)
-            self._quote_ctx = OpenQuoteContext(host=self.host, port=self.port)
-            self._connected = True
-            self._last_connect_time = time.time()
-            logger.info(f"[FutuLV3·历史] 盘后连接 OpenD 成功 (历史K线查询)")
-            return True
-        except Exception as e:
-            self._connected = False
-            logger.debug(f"[FutuLV3·历史] 盘后连接失败: {e}")
-            return False
+                from futu import SysConfig
+                SysConfig.enable_proto_encrypt(False)
+                self._quote_ctx = self._open_ready_quote_context()
+                self._connected = True
+                self._last_connect_time = time.time()
+                logger.info(f"[FutuLV3·历史] 盘后连接 OpenD 成功 (历史K线查询)")
+                return True
+            except Exception as e:
+                self._connected = False
+                logger.debug(f"[FutuLV3·历史] 盘后连接失败: {e}")
+                return False
 
     def get_snapshot(self, symbols: List[str]) -> List[Dict[str, Any]]:
         """通用快照观测 (仅观测, 不服务任何交易/退出链路).

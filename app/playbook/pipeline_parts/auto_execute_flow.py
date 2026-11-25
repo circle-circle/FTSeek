@@ -2,10 +2,15 @@
 from __future__ import annotations
 
 import json
+import math
+import re
 
 # 2026-11-03 冻结长轮次: 主线程进度心跳 (与出场快循环心跳分离, 见 progress_beat)
 from app.observability.progress_beat import progress_ping  # noqa: E402
 from app.playbook.price_ledger import build_price_ledger, calculate_risk_reward
+from app.playbook.entry_data_fetch import (
+    EntryDataUnavailable, fetch_entry_broker_positions, fetch_entry_data,
+)
 from app.playbook import s1_arm as _s1_gate  # 判据 B23 臂闸 (enabled=false 时整体空转)
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -93,6 +98,23 @@ def _reprice_quote_age_gate(
             f"→ 本轮不起价 (下轮重试)")
         return False
     return True
+
+
+def _record_entry_data_defer(inst: Dict[str, Any], error: EntryDataUnavailable,
+                             logger: Any, emit_exec_gate_audit: Callable) -> None:
+    """Caller-only transient audit, never a terminal SKIP or stale-price fallback."""
+    logger.warning(
+        f"[playbook] {inst.get('symbol')} 入场取数暂不可用 (下轮复评): {error}")
+    try:
+        emit_exec_gate_audit(
+            inst, action="deferred_entry_data_unavailable",
+            entry=float(inst.get("entry_price") or 0),
+            size=float(inst.get("position_size") or 0), notional=0.0,
+            extra={"gate": "entry_data_available", "query_label": error.query_label,
+                   "why": error.reason, "transient": True,
+                   "skip_reason": f"temporary_entry_data_unavailable({error})"})
+    except Exception as audit_error:
+        logger.warning(f"[playbook] 入场取数暂缓审计失败 (仍跳过): {audit_error}", exc_info=True)
 
 
 def _mom_quote_price(ctx: Optional[Dict[str, Any]]) -> float:
@@ -218,20 +240,30 @@ def emit_blackout_shadow(scheduler, today: str, now_dt, logger: Any,
             _px = 0.0
             _quote_source = None
             try:
-                _ctx = _dr.get_full_market_context(_sym)
+                _ctx = fetch_entry_data(
+                    scheduler, "blackout_context", _dr, "get_full_market_context", _sym)
                 if isinstance(_ctx, dict):
                     _px = float(_ctx.get("price") or 0)
                     _quote_source = "full_market_context" if _px > 0 else None
+            except EntryDataUnavailable as _quote_err:
+                _n_quote_error += 1
+                logger.warning(f"[blackout-shadow] {_sym} 取数暂不可用: {_quote_err}")
+                continue
             except Exception:
                 _n_quote_error += 1
-            # 与生产 check_intraday_trigger 一致：主上下文无价时用 quote 兜底，
-            # 否则会把行情字段缺失误判为“黑窗没有机会”。
+            # 与生产 check_intraday_trigger 一致：正常无价响应用 quote 兜底；
+            # 在途/超时/失败不允许再发另一条查询。
             if _px <= 0:
                 try:
-                    _quote = _dr.get_quote(_sym)
+                    _quote = fetch_entry_data(
+                        scheduler, "blackout_quote", _dr, "get_quote", _sym)
                     if isinstance(_quote, dict):
                         _px = float(_quote.get("last", 0) or _quote.get("price", 0) or 0)
                         _quote_source = "quote_fallback" if _px > 0 else None
+                except EntryDataUnavailable as _quote_err:
+                    _n_quote_error += 1
+                    logger.warning(f"[blackout-shadow] {_sym} 取数暂不可用: {_quote_err}")
+                    continue
                 except Exception:
                     _n_quote_error += 1
             if _px <= 0:
@@ -479,14 +511,42 @@ def run_playbook_auto_execute(
         # 2026-08-09 性能预审: broker 持仓是轮级全局状态, 循环外查一次即可.
         #   原实现每条未执行指令调 get_positions (OpenD 交易连接, 放量后 40+指令×78轮/日
         #   = 数千次连接调用), 同轮内重复查询结果不变 → 提升到循环外, 一轮一次.
-        #   失败时降级为空列表 (与原先每条指令独立失败返回 [] 语义一致, 防误拦).
+        #   查询失败不等于零持仓：必须有显式成功证据才能继续本轮入场。
         try:
-            from app.execution.dual_broker import get_dual_broker
-            _dual = get_dual_broker()
-            _broker_positions = _dual.get_positions(target_env="sim") or []
+            _positions_result = fetch_entry_broker_positions(scheduler)
+            if (not isinstance(_positions_result, dict)
+                    or _positions_result.get("success") is not True
+                    or not isinstance(_positions_result.get("positions"), list)):
+                raise EntryDataUnavailable("broker_positions", "query_unsuccessful")
+            # Malformed external rows must not reach the per-instruction SIM fail-open.
+            for _position in _positions_result["positions"]:
+                if (not isinstance(_position, dict)
+                        or not isinstance(_position.get("code"), str)
+                        or re.fullmatch(r"US\.[A-Z0-9]+(?:[.-][A-Z0-9]+)*", _position["code"]) is None
+                        or _position["code"].startswith("US.US.")
+                        or "qty" not in _position
+                        or isinstance(_position["qty"], bool)):
+                    raise EntryDataUnavailable("broker_positions", "malformed_positions")
+                try:
+                    _validated_qty = float(_position["qty"])
+                except (TypeError, ValueError, OverflowError) as _qty_error:
+                    raise EntryDataUnavailable("broker_positions", "malformed_positions") from _qty_error
+                if not math.isfinite(_validated_qty):
+                    raise EntryDataUnavailable("broker_positions", "malformed_positions")
+            _broker_positions = _positions_result["positions"]
         except Exception as _bp_err:
-            logger.warning(f"[playbook] 轮级 broker 持仓查询失败 (降级空表): {_bp_err}")
-            _broker_positions = []
+            _bp_unavailable = (_bp_err if isinstance(_bp_err, EntryDataUnavailable)
+                               else EntryDataUnavailable("broker_positions", "query_failed"))
+            logger.warning(f"[playbook] 轮级 broker 持仓未知，本轮暂缓入场: {_bp_err}")
+            for _deferred_inst in instructions:
+                if (not _deferred_inst.get("executed")
+                        and _deferred_inst.get("direction") != "SKIP"
+                        and (_deferred_inst.get("skip_reason") or "") not in INVALIDATED_SKIP_REASONS):
+                    _record_entry_data_defer(
+                        _deferred_inst, _bp_unavailable, logger, _emit_exec_gate_audit)
+            return {"date": today, "executed": 0, "skipped": len(instructions),
+                    "skipped_reason": "entry_data_unavailable",
+                    "query_label": _bp_unavailable.query_label}
 
         # 2026-08-22 audit: already_held 对账查询的共享连接 — 原每条命中指令新开
         #   sqlite3.connect (N+1), 现循环级懒建一次、循环尾关闭; 查询失败自动回退逐条建连.
@@ -746,7 +806,9 @@ def run_playbook_auto_execute(
                 inst["_knife_audit"] = _kg_audit
                 try:
                     _dr_kg = getattr(scheduler, "data_router", None) or getattr(scheduler, "market_data", None)
-                    _ctx_kg = _dr_kg.get_full_market_context(inst["symbol"]) if _dr_kg is not None else None
+                    _ctx_kg = (fetch_entry_data(
+                        scheduler, "knife_context", _dr_kg, "get_full_market_context", inst["symbol"])
+                        if _dr_kg is not None else None)
                     if _ctx_kg:
                         _px_kg = float(_ctx_kg.get("price") or 0)
                         _pc_kg = float(_ctx_kg.get("prev_close") or 0)
@@ -763,6 +825,11 @@ def run_playbook_auto_execute(
                                     f"[playbook] 🚫 {inst['symbol']} B门硬门拦截: 现价{_px_kg:.2f} vs "
                                     f"昨收{_pc_kg:.2f} ({_chg_kg:+.1f}% < -5%) 接飞刀拒入场 (下轮复评)"
                                 )
+                except EntryDataUnavailable as _kg_err:
+                    _kg_audit["error"] = str(_kg_err)[:120]
+                    _record_entry_data_defer(inst, _kg_err, logger, _emit_exec_gate_audit)
+                    skipped_count += 1
+                    continue
                 except Exception as _kg_err:
                     _kg_audit["error"] = str(_kg_err)[:120]
                     logger.warning(f"[playbook] {inst['symbol']} B门硬门评估异常 (放行): {_kg_err}")
@@ -820,7 +887,8 @@ def run_playbook_auto_execute(
                        else (getattr(scheduler, "data_router", None)
                              or getattr(scheduler, "market_data", None)))
                 if _dr:
-                    _ctx = _dr.get_full_market_context(inst["symbol"])
+                    _ctx = fetch_entry_data(
+                        scheduler, "reprice_context", _dr, "get_full_market_context", inst["symbol"])
                     # ── [RFC-185 2026-11-06] 报价陈旧度门 ──
                     #   这里取到的 ctx 就是下面算 entry/SL/TP/size 的那一跳; 它过旧
                     #   ⇒ 止损距离按旧价定, 实际风险偏离桶值 (TCA 实测 >30s 档
@@ -1270,6 +1338,10 @@ def run_playbook_auto_execute(
                             )
                         except Exception:
                             pass
+            except EntryDataUnavailable as _rp_err:
+                _record_entry_data_defer(inst, _rp_err, logger, _emit_exec_gate_audit)
+                skipped_count += 1
+                continue
             except Exception as _rp_err:
                 logger.debug(f"[playbook] re-price 失败: {_rp_err}")
 
@@ -1278,10 +1350,15 @@ def run_playbook_auto_execute(
                 try:
                     _dr_mom = (getattr(scheduler, "data_router", None)
                                or getattr(scheduler, "market_data", None))
-                    _ctx = (_dr_mom.get_full_market_context(inst["symbol"])
-                            if _dr_mom is not None else None)
+                    _ctx = (fetch_entry_data(
+                        scheduler, "mom_context", _dr_mom, "get_full_market_context", inst["symbol"])
+                        if _dr_mom is not None else None)
                     if _dr_mom is None:
                         _mom_quote_why = "router_missing"
+                except EntryDataUnavailable as _mom_ctx_err:
+                    _record_entry_data_defer(inst, _mom_ctx_err, logger, _emit_exec_gate_audit)
+                    skipped_count += 1
+                    continue
                 except Exception as _mom_ctx_err:
                     logger.warning(f"[MOM-ETF-V1] {inst.get('symbol')} 报价获取失败: {_mom_ctx_err}",
                                    exc_info=True)
@@ -1503,6 +1580,47 @@ def run_playbook_auto_execute(
                         logger.warning(
                             f"[playbook] chase_cap 归一化异常 {inst.get('symbol')} "
                             f"(维持原 cap 判定): {_ccn_err}")
+                # [RFC-145 B1 2026-11-19] record-only「过紧帽」机检。
+                # 量的是**原始 cap 对生成锚**的方向余量；不能用归一化后的 cap，
+                # 否则 SHORT 倒挂等出生病灶会被修复值掩盖。与违例判定/下单完全隔离：
+                # 必须放在 _cc_violated 之外（尚未违例但余量<5%也要采样），写盘失败
+                # 只 warning，不得进入外层 fail-close 让 _cc_gate_ok 停在 False。
+                try:
+                    from app.playbook.entry_routing import (
+                        chase_cap_anchor_headroom_pct as _cc_headroom_pct)
+                    _cc_headroom = _cc_headroom_pct(_dir, _gen_cc, _cc_orig)
+                    if _cc_headroom is not None and _cc_headroom < _cc_chase_pct * 100.0:
+                        from pathlib import Path as _PccHeadroom
+                        _cc_headroom_path = (_PccHeadroom(module_file).resolve().parents[2] /
+                                             "data" / "shadow" / "pullback_limit_shadow.jsonl")
+                        _cc_headroom_path.parent.mkdir(parents=True, exist_ok=True)
+                        _cc_headroom_claim = _shadow_dedup_claim(
+                            _cc_headroom_path, inst.get("id"), "chase_cap_anchor_headroom")
+                        if _cc_headroom_claim is not None:
+                            _cc_headroom_row = {
+                                "type": "chase_cap_anchor_headroom",
+                                "schema": "rfc145_b1.v1",
+                                "ts": datetime_cls.now(_now_et()).isoformat(timespec="seconds"),
+                                "inst_id": inst.get("id"), "decision_id": inst.get("decision_id"),
+                                "symbol": inst.get("symbol"), "direction": _dir,
+                                "entry_archetype": _sem_cc.get("entry_archetype"),
+                                "generated_anchor": _gen_cc,
+                                "chase_cap_price_original": _cc_orig,
+                                "chase_cap_price_effective": _cc_f,
+                                "cap_normalized": _cc_normed,
+                                # 百分比口径：4.0 = 4%；阈值同为百分比，严禁混作比例。
+                                "headroom_pct": round(_cc_headroom, 4),
+                                "chase_zone_threshold_pct": round(_cc_chase_pct * 100.0, 4),
+                                "record_only": True,
+                            }
+                            with open(_cc_headroom_path, "a", encoding="utf-8") as _cc_hr_f:
+                                _cc_hr_f.write(json.dumps(
+                                    _cc_headroom_row, ensure_ascii=False) + "\n")
+                            _shadow_dedup_commit(_cc_headroom_claim)
+                except Exception as _cc_headroom_err:
+                    logger.warning(
+                        f"[playbook] chase_cap_anchor_headroom 影子写盘失败 {inst.get('symbol')} "
+                        f"(record-only, 不影响 chase-cap 判定): {_cc_headroom_err}")
                 if _cc_violated(_dir, _new_entry, _cc_f):
                     from pathlib import Path as _Pcc
                     _cc_path = _Pcc(module_file).resolve().parents[2] / "data" / "shadow" / "pullback_limit_shadow.jsonl"
@@ -1813,9 +1931,14 @@ def run_playbook_auto_execute(
                                    or getattr(scheduler, "market_data", None))
                         if _dr_tca is not None and hasattr(_dr_tca, "get_quote"):
                             try:
-                                _tca_ctx = _dr_tca.get_quote(inst["symbol"])
+                                _tca_ctx = fetch_entry_data(
+                                    scheduler, "tca_quote", _dr_tca, "get_quote", inst["symbol"])
                                 _tca_quote_source = ("quote_fallback"
                                                      if isinstance(_tca_ctx, dict) else "missing")
+                            except EntryDataUnavailable as _tca_q_err:
+                                _record_entry_data_defer(inst, _tca_q_err, logger, _emit_exec_gate_audit)
+                                skipped_count += 1
+                                continue
                             except Exception as _tca_q_err:
                                 logger.warning(
                                     f"[TCA] {inst.get('symbol')} 到达报价获取失败 "

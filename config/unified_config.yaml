@@ -1099,6 +1099,10 @@ playbook:
   #   替代控制 = 9/8 开盘首小时人工盯盘 + 三项在场核验 (chase_cap 遥测/enforce、
   #   20s 退出快环心跳、组合兜底聚合), 任一缺位即当轮把本键写回 false (热载, 无需重启)。
   #   回滚: 本键写 false (热载生效) — 平仓/monitor 路径不受影响, 只停新开仓。
+  # 2026-11-20 22:56 恢复 (DEB-20260815 §四十三, 用户明确指令「请恢复」):
+  #   02:31 §11.4 硬止损触线(累计净-4908.07≤止损线-4840.06)自动写 false;
+  #   恢复时累计净-5168.86 仍低于止损线; monitor state tripped=true ⇒ 不再自动
+  #   重触发, 后续回撤风险归人工盯盘+其他闸门, 不再由本监控兜底。
   auto_execute: true
   mom_etf_v1_entries_enabled: true
   # 2026-08-16 减法: premarket_shadow/after_hours_shadow 采集器已删除 —
@@ -2196,6 +2200,8 @@ risk:
     enabled: false
   account:
     max_daily_drawdown: 0.03
+    sim:
+      max_peak_drawdown: 0.05
     # max_total_drawdown 已删除 (2026-08-24 全仓清理): 总回撤门 8/23 随死门删除
     # (DEB-20260823, ffafea48), 此键仅剩日志输出消费 = 死链. 总回撤防护现由
     # capital_safety 水位承担.

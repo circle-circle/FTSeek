@@ -23,6 +23,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env.us")
 
 from app.utils.symbol_utils import to_dotted_class_share  # noqa: E402
+from app.data.quote_cache_policy import DATA_CACHE_PUBLICATION_ALLOWED  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -224,6 +225,8 @@ class TwelveDataProvider:
         return age < ttl
 
     def _set_cache(self, key: str, value: Any):
+        if not DATA_CACHE_PUBLICATION_ALLOWED.get():
+            return
         self._cache[key] = value
         self._cache_time[key] = datetime.now()
 

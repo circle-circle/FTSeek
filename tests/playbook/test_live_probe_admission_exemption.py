@@ -36,7 +36,7 @@ _REAL_GET_ADMISSION_CONFIG = A.get_admission_config
 
 
 @pytest.fixture(autouse=True)
-def _prod_cfg(monkeypatch):
+def _prod_cfg(monkeypatch, tmp_path):
     """用生产 config 实值, 但**显式打开费用门**后注入。
 
     2026-11-12 (核查修复, 5 例长期恒红): 生产自 2026-11-06 起 `fee_gate_enforce=false`
@@ -49,6 +49,9 @@ def _prod_cfg(monkeypatch):
     `test_production_fee_gate_is_currently_unenforced` 单独钉住 —— 一旦有人把开关改回
     true, 该用例会红, 提醒把这里的覆盖删掉、让测试直接跑生产口径。
     """
+    from app.risk import capital_safety
+    capital = capital_safety.CapitalSafetySystem(db_path=str(tmp_path / "capital.sqlite"))
+    monkeypatch.setattr(capital_safety, "get_capital_safety_system", lambda: capital)
     A.reset_cache()
     base = dict(_REAL_GET_ADMISSION_CONFIG(refresh=True))
     enforced = {**base, "enforce": True, "fee_gate_enforce": True}
