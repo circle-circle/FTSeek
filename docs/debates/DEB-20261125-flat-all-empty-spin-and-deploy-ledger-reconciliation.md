@@ -80,3 +80,4 @@
 - **在仓**：BA/BABA SHORT 浮盈≈+$0.34（近平），SL 167.74/88.1 距离充裕；退出快循环心跳新鲜（watchdog 120s 阈值零 stale 告警 ⇒ 监控在线）。
 - **盘前过程链**：FutuLV3 17:00 一次强制重连成功（LV3 可用，零重连失败）；premarket_index 20:32 准点；EXT 臂候选 57/四闸正常/ordered=0 常态；DA 主 carrier（ET-pinned 08:00，enabled）21:00 CST 发车在臂，盘前综合预检 EST 21:45 在臂；regime 部署后无评估属设计（入场循环盘前 idle，RTH 09:45 ET 恢复）。
 - **结论**：部署无回归，交易链路就绪；今日 RTH 为归账 HEAD + 降噪代码的首个完整交易日，观察点=DA 准点发车、22:30 CST 起 regime 评估、回撤 ≥3% 时段首 WARNING。
+- **RTH 开盘核查（22:5x CST = 09:5x ET，用户令「已开盘 请核查是否可以正常成交」）**：DA 准点产出 17 指令（15 SHORT/2 BUY/1 SKIP fee floor）；regime 每 ~3min 评估、日 K 热加载增量生效、**开盘后零 timeout/busy（昨日饥饿未复发）、零 Traceback/CRITICAL**；当前 score -6.7 < -5 ⇒ NO_TRADE（VIX 21.8、SPY 697.9 -2.8%，盘前独立快照 composite -2.711%/QQQ -2.913% 互证真实跌日非数据错误），不新开属硬门风控非故障，score 回 ≥-5 自动恢复（昨日 11:01 ET 已实证该路径 6 笔成交）。出场链正常锁利：BABA 09:33 ET SL_TRAIL_LOCK 净+$53.94，今日净已实现 **+$205.04**（3 笔全锁利）；仅余 BA SHORT 现价≈160.20 距 SL 4.71%，快循环监控在线。不放宽 VIX 门制造成交（11-24 handoff 已裁）。
