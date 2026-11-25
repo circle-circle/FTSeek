@@ -70,3 +70,13 @@
 - A 的自然日志验证待下一 tripped 空转轮（预期：段首一条 WARNING，后续轮静默）；
 - 收益/命中率与本批无关，不宣称任何盈利改善；
 - 干净 checkout 全量重部署演练未做（闭包检查为 AST 级，非全仓 import 演练）。
+
+## 7. 部署后 10.5 小时复查（2026-11-25 20:4x CST = 07:4x ET 盘前）
+
+用户令「请再核查日志记录和过程」，只读实查结果：
+
+- **进程连续**：PID 4112220 自 10:14 部署连续运行，NRestarts=0；窗口内 **0 Traceback / 0 CRITICAL**，error_alert 逐窗扫 261 文件均 0 ERROR/CRITICAL，healthcheck 每 10min 通过。
+- **降噪自然验证——触发条件自然消失（非故障静默）**：盘前 CAT 04:50 ET `SL_TRAIL_LOCK` 净+$43.24、AVGO 07:13 ET `SL_CERT_LOCK` 净+$107.86 两笔锁利平仓（PlaybookExitFastLoop 执行，intent BOOKED/ETH、legs TERMINAL、未决 0、钉钉推送走正路），净值 96872.83→97300.25，回撤 3.13%→**2.70% < 3%**，组合止损不再触发 ⇒ 零日志为正确行为。**WARNING 路径本身尚未自然演练**（监控 17:00 CST 恢复扫描前条件已解除），由 9 例单测覆盖；若 RTH 回撤重返 ≥3% 预期段首一条 WARNING。
+- **在仓**：BA/BABA SHORT 浮盈≈+$0.34（近平），SL 167.74/88.1 距离充裕；退出快循环心跳新鲜（watchdog 120s 阈值零 stale 告警 ⇒ 监控在线）。
+- **盘前过程链**：FutuLV3 17:00 一次强制重连成功（LV3 可用，零重连失败）；premarket_index 20:32 准点；EXT 臂候选 57/四闸正常/ordered=0 常态；DA 主 carrier（ET-pinned 08:00，enabled）21:00 CST 发车在臂，盘前综合预检 EST 21:45 在臂；regime 部署后无评估属设计（入场循环盘前 idle，RTH 09:45 ET 恢复）。
+- **结论**：部署无回归，交易链路就绪；今日 RTH 为归账 HEAD + 降噪代码的首个完整交易日，观察点=DA 准点发车、22:30 CST 起 regime 评估、回撤 ≥3% 时段首 WARNING。
