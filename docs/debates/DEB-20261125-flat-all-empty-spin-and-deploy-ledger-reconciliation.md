@@ -81,3 +81,27 @@
 - **盘前过程链**：FutuLV3 17:00 一次强制重连成功（LV3 可用，零重连失败）；premarket_index 20:32 准点；EXT 臂候选 57/四闸正常/ordered=0 常态；DA 主 carrier（ET-pinned 08:00，enabled）21:00 CST 发车在臂，盘前综合预检 EST 21:45 在臂；regime 部署后无评估属设计（入场循环盘前 idle，RTH 09:45 ET 恢复）。
 - **结论**：部署无回归，交易链路就绪；今日 RTH 为归账 HEAD + 降噪代码的首个完整交易日，观察点=DA 准点发车、22:30 CST 起 regime 评估、回撤 ≥3% 时段首 WARNING。
 - **RTH 开盘核查（22:5x CST = 09:5x ET，用户令「已开盘 请核查是否可以正常成交」）**：DA 准点产出 17 指令（15 SHORT/2 BUY/1 SKIP fee floor）；regime 每 ~3min 评估、日 K 热加载增量生效、**开盘后零 timeout/busy（昨日饥饿未复发）、零 Traceback/CRITICAL**；当前 score -6.7 < -5 ⇒ NO_TRADE（VIX 21.8、SPY 697.9 -2.8%，盘前独立快照 composite -2.711%/QQQ -2.913% 互证真实跌日非数据错误），不新开属硬门风控非故障，score 回 ≥-5 自动恢复（昨日 11:01 ET 已实证该路径 6 笔成交）。出场链正常锁利：BABA 09:33 ET SL_TRAIL_LOCK 净+$53.94，今日净已实现 **+$205.04**（3 笔全锁利）；仅余 BA SHORT 现价≈160.20 距 SL 4.71%，快循环监控在线。不放宽 VIX 门制造成交（11-24 handoff 已裁）。
+
+## 8. NO_TRADE SHORT 直接验证实验（2026-11-25 用户裁，预注册）
+
+**裁决**：用户「目前本身就是模拟交易 并没真实资金入场 我需要直接验证」——明确覆盖影子先行默认（仓内先例：11-20 auto_execute 恢复、重启按需等用户裁覆盖默认）。SIM 风险由既有硬边界兜底：SIM 5% 峰值回撤预算、日亏三档、逐仓止损、四锁（LIVE 切换仍需签字）。
+
+**假设**：高 VIX 恐惧日（regime=NO_TRADE，当前权重下 NO_TRADE 必含 VIX>20 负分项）DA 产出的 SHORT 指令具有正的**成本后**期望。支持证据：11-17→23 SHORT n18 +$196.93 vs LONG n13 -$688.03（小样本）；昨日 risk_off 6 SHORT 全净正。缺口证据：no_trade 日放空的成本后样本≈0。
+
+**单变量变更**（其余一切不变）：
+- 配置键 `playbook.execution_parameters.no_trade_short_sim_experiment_enabled`（默认 false，回滚=改 false 热载即恢复 NO_TRADE 全禁）
+- 开启时：preflight 放行 NO_TRADE 轮 → 主循环**仅 SELL_SHORT** 过方向滤（LONG 记 `NO_TRADE_EXP_LONG_BLOCKED`）→ sizing NO_TRADE 乘数对 SHORT 取 risk_off 同款 **0.3**（非 SHORT 恒 0.0，双层拦截）
+- **SIM-only 代码闸**：`is_live_capable_env()` 为真恒不生效；配置读取失败=关（fail-close 回旧门）
+- 触发/reprice/EntryConfirm/chase_cap/VWAP/费用地板/借券/日亏/SIM 预算/止损全部原样；top_n/min_strength 等其余 regime 参数不动
+
+**cohort 隔离**：实验成交在指令 metadata 落 `no_trade_short_exp`（vix/score/at），经 entry_booking_outbox 关联 trade；**不与 RFC-216 risk_off 子 cohort、qwen post 混算**（RFC-216 handoff 已裁口径）。
+
+**预注册判据**：
+- 度量：净 bps/笔（fees_est 后）、死单率、退出原因分布、MFE/MAE；借券费未统一计入的口径缺口沿用 OKR 披露
+- 结算：n≥30 或激活后 10 个交易日先到者；判「可交易」= 净 bps>0；n≥20 仍显著为负可提前裁停
+- 硬停：既有 SIM 5%/日亏/止损闸任一触发即按原语义停新仓，实验不豁免
+- 到期结算入注册表（军规），判据 FAIL≠自动停采集，先查消费方
+
+**验证**：新契约测试 `tests/playbook/test_no_trade_short_sim_experiment.py` 11 例 + preflight/open_floor 既有 = **54 passed**；regime/f5_shadow/mom_flow/pipeline 回归 **134 passed**（正常 conftest）。
+
+**未验证**：收益假设本身待前向样本；今日恰为 NO_TRADE 日，激活后可立即自然验证链路（SHORT 进触发评估、LONG 被拦）；LIVE 路径仅单测级证据（生产 LIVE 冻结，不可能自然触达）。

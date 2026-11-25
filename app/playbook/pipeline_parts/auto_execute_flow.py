@@ -455,6 +455,19 @@ def run_playbook_auto_execute(
         live_skipped_count = 0
         errors = []
 
+        # [DEB-20261125 §8] NO_TRADE SHORT 实验轮级态 (SIM-only, 用户裁直接验证)。
+        #   fail-close: 读取异常 → False ⇒ sizing 回落 NO_TRADE=0.0, 本轮无新仓。
+        _nt_short_exp = False
+        try:
+            from app.playbook.pipeline_parts.risk_gates import (
+                no_trade_short_sim_experiment_active as _nt_exp_active)
+            if _nt_exp_active():
+                from app.playbook.market_regime import MarketRegimeGate as _MRG_nt
+                _nt_short_exp = _normalize_regime_str(_MRG_nt().assess()) == "NO_TRADE"
+        except Exception as _nt_exp_err:
+            logger.warning(f"[playbook] NO_TRADE SHORT实验态读取失败 (回落旧门): {_nt_exp_err}")
+            _nt_short_exp = False
+
         # [阶段 9] 预算/单日 guardrail 装配本体迁 execution_flow;
         #   R1b/日帽 DB 失败仍按原 fail-close 返回。
         _budget_ctx, _budget_skip = _load_execution_budget(today)
@@ -581,6 +594,12 @@ def run_playbook_auto_execute(
             if inst.get("executed"):
                 continue
             if inst.get("direction") == "SKIP":
+                continue
+            # [DEB-20261125 §8] NO_TRADE SHORT 实验: LONG/BUY 仍禁 (第一层;
+            #   第二层 sizing NO_TRADE 乘数对非 SHORT 恒 0.0), SHORT 进后续全部门。
+            if _nt_short_exp and inst.get("direction", "").upper() not in ("SELL_SHORT", "SHORT"):
+                db.mark_instruction_guardrail_skip(inst["id"], "NO_TRADE_EXP_LONG_BLOCKED")
+                skipped_count += 1
                 continue
             # 2026-07-19 (DEB-round3 #2): 漂移作废指令不再参与触发 (特异性匹配, 防误杀)
             #   P1-2 (2026-08-23): 取值集合化 — 含 tripwire 核销 (见 INVALIDATED_SKIP_REASONS)
@@ -1086,9 +1105,29 @@ def run_playbook_auto_execute(
                                 )
                             try:
                                 from app.playbook.market_regime import MarketRegimeGate as _MRG_f1
-                                _regime_str_f1 = _normalize_regime_str(_MRG_f1().assess())
+                                _ctx_f1 = _MRG_f1().assess()
+                                _regime_str_f1 = _normalize_regime_str(_ctx_f1)
                                 _regime_str_b1 = _regime_str_f1
                                 _regime_mult = {"RISK_ON": 1.0, "CAUTIOUS": 0.5, "RISK_OFF": 0.3, "NO_TRADE": 0.0}.get(_regime_str_f1, 0.5)
+                                # [DEB-20261125 §8] NO_TRADE SHORT 实验 (SIM-only):
+                                #   SHORT → risk_off 同款 0.3, 非 SHORT 恒 0.0 (第二层拦截)。
+                                #   cohort 标记 record-only, 失败不阻断下单。
+                                if _regime_str_f1 == "NO_TRADE":
+                                    from app.playbook.pipeline_parts.risk_gates import (
+                                        no_trade_short_regime_mult as _nt_mult)
+                                    _regime_mult = _nt_mult(inst.get("direction"), _nt_short_exp)
+                                    if _regime_mult > 0:
+                                        try:
+                                            from app.utils.timezone import now_utc as _now_utc_nt
+                                            db.merge_instruction_metadata(inst["id"], {
+                                                "no_trade_short_exp": {
+                                                    "vix": getattr(_ctx_f1, "vix", None),
+                                                    "score": getattr(_ctx_f1, "score", None),
+                                                    "at": _now_utc_nt().isoformat(),
+                                                }
+                                            })
+                                        except Exception:
+                                            pass
                                 # 2026-08-06 (用户指示, sim 采集期): cautious 不再降仓 — 数据采集优先.
                                 #   原 0.5 与 LONG分歧0.5 相乘 → 名义仅 25%, 大量单被 min_notional=3000 物理拦截.
                                 #   回滚: cautious_mult 改回 0.5 (或删本行恢复硬编码).

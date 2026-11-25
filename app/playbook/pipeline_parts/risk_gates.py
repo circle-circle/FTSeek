@@ -190,6 +190,31 @@ def _check_daily_loss_circuit(
     return base
 
 
+def no_trade_short_sim_experiment_active() -> bool:
+    """[DEB-20261125 §8] NO_TRADE SHORT 直接验证实验是否生效 (SIM-only)。
+
+    用户裁 (2026-11-25): SIM 无真实资金, 直接验证高 VIX 恐惧日 DA SHORT 的
+    成本后期望, 覆盖影子先行默认。LIVE-capable 恒 False (代码闸);
+    配置读取失败 = False (回落 NO_TRADE 全禁旧门)。
+    """
+    try:
+        from app.core.live_readiness import is_live_capable_env
+        if is_live_capable_env():
+            return False
+        from app.playbook.config import get_playbook_config
+        return bool(get_playbook_config().get(
+            "no_trade_short_sim_experiment_enabled", False))
+    except Exception:
+        return False
+
+
+def no_trade_short_regime_mult(direction, exp_active: bool) -> float:
+    """NO_TRADE 档仓位乘数: 实验生效且 SHORT → risk_off 同款 0.3, 否则 0.0。"""
+    if exp_active and str(direction or "").upper() in ("SELL_SHORT", "SHORT"):
+        return 0.3
+    return 0.0
+
+
 def _auto_execute_preflight(
     today: str,
     *,
@@ -233,15 +258,23 @@ def _auto_execute_preflight(
         from app.playbook.market_regime import MarketRegime
         from app.us_pipeline.risk_state_machine import RiskStateMachine, RiskState
         if regime_ctx.regime == MarketRegime.NO_TRADE:
-            logger.warning(
-                f"[playbook] 当前 regime=NO_TRADE (VIX={regime_ctx.vix:.2f}), 跳过 auto_execute"
-            )
-            return {
-                "date": today,
-                "executed": 0,
-                "skipped": 0,
-                "reason": "regime_no_trade",
-            }
+            if no_trade_short_sim_experiment_active():
+                # [DEB-20261125 §8] SIM-only 实验: 放行本轮, 下游 auto_execute_flow
+                #   按方向过滤 (仅 SELL_SHORT) + sizing 用 0.3; LONG 双层拦截。
+                logger.warning(
+                    f"[playbook] NO_TRADE SHORT实验 (SIM-only, VIX={regime_ctx.vix:.2f}): "
+                    "仅放行 SELL_SHORT (risk_off 仓位参数), LONG 仍禁"
+                )
+            else:
+                logger.warning(
+                    f"[playbook] 当前 regime=NO_TRADE (VIX={regime_ctx.vix:.2f}), 跳过 auto_execute"
+                )
+                return {
+                    "date": today,
+                    "executed": 0,
+                    "skipped": 0,
+                    "reason": "regime_no_trade",
+                }
         risk_state = RiskStateMachine().get_state()
         if risk_state in (RiskState.RISK_OFF, RiskState.HALT):
             logger.warning(
