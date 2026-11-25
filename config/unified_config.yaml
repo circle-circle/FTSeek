@@ -1165,7 +1165,7 @@ playbook:
     #   SIM-only 硬隔离: LIVE-capable 环境恒不生效 (代码闸, 非仅配置)。
     #   cohort: 指令 metadata.no_trade_short_exp 标记, 经 outbox 关联 trade, 不与旧样本混算。
     #   回滚: 本键改 false (热载即恢复 NO_TRADE 全禁; 已开仓位由原退出链管理)。
-    no_trade_short_sim_experiment_enabled: false
+    no_trade_short_sim_experiment_enabled: true
     # [RFC-196 2026-11-10] 盘前全量生成最晚启动时点 (ET HHMM) — 单轮实测 300-400s 且
     #   单步不可中断, 09:20 之后再启动必跨开盘, 卡住同轮入场执行 (11-09 实证: 18 轮/94min,
     #   首单拖到 09:40)。过期即不启动 (人工应急可 force=True 重跑)。
