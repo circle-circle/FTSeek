@@ -2,6 +2,14 @@
 
 > **写入约定（2026-11-11 起）**：每条交接必须带三件可核凭据 —— `**凭据**`（commit sha / 改动文件数，`git show --stat` 可核）、`**验证**`（可复跑命令 + 日志路径，不写“已通过”）、`**未验证**`（显式列出没验的部分，无则写“无”）。自述≠事实，这三行是给下一个人核的。
 
+## 2026-11-25 23:4x CST · 【RFC-217 NO_TRADE SHORT实验】用户裁直接验证已部署激活；首轮链路自然验证成立，零成交属chase_cap/VWAP门生效；收益待样本
+
+- **结论**：用户质疑「高VIX=可做空情绪，DA持续产出SHORT为何强禁」，继而裁「目前本身就是模拟交易…我需要直接验证」，明确覆盖影子先行默认。落地单变量实验：**NO_TRADE 档仅放行 SELL_SHORT（SIM-only 代码闸，LIVE-capable 恒不生效），仓位沿用 risk_off 乘数 0.3，LONG 双层拦截**；触发/reprice/确认/chase/VWAP/日亏/SIM 5%预算/止损全部原样，RFC-216 不动。配置键 `no_trade_short_sim_experiment_enabled=true`（回滚=改 false 热载恢复全禁）。cohort=指令 metadata `no_trade_short_exp` 经 outbox 关联 trade，不与 RFC-216/qwen post 混算；预注册判据 n≥30 或 10 交易日结算、净 bps>0 为可交易、n≥20 显著负可提前裁停（DEB §8/RFC-217）。**首轮自然验证**（VIX 22.00 NO_TRADE）：17 指令进评估（此前整轮跳过），13 SHORT 中 5 triggered 全被 chase_cap_enforced 拦、CAT VWAP 拦，2 LONG 记 NO_TRADE_EXP_LONG_BLOCKED，零 Traceback——**零成交是既有追价门在跌日保护，非故障，实验不豁免执行质量门**。
+- **凭据**：2 提交=`ad44b0d34`（代码+测试+DEB§8+config默认关，5文件）+`cd604501d`（RFC-217+激活，2文件）；治理闸交互确认经用户 AskUserQuestion 明确授权代答 y（hook 完整执行未跳过）；commit-msg 闸要求 ADR/RFC 引用故补 RFC-217。其他 WIP 未触碰。
+- **验证**：契约 11 例+preflight/open_floor=**54 passed**、regime/f5_shadow/mom_flow/pipeline=**134 passed**（正常 conftest）。重启前核 BA 1 仓/两账本未决 0/10:14 后仅本批 3 生产文件改动；冒烟 **7/7 exit0**（`/tmp/rfc217-startup-smoke.log`）；重启后 BA 原样/peak 不重置；首轮实验日志与指令状态均实查（5770/5775 SKIP=NO_TRADE_EXP_LONG_BLOCKED，5762/5763/5766/5772/5774 chase_cap_enforced）。
+- **未验证**：收益假设零样本（首轮无成交）；chase_cap 在跌日持续拦追空 ⇒ 样本积累速度可能慢，若长期零成交需另裁是否调 chase 锚口径（不得顺手放宽）；LIVE 路径仅单测级。今日净已实现 +$205.04（BABA/CAT/AVGO 锁利，实验前成交，不属本 cohort）。
+- **下一步**：观察实验 cohort 首笔成交与 chase_cap 拦截比例；n≥20 显著负或 SIM 硬闸触发即按预注册裁停；每日结算入注册表。其余脏文件归账/F1 政策/DA 咨询vs严格计划语义仍另案。**最后更新：2026-11-25 23:4x CST。**
+
 ## 2026-11-25 10:2x CST · 【11-24诊断落地】组合止损空转降噪已部署+入场链路39文件归账；冒烟7/7，交易链路正常；降噪自然验证待盘前
 
 - **结论**：用户裁「请按照建议合理优化修复，确保可正常交易」。按昨日诊断三项落地：**A** 账户级组合止损 tripped 空转（11-24 实测 1231 轮×2 条 CRITICAL/日，managed 恒空、Playbook 仓 R-7c 排除）改为**空仓段一条 WARNING**，回撤解除/持仓恢复重新计段；有仓时 CRITICAL/平仓/冷却语义逐字保留，返回值与交易门零变更；**不接 tripped 进 Playbook 入场门**（会停新仓，与用户指令相悖，结构性问题仍归 DEB-20261122 F1 待裁）。**B** 入场链路归账：`entry_data_fetch.py`（原未跟踪）/`publish_cache` 片段/SIM 5% 键等已部署内容原在独立分支 `sim5-budget-release-20261121`（fff29129a+a365e64ca 非本分支祖先），干净重部署会 ImportError 或 SIM 预算回退 3%；按三方比对（base=f296a3491）+AST import 闭包验证把 worktree 已运行内容精确提交 **39 文件**（含 entry_routing RFC-145 B1 纯函数依赖、futu 快照 N/A 行隔离、RFC-145 B1 影子、11-20 恢复注释），提交内容==运行中内容，零运行时差异。**C** 今晨 09:09 重启无 handoff/冒烟记录已登记待执行方自认；本批重启补冒烟覆盖。**交易正常性**：auto_execute=true、无 KILL_SWITCH、regime 链路昨日已自然验证（6 新 SHORT/平 6 净+$52.89 全保护性退出）、退出快循环 10s 接管 4 在仓。详 `docs/debates/DEB-20261125-flat-all-empty-spin-and-deploy-ledger-reconciliation.md`。

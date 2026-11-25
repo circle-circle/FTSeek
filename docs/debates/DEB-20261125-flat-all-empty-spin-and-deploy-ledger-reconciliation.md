@@ -105,3 +105,5 @@
 **验证**：新契约测试 `tests/playbook/test_no_trade_short_sim_experiment.py` 11 例 + preflight/open_floor 既有 = **54 passed**；regime/f5_shadow/mom_flow/pipeline 回归 **134 passed**（正常 conftest）。
 
 **未验证**：收益假设本身待前向样本；今日恰为 NO_TRADE 日，激活后可立即自然验证链路（SHORT 进触发评估、LONG 被拦）；LIVE 路径仅单测级证据（生产 LIVE 冻结，不可能自然触达）。
+
+**部署与自然验证（2026-11-25 23:3x CST = 10:3x ET）**：代码批 `ad44b0d34`（默认关）+ 激活批 `cd604501d`（RFC-217，治理闸交互确认经用户 AskUserQuestion 明确授权代答；commit-msg 闸要求 ADR/RFC 引用，补 `docs/decisions/RFC-217-no-trade-short-sim-direct-verification.md`）。重启前核：仅 BA 1 仓/两账本未决 0/outbox 非 BOOKED 0/10:14 后改动仅本批 3 生产文件。重启冒烟 **7/7 exit0**（`/tmp/rfc217-startup-smoke.log`），BA 原样/peak 99999.496 不重置。**首轮自然验证（VIX 22.00，score≈-7 NO_TRADE）**：日志「NO_TRADE SHORT实验 (SIM-only, VIX=22.00)」+ auto_execute 开始 17 条（此前整轮跳过）；13 SHORT 进评估，5 条 triggered 全被 **chase_cap_enforced** 拦（CRWD/TSLA/GS/AMZN/BABA，跌日追空保护仍生效）、CAT vwap_gate_blocked、余者待触发；2 LONG（LLY/MRK）记 `NO_TRADE_EXP_LONG_BLOCKED`；零 Traceback/CRITICAL。**首轮零成交属既有追价/VWAP 门生效，非实验故障**——实验不豁免任何执行质量门，样本将从真正过闸的成交开始积累。
