@@ -2,6 +2,13 @@
 
 > **写入约定（2026-11-11 起）**：每条交接必须带三件可核凭据 —— `**凭据**`（commit sha / 改动文件数，`git show --stat` 可核）、`**验证**`（可复跑命令 + 日志路径，不写“已通过”）、`**未验证**`（显式列出没验的部分，无则写“无”）。自述≠事实，这三行是给下一个人核的。
 
+## 2026-11-25 10:2x CST · 【11-24诊断落地】组合止损空转降噪已部署+入场链路39文件归账；冒烟7/7，交易链路正常；降噪自然验证待盘前
+
+- **结论**：用户裁「请按照建议合理优化修复，确保可正常交易」。按昨日诊断三项落地：**A** 账户级组合止损 tripped 空转（11-24 实测 1231 轮×2 条 CRITICAL/日，managed 恒空、Playbook 仓 R-7c 排除）改为**空仓段一条 WARNING**，回撤解除/持仓恢复重新计段；有仓时 CRITICAL/平仓/冷却语义逐字保留，返回值与交易门零变更；**不接 tripped 进 Playbook 入场门**（会停新仓，与用户指令相悖，结构性问题仍归 DEB-20261122 F1 待裁）。**B** 入场链路归账：`entry_data_fetch.py`（原未跟踪）/`publish_cache` 片段/SIM 5% 键等已部署内容原在独立分支 `sim5-budget-release-20261121`（fff29129a+a365e64ca 非本分支祖先），干净重部署会 ImportError 或 SIM 预算回退 3%；按三方比对（base=f296a3491）+AST import 闭包验证把 worktree 已运行内容精确提交 **39 文件**（含 entry_routing RFC-145 B1 纯函数依赖、futu 快照 N/A 行隔离、RFC-145 B1 影子、11-20 恢复注释），提交内容==运行中内容，零运行时差异。**C** 今晨 09:09 重启无 handoff/冒烟记录已登记待执行方自认；本批重启补冒烟覆盖。**交易正常性**：auto_execute=true、无 KILL_SWITCH、regime 链路昨日已自然验证（6 新 SHORT/平 6 净+$52.89 全保护性退出）、退出快循环 10s 接管 4 在仓。详 `docs/debates/DEB-20261125-flat-all-empty-spin-and-deploy-ledger-reconciliation.md`。
+- **凭据**：2 提交=`4e364f319`（B 归账 39 文件 4553 增 113 删）+`0fc72268f`（A 修复 4 文件：position_exit_monitor 仅 4 hunk 24 增 2 删 + 新测试 6 例 + DEB + README 索引）；DEB-20261120 §R2 既有 WIP 7 hunk 未带入仍留 worktree；其他批次脏文件（scheduler_core/shadow_registry/daily_review/lesson_injector/trailing_stop/trail_state_store 等）未触碰，归各 owner 归账。未推送。
+- **验证**：A 新回归 6+既有 FLAT_ALL 3=**9 passed**、B 归账集关键回归（sim_entry_budget_wiring/account_circuit_breaker_sim_budget/entry_data_bounded_fetch/futu_dailyk_quota/entry_context_cache_boundary）**278 passed**（均正常 conftest，存量豁免 pdt_guard 2 次主库写为既有登记项）。重启前核：SIM 4 仓/两退出账本未决 0/outbox 非 BOOKED 0/09:09 后源码改动仅本批 A/无 KILL_SWITCH。`systemctl restart ftseek-us` 新 PID 4112220（10:14:24），冒烟 **7/7 exit0**（`/tmp/deb20261125-startup-smoke.log`）；重启后 BA/BABA/CAT/AVGO 4 仓原样、peak 99999.496/equity 96872.827 不重置、零 Traceback。
+- **未验证**：降噪自然日志验证待下一活跃时段——PositionMonitorLoop 在 OVERNIGHT/WEEKEND 按设计跳扫，重启时值 21:2x ET 属 OVERNIGHT；预期今日 17:00 CST（04:00 ET 盘前）起段首一条「managed 持仓为空」WARNING、后续轮静默。干净 checkout 全量重部署演练未做（闭包为 AST 级）。收益/命中率与本批无关，不宣称盈利改善；tripped 结构性空转（账户级熔断看不到 Playbook 仓）未解决，F1 政策仍待用户裁。
+- **下一步**：盘前核降噪自然生效（grep「组合止损」应仅段首 WARNING）；若异常放大 revert `0fc72268f`（纯日志无交易行为可回滚）；其余脏生产文件归账与 F1 预算政策另案，不叠加同轴变更。**最后更新：2026-11-25 10:2x CST。**
 
 ## 2026-11-25 00:0x CST · 【RFC-216 VIX连续计分】20–22线性过渡已部署；自然RISK_OFF+BABA解堵+MSFT/BABA BOOKED；收益未证
 

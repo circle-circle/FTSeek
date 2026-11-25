@@ -60,8 +60,9 @@
 
 ## 5. 部署与回滚
 
-- 重启前核：在途出场 SQL + 09:09 后源码 mtime（实测为空，重启只带本批 A 改动）。
-- 回滚：A 为纯日志改动，回滚 = revert 对应 commit；无配置开关、无交易行为可回滚。
+- **已部署（2026-11-25 10:14 CST）**：提交 `4e364f319`（B 归账 39 文件）+ `0fc72268f`（A 修复 4 文件，hunk 级分离，DEB-20261120 既有 WIP 7 hunk 未带入）。重启前核：SIM 4 仓（BA/BABA/CAT/AVGO）/两退出账本未决 0/outbox 非 BOOKED 0/09:09 后源码改动仅 position_exit_monitor.py（本批 A）/无 KILL_SWITCH/auto_execute=true。`systemctl restart ftseek-us` 新 PID 4112220，冒烟 **7/7 exit0**（`/tmp/deb20261125-startup-smoke.log`）。重启后 4 仓原样、peak 99999.496/equity 96872.827/initial 77806.99 不变、退出快循环 10s 接管、零 Traceback。
+- **自然验证窗口**：PositionMonitorLoop 在 `MarketPhase.OVERNIGHT/WEEKEND` 按设计跳扫（position_monitor.py 循环 phase 门），重启时值 21:2x ET 属 OVERNIGHT，故空转降噪的自然日志验证待下一活跃时段（盘前 04:00 ET = 17:00 CST）；预期段首一条「FLAT_ALL 触发但 managed 持仓为空」WARNING、后续轮静默、零 CRITICAL。
+- 回滚：A 为纯日志改动，回滚 = revert `0fc72268f`；无配置开关、无交易行为可回滚。
 - 一次一变量：本批运行时变化仅 A 的日志分支；B 归账零运行时差异（提交内容 == 运行中内容）。
 
 ## 6. 未验证
