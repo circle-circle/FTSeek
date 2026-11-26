@@ -2,6 +2,15 @@
 
 > **写入约定（2026-11-11 起）**：每条交接必须带三件可核凭据 —— `**凭据**`（commit sha / 改动文件数，`git show --stat` 可核）、`**验证**`（可复跑命令 + 日志路径，不写“已通过”）、`**未验证**`（显式列出没验的部分，无则写“无”）。自述≠事实，这三行是给下一个人核的。
 
+## 2026-11-26 13:3x CST · 【明显错误清理】RFC-217 LONG 首层拦截改回按轮暂缓（一处代码，本地未重启）；上轮四条建议经数据全部否决
+
+- **结论**：用户令「不过度保守、找明显错误、执行优化」。只读复核后，上轮四条建议（确认 TTL 复验 / TP 吞咽 / 严格盘内计划 / LONG 持夜取消）均被数据或既有判据否决，**不动作**；唯一落地的是一处保真修正：NO_TRADE 实验轮的 LONG 首层拦截原先写**当日终态** `SKIP`+`skip_reason`（regime 回落也不恢复、回滚开关也救不回），比 RFC-217「不改 LONG 权限」更严，且与 2026-11-12 已修的「暂时态写终态字段」同病根。现改为按轮暂缓（`exec_gate_audit` `gate=no_trade_short_exp_long`/`transient=True`，指令保持 PENDING）；sizing 第二层、SHORT 0.3、LIVE 闸、cohort、预注册判据不变。NO_TRADE 期间 LONG 仍不能开仓——这是纠错不是增收项。
+- **凭据**：`git diff --stat` 仅 `app/playbook/pipeline_parts/auto_execute_flow.py`（+25/−6：LONG 拦截块 + `_record_mom_defer` 新增可选 `label`，MOM 调用方默认值不变）与 3 个测试文件（`tests/playbook/test_entry_data_bounded_fetch.py` 新增暂缓/回落两用例、`test_no_trade_short_sim_experiment.py` 注释、`test_entry_context_cache_boundary.py` 补 Phase A 的 `quote_time` 期望值）；文档 DEB-20261125 §11 + RFC-217 §6 + 本条。零 config/DB/订单改动；11-25 已写 SKIP 的 5770/5775 不回改。**未提交/未推送/未重启**，现役 PID 36694 仍跑旧写法。
+- **验证**：`./venv/bin/python -m pytest tests/playbook/test_entry_data_bounded_fetch.py tests/playbook/test_no_trade_short_sim_experiment.py tests/playbook/test_mom_etf_v1_flow.py tests/test_auto_execute_open_floor.py -q -p no:cacheprovider` → 222 passed。扩大回归 `tests/playbook tests/test_playbook*.py tests/test_auto_execute*.py` → 1780 passed / 26 failed；因果对照：把 LONG 拦截临时还原旧写法重跑同 6 个失败文件仍 26 failed，按 SHA 复原 ⇒ 既有失败（均在 `_check_intraday_trigger` 入场取数路径，日志「trigger_context: busy」，根因未诊断，未修）。数据脚本 `/tmp/ftseek-opt-20261126/q*.py`、`c17_split.py`（只读）。
+- **未验证**：未做重启冒烟（未重启）；扩大回归的 26 例既有失败未定位；11.3 的 regime×方向期望为描述性统计（n 低于 A1 成规线），未做样本外验证；SHORT 持夜与假日敞口的反事实净收益未算。
+- **归账更正**：上一条所记「PID 4164761 / 未部署 Phase A」已失效——服务于 **2026-11-26 09:09:18 CST 被另一会话重启**（PID 36694，NRestarts 0，无 handoff、无对应 commit），运行中的进程已加载 Phase A 14 文件及其他会话的全部在途 WIP（mtime 均早于重启）。本次重启前核：在途出场 0（BA/BABA/GS 三仓 SHORT 隔夜持仓，库内状态完整）、重启后仅本批 1 个生产文件变更。
+- **下一步**：① 用户授权后 `systemctl restart ftseek-us` + `PYTHONPATH=. ./venv/bin/python scripts/startup_smoke_check.py --wait 90`（11-27 半日市 13:00 ET 收盘前完成即可）；② **留裁**：弱市 LONG 授权——09-01 起 risk_off LONG −36.9/笔(n=37) 对 SHORT +20.4/笔(n=26)，是否另立预注册实验由用户裁，不代答（C15 禁方向硬护栏）；③ lessons 575/578「强制收盘平仓」与 C17 冲突仍待另批；④ 26 例既有 `_check_intraday_trigger` 失败建议由入场取数改动方定位。**最后更新：2026-11-26。**
+
 ## 2026-11-25 23:4x CST · 【RFC-217 NO_TRADE SHORT实验】用户裁直接验证已部署激活；首轮链路自然验证成立，零成交属chase_cap/VWAP门生效；收益待样本
 
 - **结论**：用户质疑「高VIX=可做空情绪，DA持续产出SHORT为何强禁」，继而裁「目前本身就是模拟交易…我需要直接验证」，明确覆盖影子先行默认。落地单变量实验：**NO_TRADE 档仅放行 SELL_SHORT（SIM-only 代码闸，LIVE-capable 恒不生效），仓位沿用 risk_off 乘数 0.3，LONG 双层拦截**；触发/reprice/确认/chase/VWAP/日亏/SIM 5%预算/止损全部原样，RFC-216 不动。配置键 `no_trade_short_sim_experiment_enabled=true`（回滚=改 false 热载恢复全禁）。cohort=指令 metadata `no_trade_short_exp` 经 outbox 关联 trade，不与 RFC-216/qwen post 混算；预注册判据 n≥30 或 10 交易日结算、净 bps>0 为可交易、n≥20 显著负可提前裁停（DEB §8/RFC-217）。**首轮自然验证**（VIX 22.00 NO_TRADE）：17 指令进评估（此前整轮跳过），13 SHORT 中 5 triggered 全被 chase_cap_enforced 拦、CAT VWAP 拦，2 LONG 记 NO_TRADE_EXP_LONG_BLOCKED，零 Traceback——**零成交是既有追价门在跌日保护，非故障，实验不豁免执行质量门**。

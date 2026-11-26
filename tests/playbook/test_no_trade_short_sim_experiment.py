@@ -6,7 +6,8 @@
   2. 配置读取失败 = 关 (回落 NO_TRADE 全禁旧门);
   3. NO_TRADE 下 SHORT 乘数 = risk_off 同款 0.3, 非 SHORT 恒 0.0;
   4. preflight: 开关关/LIVE → regime_no_trade 旧拦截; 开关开 SIM → 放行本轮;
-  5. 主循环有 LONG 方向过滤钉 (NO_TRADE_EXP_LONG_BLOCKED) 与 sizing 第二层。
+  5. 主循环有 LONG 方向过滤钉 (NO_TRADE_EXP_LONG_BLOCKED, 按轮暂缓不写终态
+     skip_reason — 行为用例见 test_entry_data_bounded_fetch) 与 sizing 第二层。
 """
 from __future__ import annotations
 

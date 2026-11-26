@@ -107,3 +107,57 @@
 **未验证**：收益假设本身待前向样本；今日恰为 NO_TRADE 日，激活后可立即自然验证链路（SHORT 进触发评估、LONG 被拦）；LIVE 路径仅单测级证据（生产 LIVE 冻结，不可能自然触达）。
 
 **部署与自然验证（2026-11-25 23:3x CST = 10:3x ET）**：代码批 `ad44b0d34`（默认关）+ 激活批 `cd604501d`（RFC-217，治理闸交互确认经用户 AskUserQuestion 明确授权代答；commit-msg 闸要求 ADR/RFC 引用，补 `docs/decisions/RFC-217-no-trade-short-sim-direct-verification.md`）。重启前核：仅 BA 1 仓/两账本未决 0/outbox 非 BOOKED 0/10:14 后改动仅本批 3 生产文件。重启冒烟 **7/7 exit0**（`/tmp/rfc217-startup-smoke.log`），BA 原样/peak 99999.496 不重置。**首轮自然验证（VIX 22.00，score≈-7 NO_TRADE）**：日志「NO_TRADE SHORT实验 (SIM-only, VIX=22.00)」+ auto_execute 开始 17 条（此前整轮跳过）；13 SHORT 进评估，5 条 triggered 全被 **chase_cap_enforced** 拦（CRWD/TSLA/GS/AMZN/BABA，跌日追空保护仍生效）、CAT vwap_gate_blocked、余者待触发；2 LONG（LLY/MRK）记 `NO_TRADE_EXP_LONG_BLOCKED`；零 Traceback/CRITICAL。**首轮零成交属既有追价/VWAP 门生效，非实验故障**——实验不豁免任何执行质量门，样本将从真正过闸的成交开始积累。
+
+## 11. 「不过度保守 · 找明显错误」复核与执行（2026-11-26 CST，用户令；一处代码修正，其余经数据否决）
+
+### 11.1 上一轮四条建议的复核结果（只读，`mode=ro` + `PRAGMA query_only=ON`）
+
+| 上轮建议 | 复核结论 | 证据 |
+|---|---|---|
+| ① 成交前复验确认新鲜度（BABA 旧确认） | **不成立，撤回** | 11-17 起 42 笔 DA 成交，确认年龄最大 38.6 分钟，全部落在 DA 自身 `confirmation.ttl_min`（60–390）内；BABA 38.1 分钟对 TTL 180 |
+| ② 量化 TP 可执行 RR（BABA RR 1.477<1.5） | **无已实现影响，不动作** | 12/42 笔 `_tp_rr_gate.swallowed=true`，全部经 BE/trail lock 出场，无一触及 TP；吞 TP 的已实现损益差为 0 |
+| ③ 审计「按盘内计划严格执行」 | **被既有判据否决** | RFC-215：忠实执行 LLM 计划净 −$1,183（217 笔），严格计划模式劣于机器 |
+| ④ 复审 LONG 持夜授权 | **不稳健，不动作（C17 维持）** | 见 11.2 |
+
+### 11.2 LONG 持夜取消按方向拆分重放（`/tmp/ftseek-opt-20261126/c17_split.py`，算法同 `scripts/deb20261030_overnight_cancel_replay.py`）
+
+- LONG 取消持夜全期 Δ=**+1,549.0**（n=97），但逐笔中位数 Δ=**−25.2**、38 笔变好/59 笔变差——总和为正靠 10–11 月少数几笔；按月 Δ：Jul −163.0 / Aug −175.1 / Sep −963.3 / Oct +799.8 / Nov +2050.7（符号不稳）；样本内（≤10-30）日K收盘臂 −501.7 对 15:52 臂 +478.5，**两臂异号**。
+- SHORT 取消持夜 Δ=**−1,874.6**，凡 n>1 的月份全负。
+- LONG 入场日收盘时浮亏的 90 笔：实际 −7,901.5，改当日收盘平 −6,557.3——亏损主要在入场日盘中就已发生，不是隔夜才产生。
+- 结论：C17 复活条件（事前可识别子集 + Δ>0 + 不侵蚀修复腿）三条均不满足，**不重开**。
+
+### 11.3 损益结构（2026-06-24..11-25 已平 928 笔；09-01 起按 regime）
+
+- 引擎为正的部分：SL_TRAIL_LOCK LONG 盘中 171 笔 +6,646.04、SL_BREAKEVEN LONG 盘中 235 笔 +1,137.69、SHORT 盘中 186 笔 +1,084.03、SHORT 隔夜 24 笔 +1,046.70。
+- 尾部：LONG 隔夜 101 笔 **−7,899.05**；其中 OVERNIGHT_GAP_STOP LONG 28 笔、胜率 0%、Σ −7,976.99；SL_INITIAL LONG 29 笔 −3,599.39；SL_ATR_STOP LONG 3 笔 −2,416.20。
+- 09-01 起 LONG 在每个 regime 都为负、SHORT 在 risk_off 为正：
+
+| regime | LONG n / Σ | SHORT n / Σ |
+|---|---|---|
+| risk_off | 37 / −1,366.58（≈ −36.9/笔） | 26 / +534.27（≈ +20.4/笔，胜率 96.2%） |
+| cautious | 130 / −763.65 | 48 / −209.02 |
+| risk_on | 107 / −448.61 | 36 / +88.93 |
+
+  这是描述性统计，n 多数低于 A1 的 n≥60 成规线，**不据此改乘数**（C15 禁方向硬护栏；§5 禁强制多空配比）。留作裁决项，见 11.6。
+
+### 11.4 已执行：RFC-217 LONG 首层拦截由「当日终态」改回「按轮暂缓」（一处代码，SIM-only 实验闸内）
+
+- **病灶**：`auto_execute_flow.py` LONG 首层拦截调用 `db.mark_instruction_guardrail_skip(..., "NO_TRADE_EXP_LONG_BLOCKED")`，把 `direction` 写成 `SKIP` 并写 `skip_reason`。该列是终态字段（`db.py:1051`），后续循环先跳过 SKIP，于是 **regime 盘中回落后同条 LONG 仍当日死透**；开关回滚（改 false 热载）也救不回已写 SKIP 的指令。§10.6 已指出该不对称、留待裁决。
+- **为何按「不改 LONG 权限」修**：RFC-217 §1 明写不改 LONG 权限。实验关时 NO_TRADE 是 preflight **整轮**拦截、指令保持 PENDING、regime 回落后 LONG 按 RISK_OFF 0.3 正常评估；实验开后 LONG 反而更严。同一病根仓库 2026-11-12 已修过一次（`_record_mom_defer` 注释：「暂时态写进终态字段」，下游 `premarket_invalidation` / `shadow_tracker` / `ue_batch` 把非空 `skip_reason` 当已跳过）。该测试夹具默认即把「永久 SKIP」列为禁止边界。
+- **修法**：改用 `_record_mom_defer`（新增可选 `label` 参数，默认值不变，MOM 调用方零影响）：审计 `exec_gate_audit`（`gate=no_trade_short_exp_long`, `transient=True`，按 指令/日/原因 去重）+ warning「下轮复检」；指令保持 PENDING，不写 `direction`/`skip_reason`。`skipped_count` 计数与 `continue` 不变。sizing 第二层（NO_TRADE 下非 SHORT 乘数 0.0）原样，SHORT 路径、cohort 标记、LIVE 闸原样。
+- **效果边界**：NO_TRADE 期间 LONG 仍完全不能开仓（两层都在）。唯一差别是 regime 回落后 LONG 回到实验前的基线评估。按 11.3，弱市 LONG 的历史期望为负——所以这一处是**保真修正而非增收项**，不应被解读为「多放 LONG 能赚钱」。
+- **未动的 DB**：11-25 已被写 SKIP 的 LLY/MRK（指令 5770/5775）不回改（日期已过，改回无意义）。
+
+### 11.5 验证
+
+- 新增行为用例（`tests/playbook/test_entry_data_bounded_fetch.py`）：① 实验开、preflight RISK_ON、轮级 NO_TRADE：BUY 本轮不执行、不触发永久 SKIP、`direction` 仍 BUY、`skip_reason` 空、留下一条 `transient=True` 审计，sizing 与下单均未调用；② NO_TRADE 暂缓后 regime 回落 RISK_OFF：同条指令第二轮按乘数 0.3 执行，暂缓审计仍只一条（去重生效）。原参数化用例去掉对「必须写终态 SKIP」的断言。
+- 顺手校正：Phase A 的 VIX 实时缓存新增 `quote_time` 字段，`tests/playbook/test_entry_context_cache_boundary.py::…[av_live]` 的精确字典断言未跟上（539 隔离集未含该文件），已补期望值；缓存消费方只读 `vix` 键，无行为回归。
+- 命令与结果：`./venv/bin/python -m pytest tests/playbook/test_entry_data_bounded_fetch.py tests/playbook/test_no_trade_short_sim_experiment.py tests/playbook/test_mom_etf_v1_flow.py tests/test_auto_execute_open_floor.py -q -p no:cacheprovider` → **222 passed**。
+- 扩大回归 `tests/playbook tests/test_playbook*.py tests/test_auto_execute*.py` → 1780 passed / 26 failed。26 例失败集中在 `_check_intraday_trigger` 入场取数路径（`test_low_atr_gate_screening_basis` / `test_m2_c2_live_quote_gate` / `test_playbook_service::TestDirectionGateC` / `test_offline_full_chain` / `test_risk_scale_wiring` / `test_falsification_capital_flow_shadow`，日志「trigger_context: busy」）。**因果对照**：把本批 LONG 拦截临时还原为旧写法后重跑同 6 个文件，仍 **26 failed**，随后按 SHA 复原 ⇒ 与本批无关，属既有失败（根因未诊断；`trigger_flow.py` / `entry_data_fetch.py` 均无未提交改动），本批不认领也不修。另 `test_valid_broker_rows…[2.5_1-BUY]` 在全量并发下超时失败一次、单跑通过，属 0.04s 超时夹具的时序抖动。
+- 状态：**未提交、未推送、未重启**。现役进程 PID 36694 仍是旧写法。
+
+### 11.6 归账更正与留裁
+
+- **更正**：本会话此前记录「Phase A 未部署」。实查 `systemctl show ftseek-us`：服务于 **2026-11-26 09:09:18 CST** 被另一会话重启（PID 36694，NRestarts 0，无 handoff 条目、无对应 commit），全部 WIP 的 mtime 均早于该时刻 ⇒ **运行中的进程已加载 Phase A 14 个源码/测试文件及其他会话的在途改动**。Phase A「已上线」是既成事实，但不是本会话部署的。
+- **留裁（不代答）**：弱市 LONG 授权。数据见 11.3（risk_off LONG −36.9/笔 n=37，SHORT +20.4/笔 n=26）。可选方向是另立预注册实验（如 risk_off 档 LONG 乘数下调），但 C15 禁方向硬护栏、样本量低于成规线，且 11.4 的修正本身会让 LONG 在弱市多一点评估机会。是否立项由用户裁。
+- **不动作清单**：确认 TTL 复验、TP 吞咽、严格盘内计划、LONG 持夜取消、SL/TP 轴新影子（RFC-215 §6）、lessons 575/578 的「强制收盘平仓」（与 C17 冲突，仍待另批处置）。

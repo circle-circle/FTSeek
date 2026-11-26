@@ -37,3 +37,9 @@
 - 契约测试 `tests/playbook/test_no_trade_short_sim_experiment.py` 11 例 + preflight/open_floor 既有 = 54 passed；regime/f5_shadow/mom_flow/pipeline 回归 134 passed（正常 conftest）
 - 激活日（11-25）恰为 NO_TRADE 日，可即时自然验证：SHORT 进触发评估、LONG 被拦、零 Traceback
 - 未验证：收益假设本身；LIVE 路径仅单测级（生产 LIVE 冻结不可能自然触达）
+
+## 6. 2026-11-26 保真修正：LONG 首层拦截按轮暂缓（本地已改，未重启）
+
+§1「不改 LONG 权限」的执行口径修正为：NO_TRADE 轮 LONG/BUY **本轮**不进评估，指令保持 PENDING，不写 `SKIP`/`skip_reason`；留痕走 `exec_gate_audit`（`gate=no_trade_short_exp_long`, `transient=True`）。sizing 第二层（非 SHORT 乘数 0.0）、SHORT 0.3、SIM-only/LIVE fail-close、cohort 与预注册判据全部不变。
+
+原因、数据与否决项见 DEB-20261125 §11。本修正不扩张实验、不改收益假设；已上线进程在重启前仍按旧写法（当日终态）。

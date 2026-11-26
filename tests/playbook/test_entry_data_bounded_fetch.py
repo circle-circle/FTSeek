@@ -93,13 +93,17 @@ def env(tmp_path, monkeypatch):
     futu.__getattr__ = lambda name: forbidden(f"Futu {name}")
     module("app.observability.progress_beat", progress_ping=Mock())
     module("app.web_dashboard.routes.ws", publish_event_sync=Mock())
-    module("app.utils.timezone", now_et=lambda: datetime(2026, 11, 20, 10, tzinfo=timezone.utc))
+    module("app.utils.timezone",
+           now_et=lambda: datetime(2026, 11, 20, 10, tzinfo=timezone.utc),
+           now_utc=lambda: datetime(2026, 11, 20, 15, tzinfo=timezone.utc))
     module("app.playbook.entry_confirm_gate", defer_pending=lambda *args: False,
            gate_at_execute=lambda *args, **kwargs: "allow", confirm_gate_config=lambda cfg: {})
     module("app.playbook.entry_routing", chase_cap_enforce_enabled=lambda: True,
            parse_raw_semantics=lambda raw: {"chase_cap_price": None},
            chase_cap_violated=lambda *args: False, chase_cap_anchor_headroom_pct=lambda *args: None)
     module("app.playbook.admission", evaluate=lambda payload: None)
+    module("app.playbook.risk_size_shadow", risk_shadow_enabled=lambda cfg: False,
+           build_row=Mock(), finalize_and_record=Mock())
     tca = module("app.playbook.execution_tca_shadow", tca_config=lambda cfg: {"enabled": True},
                  resolve_planned_entry=lambda inst: (inst["entry_price"], "test"),
                  build_attempt_row=Mock(return_value=None))
@@ -155,7 +159,7 @@ def env(tmp_path, monkeypatch):
     module("app.us_pipeline.emergency_interceptor", check_kill_switch=kill)
     module("app.us_pipeline.risk_state_machine", RiskStateMachine=risk_factory,
            RiskState=SimpleNamespace(RISK_OFF="RISK_OFF", HALT="HALT"))
-    module("app.core.live_readiness", preflight_fail_mode=lambda: "open")
+    module("app.core.live_readiness", preflight_fail_mode=lambda: "open", is_live_capable_env=lambda: False)
     module("app.core.paths", get_trade_records_db_for_arm=lambda arm: ":memory:")
     module_file = tmp_path / "app" / "playbook" / "pipeline.py"
     (tmp_path / "data").mkdir()
@@ -223,7 +227,7 @@ def env(tmp_path, monkeypatch):
 
     trigger_call = Mock(return_value=True)
 
-    def run_auto(real_trigger=False, real_preflight=False):
+    def run_auto(real_trigger=False, real_preflight=False, reprice=False):
         kwargs = {name: Mock(return_value=None)
                   for name in inspect.signature(auto.run_playbook_auto_execute).parameters
                   if name not in {"scheduler", "force"}}
@@ -233,8 +237,12 @@ def env(tmp_path, monkeypatch):
                       _playbook_cfg=lambda key, default=None: cfg.get(key, default),
                       _load_execution_budget=lambda today: (budget, None),
                       _emit_exec_gate_audit=audit,
+                      _normalize_regime_str=lambda ctx: getattr(ctx, "regime", ctx),
                       _check_intraday_trigger=(lambda sched, inst: trigger.check_intraday_trigger(
                           sched, inst, **trigger_kwargs())) if real_trigger else trigger_call)
+        if reprice:
+            kwargs["_positive_finite_atr"] = lambda value: value if isinstance(value, (int, float)) and value > 0 else None
+            kwargs["_resolve_sizing_base"] = lambda cfg: 100000.0
         if real_preflight:
             kwargs["_auto_execute_preflight"] = lambda today, logger=None: risk._auto_execute_preflight(
                 today, logger=logger, check_daily_loss_circuit=daily, entry_data_owner=scheduler)
@@ -288,6 +296,36 @@ def test_success_preserves_original_payload_and_timestamps(env):
     assert result is payload
     assert result == payload
     assert env.scheduler._entry_data_query_state.flight is None
+
+
+def test_no_trade_long_defer_recovers_when_regime_lifts(env):
+    env.cfg["no_trade_short_sim_experiment_enabled"] = True
+    env.row.update(direction="BUY", position_size=0, execution_state="PENDING")
+    env.router.get_full_market_context.return_value = {"price": 101, "atr": 3, "prev_close": 100}
+    def context(regime, vix):
+        data = {"regime": regime, "vix": vix, "assessed_at": f"read-{vix}"}
+        return SimpleNamespace(**data, score=-5, to_dict=lambda: dict(data))
+    env.regime_assess.side_effect = [context("NO_TRADE", 22), context("NO_TRADE", 22),
+                                     context("RISK_OFF", 21), context("RISK_OFF", 21)]
+    sizing = Mock(return_value=30)
+    env.module("app.playbook.instruction_generator", compute_position_size=sizing)
+    env.module("app.risk.capital_safety", get_capital_safety_system=lambda: SimpleNamespace(
+        get_position_multiplier=lambda: 1, get_risk_multiplier=lambda: 1))
+    first = env.run_auto(reprice=True)
+    second = env.run_auto(reprice=True)
+    for result in (first, second):
+        assert result["executed"] == 0 and result["skipped"] == 1
+    assert env.row["direction"] == "BUY" and not env.row["skip_reason"]
+    assert env.row["execution_state"] == "PENDING"
+    assert env.writes == []
+    sizing.assert_not_called()
+    env.service.execute_instruction.assert_not_called()
+    assert sum((call.kwargs.get("extra") or {}).get("gate") == "no_trade_short_exp_long"
+               for call in env.audit.call_args_list) == 1, "同指令同日只留一条暂缓审计"
+    recovered = env.run_auto(reprice=True)
+    assert recovered["executed"] == 1
+    assert sizing.call_args.kwargs["regime_mult"] == 0.3
+
 
 
 @pytest.mark.parametrize("method,phase", [("get_full_market_context", "context"),

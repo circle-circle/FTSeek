@@ -137,7 +137,7 @@ _MOM_DEFER_AUDIT_SEEN: set = set()  # {(trade_date, instruction_id, reason)}
 
 def _record_mom_defer(db: Any, inst: Dict[str, Any], today: str, reason: str,
                       action: str, gate: str, why: str, logger: Any,
-                      emit_exec_gate_audit: Callable) -> None:
+                      emit_exec_gate_audit: Callable, label: str = "MOM-ETF-V1") -> None:
     """记录暂时性 MOM 拦截；审计按指令/日/原因去重。
 
     2026-11-12 (核查后修正): **不再写 `skip_reason`**。该列是终态字段 ——
@@ -157,7 +157,7 @@ def _record_mom_defer(db: Any, inst: Dict[str, Any], today: str, reason: str,
         size=float(inst.get("position_size") or 0),
         notional=0.0,
         extra={"gate": gate, "why": why, "transient": True})
-    logger.warning(f"[MOM-ETF-V1] {inst.get('symbol')} {reason} (下轮复检)")
+    logger.warning(f"[{label}] {inst.get('symbol')} {reason} (下轮复检)")
     _MOM_DEFER_AUDIT_SEEN.add(key)
     if len(_MOM_DEFER_AUDIT_SEEN) > 10000:
         _MOM_DEFER_AUDIT_SEEN.clear()
@@ -595,10 +595,18 @@ def run_playbook_auto_execute(
                 continue
             if inst.get("direction") == "SKIP":
                 continue
-            # [DEB-20261125 §8] NO_TRADE SHORT 实验: LONG/BUY 仍禁 (第一层;
+            # [DEB-20261125 §8] NO_TRADE SHORT 实验: LONG/BUY 本轮不进 (第一层;
             #   第二层 sizing NO_TRADE 乘数对非 SHORT 恒 0.0), SHORT 进后续全部门。
+            #   按轮暂缓而非终态 SKIP: 实验关时 NO_TRADE 轮本就是 preflight 整轮拦
+            #   (指令保持 PENDING), 写终态会让 LONG 在 regime 回落后仍当日死透,
+            #   且回滚开关也救不回 —— 比"不改 LONG 权限"更严。
             if _nt_short_exp and inst.get("direction", "").upper() not in ("SELL_SHORT", "SHORT"):
-                db.mark_instruction_guardrail_skip(inst["id"], "NO_TRADE_EXP_LONG_BLOCKED")
+                _record_mom_defer(
+                    db, inst, today, "NO_TRADE_EXP_LONG_BLOCKED",
+                    action="skipped_no_trade_short_exp_long",
+                    gate="no_trade_short_exp_long", why="no_trade_regime_round_deferred",
+                    logger=logger, emit_exec_gate_audit=_emit_exec_gate_audit,
+                    label="NO_TRADE-EXP")
                 skipped_count += 1
                 continue
             # 2026-07-19 (DEB-round3 #2): 漂移作废指令不再参与触发 (特异性匹配, 防误杀)
