@@ -440,7 +440,7 @@ class FutuLV3Provider:
         self._daily_disk_last_flush = 0.0
         self._daily_disk_next_probe = 0.0
         self._daily_disk_mtime_ns: Optional[int] = None
-        self._daily_disk_lock = threading.Lock()
+        self._daily_disk_lock = threading.RLock()
         # 2026-06-30: 过期K线标记缓存 — 避免反复fallback到TwelveData导致429
         self._stale_kline_notified: Dict[str, float] = {}  # futu_symbol -> last_notified_ts
 
@@ -2054,11 +2054,12 @@ class FutuLV3Provider:
 
                 # 写入缓存 (只在数据新鲜时写入)
                 if DATA_CACHE_PUBLICATION_ALLOWED.get():
-                    self._daily_kline_cache[futu_symbol] = klines
-                    self._daily_kline_cache_time[futu_symbol] = time.time()
-                    # [RFC-171] 落盘 (节流 30s) — 供下次进程重建后盘前批次直接复用
-                    self._daily_disk_dirty = True
-                    self._daily_disk_save()
+                    with self._daily_disk_lock:
+                        self._daily_kline_cache[futu_symbol] = klines
+                        self._daily_kline_cache_time[futu_symbol] = time.time()
+                        # [RFC-171] 落盘 (节流 30s) — 供下次进程重建后盘前批次直接复用
+                        self._daily_disk_dirty = True
+                        self._daily_disk_save()
                 return klines[-count:]
             else:
                 # 2026-08-27: 透出 OpenD retMsg (此前 `_` 吞掉 → 频控/权限/无数据都只见 "ret=-1", 病灶查了10天)

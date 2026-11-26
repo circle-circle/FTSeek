@@ -239,6 +239,80 @@ class TestGetDailyKlineGate:
         assert len(payload["symbols"]) == 60
         assert not list(tmp_path.glob("*.tmp"))
 
+    def test_daily_disk_producer_during_flush_keeps_dirty(self, provider, tmp_path, monkeypatch):
+        """落盘快照写出的同时生产者新增标的，新 dirty 不得被旧快照清掉。"""
+        import json
+        import app.data.futu_lv3_provider as _fp
+
+        disk = tmp_path / "daily_kline_v1.json"
+        monkeypatch.setattr(_fp, "_DAILY_DISK_PATH", str(disk))
+        monkeypatch.setattr(_fp, "_session_final_bar", lambda *_args: True)
+        bar = [{"time": f"{date.today().isoformat()} 00:00:00", "open": 1, "high": 1,
+                "low": 1, "close": 1, "volume": 1, "turnover": 1}]
+        provider._daily_kline_cache = {"US.OLD": bar}
+        provider._daily_kline_cache_time = {"US.OLD": 100.0}
+        provider._daily_disk_dirty = True
+        provider._daily_disk_loaded = True
+        provider._connected = True
+        provider._verify_connection_alive = lambda: True
+        monkeypatch.setattr(provider, "_daily_disk_load", lambda: None)
+        monkeypatch.setattr(provider, "_acquire_daily_kline_quota",
+                            lambda *_args, **_kwargs: True)
+
+        dump_started = threading.Event()
+        producer_ready = threading.Event()
+        release_dump = threading.Event()
+        original_dump = json.dump
+
+        def paused_dump(payload, fh, **kwargs):
+            dump_started.set()
+            producer_ready.wait(timeout=2)
+            release_dump.wait(timeout=2)
+            return original_dump(payload, fh, **kwargs)
+
+        class Ctx:
+            def request_history_kline(self, code, **kwargs):
+                producer_ready.set()
+                return 0, pd.DataFrame([{
+                    "time_key": f"{date.today().isoformat()} 00:00:00",
+                    "open": 2, "high": 2, "low": 2, "close": 2,
+                    "volume": 2, "turnover": 2,
+                }]), None
+
+        provider._quote_ctx = Ctx()
+        monkeypatch.setattr(json, "dump", paused_dump)
+        errors = []
+
+        def flush():
+            try:
+                provider._daily_disk_save(force=True)
+            except Exception as exc:
+                errors.append(exc)
+
+        def produce():
+            try:
+                provider.get_daily_kline("US.NEW", count=1)
+            except Exception as exc:
+                errors.append(exc)
+
+        flush_thread = threading.Thread(target=flush)
+        flush_thread.start()
+        assert dump_started.wait(timeout=2)
+        produce_thread = threading.Thread(target=produce)
+        produce_thread.start()
+        assert producer_ready.wait(timeout=2)
+        time.sleep(0.1)
+        release_dump.set()
+        flush_thread.join(timeout=2)
+        produce_thread.join(timeout=2)
+        assert not flush_thread.is_alive()
+        assert not produce_thread.is_alive()
+        assert errors == []
+        assert provider._daily_disk_dirty is True
+        provider._daily_disk_save(force=True)
+        payload = json.loads(disk.read_text(encoding="utf-8"))
+        assert set(payload["symbols"]) == {"US.OLD", "US.NEW"}
+
     def test_daily_disk_write_failure_keeps_dirty_and_flush_baseline(self, provider, tmp_path, monkeypatch):
         import app.data.futu_lv3_provider as _fp
 

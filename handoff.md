@@ -2,6 +2,37 @@
 
 > **写入约定（2026-11-11 起）**：每条交接必须带三件可核凭据 —— `**凭据**`（commit sha / 改动文件数，`git show --stat` 可核）、`**验证**`（可复跑命令 + 日志路径，不写“已通过”）、`**未验证**`（显式列出没验的部分，无则写“无”）。自述≠事实，这三行是给下一个人核的。
 
+## 2026-11-26 22:4x CST · 【按建议实施】日K lost-dirty 同锁修复 + RFC-217 SIM-only 覆盖 live-arm SHORT 镜像能力；当前实验/权限不变，未重启未部署
+
+- **结论**：按用户「按照建议执行优化逻辑」实施 correctness DEB §7.4 第 1/2 项。日 K：`_daily_disk_lock` 改 RLock，生产侧缓存/time/dirty/save 同锁，防旧快照清掉新 dirty；隔离复现修复后 `lost_update_reproduced=false`。SIM-only：`no_trade_short_sim_experiment_active()` 保留原 LIVE-capable 闸，并在 ALLOW=true+arm enabled 时复用共享 `evaluate_live_arm_gate(SELL_SHORT)` 探测 real-target SHORT 镜像能力；可接受或读取失败则实验 off。当前 ALLOW=false/probe LONG，`experiment_active=true` 不变；不新增策略门，不改 cohort/阈值/方向权限/SHORT 0.3/LONG 拦截/硬停/四锁。标记完整性仍 record-only 另案。详 correctness DEB §8、RFC-217 §7。
+- **凭据**：HEAD `2bfaea477`；本批 2 源（`app/data/futu_lv3_provider.py`、`app/playbook/pipeline_parts/risk_gates.py`）+2 测试+3 MD（correctness DEB §8/RFC-217 §7/本条），未提交未推送；保留 DEB-20261125 既有 WIP。零 config/DB 写/订单/重启；服务 active/running PID80581，21:04:04 CST 启动，NRestarts=0。
+- **验证**：针对性 40 passed `/tmp/ftseek-opt-two-fixes-20261126-targeted.log`；正确性相邻 229 passed/7 deselected `/tmp/ftseek-opt-two-fixes-20261126-correctness.log`；行为/LIVE 相邻 455 passed `/tmp/ftseek-opt-two-fixes-20261126-behavior.log`；日 K 修复复现 `/tmp/ftseek-opt-two-fixes-20261126-dailyk-fixed.log`；当前配置读数 `/tmp/ftseek-opt-two-fixes-20261126-currentlike.log`；本批 py_compile/check_undefined_names/git diff --check exit0。
+- **未验证**：未跑全量 pytest/GitHub Actions；未做生产自然日 K 并发落盘、未来 SHORT live-arm 自然镜像、完整 tick/订单簿回放、收益显著性检验；未补齐 trade metadata/outbox 标记。收益未证，正确性修复不等于盈利改善。
+- **下一步**：部署须用户明确授权；先核在途出场 SQL + `git status --porcelain -- app/ scripts/`，只隔离本批生产文件，再 `systemctl restart ftseek-us` + 启动冒烟。RFC-217 维持原结算与硬停；标记完整性 record-only 另案；教训闭环/VIX 平滑单独归因。**最后更新：2026-11-26。**
+
+## 2026-11-26 22:3x CST · 【独立复核】正确性修复大体合理但收益未证；确认日K丢dirty竞态与RFC-217 SIM-only口径缺口，零策略变更
+
+- **结论**：以 HEAD `2bfaea477` 只读复核其他 Agent 近期优化。迟到 single、配置 LKG、复盘库隔离、回放毛/费/净/保真门、日 K 配额/落盘、CI/static 门大多属“修尺子/补护栏”，方向合理；但官方 DA 整窗 n146 净 −24.8369bps NOT_MET，post qwen4-max n39 −17.4678bps UNDERPOWERED，KR2 21.23% MET，盈利未证。确认两项缺口：日 K 生产侧更新不持落盘锁可丢磁盘更新（隔离复现 lost_update=true）；RFC-217 SIM-only 闸只查 AUTO=real+ALLOW=true，未覆盖 live_manual_arm real-target 镜像口径，当前 ALLOW=false/probe LONG 无 LIVE 暴露但文档断言过强。RFC-217 已平实验仅 CAT +$9.96，n=1，标记链路不完整；11-25 总 +$215 中旧仓 +$205.04 不可归实验。教训验证/VIX 平滑/陈旧 trail 丢弃等属行为相邻或状态卫生，不能标纯遥测。详 correctness DEB §7 与 DEB-20261125 §13。
+- **凭据**：本批仅 correctness DEB 新增 §7、DEB-20261125 新增 §13、本条 handoff；零代码/config/DB 写/订单/重启，未提交未推送；保留其他会话既有 WIP。`app/ scripts/ config/` 工作树为空；服务 active/running PID80581，21:04:04 启动后未重启；运行时 sim/ALLOW=false，LIVE 无仓。
+- **验证**：正确性主命令复跑 228 passed/7 deselected `/tmp/ftseek-audit-correctness-20261126.log`；行为/研究子集 236 passed `/tmp/ftseek-audit-behavior-20261126.log`；毕业研究 pin 6 passed `/tmp/ftseek-audit-graduation-pin-20261126.log`；官方判分 `/tmp/ftseek-audit-okr-20261125.json`；日 K 竞态 `/tmp/ftseek-audit-dailyk-race-20261126.log`；SIM-only 口径 `/tmp/ftseek-audit-sim-only-gate-20261126.log`；只读 DB `/tmp/ftseek-audit-db-readonly-20261126.log`；补充计数/边界 `/tmp/ftseek-audit-supplement-20261126.log`。
+- **未验证**：未跑全量 pytest/GitHub Actions；未做生产自然退出取价、坏 YAML 运维演练、未来 live-arm 自然验证、完整 tick/订单簿回放、收益显著性检验；未触发自然 FLAT_ALL 新 WARNING；未补齐实验标记写库。毕业异常 fail-close 已隔离验证，但 engineering probe 豁免毕业门禁，不夸称 live-arm 全路径毕业锁。
+- **下一步**：日 K lost-dirty 与 SIM-only 闸口径作为独立正确性补丁评审/修复，各带契约测试；RFC-217 维持原 cohort/n≥30 或 10 交易日/硬停，不据 n=1 宣称空头 edge；标记完整性先 record-only；教训闭环/VIX 平滑单独归因。不新增默认 gate、不调方向权限/阈值/peak/tripped/UNKNOWN，不重启。**最后更新：2026-11-26。**
+
+## 2026-11-26 21:3x CST · 【外部DA审查复核】机制大体成立但不可原样实施；两处既有读数口径已独立纠错，零策略变更
+
+- **结论**：以HEAD `2bfaea477`复核另一Agent六项DA/执行分析。确认桥接重建与时间契约缺口、重价后6%单名帽未重约束、admission后缩仓、20s portfolio heat同轮旧快照、成交后TP RR门、条件顺序选退出profile及BE按last侧别等机制；但当前名义地板是2500且`fee_gate_enforce=false`（非5500硬门），SIM最终数量预占/UNKNOWN保锁/三档RR与TP gate已存在，严格原价执行仍由RFC-215封闭。MU原始`valid_until`当日16:00与trade1934实际跨日至11-20是直接生产证据；BABA日志实证fill RR1.476923吞固定TP。独立纠错：确认TTL可核30笔均合规、另12笔缺字段，不能写42笔全覆盖；TP吞咽12笔=11已平+1未平，已平出口含DEAD_SIGNAL/PRE_CLOSE，并非全部BE/trail，但按落库MFE均未达TP，已实现TP损益差0仍成立。详`docs/debates/DEB-20261125-flat-all-empty-spin-and-deploy-ledger-reconciliation.md` §12。
+- **凭据**：本批仅上述既有DEB新增§12与本条handoff共2个Markdown；零代码/config/prompt/DB写/订单/重启，未提交未推送。源码/配置双路只读复核；原始`data/da_checkpoint/2026-11-18/US.MU.json`、`logs/ftseek_us.log-20261126:7181`与SQLite `mode=ro`+`PRAGMA query_only=ON`直接核对，其他会话既有handoff内容保留。
+- **验证**：价格三档台账、SIM UNKNOWN/终态预占与gap后最终数量隔离契约测试**12 passed**，可复跑命令见DEB§12对应测试清单，日志`/tmp/ftseek-da-review-20261126-targeted-tests.log`；30笔确认年龄、12笔TP gate退出结构/MFE与BABA38.101min<TTL180均由只读SQL重算，口径见DEB§12.3。
+- **未验证**：未读仓外生产`llm_synth.py`，不评价prompt/challenger本体；未统计6%帽/heat生产超帽次数，未做完整订单簿回放、全量反事实、收益显著性检验或全量pytest。MFE未达TP是落库口径证据，不冒充完整tick证明；未平BABA不结算未来结局。
+- **下一步**：先以record-only核最终订单6%单名帽与4% heat一致性，复用price ledger/SIM身份账本；再分析既有BE last与可成交侧遥测，时效缺字段标UNKNOWN。不得顺带恢复费用硬门、新建UNKNOWN账本、降TP RR、恢复严格原价/entry-archetype路由、调chase/BE/trailing或砍/减半隔夜；任何行为变更另案一次一变量并遵守C4。**最后更新：2026-11-26。**
+
+## 2026-11-26 21:04 CST · 【全量归账部署】用户授权重启完成，启动冒烟7/7；三笔SHORT持仓与退出账不变
+
+- **凭据**：用户明确「请重启」。生产代码=`main`/`rfc-060-phase1-hotfixes` 同SHA `2bfaea477`；重启前 `git status --porcelain -- app/ scripts/` 为空。`systemctl restart ftseek-us` 于21:04:04完成，PID 55482→80581，`active/running`，NRestarts=0。重启前SIM三笔SHORT：BA 23股@160.17、BABA 47股@81.88、GS 5股@789.14，LIVE无仓；exit_intents 458条全BOOKED、未结算0。
+- **验证**：`PYTHONPATH=. ./venv/bin/python scripts/startup_smoke_check.py --wait 90` **7/7 exit0**：ConfigValidator、漂移检测、热重载、SSOT 0 BLOCKING、双臂安全、退出快循环、零Traceback/CRITICAL。重启后三笔持仓的id/方向/数量/入价/入时逐项不变，LIVE仍无仓，未结算退出意图仍0；源码工作树除本条文档记录外无代码改动。
+- **未验证**：未做自然交易时段的退出取价、配置热载及成交验证；冒烟只证明启动设施/模式/退出循环，不证明盈利、全部退出策略或自然链完整。
+- **下一步**：下一交易时段观察退出取价收编、配置热载与自然链路，异常按DEB-20261126回滚对应修复；本条重启记录当前未提交。**最后更新：2026-11-26。**
+
 ## 2026-11-26 17:4x CST · 【正确性/证据口径修复】迟到single+配置LKG+复盘库隔离+回放保真+日K/CI，228项定向回归通过，未重启
 
 - **结论**：按用户「按照建议进行优化修复，有把握的可以直接落地」完成复核后修复。恢复既定契约，不新增策略门、不改退出参数/方向权限/四锁：① single 迟到结果补 symbol 并按完成时刻计龄；② ConfigContainer 候选快照加载，坏YAML/缺文件保留last-known-good且热重载不再虚报成功；③ ReviewDatabase 显式路径连接真实独立文件，删除复盘库生产写入豁免；④ 回放显式毛/费/净、费用未知跳过，官方入口保真<0.80只出诊断不出变体；⑤ 日K跨进程flock+唯一临时文件+成功才清dirty、重试逐物理请求预占配额；⑥ CI缓存/浅检出/空跑及pyflakes缺依赖静默放行修复。独立复查再补修空/假值YAML、ATR NULL费用、BE净对净及零候选/零可回放旧产物覆盖问题。旧 `live_pnl` 保持毛利兼容，新增 `live_gross/live_net/live_fee_est`；历史产物不覆写，绝对净额类须按新口径重跑，配对差不一概作废。详 `docs/debates/DEB-20261126-correctness-evidence-and-reliability-fixes.md`。

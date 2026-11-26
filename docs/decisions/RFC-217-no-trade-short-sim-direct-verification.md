@@ -54,3 +54,7 @@
 原因、数据与否决项见 DEB-20261125 §11。本修正不扩张实验、不改收益假设；已上线进程在重启前仍按旧写法（当日终态）。
 
 **部署续记（2026-11-26 14:57 CST）**：用户明确授权重启及本地提交，commit `9532275dc`只提交本修正及配套测试/说明，Phase A与其他在途改动未提交、未推送。`systemctl restart ftseek-us`成功，PID55482；官方启动冒烟7/7 exit0，日志 `/tmp/ftseek-opt-20261126/startup-smoke.log`。BA/BABA/GS三仓与持久化stoploss状态前后不变，两出场账本/entry outbox均无在途。连续两轮NO_TRADE暂缓、第三轮RISK_OFF恢复的隔离行为用例通过；休市无自然执行证据，启动通过不等于盈利假设成立。详DEB§11.7，本续记随部署凭据批提交推送。
+
+## 7. 2026-11-26 SIM-only 边界补修（本地，未重启/未部署）
+
+§1/§2 的 LIVE-capable 闸口径补强：除 `is_live_capable_env()` 外，`no_trade_short_sim_experiment_active()` 复用 `evaluate_live_arm_gate(..., instruction_direction="SELL_SHORT")` 探测 live-arm real-target 镜像的结构能力；共享 LIVE 门可接受 SHORT 镜像或能力读取失败时，实验恒不生效。当前 `ALLOW=false`、probe=LONG，实验 active 与人群不变；cohort/n≥30 或 10 交易日/SHORT 0.3/LONG 拦截/硬停/四锁均不变。详 `docs/debates/DEB-20261126-correctness-evidence-and-reliability-fixes.md` §8。本批未提交/推送/重启/部署。

@@ -194,13 +194,37 @@ def no_trade_short_sim_experiment_active() -> bool:
     """[DEB-20261125 §8] NO_TRADE SHORT 直接验证实验是否生效 (SIM-only)。
 
     用户裁 (2026-11-25): SIM 无真实资金, 直接验证高 VIX 恐惧日 DA SHORT 的
-    成本后期望, 覆盖影子先行默认。LIVE-capable 恒 False (代码闸);
-    配置读取失败 = False (回落 NO_TRADE 全禁旧门)。
+    成本后期望, 覆盖影子先行默认。LIVE-capable 或 live-arm 结构上可接受
+    SHORT real-target 镜像时恒 False; 配置/能力读取失败 = False
+    (回落 NO_TRADE 全禁旧门)。
     """
     try:
         from app.core.live_readiness import is_live_capable_env
         if is_live_capable_env():
             return False
+        import os
+        allow_real_trading = (
+            os.getenv("ALLOW_REAL_TRADING", "false").strip().lower() == "true"
+        )
+        if allow_real_trading:
+            from app.core.config_container import get_config
+            from app.playbook.db import route_playbook_db
+            from app.playbook.live_arm_gate import evaluate_live_arm_gate
+            arm = get_config().get_dotted("playbook.live_manual_arm", {}) or {}
+            if bool(arm.get("enabled", False)):
+                live_db = route_playbook_db("real")
+                decision = evaluate_live_arm_gate(
+                    arm,
+                    allow_real_trading=allow_real_trading,
+                    real_account_id=os.getenv("REAL_ACCOUNT_ID", ""),
+                    lane_db_name=live_db.db_name,
+                    instruction_direction="SELL_SHORT",
+                    market_phase="TRADING",
+                    open_live_positions=0,
+                    halted=False,
+                )
+                if decision.get("allowed"):
+                    return False
         from app.playbook.config import get_playbook_config
         return bool(get_playbook_config().get(
             "no_trade_short_sim_experiment_enabled", False))

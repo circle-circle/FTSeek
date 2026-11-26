@@ -79,6 +79,99 @@ def test_config_error_falls_back_off(monkeypatch):
     assert no_trade_short_sim_experiment_active() is False
 
 
+def test_flag_on_sim_allow_false_skips_live_arm_probe(monkeypatch):
+    import app.core.config_container as config_container
+
+    _set_env(monkeypatch, "sim", "false")
+    _patch_pb(monkeypatch, _FakePBConfig(value=True))
+
+    def unreadable_config():
+        raise AssertionError("ALLOW=false must not probe live-arm capability")
+
+    monkeypatch.setattr(config_container, "get_config", unreadable_config)
+    assert no_trade_short_sim_experiment_active() is True
+
+
+def test_flag_on_sim_with_long_only_live_arm_stays_active(monkeypatch):
+    import app.core.config_container as config_container
+    import app.core.live_readiness as live_readiness
+    import app.playbook.live_arm_gate as live_arm_gate
+
+    _set_env(monkeypatch, "sim", "true")
+    monkeypatch.setenv("REAL_ACCOUNT_ID", "123456789")
+    _patch_pb(monkeypatch, _FakePBConfig(value=True))
+    arm = {
+        "enabled": True,
+        "mode": "engineering_probe",
+        "max_order_qty": 1,
+        "max_open_positions": 3,
+        "session": "RTH",
+        "probe": {
+            "authorized": True,
+            "authorization_id": "TEST-AUTH",
+            "direction": "LONG",
+        },
+    }
+    monkeypatch.setattr(
+        config_container, "get_config",
+        lambda: SimpleNamespace(get_dotted=lambda path, default=None: arm),
+    )
+    monkeypatch.setattr(live_readiness, "live_fail_mode_issues", lambda: [])
+    monkeypatch.setattr(
+        live_arm_gate, "read_live_probe_waiver",
+        lambda: {
+            "active": True,
+            "authorization_id": "TEST-AUTH",
+            "locks_waived": {"ALLOW_REAL_TRADING": "true"},
+        },
+    )
+    assert no_trade_short_sim_experiment_active() is True
+
+
+def test_flag_on_sim_with_short_capable_live_arm_inactive(monkeypatch):
+    import app.core.config_container as config_container
+    import app.playbook.live_arm_gate as live_arm_gate
+
+    _set_env(monkeypatch, "sim", "true")
+    monkeypatch.setenv("REAL_ACCOUNT_ID", "123456789")
+    _patch_pb(monkeypatch, _FakePBConfig(value=True))
+    arm = {"enabled": True, "probe": {"direction": "SHORT"}}
+    calls = []
+
+    def fake_gate(arm_config, **kwargs):
+        calls.append(kwargs)
+        return {"allowed": True, "reasons": []}
+
+    monkeypatch.setattr(
+        config_container, "get_config",
+        lambda: SimpleNamespace(get_dotted=lambda path, default=None: arm),
+    )
+    monkeypatch.setattr(live_arm_gate, "evaluate_live_arm_gate", fake_gate)
+    assert no_trade_short_sim_experiment_active() is False
+    assert calls and calls[0]["instruction_direction"] == "SELL_SHORT"
+    assert calls[0]["lane_db_name"] == "ftseek_us_live"
+
+
+def test_live_arm_capability_error_falls_back_off(monkeypatch):
+    import app.core.config_container as config_container
+    import app.playbook.live_arm_gate as live_arm_gate
+
+    _set_env(monkeypatch, "sim", "true")
+    monkeypatch.setenv("REAL_ACCOUNT_ID", "123456789")
+    _patch_pb(monkeypatch, _FakePBConfig(value=True))
+    arm = {"enabled": True}
+
+    def broken_gate(arm_config, **kwargs):
+        raise RuntimeError("capability unreadable")
+
+    monkeypatch.setattr(
+        config_container, "get_config",
+        lambda: SimpleNamespace(get_dotted=lambda path, default=None: arm),
+    )
+    monkeypatch.setattr(live_arm_gate, "evaluate_live_arm_gate", broken_gate)
+    assert no_trade_short_sim_experiment_active() is False
+
+
 def test_mult_short_active_gets_risk_off_sizing():
     assert no_trade_short_regime_mult("SELL_SHORT", True) == 0.3
     assert no_trade_short_regime_mult("SHORT", True) == 0.3
