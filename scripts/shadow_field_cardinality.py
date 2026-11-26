@@ -190,11 +190,54 @@ def collect(days: int) -> list:
     return results
 
 
+def regime_audit_cardinality(rows: list) -> dict:
+    fields = {
+        "regime": "enum",
+        "spy_price_basis": "enum",
+        "spy_quote_time": "provider_raw",
+        "assessed_at": "utc_iso8601",
+        "trend_score": "score_points",
+        "volatility_score": "score_points",
+        "vix_observation.value": "vix_observation.unit",
+        "vix_observation.source": "enum",
+        "vix_observation.unit": "enum",
+        "vix_observation.as_of": "provider_observation_date",
+        "vix_observation.quote_time": "provider_raw",
+        "vix_observation.read_at": "utc_iso8601",
+    }
+    rows = [row for row in rows if isinstance(row, dict)]
+    results = []
+    for stage in ("preflight", "experiment", "sizing"):
+        for field, unit in fields.items():
+            values = []
+            for row in rows:
+                value = row.get("regime_reads", {})
+                for part in (stage, *field.split(".")):
+                    value = value.get(part) if isinstance(value, dict) else None
+                if value is not None and value != "":
+                    values.append(value)
+            counts = Counter(str(value) for value in values)
+            n, unique = len(values), len(counts)
+            verdict = "INSUFFICIENT" if n < 10 else "WARNING_CONST" if unique < 2 else "OK"
+            results.append({"stage": stage, "field": field, "unit": unit,
+                            "n": n, "missing": len(rows) - n, "unique": unique,
+                            "verdict": verdict})
+    return {"record_only": True, "row_count": len(rows), "fields": results,
+            "caveat": "行可重复同一轮或缓存观测；恒定也可能来自稳定市场/单一来源，不证明传感器损坏或方向edge。"}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="离散字段基数自检 (W0)")
     ap.add_argument("--days", type=int, default=30, help="回看天数 (默认30)")
     ap.add_argument("--json", action="store_true", help="输出 JSON 而非表格")
+    ap.add_argument("--regime-audit", type=Path,
+                    help="仅只读指定 sizing_delta JSONL，基数警告不改退出码或发通知")
     args = ap.parse_args()
+
+    if args.regime_audit is not None:
+        print(json.dumps(regime_audit_cardinality(_read_jsonl(args.regime_audit)),
+                         ensure_ascii=False, indent=2))
+        return 0
 
     results = collect(args.days)
     if args.json:

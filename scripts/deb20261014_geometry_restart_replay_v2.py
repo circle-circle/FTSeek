@@ -75,7 +75,7 @@ def main() -> int:
         ex = m.get("exclusion_reason", "") or ""
         if (dq or "") not in ("clean", "real") or ex:
             bad.add(rid)
-        fees[rid] = float(fee or 0.0)
+        fees[rid] = float(fee) if fee is not None else None
         telem[rid] = m.get("exit_telemetry") or {}
     con.close()
     trades = [t for t in trades if t["id"] not in bad]
@@ -102,7 +102,7 @@ def main() -> int:
     print(f"bars 缓存 {len(bars_map)}/{len(need)} (缺 {len(missing)})")
 
     # ── attach + 锚定构造 ──
-    runnable, skipped, anchored, peak_mismatch = [], 0, 0, 0
+    runnable, skipped, anchored, peak_mismatch, skipped_fee_unknown = [], 0, 0, 0, 0
     for tr in trades:
         seq = []
         d = tr["entry_et"].date()
@@ -118,9 +118,12 @@ def main() -> int:
         tr["_bars"] = seq
         tr["_exit_cfg"] = eng._get_factor_exit_config(tr["conditions"], factor_rules,
                                                       direction=tr["direction"])
-        tr["_fees_est"] = fees.get(tr["id"], 0.0)
+        tr["_fees_est"] = fees.get(tr["id"])
+        if tr["_fees_est"] is None or tr.get("live_net") is None:
+            skipped_fee_unknown += 1
+            continue
         tr["_sign"] = 1.0 if tr["direction"] == "LONG" else -1.0
-        tr["_live_net"] = tr["live_pnl"] - tr["_fees_est"]
+        tr["_live_net"] = tr["live_net"]
         tr["_day0_close"] = max((b for b in seq if b["t"].date() == tr["exit_et"].date()),
                                 key=lambda b: b["t"])["c"]
         if tr["live_reason"] in ANCHOR_REASONS:
@@ -138,7 +141,7 @@ def main() -> int:
         else:
             tr["_anchor"] = None
         runnable.append(tr)
-    print(f"可回放 {len(runnable)} (缺bar跳过 {skipped}); 锚定人群 {anchored} "
+    print(f"可回放 {len(runnable)} (缺bar跳过 {skipped}; 费用未知跳过 {skipped_fee_unknown}); 锚定人群 {anchored} "
           f"(BE {sum(1 for t in runnable if t['live_reason']=='SL_BREAKEVEN')} + "
           f"trail {sum(1 for t in runnable if t['live_reason']=='SL_TRAIL_LOCK')}); "
           f"peak 口径不一致 {peak_mismatch}")

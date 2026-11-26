@@ -313,6 +313,113 @@ def test_execute_generates_artifact_and_latest_with_two_calls(
     assert latest["caveat"] == shadow.CAVEAT
 
 
+def test_successful_run_audits_raw_json_without_leaking_into_latest(
+    sandbox, fake_llm, monkeypatch, capsys,
+):
+    from app.event_stream.market_brief import PROMPT_VERSION
+
+    responses = []
+
+    def recording_llm(system, user, **kwargs):
+        response = fake_llm(system, user, **kwargs)
+        response["raw_only_probe"] = {"values": [None, True, 0.25, "原始回包"]}
+        responses.append(response)
+        return response
+
+    monkeypatch.setattr(shadow, "_resolve_llm_call", lambda: recording_llm)
+    report = _run(capsys, sandbox, "--execute")
+    assert report["status"] == "OK"
+    assert report["llm_calls"] == len(responses) == 2
+    artifact = json.loads(_artifact_files(sandbox)[0].read_text(encoding="utf-8"))
+    assert artifact["llm_artifacts"] == {
+        "main_raw": responses[0],
+        "challenger_raw": responses[1],
+        "prompt_version": PROMPT_VERSION,
+    }
+    latest_text = (sandbox.out / "latest.json").read_text(encoding="utf-8")
+    latest = json.loads(latest_text)
+    assert latest["brief"] == artifact["brief"]
+    assert "llm_artifacts" not in latest_text
+    assert "raw_only_probe" not in latest_text
+
+
+@pytest.mark.parametrize("confidence_state", ["missing", "null"])
+def test_invalid_challenger_raw_is_audited_without_publish_or_repay(
+    sandbox, fake_llm, monkeypatch, capsys, confidence_state,
+):
+    from app.event_stream.market_brief import PROMPT_VERSION
+
+    _run(capsys, sandbox, "--execute")
+    previous_artifact = _artifact_files(sandbox)[0]
+    previous_bytes = previous_artifact.read_bytes()
+    latest_path = sandbox.out / "latest.json"
+    latest_before = latest_path.read_bytes()
+    calls = []
+    responses = []
+
+    def invalid_llm(system, user, **kwargs):
+        calls.append(kwargs)
+        if "挑战者" in system:
+            main = json.loads(user)["main"]["transmissions"][0]
+            counter = dict(main)
+            if confidence_state == "missing":
+                counter.pop("confidence")
+            else:
+                counter["confidence"] = None
+            response = {
+                "opposition": "OPPOSE",
+                "fatal_flaw": {
+                    "detail": "fixture_grounded_objection",
+                    "evidence_ids": main["event_ids"],
+                },
+                "counter_transmissions": [counter],
+                "missing_queries": [],
+            }
+        else:
+            response = fake_llm(system, user, **kwargs)
+        responses.append(response)
+        return response
+
+    monkeypatch.setattr(shadow, "_resolve_llm_call", lambda: invalid_llm)
+    # New sandbox input creates a new run; the existing successful latest stays put.
+    report = _run(capsys, sandbox, "--execute", "--supplemental-limit", "1")
+    assert report["status"] == "ERROR"
+    assert report["reason"] == "brief_validation_failed"
+    assert report["llm_calls"] == len(calls) == 2
+    assert report["validation_errors"] == [
+        "counter_transmissions[0]:invalid_confidence",
+        "oppose_requires_detail_and_evidence",
+    ]
+    new_artifacts = [path for path in _artifact_files(sandbox) if path != previous_artifact]
+    assert len(new_artifacts) == 1
+    failed_path = new_artifacts[0]
+    failed_before = failed_path.read_bytes()
+    artifact = json.loads(failed_before)
+    assert artifact["llm_artifacts"] == {
+        "main_raw": responses[0],
+        "challenger_raw": responses[1],
+        "prompt_version": PROMPT_VERSION,
+    }
+    raw = artifact["llm_artifacts"]["challenger_raw"]
+    counter = raw["counter_transmissions"][0]
+    assert ("confidence" in counter) is (confidence_state == "null")
+    if confidence_state == "null":
+        assert counter["confidence"] is None
+    assert "detail" not in raw and "evidence_ids" not in raw
+    assert artifact["brief"]["challenger"]["detail"] == ""
+    assert artifact["brief"]["challenger"]["evidence_ids"] == []
+    assert latest_path.read_bytes() == latest_before
+
+    repeated = _run(capsys, sandbox, "--execute", "--supplemental-limit", "1")
+    assert repeated["status"] == "ERROR"
+    assert "refusing to overwrite or re-pay" in repeated["error"]
+    assert len(calls) == 2
+    assert failed_path.read_bytes() == failed_before
+    assert previous_artifact.read_bytes() == previous_bytes
+    assert latest_path.read_bytes() == latest_before
+    assert len(_artifact_files(sandbox)) == 2
+
+
 def test_supplemental_limit_is_capped_at_48(sandbox, fake_llm, capsys):
     report = _run(capsys, sandbox, "--execute", "--supplemental-limit", "1")
     assert report["status"] == "OK"
@@ -348,10 +455,17 @@ def test_llm_exception_is_error_and_writes_no_latest(sandbox, monkeypatch, capsy
 # ---------------------------------------------------------------------------
 
 
-def test_same_input_hash_skips_llm_and_is_already_current(sandbox, fake_llm, capsys):
+@pytest.mark.parametrize("legacy_run", [False, True])
+def test_same_input_hash_skips_llm_and_is_already_current(
+    sandbox, fake_llm, capsys, legacy_run,
+):
     first = _run(capsys, sandbox, "--execute")
     assert len(fake_llm.calls) == 2
     artifact = _artifact_files(sandbox)[0]
+    if legacy_run:
+        legacy = json.loads(artifact.read_text(encoding="utf-8"))
+        del legacy["llm_artifacts"]
+        artifact.write_text(json.dumps(legacy), encoding="utf-8")
     original_bytes = artifact.read_bytes()
 
     second = _run(capsys, sandbox, "--execute")
@@ -367,6 +481,7 @@ def test_same_input_hash_skips_llm_and_is_already_current(sandbox, fake_llm, cap
     assert latest["status"] == "ALREADY_CURRENT"
     assert latest["generated_at"] == first["generated_at"]
     assert latest["brief_id"] == first["brief_id"]
+    assert "llm_artifacts" not in latest
 
 
 def test_same_day_later_as_of_reuses_content_hash(sandbox, fake_llm, capsys):
@@ -386,11 +501,17 @@ def test_same_day_later_as_of_reuses_content_hash(sandbox, fake_llm, capsys):
     assert len(_artifact_files(sandbox)) == 1
 
 
+@pytest.mark.parametrize("legacy_run", [False, True])
 def test_missing_latest_reuses_immutable_artifact_without_paying(
-    sandbox, fake_llm, capsys,
+    sandbox, fake_llm, capsys, legacy_run,
 ):
     first = _run(capsys, sandbox, "--execute")
     artifact = _artifact_files(sandbox)[0]
+    if legacy_run:
+        # Simulate an existing pre-audit run: never backfill invented raw responses.
+        legacy = json.loads(artifact.read_text(encoding="utf-8"))
+        del legacy["llm_artifacts"]
+        artifact.write_text(json.dumps(legacy), encoding="utf-8")
     original_bytes = artifact.read_bytes()
     (sandbox.out / "latest.json").unlink()
 

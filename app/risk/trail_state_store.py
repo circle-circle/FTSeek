@@ -21,10 +21,46 @@ import logging
 import os
 import sqlite3
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("ftseek_us.trail_state_store")
+
+
+def is_stale_for_position(updated_at: Optional[str], entry_time: Any,
+                          margin_hours: float = 24.0) -> bool:
+    """存储态是否**早于当前这笔仓** ⇒ 属同标的的历史仓残留, 必须整条丢弃。
+
+    病灶 (2026-11-20 实测 US.MU): store 按 symbol 单键, 2026-06-12 的残留状态
+    (`lowest_price=977.0` / `entry_session_ratio=1.5` / `entry_session='opening_drive'` /
+    `scale_out_original_size=10.0`) 被恢复进 2026-11-18 入场的仓。exit_monitor 的完整性
+    检查只校验"数值方向"(lowest > entry)并重置了那一个字段, 而 `entry_session_ratio` 与
+    `entry_session` 因"键已存在"(:1205 只在缺失时写)而永久沿用六月值 ⇒ 该仓被当成
+    刚在开盘驱动段入场、用最宽波动档 1.5 的仓, 五个月后仍是。
+
+    判据取**单边 + 24h 余量**: 仅当 updated_at 比 entry_time 早超过 margin_hours 才判陈旧。
+    ①同一笔仓的合法状态必然 updated_at >= entry_time ⇒ 单边判据不会误杀正常重启恢复
+      (含隔夜持仓, 那正是本 store 存在的目的);
+    ②DB 的 entry_time 既有 ET-aware('-05:00') 也有 naive 本地(CST) 两种写法, 而 store 的
+      updated_at 是 naive 本地 ⇒ 归一化存在最多 ~14h 的口径不确定性, 24h 余量确保不会
+      因时区误判丢掉合法 peak。
+    缺任一时间或解析失败 ⇒ 无法判别, 返回 False (保持原行为, 不引入新的丢弃面)。
+    """
+    if not updated_at or entry_time is None:
+        return False
+    try:
+        upd = datetime.fromisoformat(str(updated_at))
+        ent = (entry_time if isinstance(entry_time, datetime)
+               else datetime.fromisoformat(str(entry_time)))
+    except (TypeError, ValueError):
+        return False
+    local_tz = datetime.now().astimezone().tzinfo
+    if upd.tzinfo is None:
+        upd = upd.replace(tzinfo=local_tz)
+    if ent.tzinfo is None:
+        ent = ent.replace(tzinfo=local_tz)
+    delta_s = (ent.astimezone(timezone.utc) - upd.astimezone(timezone.utc)).total_seconds()
+    return delta_s > margin_hours * 3600.0
 
 # DB 路径: data/trail_state.db (独立于 ftseek_us.db，避免表锁竞争)
 _DB_PATH = os.path.normpath(
@@ -222,6 +258,25 @@ class TrailStateStore:
         except Exception as e:
             logger.error(f"[TrailStateStore] load({symbol}) 失败: {e}")
             return None
+
+    def load_with_ts(self, symbol: str):
+        """同 `load`, 但一并返回 `updated_at` 供陈旧态判别。
+
+        返回 `(state|None, updated_at|None)`。新增方法, `load` 语义与签名逐字不变
+        (其余调用方零感知)。
+        """
+        try:
+            conn = self._get_conn()
+            row = conn.execute(
+                "SELECT state_json, updated_at FROM trail_state WHERE symbol = ?", (symbol,)
+            ).fetchone()
+            conn.close()
+            if row and row[0]:
+                return json.loads(row[0]), row[1]
+            return None, None
+        except Exception as e:
+            logger.error(f"[TrailStateStore] load_with_ts({symbol}) 失败: {e}")
+            return None, None
 
     def load_all(self) -> Dict[str, Dict[str, Any]]:
         """加载所有 trail_state"""

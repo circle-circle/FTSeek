@@ -189,13 +189,19 @@ def test_ack_does_not_hide_unclaimed_new_cases():
     2026-10-23 新增 premarket_invalidation (判据结题): 产物仍被 daily_invariant_check W7
     (干净昨收快照) 与 data_freshness_watchdog 只读消费; 两者是审计/巡检面, 非交易链,
     采集保留 ⇒ 逐条实测后认领。
+    2026-11-19 新增 entry_anchor_dual (RFC-215 §5 案A 落地日): 判阶段1 不立案 (KILLED)
+    当日 grep 实测, 产物 data/entry_timing_shadow.jsonl 仍被 daily_invariant_check.py W7
+    (cron 5 5 * * 2-6, ctx 侧 change_percent 分母对账陈旧侧) 与
+    rfc123_planned_entry_anchor_backtest.py (cron 53 5 * * 2-6 --daily, RFC-123 §G 第2层
+    日更重放 = 案A 否决证据的复跑链) 只读消费; 两者是审计/巡检+研究重放面, 非交易链,
+    采集保留 ⇒ 逐条实测后认领 (停采另裁, ADJUDICATED 2026-11-26 闹钟)。
     """
     expected = {"universe_expansion_shadow", "limit_entry", "da_glm_shadow",
                 "da_prompt_distill_shadow", "premarket_peer_shadow",
                 "ue_midday_shadow", "ue_earnings_clue_shadow", "eth_ext_entry_prefilter",
                 "ue_short_boost_shadow", "p1_1_vwap_slope",
                 "ext_entry_exec_price_shadow", "ue_tier_gate",
-                "premarket_invalidation"}
+                "premarket_invalidation", "entry_anchor_dual"}
     assert set(sr._CONSUMER_ACK) == expected, (
         f"豁免表新增了未认领条目: {set(sr._CONSUMER_ACK) - expected} — "
         f"每条必须逐条实测 (消费者是终点报表还是生产门) 后才可加, 禁批量豁免")

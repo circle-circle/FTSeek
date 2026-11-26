@@ -33,7 +33,7 @@ class TestF5ShadowFields:
     def test_defaults_are_inert(self):
         """影子字段默认 = 无双算 (basis 标注 + 0/None), 主判定字段不受影响。"""
         c = _ctx()
-        assert c.spy_price_basis == "kline_last_close"
+        assert c.spy_price_basis == "unknown"
         assert c.spy_pre_price == 0.0
         assert c.score_shadow is None
         assert c.regime_shadow is None
@@ -44,7 +44,7 @@ class TestF5ShadowFields:
     def test_to_dict_contains_shadow_keys(self):
         d = _ctx(score_shadow=8, regime_shadow="risk_on").to_dict()
         assert d["score_shadow"] == 8 and d["regime_shadow"] == "risk_on"
-        assert d["spy_price_basis"] == "kline_last_close"
+        assert d["spy_price_basis"] == "unknown"
 
 
 class TestShadowScoreDelta:

@@ -245,6 +245,13 @@ def check_trailing_stop(monitor, position, current_price, entry_price, atr,
         except Exception as e:
             logger.debug(f"[技术破位] 检查失败 {position.symbol}: {e}")
 
+    # 2026-11-20 (DEB-20261120 §R2): 把本轮**实际生效**的止损线暴露给观测面。
+    #   `_check_approaching_stop` 原自行推算 entry − effective_atr×atr_mult, 忽略了
+    #   hard_stop(max_loss_pct 帽)/成本缓冲/initial_sl 地板 ⇒ 告警线与执行线不同源。
+    #   实测 US.MU: 告警显示 669.47(距 3.2%), 而执行线是 690.587(距 0.71%) ⇒ 接近程度
+    #   被低估约 4.5×。此处只加一个键, 不改任何触发判定与返回值。
+    trail_state["enforcing_stop"] = float(r.final_stop)
+
     # 8. 未触发 → 返回 None
     if not r.triggered:
         return None

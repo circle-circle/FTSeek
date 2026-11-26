@@ -65,3 +65,69 @@ def test_analyze_stratifies_recovery_artifacts_out_of_dead_rate():
     assert report["artifact"]["n"] == 5
     assert report["artifact"]["dead_n"] == 5
     assert report["artifact"]["net_usd"] == pytest.approx(-100.0)
+
+
+# ── 空转指标 (RFC-145 §4 B3 / RFC-215 §4 D4, 2026-11-19) ──────────────────────
+
+import json as _json
+
+
+def _cc_row(day, dec, rtype="chase_cap_violation"):
+    return {"date": day, "type": rtype, "decision_id": dec}
+
+
+def test_load_chase_cap_rounds_filters_type_date_badlines(tmp_path):
+    p = tmp_path / "pb.jsonl"
+    lines = [
+        _json.dumps(_cc_row("2026-10-01", "DA-a")),
+        _json.dumps(_cc_row("2026-10-01", "DA-a")),          # 同指令同日第二轮 ⇒ 2
+        _json.dumps(_cc_row("2026-10-01", "DA-b", rtype="trigger")),  # 非 violation 不计
+        _json.dumps(_cc_row("2026-09-30", "DA-c")),           # 早于 start 不计
+        "{broken json",                                      # 坏行跳过
+        _json.dumps({"date": "2026-10-02", "type": "chase_cap_violation"}),  # 无 decision_id 不计
+    ]
+    p.write_text("\n".join(lines), encoding="utf-8")
+    pairs = MODULE.load_chase_cap_rounds("2026-10-01", path=p)
+    assert pairs == {("DA-a", "2026-10-01"): 2}
+
+
+def test_load_chase_cap_rounds_missing_file_returns_none(tmp_path):
+    assert MODULE.load_chase_cap_rounds("2026-10-01", path=tmp_path / "nope.jsonl") is None
+
+
+def test_idle_churn_metrics_ge20_and_executed0():
+    from collections import Counter
+    pairs = Counter({("DA-a", "2026-10-01"): 25, ("DA-b", "2026-10-02"): 71,
+                     ("DA-c", "2026-10-03"): 19, ("DA-d", "2026-10-04"): 30})
+    em = {("DA-a", "2026-10-01"): False, ("DA-b", "2026-10-02"): True,
+          ("DA-c", "2026-10-03"): False, ("DA-d", "2026-10-04"): False}
+    m = MODULE.idle_churn_metrics(pairs, em)
+    assert m["rounds_total"] == 145
+    assert m["pairs_total"] == 4
+    assert m["median_rounds"] == 30  # 上中位: sorted [19,25,30,71] -> values[n//2]
+    assert m["max_rounds"] == 71
+    assert m["pairs_ge_min"] == 3
+    assert m["idle_pairs"] == 2          # DA-a(25,未执行) + DA-d(30,未执行)
+    assert m["idle_rounds"] == 55
+    assert m["executed_pairs_ge_min"] == 1
+    assert m["unknown_pairs_ge_min"] == 0
+    assert m["monthly"] == [{"month": "2026-10", "idle_pairs": 2, "idle_rounds": 55}]
+
+
+def test_idle_churn_metrics_unknown_instruction_rows_counted_separately():
+    from collections import Counter
+    pairs = Counter({("DA-x", "2026-11-01"): 40})
+    m = MODULE.idle_churn_metrics(pairs, {})  # 指令行缺席 ⇒ unknown, 不当未执行
+    assert m["pairs_ge_min"] == 1
+    assert m["idle_pairs"] == 0
+    assert m["unknown_pairs_ge_min"] == 1
+
+
+def test_idle_churn_metrics_empty():
+    from collections import Counter
+    m = MODULE.idle_churn_metrics(Counter(), {})
+    assert m["rounds_total"] == 0
+    assert m["pairs_total"] == 0
+    assert m["median_rounds"] is None
+    assert m["max_rounds"] is None
+    assert m["monthly"] == []

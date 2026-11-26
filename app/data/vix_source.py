@@ -34,8 +34,8 @@
      消除"哪些阶段走代理"的四处分派。
 
 口径依据:
-  - **VIX 现货无盘前交易** (CBOE 现金指数不撮合), 故盘前/盘中只能取代理值;
-    可用代理 = VIXY (短期期货 ETF) 实时报价 × contango 校准系数 0.85。
+  - 本链路盘前/盘中优先取 VIXY last_price×0.85 经验代理；
+    指数不撮合不等于不能发布指数值，代理也不是现货恒等换算或新鲜度保证。
   - **富途不供指数快照**: 实测 US.VIX / US.IXIC / US.DJI / US.SPX 全部
     `{"_error": "empty"}`, 而 US.VIXY / US.SPY / US.QQQ 正常
     (与 docs/debates/DEB-20260818-futu-capability-audit.md:89,144
@@ -52,14 +52,23 @@
 """
 import logging
 import os
+from contextvars import ContextVar
 from typing import Optional
+
+
+VIX_READ_RECEIPT: ContextVar[Optional[dict]] = ContextVar("vix_read_receipt", default=None)
+
+
+def record_vix_read(value, source, *, as_of=None, quote_time=None) -> None:
+    receipt = VIX_READ_RECEIPT.get()
+    if receipt is not None:
+        receipt.clear()
+        receipt.update(value=value, source=source, as_of=as_of,
+                       quote_time=str(quote_time) if quote_time is not None else None)
 
 logger = logging.getLogger(__name__)
 
-# VIXY (iPath VIX Short-Term Futures ETF) → VIX spot 的 contango 校准系数。
-# 正常 contango 下 VIXY ≈ VIX × 1.15~1.20; 反推取 0.85 (与 2026-06-21 起的
-# router / alphavantage_provider / vix_monitor 三处现值逐字一致, 本次为收敛而非变更)。
-# ⚠️ backwardation 时该系数偏差会变大 (期货贴水), 属已知代理误差, 非本模块可解。
+# 经验代理系数，不是 ETF 价格与现货指数的恒等关系；误差可双向。
 VIXY_CONTANGO_FACTOR = 0.85
 
 
@@ -81,11 +90,10 @@ def vixy_to_vix(vixy_price: Optional[float]) -> Optional[float]:
 #     2026-08-03_regime_validation): 盘前用 FRED VIXCLS 日频 → FRED 更新滞后
 #     2-3 天, 7/31 盘前生成的 23 条指令**全用 7/29 的 20.66**, 与 SPY 实际波动
 #     12.4% 脱节, **污染 regime**。当事修复即"盘前/交易时段优先取 VIXY 实时代理"。
-#   - 事实基础: VIX 现货 (CBOE 现金指数) **盘前不撮合**, 而 VIXY 是 ETF、有盘前
-#     成交 (实测 04:00 ET 起有报价) ⇒ 盘前唯一**可用且新鲜**的 VIX 值就是代理值。
+#   - 这是既有取数优先级，不保证 last_price 为本时段成交或代理误差为零。
 #
 # 为何**不含** AFTER_HOURS / OVERNIGHT / WEEKEND: 盘后 VIXY 报价稀疏易失真, 且
-#   此刻 FRED 的 T-1 收盘是**只欠几小时的真值** ⇒ 维持 FRED 优先 (与 router 原
+#   FRED 观测日期可能滞后，应保留 as_of；既有规则维持 FRED 优先 (与 router 原
 #   `OVERNIGHT/WEEKEND 用 FRED 日频可接受` 注释一致)。改这条边界属消费者可见的
 #   行为变更, 须另开辩论。
 VIXY_PROXY_PHASES = ("PRE_MARKET", "TRADING")

@@ -319,7 +319,8 @@ def monitor_playbook_exits(
                         #   超时 → 用兜底价; 两者都没有 → 走下方 R2 连续取价失败告警。
                         _q1, _q1_to, _q1_err = _pb_exit_bounded_fetch(
                             f"single:{symbol}", lambda _s=symbol: data_router.get_quote(_s),
-                            _PB_EXIT_FETCH_SINGLE_TIMEOUT)
+                            _PB_EXIT_FETCH_SINGLE_TIMEOUT,
+                            result_to_quotes=lambda _q, _s=symbol: {_s: _q})
                         if isinstance(_q1, dict) and _q1:
                             _pb_exit_price_cache_update({symbol: _q1})
                             quote = _q1

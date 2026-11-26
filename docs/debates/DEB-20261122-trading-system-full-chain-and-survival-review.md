@@ -230,6 +230,18 @@ Kimi 独立核实现后确认：这是估计对象的披露澄清，不能仅据
 
 **成品独立复核与更正**：Kimi 全文静态复核指出两项必须修正：① `--as-of` 不设成交 SQL 上界，后续正常新已平成交也进入重跑；② SIM5% §11.14 凭据在 DA 推理链审计 DEB，而非 MU DEB。主线程亲读取数器与实际章节后，已更正 §4.1、§4.3、下方教训及本批 handoff。其余关键风险/统计/待裁表述核对成立；Kimi 实算 AST 120/66/26、核相对链接与 diff-check，未复现三窗经济值、部署动作或测试，不借其静态复核替代这些证据。历史交接的简写 DEB 锚不在本批改写范围，本题引用已写全。
 
+### R6 · 独立复查复核（2026-11-22 20:2x CST，today-execution-audit，只读）
+
+独立复查对象 = 本文件 §11/§12 scoped 批（commit `7afe36c5e`，8 文件：4 MD + 1 script + 3 tests）。全部检查本轮亲跑，零写入生产、零下单、零重启、零付费。
+
+- **真实路径测试复跑**（cwd=/tmp、`PYTHONPATH=/opt/ftseek/FTSeek-US`、venv pytest、`--noconftest -p no:cacheprovider`、`PYTHONDONTWRITEBYTECODE=1`）：`tests/test_okr_2026_11_scoring.py` ⇒ **46 passed / 0.32s / exit 0**；`tests/test_deb0815_stoploss_monitor_contract.py` + `tests/test_blocked_exit_opportunity_shadow.py` ⇒ **21 passed / 2.83s / exit 0**（3+18 例构成）。与 §11.2/§12 宣称的 46/21 逐条吻合。
+- **真实数据复算**（只读 CLI，`mode=ro` 亲读 :569-583）：`scripts/okr_2026_11_scoring.py --as-of 2026-11-20` exit 0 ⇒ whole n=131 净 **-31.5021bps**（毛 -21.9856/费 9.5165）净$ -1832.82、KR1 NOT_MET、KR2 22.1374%（29/131）MET；pre n=107 净 -27.0715；post n=24 净 -55.2618 净$ -505.33；**Kill/Pivot triggered=False**、顺延 2026-12-15；F4 四行口径披露均实际打印。与 §11.2 记载逐位一致。
+- **保护范围 SHA 与 diff-check**：`git diff --name-only 7afe36c5e^ 7afe36c5e -- app/ config/ ops/ data/ main.py` ⇒ **空**（本批零触碰运行时/配置/止损 state）；`ops/hermes/deb0815_stoploss_monitor.py` 对 HEAD 干净（本批未改监控脚本，F1 是 test-only）；`data/deb0815_stoploss_state.json` mtime 仍 2026-11-20 02:31（tripped 态未动）。research worktree 内 4 个同名副本（scripts/okr_2026_11_scoring.py + 3 tests）SHA256 与 `7afe36c5e` blob **逐文件全等**（51321c0f…/8d28863c…/acb5d399…/c7edb399… 四个 MATCH）。
+- **代码审读**：F6 旧 `bool(verdict=="NOT_MET")` 会把 n<120 功效不足也展示成触发；新逻辑 n≥120 ∧ net≤0 ∧ CI 含 0 才触发、CI=None 不触发，符合 §12.5 已裁口径；`pivot_evaluation` 无自动交易消费方（grep 无），报告不自动停单。F4 仅增 caliber 披露键与打印行。F1/F2 测试全部 monkeypatch 隔离 tmp DB/CFG/STATE，不触生产路径。
+- **记录差异（如实登记，不改他人原文）**：§11.3 与 handoff R3-R5 条写「未提交/推送」，但实态是本批已入 commit `7afe36c5e`（15:23:42）且**已推送 origin/rfc-060-phase1-hotfixes**（`git rev-parse HEAD origin/rfc-060-phase1-hotfixes` 同值）。代码正确性不受影响，台账自述滞后于 git 实态。
+- **未验证**：①收益未证——F4/F6 为判分/披露修复，F1/F2 为 test-only 护栏，均无利润/命中率/执行改善证据；②F6 新触发分支（post n≥120）在真实数据上**未发生**（当前 post n=24 走「功效不足」路径），仅有参数化测试级证据；③本批未部署亦无需部署（服务零 import `okr_2026_11_scoring`，grep 实证）；今日 15:41:48 服务重启（PID 3829947）属**另一批次**的部署，非本修复；④F3 自然链、完整 SDK 有界性、F1 预算政策、F2 自动处置仍待裁，不在本复查范围。
+
+
 ## 11. Scoped 实施记录（R3，2026-11-22）
 
 ### 11.1 授权与落地范围

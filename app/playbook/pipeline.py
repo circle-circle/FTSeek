@@ -2090,7 +2090,7 @@ def _mirror_instruction_to_live_if_allowed(inst: Dict[str, Any], live_db):
     )
 
 
-def _auto_execute_preflight(today: str, *, logger=None, entry_data_owner=None):
+def _auto_execute_preflight(today: str, *, logger=None, entry_data_owner=None, regime_audit=None):
     """[阶段 7] 本体迁 risk_gates; 注入日亏回调保 monkeypatch 缝。"""
     from app.playbook.pipeline_parts import risk_gates as _rg
     return _rg._auto_execute_preflight(
@@ -2098,6 +2098,7 @@ def _auto_execute_preflight(today: str, *, logger=None, entry_data_owner=None):
         check_daily_loss_circuit=_check_daily_loss_circuit,
         logger=logger or globals()["logger"],
         entry_data_owner=entry_data_owner,
+        regime_audit=regime_audit,
     )
 
 
@@ -2126,8 +2127,8 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
         INVALIDATED_SKIP_REASONS=INVALIDATED_SKIP_REASONS,
         _CC_NORM_LOGGED=_CC_NORM_LOGGED,
         _CC_NORM_LOGGED_MAX=_CC_NORM_LOGGED_MAX,
-        _auto_execute_preflight=lambda today, logger=None: _auto_execute_preflight(
-            today, logger=logger, entry_data_owner=scheduler),
+        _auto_execute_preflight=lambda today, logger=None, regime_audit=None: _auto_execute_preflight(
+            today, logger=logger, entry_data_owner=scheduler, regime_audit=regime_audit),
         _chase_cap_round_bump=_chase_cap_round_bump,
         _check_bridge_health_and_alert=_check_bridge_health_and_alert,
         _check_intraday_trigger=_check_intraday_trigger,
@@ -3513,9 +3514,13 @@ _PB_EXIT_FETCH_BOX: Dict[str, Dict[str, Any]] = {}  # label -> 在途线程的�
 _PB_EXIT_STALE_ALERT_SEC = 30.0                  # 兜底价"可感陈旧"门槛 (仅告警用)
 
 
-def _pb_exit_price_cache_update(quotes: Dict[str, Any]) -> None:
-    """把本轮成功取到的报价并入兜底缓存 (仅接受有正价的 dict)。"""
-    now = time.time()
+def _pb_exit_price_cache_update(quotes: Dict[str, Any], *, completed_at: float = None) -> None:
+    """把成功取到的报价并入兜底缓存 (仅接受有正价的 dict)。
+
+    completed_at 是取价线程实际完成时刻。迟到结果按完成时刻计龄，不得在下一轮
+    收编时重新获得完整 TTL。
+    """
+    now = time.time() if completed_at is None else float(completed_at)
     for sym, q in (quotes or {}).items():
         if isinstance(q, dict) and (q.get("last") or q.get("price")):
             _PB_EXIT_PRICE_CACHE[sym] = q
@@ -3533,7 +3538,7 @@ def _pb_exit_price_cache_view(symbols: List[str]) -> Dict[str, Any]:
     return out
 
 
-def _pb_exit_bounded_fetch(label: str, fn, timeout_s: float):
+def _pb_exit_bounded_fetch(label: str, fn, timeout_s: float, *, result_to_quotes=None):
     """在有界时间内执行取价调用。
 
     返回 (value, timed_out, error):
@@ -3541,17 +3546,27 @@ def _pb_exit_bounded_fetch(label: str, fn, timeout_s: float):
       timed_out = 超时仍在途 (线程被放弃, 由缓存兜底; 线程自行结束, 不再被等待)
       error     = fn() 抛出的异常 (不静默: 由调用方决定日志级别)
 
+    result_to_quotes 把 fn 的返回值归一为 {symbol: quote}。批量取价可省略；
+    单标的取价必须显式补回 symbol，避免迟到结果被误当批量字典而丢弃。
+
     单飞: 同名 label 的上一轮取价仍在途 → 本轮直接返回 (None, True, None),
       不重复发起 — 防连接故障期每轮堆积一个阻塞线程; 若上一轮超时线程已结束,
-      先收编其结果入兜底缓存 (不白丢一次成功取价), 再发起本轮。
+      先按实际完成时刻收编其结果入兜底缓存 (不白丢一次成功取价), 再发起本轮。
     """
     prev = _PB_EXIT_FETCH_INFLIGHT.get(label)
     if prev is not None:
         if prev.is_alive():
             return None, True, None
-        _prev_r = (_PB_EXIT_FETCH_BOX.pop(label, None) or {}).get("r")
+        _prev_box = _PB_EXIT_FETCH_BOX.pop(label, None) or {}
+        _prev_r = _prev_box.get("r")
         if isinstance(_prev_r, dict):
-            _pb_exit_price_cache_update(_prev_r)
+            try:
+                _quotes = result_to_quotes(_prev_r) if result_to_quotes else _prev_r
+                _pb_exit_price_cache_update(
+                    _quotes, completed_at=_prev_box.get("completed_at"))
+            except Exception as _harvest_error:
+                logger.warning("[playbook] 迟到取价收编失败 label=%s: %s",
+                               label, _harvest_error, exc_info=True)
         _PB_EXIT_FETCH_INFLIGHT.pop(label, None)
 
     box: Dict[str, Any] = {}
@@ -3559,6 +3574,7 @@ def _pb_exit_bounded_fetch(label: str, fn, timeout_s: float):
     def _run():
         try:
             box["r"] = fn()
+            box["completed_at"] = time.time()
         except Exception as _e:  # 取价失败 = 本轮无价, 交给缓存/告警路径
             box["e"] = _e
 

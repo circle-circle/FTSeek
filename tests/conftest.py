@@ -94,11 +94,6 @@ _PROD_DB_VIOLATIONS = []
 _KNOWN_PRODUCTION_WRITE_DBS = {
     "ftseek_us.db": "app/risk/pdt_guard.py:64 等经 get_main_db() 直连主库 (生产代码在测试中直写)",
     "trail_state.db": "app/risk/trail_state_store.py:31 硬编码 data/trail_state.db (待改统一解析器)",
-    # [RFC-168 实施期新发现] app/storage/review_tables.py:49 get_connection() 走
-    # db_pool 的 "review" 槽位 (生产库), **完全忽略构造时传入的 db_path** ⇒
-    # tests/test_review_tables.py 即使建了 tempfile 库, 实际仍写生产 review 库。
-    # 修它属存储层重构 (改连接目标/复用策略), 超出本批范围 ⇒ 登记豁免 + 单独立项。
-    "ftseek_us_review.db": "app/storage/review_tables.py:49 忽略 db_path 固定走 db_pool 生产槽位 (待修)",
 }
 
 # 已知存量命中计数 (会话级) — [(库路径, 对象名, 次数)]

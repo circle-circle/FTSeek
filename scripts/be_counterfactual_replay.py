@@ -26,6 +26,9 @@ for tr in be_trades:
         print('TOO FEW BARS', tr['symbol'], day); continue
     exit_cfg = _get_factor_exit_config(tr['conditions'], factor_rules, tr['direction'])
     fee = ER._fee_of(tr)
+    if fee is None or tr.get('live_net') is None:
+        print('SKIP FEE/NET UNKNOWN', tr['symbol'], day)
+        continue
     sign = 1 if tr['direction'] == 'LONG' else -1
     out = {}
     for ordering in ('pess', 'opt'):
@@ -38,7 +41,7 @@ for tr in be_trades:
             be8=(be8['exit_price'], be8['reason']))
     net = lambda px: tr['qty'] * sign * (px - tr['entry']) - fee
     rows.append(dict(sym=tr['symbol'], day=day, dir=tr['direction'], entry=tr['entry'],
-                     live_pnl=tr['live_pnl'], fee=round(fee, 2),
+                     live_gross=tr['live_gross'], live_net=tr['live_net'], fee=round(fee, 2),
                      live_px=out['pess']['live'][0], live_rsn=out['pess']['live'][1],
                      nobe_px=out['pess']['nobe'][0], nobe_rsn=out['pess']['nobe'][1],
                      nobe_net=round(net(out['pess']['nobe'][0]), 2),
@@ -47,16 +50,17 @@ for tr in be_trades:
                      be8_net=round(net(out['pess']['be8'][0]), 2),
                      cfg=f"trail={exit_cfg.get('trailing_enabled')}"))
 
-print(f"\n{'sym':9}{'day':11}{'live_pnl':>9}{'cf_noBE':>9}{'cf_be0.8':>9}  noBE_exit")
+print(f"\n{'sym':9}{'day':11}{'live_net':>9}{'cf_noBE':>9}{'cf_be0.8':>9}  noBE_exit")
 for r in rows:
-    print(f"{r['sym']:9}{r['day']:11}{r['live_pnl']:>9.2f}{r['nobe_net']:>9.2f}{r['be8_net']:>9.2f}  {r['nobe_rsn']} @{r['nobe_px']:.2f} ({r['cfg']})")
+    print(f"{r['sym']:9}{r['day']:11}{r['live_net']:>9.2f}{r['nobe_net']:>9.2f}{r['be8_net']:>9.2f}  {r['nobe_rsn']} @{r['nobe_px']:.2f} ({r['cfg']})")
 
 n = len(rows)
 print(f"\nn={n}")
-print(f"live sum (replay)={sum(r['live_pnl'] for r in rows):.2f}")
+print(f"live gross sum={sum(r['live_gross'] for r in rows):.2f}; fees={sum(r['fee'] for r in rows):.2f}; "
+      f"live net sum={sum(r['live_net'] for r in rows):.2f}")
 print(f"cf noBE pess sum ={sum(r['nobe_net'] for r in rows):.2f}   opt sum={sum(r['nobe_net_opt'] for r in rows):.2f}")
 print(f"cf be0.8 pess sum={sum(r['be8_net'] for r in rows):.2f}")
-better = sum(1 for r in rows if r['nobe_net'] > r['live_pnl'])
+better = sum(1 for r in rows if r['nobe_net'] > r['live_net'])
 print(f"noBE better in {better}/{n} trades (pess)")
 from collections import Counter
 print("noBE exit reasons:", Counter(r['nobe_rsn'] for r in rows))

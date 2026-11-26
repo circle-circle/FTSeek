@@ -432,7 +432,9 @@ def run_playbook_auto_execute(
 
         # [阶段 7] kill/regime/risk/日亏前置闸本体迁 risk_gates;
         #   fail-open/fail-close 与返回 reason 顺序不变。
-        _preflight = _auto_execute_preflight(today, logger=logger)
+        from app.playbook.pipeline_parts.risk_gates import _record_regime_snapshot
+        _cycle_regime_audit = {}
+        _preflight = _auto_execute_preflight(today, logger=logger, regime_audit=_cycle_regime_audit)
         if _preflight is not None:
             return _preflight
 
@@ -463,7 +465,9 @@ def run_playbook_auto_execute(
                 no_trade_short_sim_experiment_active as _nt_exp_active)
             if _nt_exp_active():
                 from app.playbook.market_regime import MarketRegimeGate as _MRG_nt
-                _nt_short_exp = _normalize_regime_str(_MRG_nt().assess()) == "NO_TRADE"
+                _nt_ctx = _MRG_nt().assess()
+                _nt_short_exp = _normalize_regime_str(_nt_ctx) == "NO_TRADE"
+                _record_regime_snapshot(_cycle_regime_audit, "experiment", _nt_ctx, logger)
         except Exception as _nt_exp_err:
             logger.warning(f"[playbook] NO_TRADE SHORT实验态读取失败 (回落旧门): {_nt_exp_err}")
             _nt_short_exp = False
@@ -891,6 +895,7 @@ def run_playbook_auto_execute(
             # 根因: 盘前生成的 entry_price 用的是盘前 bid/ask, 开盘后 gap 导致 entry/stop 失准
             # 修复: 触发瞬间取实时 bid/ask, 重算 entry_price + stop_loss, 传 custom_params 给 executor
             # DB 原值保留不动 (审计可追溯盘前价), custom_params 覆盖执行价
+            _instruction_regime_audit = dict(_cycle_regime_audit)
             _reprice_params = None
             _sl_clamp_meta = {}
             _atr_required = _mom_policy is None
@@ -1114,6 +1119,7 @@ def run_playbook_auto_execute(
                             try:
                                 from app.playbook.market_regime import MarketRegimeGate as _MRG_f1
                                 _ctx_f1 = _MRG_f1().assess()
+                                _record_regime_snapshot(_instruction_regime_audit, "sizing", _ctx_f1, logger)
                                 _regime_str_f1 = _normalize_regime_str(_ctx_f1)
                                 _regime_str_b1 = _regime_str_f1
                                 _regime_mult = {"RISK_ON": 1.0, "CAUTIOUS": 0.5, "RISK_OFF": 0.3, "NO_TRADE": 0.0}.get(_regime_str_f1, 0.5)
@@ -1230,6 +1236,8 @@ def run_playbook_auto_execute(
                                     "direction": _dir,
                                     "source": _src_b1,
                                     "inst_regime_text": inst.get("market_regime"),
+                                    "regime_reads": _instruction_regime_audit,
+                                    "regime_snapshot_used": False,
                                     "gate_regime": _regime_str_b1,
                                     "gate_mult": _regime_mult,
                                     "water_mult": round(_water_mult, 4),
@@ -1340,6 +1348,9 @@ def run_playbook_auto_execute(
                                     "vol_bucket": (_vol_info or {}).get("bucket"),
                                     "atr_pct": round(float(atr_pct), 6),
                                     "audit_schema": "reprice_audit_v2",
+                                    "generation_regime_text": inst.get("market_regime"),
+                                    "regime_reads": _instruction_regime_audit,
+                                    "regime_snapshot_used": False,
                                     "at": _now_utc_rp().isoformat(),
                                 },
                             })

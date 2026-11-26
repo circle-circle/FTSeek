@@ -420,6 +420,7 @@ def _artifact_document(
     context: Dict[str, Any],
     supplemental: Optional[Dict[str, Any]],
     brief: Dict[str, Any],
+    artifacts: Dict[str, Any],
     target_symbols: Sequence[str],
     excluded: Sequence[Dict[str, str]],
     checkpoint_dir: Path,
@@ -430,6 +431,8 @@ def _artifact_document(
     args: argparse.Namespace,
     override_ignored: bool = False,
 ) -> Dict[str, Any]:
+    from app.event_stream.market_brief import PROMPT_VERSION
+
     supplemental_context = context.get("supplemental") or {}
     supplemental = supplemental or {}
     merged_fact_count = supplemental_context.get("merged_fact_count")
@@ -474,6 +477,12 @@ def _artifact_document(
         },
         "selection": context.get("selection"),
         "brief": brief,
+        # Immutable run audit only: preserve missing keys/nulls, not prompt text.
+        "llm_artifacts": {
+            "main_raw": artifacts["main_raw"],
+            "challenger_raw": artifacts["challenger_raw"],
+            "prompt_version": PROMPT_VERSION,
+        },
         "models": {"main": args.model, "challenger": args.challenger_model},
         "limits": {
             "lookback_hours": args.lookback_hours,
@@ -747,7 +756,7 @@ def _run(args: argparse.Namespace) -> Dict[str, Any]:
     # 4) 付费生成：主分析 + 挑战者，最多 2 次调用。
     from app.event_stream.market_brief import generate_market_event_brief
 
-    brief, _artifacts = generate_market_event_brief(
+    brief, artifacts = generate_market_event_brief(
         context,
         llm_call=_resolve_llm_call(),
         main_model=args.model,
@@ -766,6 +775,7 @@ def _run(args: argparse.Namespace) -> Dict[str, Any]:
         context=context,
         supplemental=supplemental,
         brief=brief,
+        artifacts=artifacts,
         target_symbols=target_symbols,
         excluded=excluded,
         checkpoint_dir=checkpoint_dir,

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import pytest
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -136,3 +137,57 @@ def test_flow_has_direction_filter_and_sizing_second_layer():
     assert "no_trade_short_regime_mult" in src
     assert "_nt_short_exp" in src
     assert "no_trade_short_exp" in src, "cohort 标记必须落指令 metadata"
+
+
+@pytest.mark.parametrize("flag,auto,allow,reason", [
+    (False, "sim", None, "regime_no_trade"),
+    (True, "sim", None, None),
+    (True, "real", "true", "regime_no_trade"),
+])
+def test_preflight_audit_does_not_change_permissions(monkeypatch, flag, auto, allow, reason):
+    _preflight_env(monkeypatch, flag=flag, auto=auto, allow=allow)
+    context = mr.RegimeContext(
+        regime=mr.MarketRegime.NO_TRADE, vix=21.8, spy_price=490, spy_ma20=540,
+        spy_ma50=560, spy_ma200=520, spy_change_pct=0, score=-6.7, top_n=0,
+        position_multiplier=0, min_strength=999, assessed_at="2026-11-25T15:00:00+00:00",
+        vix_observation={"source": "vixy_proxy_live", "value": 21.8})
+    calls = []
+    monkeypatch.setattr(mr.MarketRegimeGate, "assess", lambda self: calls.append("assess") or context)
+    audit = {}
+    out = _auto_execute_preflight("2026-11-25", check_daily_loss_circuit=lambda today: None,
+                                  logger=logging.getLogger("test.nt_exp"), regime_audit=audit)
+    assert (out["reason"] if out else None) == reason
+    assert calls == ["assess"]
+    assert audit["preflight"] == context.to_dict()
+    audit["preflight"]["vix_observation"]["source"] = "changed-audit"
+    assert context.vix_observation["source"] == "vixy_proxy_live"
+
+
+@pytest.mark.parametrize("gate", ["kill", "risk", "daily"])
+def test_regime_audit_never_bypasses_existing_hard_gates(monkeypatch, gate):
+    _preflight_env(monkeypatch, flag=True)
+    if gate == "kill":
+        monkeypatch.setattr(ei, "check_kill_switch", lambda: True)
+    elif gate == "risk":
+        monkeypatch.setattr(rsm, "RiskStateMachine", lambda: SimpleNamespace(get_state=lambda: rsm.RiskState.HALT))
+    audit = {}
+    out = _auto_execute_preflight(
+        "2026-11-25", check_daily_loss_circuit=lambda today: {"triggered": gate == "daily"},
+        logger=logging.getLogger("test.nt_exp"), regime_audit=audit)
+    assert out is not None
+    assert out["reason"] == {"kill": "kill_switch", "risk": f"risk_state_{rsm.RiskState.HALT}",
+                              "daily": "daily_loss_circuit"}[gate]
+    if gate == "kill":
+        assert audit == {}
+
+
+def test_failed_audit_cannot_change_preflight_result(monkeypatch):
+    _preflight_env(monkeypatch, flag=True)
+    def failed_dict():
+        raise RuntimeError("audit failure")
+    monkeypatch.setattr(mr.MarketRegimeGate, "assess", lambda self: SimpleNamespace(
+        regime=mr.MarketRegime.NO_TRADE, vix=21.8, to_dict=failed_dict))
+    audit = {}
+    out = _auto_execute_preflight("2026-11-25", check_daily_loss_circuit=lambda today: None,
+                                  logger=logging.getLogger("test.nt_exp"), regime_audit=audit)
+    assert out is None and audit == {}

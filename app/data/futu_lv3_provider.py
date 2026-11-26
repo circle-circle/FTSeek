@@ -1489,21 +1489,19 @@ class FutuLV3Provider:
         调用方应处理 False 返回值（使用缓存数据）。
         """
         now = time.time()
-        
-        # ① 单标的冷却: 同一标的10秒内不重复请求
-        if symbol:
-            with self._kline_req_lock:
+
+        # 冷却检查、全局窗口检查与预占必须在同一临界区。此前两个锁块之间，
+        # 同标的并发线程可一起穿过冷却检查，再分别记账发起物理请求。
+        with self._kline_req_lock:
+            if symbol:
                 last = self._kline_symbol_cooldown.get(symbol, 0)
                 if now - last < self._kline_symbol_cooldown_sec:
                     return False  # 冷却中
-        
-        # ② 全局配额检查
-        with self._kline_req_lock:
+
             self._kline_req_times = [t for t in self._kline_req_times if t > (now - 30.0)]
             if len(self._kline_req_times) >= self._kline_max_per_30s:
                 return False  # 配额已满
-            
-            # ③ 同时记录
+
             self._kline_req_times.append(now)
             if symbol:
                 self._kline_symbol_cooldown[symbol] = now
@@ -1600,21 +1598,29 @@ class FutuLV3Provider:
                             f"({_DAILY_DISK_PATH})")
 
     def _daily_disk_save(self, force: bool = False) -> None:
-        """[RFC-171] 节流落盘 (30s); 原子写 (tmp+rename), 失败不影响取数。"""
+        """[RFC-171] 节流落盘 (30s)；跨进程合并写，成功后才清 dirty。
+
+        实例锁只保护当前对象；共享文件还需要 flock 保护完整“读—合并—替换”
+        临界区。临时文件按进程/线程/纳秒唯一化，避免并发写者互相截断或抢 rename。
+        """
         now = time.time()
         if not force and (now - self._daily_disk_last_flush) < _DAILY_DISK_FLUSH_SEC:
             return
         with self._daily_disk_lock:
             if not self._daily_disk_dirty and not force:
                 return
-            self._daily_disk_last_flush = now
-            self._daily_disk_dirty = False
+            lock_fd = None
+            tmp = None
             try:
+                import fcntl as _fcntl
                 import json as _json
                 import os as _os
-                # 合并写 (2026-10-27 实测: MarketDataRouter 每个实例自建 FutuLV3Provider,
-                #   多个实例共享同一落盘文件 ⇒ 直接覆盖会互相丢条目)。按 symbol 取
-                #   fetched_at 较新者, 保证只在"本实例数据更新"时才替换。
+
+                _os.makedirs(_os.path.dirname(_DAILY_DISK_PATH), exist_ok=True)
+                lock_fd = _os.open(_DAILY_DISK_PATH + ".lock", _os.O_CREAT | _os.O_RDWR, 0o600)
+                _fcntl.flock(lock_fd, _fcntl.LOCK_EX)
+
+                # 多实例/多进程共享同一文件：按 symbol 取 fetched_at 较新者。
                 merged = {}
                 try:
                     with open(_DAILY_DISK_PATH, "r", encoding="utf-8") as fh:
@@ -1637,13 +1643,31 @@ class FutuLV3Provider:
                         continue
                     merged[sym] = {"bars": bars, "fetched_at": mine_ts}
                 payload = {"version": 1, "symbols": merged}
-                _os.makedirs(_os.path.dirname(_DAILY_DISK_PATH), exist_ok=True)
-                tmp = _DAILY_DISK_PATH + ".tmp"
+                tmp = (f"{_DAILY_DISK_PATH}.{os.getpid()}.{threading.get_ident()}."
+                       f"{time.time_ns()}.tmp")
                 with open(tmp, "w", encoding="utf-8") as fh:
                     _json.dump(payload, fh, ensure_ascii=False, separators=(",", ":"))
                 _os.replace(tmp, _DAILY_DISK_PATH)
+                self._daily_disk_last_flush = now
+                self._daily_disk_dirty = False
             except Exception as exc:
+                # dirty 与节流时间均保持原值，下一轮可立即重试，不丢待写数据。
                 logger.warning(f"[FutuLV3·DailyK] 落盘缓存写入失败 (忽略): {exc}", exc_info=True)
+            finally:
+                if tmp is not None:
+                    try:
+                        os.unlink(tmp)
+                    except FileNotFoundError:
+                        tmp = None  # os.replace 已消费临时文件，属于成功路径
+                    except Exception as cleanup_error:
+                        logger.warning(f"[FutuLV3·DailyK] 临时文件清理失败: {cleanup_error}",
+                                       exc_info=True)
+                if lock_fd is not None:
+                    try:
+                        import fcntl
+                        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                    finally:
+                        os.close(lock_fd)
 
     def _acquire_daily_kline_quota(self, symbol_key: str, max_wait: float = 30.0) -> bool:
         """日K配额门闸 (2026-08-27 ret=-1根因修): 复用 _wait_kline_quota 的全局60/30s窗口+单标的冷却.
@@ -1970,15 +1994,20 @@ class FutuLV3Provider:
             #   避免一次抖动就把日K永久推到 TwelveData (口径不同 + 更慢)。
             if ret != 0:
                 time.sleep(2.0)
-                ret, data, _err = self._quote_ctx.request_history_kline(
-                    code=futu_symbol,
-                    ktype=KLType.K_DAY,
-                    max_count=max(count + 10, 320),
-                    start=_start,
-                    end=_end,
-                )
-                if ret == 0:
-                    logger.info(f"[FutuLV3·DailyK] {symbol} 退避重试成功")
+                # 第二次物理请求必须重新预占全局配额；symbol=None 只跳过单标的冷却，
+                # 保留既有 2s 单次退避语义。窗口满则放弃重试并走既有缓存降级。
+                if self._wait_kline_quota():
+                    ret, data, _err = self._quote_ctx.request_history_kline(
+                        code=futu_symbol,
+                        ktype=KLType.K_DAY,
+                        max_count=max(count + 10, 320),
+                        start=_start,
+                        end=_end,
+                    )
+                    if ret == 0:
+                        logger.info(f"[FutuLV3·DailyK] {symbol} 退避重试成功")
+                else:
+                    logger.warning(f"[FutuLV3·DailyK] {symbol} 退避后配额仍满，跳过重试")
 
             if ret == 0 and data is not None and len(data) > 0:
                 klines = []

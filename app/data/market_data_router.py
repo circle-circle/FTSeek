@@ -1027,7 +1027,10 @@ class MarketDataRouter:
                         from app.data.vix_source import vixy_to_vix
                         vix_est = vixy_to_vix(quote["price"])
                         if vix_est is not None:
-                            logger.info(f"[Router] VIX (Futu VIXY实时): VIXY=${quote['price']:.2f} → VIX≈{vix_est:.2f}")
+                            from app.data.vix_source import record_vix_read
+                            record_vix_read(vix_est, "vixy_proxy_live",
+                                            quote_time=quote.get("update_time"))
+                            logger.info(f"[Router] VIX (Futu VIXY last_price代理): VIXY=${quote['price']:.2f} → VIX≈{vix_est:.2f}")
                             return vix_est
             except Exception as e:
                 logger.warning(f"[Router] Futu VIXY 获取失败: {e}")
@@ -1054,6 +1057,8 @@ class MarketDataRouter:
                 spy_quote = self.futu.get_quote("US.SPY")
                 if spy_quote and spy_quote.get("price", 0) > 0:
                     result["spy_price"] = spy_quote["price"]
+                    result["spy_price_basis"] = "futu_last_price"
+                    result["spy_quote_time"] = spy_quote.get("update_time")
             except Exception as e:
                 logger.debug(f"[Router] LV3 获取 SPY 报价失败: {e}")
 

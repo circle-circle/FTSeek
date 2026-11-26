@@ -257,9 +257,12 @@ def _assert_published(case):
         assert case.save.call_count == 1
     if case.path.startswith("av_"):
         key = "vix" if case.path == "av_live" else "vix_fred"
-        assert case.av.cache[key] == {"vix": 18.11 if key == "vix" else 17.84,
-                                      "source": "finnhub_vixy" if key == "vix" else "fred",
-                                      "as_of": "2026-11-20" if key == "vix" else "2026-11-19"}
+        expected_cache = {"vix": 18.11 if key == "vix" else 17.84,
+                          "source": "finnhub_vixy" if key == "vix" else "fred",
+                          "as_of": "2026-11-20" if key == "vix" else "2026-11-19"}
+        if key == "vix":
+            expected_cache["quote_time"] = 1795186800
+        assert case.av.cache[key] == expected_cache
         assert case.av._vix_probe_fail_ts == 0.0
 
 

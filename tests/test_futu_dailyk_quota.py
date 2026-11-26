@@ -9,6 +9,7 @@ TTL 集体过期, 45 symbol 在 6s 内连发 request_history_kline 打穿 OpenD 
 ② 失败日志透出 OpenD retMsg (原 `_` 吞掉) ③ ic_tracker 按 symbol 去重.
 """
 import time
+import threading
 from datetime import date
 
 import pandas as pd
@@ -59,6 +60,23 @@ class TestAcquireDailyKlineQuota:
         # 日K请求不应把同标的分钟K挡进单标的冷却 (分键空间 "D::")
         assert provider._acquire_daily_kline_quota("D::US.NVDA", max_wait=0.0) is True
         assert provider._wait_kline_quota("US.NVDA") is True
+
+    def test_same_symbol_check_and_reservation_are_atomic(self, provider):
+        """两个同标的并发调用只能一个穿过冷却并占用配额。"""
+        barrier = threading.Barrier(2)
+        results = []
+
+        def reserve():
+            barrier.wait(timeout=2)
+            results.append(provider._wait_kline_quota("US.ATOMIC"))
+
+        threads = [threading.Thread(target=reserve) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=2)
+        assert sorted(results) == [False, True]
+        assert len(provider._kline_req_times) == 1
 
 
 class TestGetDailyKlineGate:
@@ -179,6 +197,66 @@ class TestGetDailyKlineGate:
         provider._daily_disk_save(force=True)
         syms = _json.load(open(disk))["symbols"]
         assert syms["US.A"]["fetched_at"] == 100.0   # 保留较新者
+
+    def test_daily_disk_concurrent_writers_preserve_all_symbols(self, provider, tmp_path, monkeypatch):
+        """跨实例并发“读—合并—替换”不得丢条目或留下混写临时文件。"""
+        import json
+        import app.data.futu_lv3_provider as _fp
+
+        disk = tmp_path / "daily_kline_v1.json"
+        monkeypatch.setattr(_fp, "_DAILY_DISK_PATH", str(disk))
+        bar = [{"time": "2026-10-24 00:00:00", "open": 1, "high": 1, "low": 1,
+                "close": 1, "volume": 1, "turnover": 1}]
+        second = FutuLV3Provider(host="127.0.0.1", port=1)
+        for offset, instance in enumerate((provider, second)):
+            instance._daily_kline_cache = {
+                f"US.{side}{i}": bar
+                for side in (("A" if offset == 0 else "B"),) for i in range(30)
+            }
+            instance._daily_kline_cache_time = {
+                sym: 100.0 + offset + i for i, sym in enumerate(instance._daily_kline_cache)
+            }
+            instance._daily_disk_dirty = True
+
+        barrier = threading.Barrier(2)
+        errors = []
+
+        def save(instance):
+            try:
+                barrier.wait(timeout=2)
+                instance._daily_disk_save(force=True)
+            except Exception as exc:  # 实现内应自行留痕，不得把并发异常抛给调用方
+                errors.append(exc)
+
+        threads = [threading.Thread(target=save, args=(instance,))
+                   for instance in (provider, second)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+        assert errors == []
+        payload = json.loads(disk.read_text(encoding="utf-8"))
+        assert len(payload["symbols"]) == 60
+        assert not list(tmp_path.glob("*.tmp"))
+
+    def test_daily_disk_write_failure_keeps_dirty_and_flush_baseline(self, provider, tmp_path, monkeypatch):
+        import app.data.futu_lv3_provider as _fp
+
+        disk = tmp_path / "daily_kline_v1.json"
+        monkeypatch.setattr(_fp, "_DAILY_DISK_PATH", str(disk))
+        provider._daily_kline_cache = {
+            "US.FAIL": [{"time": "2026-10-24 00:00:00", "open": 1, "high": 1,
+                         "low": 1, "close": 1, "volume": 1, "turnover": 1}]
+        }
+        provider._daily_kline_cache_time = {"US.FAIL": 100.0}
+        provider._daily_disk_dirty = True
+        provider._daily_disk_last_flush = 123.0
+        monkeypatch.setattr(_fp.os, "replace", lambda *_args: (_ for _ in ()).throw(OSError("disk busy")))
+
+        provider._daily_disk_save(force=True)
+        assert provider._daily_disk_dirty is True
+        assert provider._daily_disk_last_flush == 123.0
+        assert not list(tmp_path.glob("*.tmp"))
 
     def test_daily_disk_roundtrip_survives_restart(self, provider, tmp_path, monkeypatch):
         """[RFC-171] 落盘 → 清内存 → 重新装载: 跨进程重启后仍零请求。"""
@@ -311,6 +389,51 @@ class TestGetDailyKlineGate:
             out = provider.get_daily_kline("US.MSI", count=30)
         assert out is None
         assert "频率太高" in caplog.text
+
+    def test_daily_retry_reserves_quota_for_each_physical_request(self, provider, monkeypatch):
+        """首次与退避重试各对应一次配额预占，不能两次请求只记一次账。"""
+        provider._daily_disk_loaded = True
+        provider._daily_disk_next_probe = float("inf")
+        provider._daily_disk_save = lambda *args, **kwargs: None
+        today = date.today().isoformat()
+        df = pd.DataFrame({
+            "time_key": [today] * 10, "open": [10.0] * 10, "high": [11.0] * 10,
+            "low": [9.0] * 10, "close": [10.5] * 10,
+            "volume": [1000] * 10, "turnover": [10000] * 10,
+        })
+        calls = []
+
+        class Ctx:
+            def request_history_kline(self, **kw):
+                calls.append(kw)
+                return ((-1, None, "rate limited") if len(calls) == 1 else (0, df, None))
+
+        self._make_live(provider, time.time(), Ctx())
+        monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+        out = provider.get_daily_kline("US.RETRY", count=5)
+        assert out is not None
+        assert len(calls) == 2
+        assert len(provider._kline_req_times) == 2
+
+    def test_daily_retry_not_sent_when_second_reservation_fails(self, provider, monkeypatch):
+        from unittest.mock import Mock
+
+        provider._daily_disk_loaded = True
+        provider._daily_disk_next_probe = float("inf")
+        calls = []
+
+        class Ctx:
+            def request_history_kline(self, **kw):
+                calls.append(kw)
+                return -1, None, "rate limited"
+
+        self._make_live(provider, time.time(), Ctx())
+        provider._wait_kline_quota = Mock(side_effect=[True, False])
+        monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+        assert provider.get_daily_kline("US.NORETRY", count=5) is None
+        assert len(calls) == 1
+        assert provider._wait_kline_quota.call_count == 2
+        assert provider._wait_kline_quota.call_args_list[1].args == ()
 
 
 class TestSessionFinalBar:

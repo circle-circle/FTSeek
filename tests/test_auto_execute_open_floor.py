@@ -28,6 +28,14 @@ SRC = (REPO / "app" / "playbook" / "pipeline_parts" /
 LOG = logging.getLogger("test_open_floor")
 
 
+@pytest.fixture(autouse=True)
+def isolated_entry_side_channels(monkeypatch, tmp_path):
+    monkeypatch.setattr(aef._s1_gate, "cycle_state", lambda *args: {"enabled": False})
+    monkeypatch.setattr(aef._s1_gate, "record_real_kill_shadow", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.playbook.pipeline_parts.risk_gates.no_trade_short_sim_experiment_active", lambda: False)
+    monkeypatch.setattr(aef, "_blackout_shadow_path", lambda *args: tmp_path / "blackout.jsonl")
+
+
 class _Cfg:
     def __init__(self, data):
         self._d = data
@@ -38,7 +46,9 @@ class _Cfg:
 
 def _patch_cfg(monkeypatch, data):
     import app.playbook.config as pbcfg
-    monkeypatch.setattr(pbcfg, "get_playbook_config", lambda: _Cfg(data))
+    monkeypatch.setattr(pbcfg, "get_playbook_config", lambda: _Cfg({
+        "entry_blackout_shadow_enabled": False, **data,
+    }))
 
 
 # ── 1. 纯函数: 配置 → floor ──────────────────────────────────────────
@@ -62,9 +72,7 @@ def test_open_floor_from_config(monkeypatch, cfg, expect_min, expect_hhmm):
 
 # ── 2. 真行为: 冻结时钟跑 run_playbook_auto_execute ──────────────────
 @pytest.fixture
-def frozen(monkeypatch):
-    """把 datetime.datetime 换成可冻结的子类 (被测函数内部 `from datetime import
-    datetime as _dt` 在调用时解析, 故打类本体有效; 退出时 monkeypatch 自动还原)。"""
+def frozen():
     real = _datetime_mod.datetime
     state = {"now": None}
 
@@ -73,8 +81,6 @@ def frozen(monkeypatch):
         def now(cls, tz=None):
             d = state["now"]
             return d if tz is None else d.astimezone(tz)
-
-    monkeypatch.setattr(_datetime_mod, "datetime", _Frozen)
 
     def _set(y, m, d, hh, mm):
         import pytz
@@ -85,10 +91,11 @@ def frozen(monkeypatch):
         _set.now_dt = frozen_at      # 供直接调 emit_blackout_shadow 的用例取"当前时刻"
         return frozen_at
     _set.now_dt = None
+    _set.datetime_cls = _Frozen
     return _set
 
 
-def _run(monkeypatch, reached):
+def _run(monkeypatch, reached, frozen):
     import pytz
 
     def _mark(name):
@@ -100,7 +107,7 @@ def _run(monkeypatch, reached):
     return aef.run_playbook_auto_execute(
         scheduler=object(),
         force=False,
-        datetime_cls=_datetime_mod.datetime,
+        datetime_cls=frozen.datetime_cls,
         _now_et=lambda: pytz.timezone("America/New_York"),
         _today_et_str=lambda: "2026-11-12",
         module_file=__file__,
@@ -108,7 +115,7 @@ def _run(monkeypatch, reached):
         INVALIDATED_SKIP_REASONS=set(),
         _CC_NORM_LOGGED=set(),
         _CC_NORM_LOGGED_MAX=10,
-        _auto_execute_preflight=lambda today, logger=None: {"preflight": "stub"} if reached.append("preflight") is None else None,
+        _auto_execute_preflight=lambda today, logger=None, regime_audit=None: {"preflight": "stub"} if reached.append("preflight") is None else None,
         _chase_cap_round_bump=_mark("bump"),
         _check_bridge_health_and_alert=_mark("bridge"),
         _check_intraday_trigger=_mark("trigger"),
@@ -138,7 +145,7 @@ def test_gate_blocks_until_configured_floor(monkeypatch, frozen, hh, mm, should_
                              "entry_open_blackout_hhmm": "0945"})
     frozen(2026, 11, 12, hh, mm)
     reached = []
-    out = _run(monkeypatch, reached)
+    out = _run(monkeypatch, reached, frozen)
     if should_block:
         assert out is None
         assert "bridge" not in reached and "preflight" not in reached, reached
@@ -152,12 +159,12 @@ def test_rollback_0935_reproduces_legacy_floor(monkeypatch, frozen):
                              "entry_open_blackout_hhmm": 935})
     frozen(2026, 11, 12, 9, 35)
     reached = []
-    _run(monkeypatch, reached)
+    _run(monkeypatch, reached, frozen)
     assert reached[:2] == ["bridge", "preflight"], reached
 
     frozen(2026, 11, 12, 9, 34)
     reached2 = []
-    _run(monkeypatch, reached2)
+    _run(monkeypatch, reached2, frozen)
     assert "preflight" not in reached2
 
 

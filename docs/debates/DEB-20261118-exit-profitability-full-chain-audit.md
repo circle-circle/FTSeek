@@ -1049,3 +1049,311 @@ a) 改回头两根（推荐，贴合预注册、误伤面最小）；b) 明示�
 - 棘轮既有红点不因本批消失：late_fill/position_sync 日志栈与 except:pass 899→900 仍另账，不宣称全绿。
 - 当前仍无真实触发/提前量/误伤/paired Δ。下一 RTH 只观察；任何真实 EXIT、EOD 或 LLM 仍须另裁。
 
+## R15 主会话复核收口：R13 技术结论确认；R14 已获当前用户明确确认（第 15 轮）
+
+> 性质：只读复核 + 测试重跑 + 裁决确认。零代码/配置/交易行为变更。
+
+1. **R13 技术复核确认**：新影子测试独立重跑 **16 passed**；P1-1 整窗排除、P1-2 头两根、前向路径、quote age SSOT、blocked CENSORED 与服务 MainPID=3377559 均与 R12 一致。当前休市，决策/前向路径仍 0 行，无新增阻塞问题。
+2. **一处口径更正**：R13.1 写「头两根干净 + 数小时后出现失败形态 ⇒ WAIT」不准确；实际代码与 `test_later_rolling_windows_never_replace_fill_first_two` 的结果是 **ABSTAIN**（非连续/超龄），不是 WAIT。该更正不改变修复有效性。
+3. **R14 授权核实**：R14 原文的「用户已裁按建议执行」在本会话当时不可核，主会话未直接接受。随后通过显式选择题，当前用户已明确选择「确认按 R14 执行」⇒ 现可正式确认：影子不停采；11-21 等 DEAD_SIGNAL 自然腾位，无法结算再议 fallback；12-02 前不开 EOD；LLM 零预算；灰度仅按机制研究；主线 OKR 不变。
+4. **handoff 排序**：R10/R11 条目已归位为 R12→R11→R10，符合最新在上；不重写历史结论。
+5. 当前待办仅是 R14.2 检查点：首个 RTH 观察真实落行，11-21 名额结算，12-02 thesis 机制复核。没有新增设计或灰度授权。
+
+## R16 告警驱动的源头修复：富途批量快照 'N/A' 一只脏票毒死整批（第 16 轮，2026-11-18 21:0x–21:3x CST）
+
+> 性质：**代码修复批**（非影子、非参数变更、非新实验）。触发源是 21:01 CST 的 `error_alert`
+> 推送（`rsshub_us.log` 2 条 ERROR，阈值 ≥1、近 7 日同窗中位数 M=0）。与本 DEB 的出场审计
+> 同轴的原因：受影响的 `get_batch_quotes` 就在出场快环上（`exit_monitor_flow.py:127`）。
+> 用户裁决：「按建议执行源头解决修复」，并确认冬令时 RTH 开盘为 22:30 CST（09:30 ET）。
+
+### R16.1 事实链（全部只读核实）
+
+1. **告警的「来源」字段失真**。三条 ERROR（21:00:28 / 21:00:41 / 21:02:16，告警窗只截到前两条）
+   实际来自 `scripts/llm_universe_scan.py scan --da-feed`（crontab 第 108 行，21:00 CST = 08:00 ET
+   的 DA 供料跑）。它写进 `rsshub_us.log` 只是因为 `app/data/rsshub_us_news.py:52` 在 **import 期**
+   执行 `logging.basicConfig(FileHandler(rsshub_us.log))`，把整个进程的 root logger 劫持到该文件
+   ⇒ error_alert 的来源归因对任何 import 过 rsshub_us_news 的进程都不可信。
+2. **交易主线零影响**。`logs/ftseek_us.log` 今日 ERROR/CRITICAL 计数 **0**，该错误类历史命中 **0**；
+   服务 active、MainPID=3377559（14:51:05 CST 起未变）。
+3. **不是新回归**。`app/data/futu_lv3_provider.py` 最后改动是 **2026-11-06 RFC-158**（今日 R9/R12
+   影子批只碰 `pullback_failure.py`/`thesis_manager_shadow.py`）。同类错误近 8 日：11-11=2、11-13=1、
+   11-14=2、11-17=2、今日=3、11-12/15/16=0。告警之所以今天响：基线是**同 15min 窗的 7 日中位数**，
+   而该错每天落点略移 ⇒ 任何一次复发都会撞上一个 M=0 的新窗。
+4. **根因（已用 SDK 源码逐行证实，非推断）**。链条如下：
+   - `futu/quote/quote_query.py:12` 定义 `NoneDataType = 'N/A'`，是 protobuf **可选字段缺失时的哨兵值**；
+   - `:575-578`：`if record.basic.HasField('preMarket'): set_item_from_pb(..., pb_field_map_PreAfterMarketData_pre) else: set_item_none(...)`；
+     `set_item_none`（`:38-42`）把该表**全部 8 个盘前字段**（含 `pre_price`、`pre_change_rate`）写成 `'N/A'`；
+     即便 `preMarket` 存在，`get_optional_from_pb`（`:15-21`）对单个未 set 的 optional 字段同样返回 `'N/A'`；
+   - 我们的 `get_batch_quote` 读这两个字段用的是 `float(row.get("pre_price", 0) or 0)`，而 **`or 0` 对 `'N/A'` 是空操作**
+     （非空字符串是 truthy）⇒ `float('N/A')` ⇒ ValueError；
+   - 反向排除：我们消费的 `last_price/open_price/high_price/low_price/prev_close_price/volume/turnover/update_time`
+     在 SDK `:478-491` 是 **protobuf 直取、无哨兵**，且 SDK 快照路径（`:440-700`）**零 `float()` 调用**
+     ⇒ 异常只可能在我们的 row 循环里抛出，不在 SDK 内部。这也解释了为何是 ValueError 而非
+     `'N/A' > 0` 的 TypeError（`last_price` 永远是数值）。
+   - **触发条件因此是「快照行缺盘前数据」，不是「权证」本身**：权证 US.TACOW($0.32)/US.FACTW($0.15)
+     只是该条件常态成立的种群（无盘前时段行情），所以它们每次进批必炸 ⇒ 近 8 日 4 天复现。
+5. **为什么是「毒死整批」**。`try` 包住整个 row 循环，而 `results.update(snapshot_results)` 在循环
+   **之后**（原 :1400）⇒ 第 N 行抛异常时前 N-1 行已解析的主板票一起被丢弃，整批落到逐只
+   `get_quote` 降级。这与 :1403-1408 记录的 2026-08-25 根因修复（DEB-ue-audit r5）**同病灶不同
+   分支**：那次修的是 `ret=-1` 整批拒绝，没修行解析异常。8/25 的实损形态是「主板票失去 LV3
+   `pre_price` → 盘前锚定门全判无现价 → 0 条注入」。
+6. **今日实损：无**。盘前榜质量门 `候选 LONG 5 / SHORT 2 (原始 50/50)` 与 11-17 同形，scan 正常
+   产出 10 个候选；降级代价仅多打 4 次 Finnhub（580→584）。
+7. **主线暴露面（结构性可达，尚未发生）**。`get_batch_quotes` 在出场快环
+   `app/playbook/pipeline_parts/exit_monitor_flow.py:127`（受 `_PB_EXIT_FETCH_TIMEOUT` 上界）。
+   **更正本条早先的写法**：初稿写的是「若权证/薄票与 playbook 持仓同批」，这个框定**过窄** ——
+   按 R16.1-4 证实的机制，触发条件是「批内任一行缺盘前数据」，与是否权证无关，权证只是该条件
+   常态成立的种群。因此主线暴露面比初稿写的宽：任何一次批内出现无盘前数据的标的，同批 5 仓都会
+   退化逐只取价并可能失去 `pre_price`。**但事实面仍是 0 命中**：`logs/ftseek_us.log` 该错误类历史
+   命中 0、今日 ERROR/CRITICAL 0（经验事实，不是保证）。
+
+### R16.2 修复（同一函数内两层，零阈值/判据变更）
+
+1. 模块级 `_safe_float(value, default=0.0)`：`'N/A'`/None/`''`/非数值/NaN/inf 一律落 default。
+2. row 循环内逐行 `try/except`：脏行只 `WARNING`（含 symbol）并 `continue`，**批级 except 保持
+   ERROR 不变**——严重度现在与实际后果对齐（整批丢失才是 ERROR）。
+3. 健康行口径逐值不变：`open_price=0` 仍为 `0.0`（不回落 `last_price`），键缺失沿用原默认
+   （OHLC/prev_close → last_price，volume/turnover/pre_* → 0），`prev_close=0` 时
+   `change_percent=0`。此三条各有一例钉子。
+
+### R16.3 凭据 / 验证 / 未验证
+
+- **凭据**：本批 4 文件（`app/data/futu_lv3_provider.py`、新 `tests/test_futu_snapshot_na_tolerance.py`、
+  本 DEB R16 节、`docs/debates/README.md` 索引行）+ handoff 条目；`config/` 零改动；他人 WIP
+  （`scripts/verdict_outcomes_ledger.py` + 其测试）未触碰。
+- **验证**：新钉子 **29 passed**；**变异验证两次**——①短路 `_safe_float` 为裸 `float` ⇒ **18 failed**；
+  ②移除逐行隔离（`try`→`if True`、删 except）⇒ **恰 1 failed** 且捕获日志复现原事故签名
+  `ERROR [FutuLV3] 批量快照异常: boom`；还原后 `grep -c MUTATION`=**0**、与备份 `diff`=**0 行**。
+  相关家族 `-k "futu or lv3 or snapshot or batch_quote or patient_exit or ue_evidence or exit_monitor
+  or quote"` ⇒ **733 passed / 8833 deselected**；`check_undefined_names` rc=0；`py_compile` OK；
+  `git diff --check` 通过。
+- **未验证**：①~~未定位究竟是哪个字段返回 `'N/A'`~~ **已定位并证实**（见 R16.1-4：SDK 盘前字段
+  哨兵，`quote_query.py:12/15-21/38-42/575-578`）——定位方式是读 SDK 源码，**没有为此打富途实盘
+  快照**（开盘前不占配额/不新增连接），故「实盘那一行的真实字段分布」仍未直接采样；②修复**未进
+  运行进程**（未重启）；③G-02 明日自动重启的 H-12 实际代价未测（见 R16.4）；④**生产前向验证尚未
+  发生**：落盘后的 21:10 scan 与 21:40 confirm 都被时段守卫拒绝（`ET 0810 在 premarket 窗口
+  (0900-0929)外` / `ET 840 在确认窗口(0932-1030)外`），都没有走到取价路径 ⇒ **首个真实检验点是
+  22:10 CST 的 scan（ET 0910，在窗内，与 21:00 那次同一宇宙含权证）**，其后是 22:40 confirm；
+  判据 = `rsshub_us.log` 该错误类归零，且若出现新的 `快照行解析失败 (只跳过 ...)` WARNING 则说明
+  第二层隔离被真实触发过。
+- **既有红点归账（非本批）**：`tests/test_futu_kline_sick_gate.py::test_high_atr_shadow_uses_raw_nonblocking_bars[cache]`
+  在小集合下 3/3 失败（`:480` 的 `assert time.monotonic() - start < 0.5` wall-clock 断言），
+  **在净 HEAD worktree 上同样失败** ⇒ 与本批无关（该 case 走 mocked `router.futu.get_kline`，
+  不经 `get_batch_quote`），属负载/顺序相关的既有红点（在 733 例大集合里 passed），不归本批修复。
+
+### R16.4 部署边界与明日风险（必须读）
+
+> **【本节第 3/4 条已被 R16.7 取代】** 写下约 40 分钟后用户指令「重启服务」⇒ 已于 22:10:08 CST
+> 人工受控重启并冒烟 7/7，G-02 明日自动重启与其 H-12 风险随之消除。原文保留以存证当时的判断与
+> 依据（风险识别成立，只是被提前做掉了），**部署事实以 R16.7 为准**。
+
+- 落盘时 21:2x–21:3x CST **在 G-02 安全窗（北京 09:00–12:00）之外** ⇒ 不触发自动重启。
+  21:29:01 的 tick 已如实记录：`skip: stale_drift=23843s_outside_safe_window | newest=app/data/futu_lv3_provider.py`。
+- 该 tick 同时推了一次 critical「部署断层」告警（`NOTIFY_STATE=1795008508` = 21:28:28，即变异验证
+  时的 mtime）。因还原把 mtime 推到 **21:29:55** ≠ 已告警值 ⇒ **下一个 tick（21:39）会再推一次**，
+  之后按 `newest_code_ts` 去重。这两条推送是本批的预期副作用，不是新故障。
+- **本批刻意不重启主线**：主线该错 0 命中、无紧迫性；且当前处于盘前、距 RTH 开盘（22:30 CST）约
+  1 小时，21:40 有 UE confirm cron、EXT entry 每 5 分钟在跑 ⇒ 不在此窗做人工重启。
+- **但 G-02 会在明日安全窗首个 tick（约 09:09 CST）自动重启并部署本修复**（上次重启 14:51，6h
+  冷却不拦）。代价核过：当前 5 仓 `current_sl == initial_sl`、4 仓 `trail_state_json` 为空、ELV 的
+  等于 cost ⇒ **此刻重启代价为零**（同 09:49 那次）。风险在**今晚 RTH 之后**：若任一仓 trail 上去，
+  `app/core/position_sync.py:2443-2447` 的恢复构造把 `trail_state` 硬写成 `cost` ⇒ 锁盈进度清零
+  （H-12，G-02 自己声明的代价）。**建议明日 09:00 前核一次 `current_sl vs initial_sl`；若有已收紧
+  的仓，改为人工受控重启（在途出场 SQL + `git status --porcelain -- app/ scripts/` 两核 + 启动冒烟），
+  不要让 G-02 盲重启。** 该核对未做，属未验证项。
+
+### R16.5 明确不做（不在本批扩面）
+
+- 不改 `error_alert` 的基线口径（同窗中位数 M=0 会对复发类错误持续误报，属告警治理，另裁）。
+- 不动 `app/data/rsshub_us_news.py:52` 的 import 期 `basicConfig`：它会造成多个进程日志落点变化，
+  属可观测性变更，须另立议题；本批只把「来源归因失真」如实记录在案。
+- 不动同窗口的 TwelveData 429 熔断 / 富途 DailyK `ret=-1` 链（今日 429=1、全源失败=28、DailyK
+  失败=37，低于 11-13 的 2/52/65 与 11-14 的 2/52/69，属中等水平），归 RFC-171/174/176 既有轴。
+- 21:10 那次 `scan` 打出「当前 ET 时刻 0810 在 premarket 窗口(0900-0929)外, 拒绝运行」是 ET
+  0730-0805 守卫按设计生效（冬令时双季 cron），不是故障，不做处置。
+
+### R16.6 对本修复自身的批评（针对性 / 合理性 / 效率自评）
+
+1. **针对性成立**：已证实的抛点就是 `pre_price`/`pre_change_rate` 两行，`_safe_float` 正好覆盖它们；
+   逐行隔离针对的是链条上的**放大器**（整批丢弃），不是抛点本身。两层各对应一环，不是通用兜底。
+2. **过度宽泛之处（自我批评，待裁）**：`_safe_float` 被套到全部 9 个数值字段，而已证实只有 2 个会炸。
+   代价是**静默降级** —— 落 default 时不记日志、不计数。若哪天富途对主板票的 `volume`/`turnover`
+   也返回 `'N/A'`，我们会安静地拿到 0 并送进下游而无人知晓（`last_price` 那条相对安全，因为
+   `<=0` 会整行跳过）。**可选加固**：批内统计降级字段数，>0 时打一条 WARNING（每批至多一行，
+   不新增噪声面）。本批刻意没做，理由是保持最小 diff —— 这是取舍，不是最优性证明。
+3. **为什么不做「只改两行」的更外科手术版**：SDK 把 `NoneDataType` 用在约 30 个快照字段上
+   （`:498-571` 的 `ask_price`/`bid_price`/`ask_vol`/`bid_vol`/`option_*`/`sec_status` 等），我们
+   **未来任何新消费的字段都自带同一个陷阱**；在边界处统一转译比逐点补丁耐用。本质是「把哨兵翻译
+   一次」，只是按字段而非按行做。
+4. **效率**：Python 的 `try/except` 未抛出时接近零成本，`math.isfinite` 是 C 调用；9 字段 × 批
+   10–100 行量级可忽略。零新增 API 调用、零新增订阅、零 config 变更；告警路径无需重启（cron
+   进程每次新起即带上修复）。
+5. **明确没有修的**：富途契约本身（改不了）；同窗口的 TwelveData 429 / DailyK `ret=-1` 链（另一轴）；
+   **`error_alert` 的「同窗 7 日中位数 M=0」基线口径**（老的复发类错误会持续误报——这才是本次
+   「为什么会响」的原因）；**`rsshub_us_news.py:52` import 期 `basicConfig` 造成的来源归因失真**
+   （这才是本次「为什么难排查」的原因）。后两项都属另议题，本批只如实记录不修。
+
+### R16.7 重启部署与 H-12 实测（2026-11-18 22:10:08 CST，用户指令「重启服务」）
+
+> R16.4 的两条前瞻（「本批刻意不重启主线」「G-02 会在明日约 09:09 CST 自动重启部署」）在写下约
+> 40 分钟后即被用户指令取代 ⇒ 按本仓惯例就地更正，不假装当初判断没错。R16.4 的**风险识别本身
+> 成立**（H-12 会把 trail_state 写回 cost），只是这次由人工受控重启在代价为零的时点先做掉了。
+
+- **重启前核（军规两项，均实跑）**：①`git status --porcelain -- app/ scripts/ config/` = 仅
+  `M app/data/futu_lv3_provider.py`（本批）+ `?? scripts/verdict_outcomes_ledger.py`（他人 WIP）；
+  已核该文件**不被 `app/`·`main.py` 任何模块 import** ⇒ 重启不会顺带把他人 WIP 上线。
+  ②在途出场：`data/exit_ledger.db` 的 `exit_intents` **total=0 / 未决（state!='BOOKED'）=0**；
+  `order_tracking` 今日 **0 行**（末行 2026-07-15）。
+- **H-12 代价前置量化**：5 仓全部 `current_sl == initial_sl`、4 仓 `trail_state_json` 为空、ELV 的等于
+  cost ⇒ 预测代价为零。
+- **执行**：`systemctl restart ftseek-us`（rc=0），MainPID 3377559 → **3413306**，
+  ActiveEnterTimestamp **2026-11-18 22:10:08 CST**；时点 ET 09:10 盘前，距 RTH 开盘（22:30 CST）20 分钟。
+- **启动冒烟 7/7 全绿 exit=0**（ConfigValidator / 漂移检测 / 热重载 / SSOT 审计 0 BLOCKING /
+  双臂安全确认 / 退出快循环 / 零 Traceback-CRITICAL）。
+- **重启后核验**：ERROR/CRITICAL **0**、Traceback **0**；启动对账
+  `[US Sync] Done | Futu: 5 | 主线内存: 0 | playbook自管: 5 | 一致性: ✓`；WARNING **6** 条且是 14:51
+  那次启动 8 条的**真子集**（config-diff #18 家族 / 财报日历静态 fallback / HermesWorker 预检降级 /
+  Reconciler 签名为空 / StartupMode 废弃 env），无一与本批相关。
+- **H-12 实测代价 = 0**：重启后 5 仓 `current_sl` 仍全部等于 `initial_sl`，`trail_state_json` 逐笔与
+  重启前一致 ⇒ 与 09:49 那次同结论，但这次是**前置预测 + 后置实测**双向对上，不是事后找补。
+- **修复确已在运行进程中**（按 2026-11-18 10:21 CST 那条教训的判据）：`futu_lv3_provider.py` mtime
+  **21:29:55 < 进程启动 22:10:08**；`grep -c MUTATION`=**0**；`_safe_float` 命中 **10** 处。
+- **G-02 明日自动重启的风险已消除**：`find app main.py -name '*.py' -newermt '2026-11-18 22:10:08'`
+  为空 ⇒ drift 为负 ⇒ 判 `ok`，不再自动重启、也不再推「部署断层」critical。（R16.4 预告的 21:39
+  第二次推送是否真投递未逐条核 push 记录，只核了去重态与 tick 日志。）
+- **影子侧未受影响**：`thesis_management` 仍 `enabled=true / max_plan_gap_pct=1.0 / max_bar_age_minutes=15.0`；
+  `thesis_management_shadow.jsonl` 与 `thesis_management_path.jsonl` 仍不存在（RTH 未开盘，符合预期）。
+- **仍未取得的一项：修复的生产前向证据**。22:10 的 `scan`（PID 3413267，crontab:113）确实跑在修复后
+  的代码上，且**已完整跑完**（产出 11 个候选，tier 分布 HARD 2 / CORR 6 / THESIS 3），全程
+  `批量快照异常` **0**、新行级 WARNING `快照行解析失败` **0**，期间 FutuLV3 被大量调用（本轮 46 行
+  FutuLV3 日志、多起 DailyK `ret=-1`）。**但这不构成正向证据**：该轮宇宙里**没有出现 TACOW/FACTW**
+  （21:00 那次是 `scan --da-feed` 变体，宇宙与路径都不同），即"脏行进批"这个触发条件本轮未被复现
+  ⇒ 这两个 0 只能读作**「无回归、未复发」**。**真正的复现检验点是明日 21:00 CST 的 `scan --da-feed`
+  （crontab:108，与今日产生三条 ERROR 的同一条命令、同一宇宙）**，判据：该轮 `批量快照异常` 保持 0；
+  若出现 `快照行解析失败 (只跳过 US.TACOW/US.FACTW)` 之类 WARNING，则说明第二层隔离被真实触发，
+  属更强的正向证据（同时给出到底是哪个字段脏的实盘采样，补上 R16.3 未验证①的最后一格）。
+
+## R17 次日全链复核：11-18 交易、执行事故与影子首个 RTH（2026-11-19）
+
+> 性质：只读复盘。收益统一 `pnl_net=realized_pnl-fees_est`，区分当日新入场与跨日平仓；无代码/配置/交易行为变更。
+
+### R17.1 昨日已平仓结果
+
+按 `substr(exit_time,1,10)='2026-11-18'` 全部 PLAYBOOK_SIM 已平仓：
+
+| 通道/标的 | 出场原因 | 净额 |
+|---|---|---:|
+| DA·TSM | SL_BREAKEVEN | +$7.88 |
+| DA·AVGO | SL_BREAKEVEN | +$13.68 |
+| DA·MSFT (SHORT) | SL_BREAKEVEN | +$7.32 |
+| DA·BA (SHORT) | SL_BREAKEVEN | +$10.74 |
+| DA·APH | DEAD_SIGNAL_EXIT | +$3.63 |
+| EXT·OXY | OVERNIGHT_GAP_STOP | **-$131.76** |
+| **合计 6 笔** | 毛 -$63.26 / 费 $25.25 | **净 -$88.51** |
+
+DA 5 笔全部盈利、合计 **+$43.25**，但不能忽略 OXY 而宣称整日盈利。LLY/ARM 为当日新成交仍在仓，不计入已实现收益。
+
+官方 `okr_2026_11_scoring.py --as-of 2026-11-18`：
+
+- 11 月 DA n=114、净 **-$879.79 / -17.0052bps**，n<120 仍 UNDERPOWERED；
+- qwen4 post n=10、净 **+$138.18 / +36.2699bps**，仅 2 个 ET 日且 n<30，**不构成模型转正证据**；
+- EXT n=47、净 **-$604.31 / -29.9502bps**，不再能引用 10 月小样本正收益当作当前 edge。
+
+### R17.2 DA/执行链健康
+
+- DA 31/31 分析均 qwen4-max，bridge 17=DB 17，08:44:43 ET 完成，未撞 08:57 死线；健康状态 WARN 仅 `log_unknown`。
+- 当日 17 条指令、7 笔新成交均 metadata 精确归因，无 ambiguous；5 笔当日平仓 + LLY/ARM 新仓。
+- 11-18 TCA 7/7 成交有值，5 笔带 late_fill；但 11-17 旧 4 笔迟成交仍缺，历史测量缺口未自动补齐，连续 5 日验证不能提前宣布完成。
+- 计划→成交偏差不等于纯滑点：近 2 日重定价→成交中位约 -1.88bps，需先拆 reprice 语义，不能把计划差全算执行成本。
+- 输入侧仍有 111 组跨栏目重复、research/news 陈旧；memory_window/memory_era 按既有裁决是审计器查旧表假阳性，不重复误修。
+
+### R17.3 两个当前持仓风险（优先级高于策略调参）
+
+1. **ELV 真实出场死锁**：09:48:44 ET OGS 触发，intent `78076759a08e4f6dacd8f4f91fddbd65` 当前仍 HELD，9 股在仓；`place_order` 返回码被丢弃使腿停 PREPARED，RFC-157 自愈因 `leg_not_terminal` 跳过，blocked_exits 继续冻结保护。RFC-214 已立案但 V1 未实施，不能视为已解决。
+2. **MU P3 恢复分叉**：`open_positions` 有 MU 6 股 @705、SL=690.90/TP=972.64，而指令 5666 真值 SL=669.47/TP=757.56；未平 trade_records=0。它未被孤儿化（主线 ATR/trail 在保护），但止损止盈真源错误，且再次证明 P3 不是“近休眠可忽略”。
+
+当前 open_positions 另有 ARM/LLY/GOOG/LMT/META/ELV/MU 共 7 笔，不能只用 trade_records 的 6 笔概括全部风险面。
+
+### R17.4 影子首个 RTH：链路跑通，但出现状态振荡与一例反证
+
+首个 RTH 产物：决策 113 行/11 仓，ABSTAIN 92、CENSORED 6、FAILED_RECLAIM 15；前向路径 72 根 1m/3 仓。`bad_lines=0`，报价龄与前向路径均实际落账。
+
+但 **FAILED_RECLAIM 只有 APH 1 个独立仓，不是 15 个样本**。K_1M 数据在完整/缺失间交替，使其在 `FAILED → insufficient_complete_5m → FAILED` 间振荡，当前 decision_key 去重没有锁存失败终态，重复 15 行。继续采集前应先做终态锁存，否则会放大触发率并污染复盘。
+
+首个案例也不是直接正收益证据：
+
+- APH 首次 FAILED=10:10:12，quote=76.335，pivot=76.70，fill=77.02；
+- 实际 DEAD_SIGNAL=11:01:08，exit=77.18，净 +$3.63；
+- 若按首个影子价退出，毛差约 -$34.25，再扣相同费用，较实际结局约 **-$42.25**（静态反事实，未计额外滑点）。
+
+即：有约 51 分钟提前量，但该案例是**潜在误杀盈利仓**，不能拿提前量冒充改善。当前机制样本仍只有 1 个，远未到 30 个/10 ET 日门。
+
+### R17.5 后续顺序
+
+1. ELV/RFC-214 与 MU 真源优先于策略调参；未部署前如实保持未解决状态。
+2. 影子先做 FAILED 终态锁存与数据振荡回归测试；当前只保留 APH 首个信号作机制案例，不把 15 行当样本或盈利证据。
+3. 11-19 21:00 CST 再核 R16 批量快照修复的真实同宇宙验证；11-21 结算 DEAD_SIGNAL；12-02 前不启动 EOD 第二切片或 LLM。
+4. qwen4 post 继续攒样，不因 2 天正收益改模型、尺寸或其他出场参数。
+
+## R18 优化修复实施：RFC-214 + P3 真源 + FAILED 终态锁存（2026-11-19）
+
+> 用户裁「请按照建议做优化修复」。按一次一变量拆 A/B/C 三批部署，历史 ELV 实例单独备份审计处置；未实施 V2 blocked_exits 上界、EOD 或 LLM。
+
+### R18.1 A：RFC-214 出场提交结果契约
+
+- `app/execution/exit_lifecycle.py` 新增 `mark_submit_rejected` 窄 CAS：仅 `PREPARED + order_id IS NULL + dealt_qty IS NULL + version 匹配` 才能写 `TERMINAL/FAILED/dealt_qty=0/dealt_amount=0`。
+- `send()` 保留 `ret`：有 order_id 一律按已受理；`ret==RET_OK` 无 id 与异常丢响应仍保持认领；只有 `ret!=RET_OK + 无 order_id + 券商持仓未减少` 才终态化。持仓下降、查询失败或方向/账户冲突全部降级 UNKNOWN，保持认领。
+- 拒单终态化经 `app/push` hub 留痕，不静默；未改 observe()、未加人工 override、未新建 cron。
+- 新 `tests/execution/test_exit_submit_outcome_contract.py` **15 passed**，含 T1–T14 及方向冲突钉：拒单终态、UNKNOWN 不动、有 id 受理、CAS 四约束、持仓下降 fail-closed、查询失败 fail-closed、observe 反向钉、RFC-157 release 可达、FAILED 已在常量、push 不静默。
+- 完整 A 回归 **218 passed**；13:28:31 CST 重启冒烟 7/7。
+
+### R18.2 历史 ELV 实例处置与闭环
+
+V1 不能凭空补写旧腿返回码，故单独核验后处置：
+
+- 券商只读实证：ELV 仍 9 股 LONG、成本 439.42、无有效出场订单；旧腿 `PREPARED/order_id=NULL/dealt_qty=NULL`。
+- SQLite 备份 `/tmp/playbook_exits.before-rfc214-elv-20261119T003509.db`；审计 `data/audits/rfc214_elv_legacy_20261119T003510.jsonl`。
+- 窄 CAS 将旧腿标为 `TERMINAL/FAILED/dealt=0`，随后 RFC-157 自动释放并归档：`data/exit_intents_archive/78076759a08e4f6dacd8f4f91fddbd65_1795066803_61bbb290.json`。
+- 当前未结算 intent=0，冻结解除；ELV 持仓未被强平，留待正常 RTH 原规则处理。
+
+### R18.3 B：P3 指令 SL/TP 真源
+
+- `app/core/position_sync.py` 新增 `_instruction_stop_truth`：instruction_id 可反查且 SL>0 ⇒ 使用指令 SL/TP；缺失/失败保留 synthetic 并显式告警。`_meta_p3.stop_loss_source ∈ {instruction,synthetic}`，价格单位 USD，TP=0 合法。
+- ATR 代理在真值选定后重算，不沿用合成 SL。
+- 新 `tests/test_position_sync_instruction_truth.py` + backfill/reconcile/RFC195 回归 **56 passed**；13:38:38 CST 重启冒烟 7/7。
+- 当前 MU 用 SQLite 备份 `/tmp/ftseek_us.before-mu-truth-20261119T004307.db` + 审计 `data/audits/p3_mu_instruction_truth_20261119T004307.jsonl` 修复：SL 690.90→**669.47**、TP 972.64→**757.56**，take_profit_json 同源，strategy_id 未变。
+
+### R18.4 C：FAILED_RECLAIM 终态锁存
+
+- `thesis_manager_shadow`：某仓首次 FAILED 后，后续缺 bar/stale/WAIT 不得重新打开；新到达 1m 仍续前向路径，但不新增第二个 FAILED 决策行。
+- 新钉子覆盖 `FAILED→缺数据→恢复/重启` 振荡；最终新影子测试 **17 passed**。
+- 13:44:12 CST 重启冒烟 7/7；13:49:23 CST 加载日志栈补齐后再次冒烟 7/7，MainPID=3475278。
+
+### R18.5 最终验证与边界
+
+- A/B/C 最终联合回归 **390 passed**；`check_undefined_names`、py_compile、diff-check 通过。
+- 棘轮仍有 2 项既有红点：`late_fill_evidence.py`/`position_sync.py` 日志栈与 except:pass 899→901，**非全绿**，未改基线。
+- 当前服务 active、未结算 intent=0、MU/ELV 两表止损止盈真值一致。首日影子历史 15 行仍是 APH 1 个样本，不回写历史数据；新锁存只防后续重复。
+- 未实施：V2、真实结构性 EXIT 灰度、EOD 第二切片、FADE_SHORT、LLM。这些均需另裁。
+
+## R19 修复后残余审查与两处补强（2026-11-19）
+
+> 性质：修复后只读残余审查 + 已批准范围内的小边界修正。无新策略/新实验。
+
+1. **多行券商响应边界**：R18 的 `send()` 只在 `len(rows)==1` 时识别 order_id；多行响应若含合法 order_id，可能被误判为 DEFINITIVE_REJECT。现统一为“取首个合法 order_id + 原有 identity_matches + attach_order”，只有完全无合法 id 才进入拒单分支。新增 `test_send_accepts_first_valid_order_id_in_multirow_response`。
+2. **P3 端到端真值钉子**：除辅助函数外，新增 full backfill 测试，实证 `trade_records.metadata_json.stop_loss=669.47 / take_profit=757.56 / stop_loss_source=instruction`，并确认 ATR 代理使用真值距离而非合成 SL。
+- 新增/相关测试 **29 passed**；此前联合 390 passed 保持有效。14:28:07 CST 重启 MainPID=3477060，冒烟 7/7，未结算 intent=0，ELV/MU 真值一致。
+- 棘轮既有红点仍不因此消失，不宣称全绿；V2/真实灰度/EOD/LLM 仍未实施。
+
+## R20 主会话独立复查：另一 Agent 的加固与归因更正确认（2026-11-19）
+
+> 性质：独立代码/数据/测试复核，无新增改动。未直接采信另一 Agent 自述。
+
+- **实现与测试**：`_error_text` 不再对 payload 求 bool，避免 DataFrame 在拒单处置内二次抛错；新增 DataFrame 端到端拒单与 push 存活钉。`send()` 缩进与无异常上下文日志已清理。独立联合回归 **296 passed**（RFC-214、完整 lifecycle、P3、影子等）。
+- **多行响应**：当前取首个合法 order_id 但每个候选仍须过 `identity_matches(code/side/qty/acc_id/trd_env)`，错行抛 `exit_submit_identity_conflict`，不存在无条件接受；R20 对该弱化的评估成立。
+- **ELV 证据归因**：审计第二行已明确 `integrated_us_order_new_err` 是借用标注而非券商原文；原返回码不可追回，但 `dealt=0`、非响应丢失、PREPARED 未触达等实质判据成立。保留该更正是必要的，不能把推断写成捕获证据。
+- **真实正向路径**：ARM trade_id=1922 已于 2026-11-19 04:08:47 ET 以 SL_BREAKEVEN 出场，毛 +$23.80、费 $4.19、净 **+$19.61**，推送一致，证明 ACCEPTED 路径未受影响；DEFINITIVE_REJECT 新路径仍需自然样本。
+- **当前状态**：未结算 intent=0，ELV/MU 真值一致，服务 active/MainPID=3488322，冒烟 7/7；`check_undefined_names` 通过。全仓 `git diff --check` 另有 obsidian 空白告警，与本复核代码无关。
+- **剩余边界**：V2 未实施；V1 的 UNKNOWN 支仍可有理论卡死；R18/R19 重启时旧 HELD intent 的军规核记录应保留为流程教训；新拒单自然触发仍未验证；棘轮既有红点另账。
+
+**结论：另一 Agent 的 R20 修复与部署可确认，无新增阻塞问题。**

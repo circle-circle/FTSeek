@@ -237,10 +237,7 @@ class LessonInjector:
         """
         验证活跃教训的有效性
         
-        逻辑:
-        - 如果教训说"避免盘前交易"，今天没有盘前交易 → 教训有效 → 延长有效期
-        - 如果教训说"避免盘前交易"，今天盘前交易亏损 → 教训有效 → 提升置信度
-        - 如果教训说"避免盘前交易"，今天盘前交易盈利 → 教训无效 → 降低置信度
+        只以已平仓的净损益验证；未平仓、无观察及非法时间均不算支持证据。
         
         Args:
             today_trades: 今日交易列表 (来自 trade_records)
@@ -274,27 +271,29 @@ class LessonInjector:
                 
                 # 验证规则
                 if subcat == 'premarket_loss':
-                    # 检查今天是否有盘前交易
-                    premarket_trades = [
-                        t for t in today_trades
-                        if self._is_premarket(t.get('entry_time', ''))
-                    ]
-                    
-                    if not premarket_trades:
-                        # 没有盘前交易 → 教训有效
-                        new_confidence = min(1.0, old_confidence + 0.05)
-                        validated += 1
-                        should_update = True
+                    observed_premarket = False
+                    premarket_trades = []
+                    for trade in today_trades:
+                        if not trade.get('entry_time'):
+                            continue
+                        is_premarket = self._is_premarket(trade.get('entry_time', ''))
+                        if is_premarket is None:
+                            continue
+                        if is_premarket:
+                            observed_premarket = True
+                        if is_premarket and trade.get('exit_price') and trade.get('exit_price') > 0:
+                            premarket_trades.append(trade)
+
+                    if not observed_premarket or not premarket_trades:
+                        # 无反例或未结算都不是支持证据，confidence/expiry/计数原样保留。
+                        pass
                     else:
-                        # 有盘前交易，检查盈亏
-                        premarket_pnl = sum(t.get('realized_pnl', 0) or 0 for t in premarket_trades)
+                        premarket_pnl = sum(self._trade_net_pnl(t) for t in premarket_trades)
                         if premarket_pnl < 0:
-                            # 盘前亏损 → 教训正确
                             new_confidence = min(1.0, old_confidence + 0.1)
                             validated += 1
                             should_update = True
                         else:
-                            # 盘前盈利 → 教训可能不正确
                             new_confidence = max(0.1, old_confidence - 0.15)
                             invalidated += 1
                             should_update = True
@@ -304,10 +303,11 @@ class LessonInjector:
                     high_signal_trades = [
                         t for t in today_trades
                         if (t.get('signal_strength', 0) or 0) >= 60
+                        and t.get('exit_price') and t.get('exit_price') > 0
                     ]
                     
                     if high_signal_trades:
-                        avg_pnl = sum(t.get('realized_pnl', 0) or 0 for t in high_signal_trades) / len(high_signal_trades)
+                        avg_pnl = sum(self._trade_net_pnl(t) for t in high_signal_trades) / len(high_signal_trades)
                         if avg_pnl < 0:
                             new_confidence = min(1.0, old_confidence + 0.05)
                             validated += 1
@@ -335,17 +335,27 @@ class LessonInjector:
         finally:
             conn.close()
     
-    def _is_premarket(self, entry_time: str) -> bool:
-        """判断是否为盘前入场"""
+    @staticmethod
+    def _trade_net_pnl(trade: Dict) -> float:
+        net = trade.get('pnl_net')
+        if net is not None:
+            return float(net)
+        return float(trade.get('realized_pnl', 0) or 0) - float(trade.get('fees_est', 0) or 0)
+
+    def _is_premarket(self, entry_time: str) -> Optional[bool]:
+        """带时区转ET；无时区按生产入口的ET，不将其错置到下一交易日。"""
         if not entry_time:
-            return False
+            return None
         try:
-            from datetime import timedelta
-            entry_dt = datetime.fromisoformat(entry_time)
-            et_hour = (entry_dt.hour - 13) % 24
-            return 4 <= et_hour < 9
-        except (ValueError, TypeError):
-            return False
+            from app.utils.timezone import ET
+            from pytz.exceptions import InvalidTimeError
+            entry_dt = datetime.fromisoformat(str(entry_time).replace('Z', '+00:00'))
+            et_dt = (ET.localize(entry_dt, is_dst=None) if entry_dt.utcoffset() is None
+                     else entry_dt.astimezone(ET))
+            et_minutes = et_dt.hour * 60 + et_dt.minute
+            return 4 * 60 <= et_minutes < 9 * 60 + 30
+        except (ValueError, TypeError, InvalidTimeError):
+            return None
     
     def get_stats(self) -> Dict:
         """获取教训统计"""

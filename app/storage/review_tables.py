@@ -34,10 +34,10 @@ class ReviewDatabase:
             db_path: 数据库文件路径
         """
         if db_path:
-            self.db_path = Path(db_path)
+            self.db_path = Path(db_path).expanduser().resolve()
         else:
             from app.core.paths import get_review_db
-            self.db_path = get_review_db()
+            self.db_path = get_review_db().expanduser().resolve()
         
         # 确保数据目录存在
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -47,9 +47,22 @@ class ReviewDatabase:
     
     @contextmanager
     def get_connection(self):
-        """获取数据库连接上下文管理器 (使用 pool 缓存连接)"""
-        from app.storage.db_pool import get_pool
-        conn = get_pool().connection("review")
+        """获取数据库连接；仅默认路径复用 ``review`` 池槽位。
+
+        显式 db_path 必须连接其规范化后的实际文件，不能借全局池槽位把不同实例
+        路由到同一个生产库。自定义路径使用短连接并在退出时关闭；默认生产路径
+        保持既有池化行为。
+        """
+        from app.storage.db_pool import get_pool, get_db_path
+
+        use_default_pool = self.db_path.resolve() == get_db_path("review").resolve()
+        conn = get_pool().connection("review") if use_default_pool else None
+        if conn is None:
+            conn = sqlite3.connect(str(self.db_path), timeout=10.0, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA synchronous=NORMAL")
         try:
             yield conn
             conn.commit()
@@ -57,6 +70,9 @@ class ReviewDatabase:
             conn.rollback()
             logger.error(f"数据库操作失败：{e}")
             raise
+        finally:
+            if not use_default_pool:
+                conn.close()
     
     def _init_tables(self):
         """初始化 8 张复盘表"""

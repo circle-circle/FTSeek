@@ -580,6 +580,9 @@ class AlphaVantageProvider:
                 # ── 代理窗口 (盘前/交易时段): 优先 Finnhub VIXY 实时代理 ──
                 hit = self._cache_entry_within(_VIX_LIVE_CACHE_KEY, live_max_age_s)
                 if hit is not None and hit.get("source") == "finnhub_vixy":
+                    from app.data.vix_source import record_vix_read
+                    record_vix_read(hit.get("vix"), "finnhub_vixy_proxy",
+                                    as_of=hit.get("as_of"), quote_time=hit.get("quote_time"))
                     return hit.get("vix")
                 vix = self._fetch_live_vix(_VIX_LIVE_CACHE_KEY)
                 if vix is not None:
@@ -587,6 +590,9 @@ class AlphaVantageProvider:
                 # VIXY 失败 → FRED 日频 fallback (独立槽位, 不占实时位)
                 hit = self._cache_entry_within(_VIX_FRED_CACHE_KEY, _VIX_FRED_MAX_AGE_S)
                 if hit is not None and hit.get("source") == "fred":
+                    from app.data.vix_source import record_vix_read
+                    record_vix_read(hit.get("vix"), "fred",
+                                    as_of=hit.get("as_of"), quote_time=hit.get("quote_time"))
                     return hit.get("vix")
                 vix = self._fetch_fred_vix(_VIX_FRED_CACHE_KEY)
                 if vix is not None:
@@ -595,12 +601,18 @@ class AlphaVantageProvider:
                 # ── 盘后/隔夜/周末: FRED 日频优先 (T-1 收盘此刻是真值) → VIXY fallback ──
                 hit = self._cache_entry_within(_VIX_FRED_CACHE_KEY, _VIX_FRED_MAX_AGE_S)
                 if hit is not None and hit.get("source") == "fred":
+                    from app.data.vix_source import record_vix_read
+                    record_vix_read(hit.get("vix"), "fred",
+                                    as_of=hit.get("as_of"), quote_time=hit.get("quote_time"))
                     return hit.get("vix")
                 vix = self._fetch_fred_vix(_VIX_FRED_CACHE_KEY)
                 if vix is not None:
                     return vix
                 hit = self._cache_entry_within(_VIX_LIVE_CACHE_KEY, live_max_age_s)
                 if hit is not None and hit.get("source") == "finnhub_vixy":
+                    from app.data.vix_source import record_vix_read
+                    record_vix_read(hit.get("vix"), "finnhub_vixy_proxy",
+                                    as_of=hit.get("as_of"), quote_time=hit.get("quote_time"))
                     return hit.get("vix")
                 vix = self._fetch_live_vix(_VIX_LIVE_CACHE_KEY)
                 if vix is not None:
@@ -663,7 +675,11 @@ class AlphaVantageProvider:
                     as_of = datetime.fromtimestamp(timestamp, tz=ET).date().isoformat()
                 except (KeyError, TypeError, ValueError, OSError):
                     as_of = None
-                result = {"vix": vix_est, "source": "finnhub_vixy", "as_of": as_of}
+                result = {"vix": vix_est, "source": "finnhub_vixy", "as_of": as_of,
+                          "quote_time": fh_data.get("t")}
+                from app.data.vix_source import record_vix_read
+                record_vix_read(vix_est, "finnhub_vixy_proxy", as_of=as_of,
+                                quote_time=fh_data.get("t"))
                 if DATA_CACHE_PUBLICATION_ALLOWED.get():
                     self.cache[cache_key] = result
                     self.cache_time[cache_key] = datetime.now()
@@ -686,6 +702,8 @@ class AlphaVantageProvider:
                 as_of, vix = latest_valid_observation(response.text)
                 if as_of is not None and vix is not None and vix > 0:
                     result = {"vix": vix, "source": "fred", "as_of": as_of}
+                    from app.data.vix_source import record_vix_read
+                    record_vix_read(vix, "fred", as_of=as_of)
                     if DATA_CACHE_PUBLICATION_ALLOWED.get():
                         self.cache[cache_key] = result
                         self.cache_time[cache_key] = datetime.now()

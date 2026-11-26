@@ -280,6 +280,9 @@ def _run_auto_execute(monkeypatch, instruction, now_et_dt, now_sequence=None,
     monkeypatch.setattr("app.playbook.playbook_service.PlaybookService", lambda db: service)
     monkeypatch.setattr("app.execution.dual_broker.get_dual_broker", lambda: FakeBroker())
     monkeypatch.setattr(aef, "progress_ping", lambda: None)
+    monkeypatch.setattr(aef._s1_gate, "cycle_state", lambda *args: {"enabled": False})
+    monkeypatch.setattr(aef._s1_gate, "record_real_kill_shadow", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.playbook.pipeline_parts.risk_gates.no_trade_short_sim_experiment_active", lambda: False)
     monkeypatch.setattr(pilot_policy, "entries_enabled", lambda: True)
     monkeypatch.setattr(pilot_policy, "rebalance_day_status", lambda today, policy=None: (
         pilot_policy.RebalanceDayStatus(True, "rebalance_day", 0)))
@@ -307,7 +310,7 @@ def _run_auto_execute(monkeypatch, instruction, now_et_dt, now_sequence=None,
         INVALIDATED_SKIP_REASONS=set(),
         _CC_NORM_LOGGED=set(),
         _CC_NORM_LOGGED_MAX=100,
-        _auto_execute_preflight=lambda today, logger=None: None,
+        _auto_execute_preflight=lambda today, logger=None, regime_audit=None: None,
         _chase_cap_round_bump=lambda instruction_id: 0,
         _check_bridge_health_and_alert=lambda source: None,
         _check_intraday_trigger=lambda scheduler, inst: True,

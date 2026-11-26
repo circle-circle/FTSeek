@@ -240,3 +240,86 @@ PYTHONPATH=. ./venv/bin/python scripts/da_chain_contract_audit.py \
 ```
 
 - 付费交叉回放只在另行明确执行预算后运行；dry-run 已给出调用矩阵与输入 shape，不以离线工具落地冒充质量结论。
+
+---
+
+## R4. 两日生产实证结算与入场延迟复查（2026-11-19，只读审计，零运行时改动）
+
+> 状态：**§4/R2.4 预注册首夜观察项已按 11-17/11-18 两个生产日结算；链路健康；入场延迟裁决 = 维持 0945 + 120s 不动。**
+> 本批纯落档：零 `app/`/`config/`/hermes 脚本改动、零重启、零付费模型调用（futu 快照为只读行情）。
+
+### R4.1 链路健康（§4 观察项①–⑤结算）
+
+| 指标 | 11-17 | 11-18 |
+|---|---|---|
+| 分析数 / 候选数 | 35 / 40 | 31 / 35 |
+| 模型三层一致（ckpt/API 回显/bridge/指令） | qwen4-max 35/35，mismatch=0 | qwen4-max 31/31，mismatch=0 |
+| 错误 / finish≠stop / 缺股 | 0 / 0 / 0 | 0 / 0 / 0 |
+| ①延迟 p50 / p90 / max (s) | 339 / 445 / 524 | 367 / 442 / 562 |
+| ②reasoning p50 / max (tok) | 13118 / 22290 | 14692 / 24810 |
+| ②reasoning ≥16000 占比 | 4/35 (11%) | **11/31 (35%)** |
+| prompt p50 / max (tok) | 22989 / 29627 | 22817 / 32935 |
+| 前缀缓存命中（Σcached/Σprompt） | 26.7% | 25.3% |
+| ④整轮完成 (ET) / 0857 死线余量 | 08:46:26 / ~10.6min | 08:44:43 / ~12.3min |
+| 门禁 PASS/WARN/BLOCK → 指令数 | 5/9/21 → 14 | 6/11/14 → 17 |
+
+- ②撞顶：budget=0 无帽 ⇒ `cap_check=not_applicable`、0 截断。**旧 16384 帽在 11-18 会截断 35% 候选的思考** — R2 解帽的直接收益实证（思考自然收尾，正文契约全部 VALID）。
+- ③契约/DEGRADED：两日 0 错误、0 非 stop、bridge fresh、state=complete、无 unreadable checkpoint。
+- ⑤429/配额：carrier 日志缺失 ⇒ 审计 `log_unknown`（两日唯一 WARN）。**429 计数不可观测，不是 0**；checkpoint 侧无限流/降级形态。
+- 延迟落在 §4 预期 300–550s 窗（11-18 max 562s 单候选略超，未影响死线）；BLOCK 理由抽查实质（财报前 3 日硬规/无增量 edge/证据互斥），门禁与指令数吻合，非空转。
+
+**结论：信息输入→推理→筛选链路健康；R2 解帽未引入契约/延迟/死线回归。**
+
+### R4.2 结果诚实呈报（非质量裁决）
+
+- 已平 11 笔（11-17×5 + 11-18×6）**全正 +$157.79，均 +37.64 bps/笔**（切换前基线 -2.25）；出场 SL_BREAKEVEN×7 / SL_TRAIL_LOCK×3 / DEAD_SIGNAL×1，**零 SL_INITIAL**（历史最大出血族）；持仓 0.1–1.4h（ARM 5.8h 隔夜）。
+- cohort 内未平浮亏（11-19 05:00 ET 快照）：ELV **-$347.22** + LLY -$83.67 ⇒ **两日 cohort 净 ≈ -$273.1**（MU +$1.62，11-18 指令为 SKIPPED_EXISTING_POSITION，归因另计）。
+- **ELV 焦点案**：11-17 LOW/conf35 BUY@439.42（thesis=板块性无信息回撤低吸，证据真实但方向错）；SL 420.28 早已跌破，现价 400.84（-8.78%）。亏损被 RFC-214 出场拒单死锁放大 ~$171（DEB-20261118 R18–R20 线程口径）；V1 已于 11-19 17:15 CST 部署、ELV 归回 playbook 自管，**预期今日开盘止损出场 — 未验证**。
+- 窗外存量仓 LMT(11-13)/GOOG/META(11-16) 浮亏合计 -$301.65，不计入两日 cohort；全簿浮亏 -$730.92。
+- 11-18 09:51–09:53 ET 入场拒单（BA/SPCX/APH/ARM，券商通道降级+死锁类）；BA/APH/ARM 重试后 BOOKED，**SPCX 仍 PENDING 未成交**。RFC-214 已修，观察自然触发。
+- **n=11 < 30，宪章第 5/9 律不下模型质量结论**。方向性证据正向（已平全正+零 SL_INITIAL），但 ELV 证明 LOW 置信全仓执行仍可放大单票亏损；质量裁决交前瞻 cohort（OKR 主 KR）。
+
+### R4.3 入场延迟复查（裁决 = 维持 0945 + 120s 不动）
+
+现行三层（本批全部不动）：①`entry_open_blackout_hhmm: 0945`（`config/unified_config.yaml:1332`，11-12 用户令 5→15min，热载，回滚=0935）；②RFC-141 D2' 触发后 120s 复核（holdout 20%，现役 UNPROVEN）；③主循环 180s/快循环 10s。实际入场 09:50–10:13 ET。
+
+| 尺子 | 窗口 | 读数 | 含义 |
+|---|---|---|---|
+| 黑窗影子 `data/entry_blackout_shadow.jsonl` | 11-17/18 | 27 hits 全在 09:30–31；首触价→实际成交方向感知等待成本 **-59.8bps（n=13，8/13 等待获益）** | 黑窗内等待更便宜，支持维持 0945 |
+| `data/shadow/entry_cost_decomposition_latest.json` | 10-20 起 n=34 | open→exec +36.3bps 不利 | 与两日读数方向相反；样本窗跨旧 regime，不可直接对比 |
+| `data/shadow/entry_delay_confirm_latest.json`（DEB-20260909 §5.2 预注册） | 滚动 | 额外 2/5min 延迟 ALL 净负/不可分辨（2min ALL t=-0.94）；SL_INITIAL 族显著获益（t=6.19/9.7）但属后验标签人群 | 不支持再加延迟；T19 红线禁止后验标签前置 |
+| `data/shadow/entry_confirm_forward_latest.json`（RFC-141） | 11-05 起 | verdict **INSUFFICIENT**；avoidance 38.1%、opp_cost 0.12%；holdout 分层 open_lt_15m -23.73/笔 vs later_ge_15m +10.05（小样本） | 120s 门未证明也未证伪，方向性支持延迟但不足以裁决 |
+
+裁决理由：①变更后 5 交易日证据方向正向（零 SL_INITIAL、等待成本有利、11-16 盘中 11 笔全正）；②各尺子样本均低于裁决门（n<30 / INSUFFICIENT / 不可分辨）；③**一次一变量** — 主分析模型刚换 2 天，此时动入场延迟会污染模型归因（OKR 主 KR 测量失效）；④黑窗影子即预注册前向尺子，继续攒样，n≥30 或模型 cohort 结算后再议。
+
+### R4.4 问题点清单与处置
+
+| # | 问题 | 处置 | 归属 |
+|---|---|---|---|
+| 1 | ELV 止损出场未验证（SL 已破、死锁已解） | 今日 22:30 CST 开盘后首验：trade_records ELV 出场行 + open_positions 清空 | DEB-20261118 R20 线程 |
+| 2 | SPCX 11-18 拒单仍 PENDING | RFC-214 已修，观察新拒单路径自然触发，不手工干预 | 同上 |
+| 3 | GOOG/META DA 翻 SHORT 但旧 LONG 未平、新 SHORT 指令 PENDING | 设计如此（出场 SSOT 独立，DA 不管仓）；机会成本观察项，要改须另立 RFC | 观察 |
+| 4 | 夜窗余量 ~11min | 候选 ≤40 不动；若越窗按 §5 旋钮（DA_MAX_WORKERS 抬 / DA_THINKING_BUDGET 降档），勿静默抬预算 | §5 既有预案 |
+| 5 | LOW-band（conf<40）全仓执行（ELV conf35） | 登记为影子候选（LOW 置信仓位建议）；OKR C1 须 RFC+用户批准，本批不实施 | 待裁 |
+| 6 | carrier 日志缺失 ⇒ 429 不可观测（审计 WARN=log_unknown） | 可选遥测加固，不阻塞；checkpoint 侧无限流形态 | 待裁 |
+
+### R4.5 验证（可复跑）
+
+```bash
+PYTHONPATH=. ./venv/bin/python scripts/da_scope_confidence_audit.py first-night \
+  --date 2026-11-17 --expected-model qwen4-max --thinking-budget 0   # rc=0, WARN=log_unknown only；--date 2026-11-18 同
+sqlite3 -readonly data/ftseek_us.db "SELECT COUNT(*),ROUND(SUM(pnl_net),2),
+  ROUND(AVG(pnl_net/NULLIF(entry_price*quantity,0)*10000),2) FROM trade_records
+  WHERE trade_date IN ('2026-11-17','2026-11-18') AND exit_time IS NOT NULL AND exit_time!='';"
+# → 11|157.79|37.64
+```
+
+- 等待成本复算：黑窗影子 hits（date+inst_id 去重）join `playbook_instructions.execution_price`，方向感知 ⇒ n=13、mean -59.8bps、8/13<0。
+- reasoning 分布：`data/da_checkpoint/{2026-11-17,2026-11-18}/*.json` `_usage` ⇒ ≥16000：4/35、11/31；缓存 26.7%/25.3%。
+- 浮亏：futu `get_market_snapshot` 六仓（11-19 05:00 ET）⇒ 全簿 -730.92、ELV -347.22。
+
+### R4.6 未验证
+
+- ELV 今日开盘出场（审计时点 05:00 ET 未到开盘）；SPCX 拒单新路径自然触发（归 R20 线程）。
+- 模型质量/费后 edge（n=11<30，前瞻 cohort 继续）；qwen4-max 官方定价与账单。
+- 429 实际计数（日志缺失，log_unknown）；挑战者链质量（未动）。

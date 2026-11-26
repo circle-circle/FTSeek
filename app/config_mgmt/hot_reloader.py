@@ -154,10 +154,18 @@ class ConfigHotReloader:
         except Exception as e:
             self._error_count += 1
             logger.error("[HotReloader] ❌ 热重载失败: %s", e)
-            # 回退到旧配置
+            # 回退到旧配置。ConfigContainer.reload 自身保证 last-known-good，
+            # 其 _raw_config 是只读 property，不能再通过赋值“回滚”制造二次异常。
             if hasattr(self.config, '_raw_config') and old_config:
-                self.config._raw_config = old_config
-                logger.warning("[HotReloader] 已回退到旧配置")
+                try:
+                    if getattr(self.config, '_raw_config', None) == old_config:
+                        logger.warning("[HotReloader] 重载未改动现役配置，last-known-good 已保留",
+                                       exc_info=True)
+                    else:
+                        self.config._raw_config = old_config
+                        logger.warning("[HotReloader] 已回退到旧配置")
+                except Exception as rollback_error:
+                    logger.error("[HotReloader] 旧配置回退失败: %s", rollback_error, exc_info=True)
             # 失败不丢变更: 挂起等下一冷却窗重试; 同时推进冷却基准防每秒 ERROR 刷屏
             self._pending_reload = True
             self._last_reload_time = now

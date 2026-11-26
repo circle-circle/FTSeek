@@ -244,8 +244,9 @@ def env(tmp_path, monkeypatch):
             kwargs["_positive_finite_atr"] = lambda value: value if isinstance(value, (int, float)) and value > 0 else None
             kwargs["_resolve_sizing_base"] = lambda cfg: 100000.0
         if real_preflight:
-            kwargs["_auto_execute_preflight"] = lambda today, logger=None: risk._auto_execute_preflight(
-                today, logger=logger, check_daily_loss_circuit=daily, entry_data_owner=scheduler)
+            kwargs["_auto_execute_preflight"] = lambda today, logger=None, regime_audit=None: risk._auto_execute_preflight(
+                today, logger=logger, check_daily_loss_circuit=daily, entry_data_owner=scheduler,
+                regime_audit=regime_audit)
         result = auto.run_playbook_auto_execute(scheduler, force=True, **kwargs)
         assert result is not None and "error" not in result, result
         assert violations == []
@@ -298,6 +299,48 @@ def test_success_preserves_original_payload_and_timestamps(env):
     assert env.scheduler._entry_data_query_state.flight is None
 
 
+@pytest.mark.parametrize("direction", ["BUY", "SELL_SHORT"])
+def test_cycle_audit_records_independent_reads_without_changing_policy(env, direction):
+    env.cfg["no_trade_short_sim_experiment_enabled"] = True
+    env.row.update(direction=direction, position_size=0, market_regime="generation-text")
+    env.router.get_full_market_context.return_value = {"price": 101, "atr": 3, "prev_close": 100}
+    def context(regime, vix):
+        data = {"regime": regime, "vix": vix, "assessed_at": f"read-{vix}"}
+        return SimpleNamespace(**data, score=-5, to_dict=lambda: dict(data))
+    env.regime_assess.side_effect = [context("RISK_ON", 18), context("NO_TRADE", 22),
+                                     context("RISK_OFF", 21)]
+    sizing = Mock(return_value=30)
+    env.module("app.playbook.instruction_generator", compute_position_size=sizing)
+    env.module("app.risk.capital_safety", get_capital_safety_system=lambda: SimpleNamespace(
+        get_position_multiplier=lambda: 1, get_risk_multiplier=lambda: 1))
+    result = env.run_auto(real_preflight=True, reprice=True)
+    if direction == "BUY":
+        assert result["executed"] == 0 and result["skipped"] == 1
+        assert env.regime_assess.call_count == 2
+        assert env.row["direction"] == "BUY" and not env.row["skip_reason"]
+        defer = next(call.kwargs["extra"] for call in env.audit.call_args_list
+                     if call.kwargs["extra"]["gate"] == "no_trade_short_exp_long")
+        assert defer == {"gate": "no_trade_short_exp_long",
+                         "why": "no_trade_regime_round_deferred", "transient": True}
+        sizing.assert_not_called()
+        env.service.execute_instruction.assert_not_called()
+    else:
+        assert result["executed"] == 1
+        assert env.regime_assess.call_count == 3
+        assert env.regime_assess.call_args_list[0].kwargs == {"publish_cache": False}
+        assert env.regime_assess.call_args_list[1].kwargs == {}
+        assert env.regime_assess.call_args_list[2].kwargs == {}
+        assert sizing.call_args.kwargs["regime_mult"] == 0.3
+        reprice = next(call.args[1]["reprice_audit"] for call in env.db.merge_instruction_metadata.call_args_list
+                       if "reprice_audit" in call.args[1])
+        assert reprice["generation_regime_text"] == "generation-text"
+        assert reprice["regime_snapshot_used"] is False
+        assert {stage: data["regime"] for stage, data in reprice["regime_reads"].items()} == {
+            "preflight": "RISK_ON", "experiment": "NO_TRADE", "sizing": "RISK_OFF"}
+        assert reprice["reprice_position_size"] == 30
+        assert env.service.execute_instruction.call_args.kwargs["custom_params"]["position_size"] == 30
+
+
 def test_no_trade_long_defer_recovers_when_regime_lifts(env):
     env.cfg["no_trade_short_sim_experiment_enabled"] = True
     env.row.update(direction="BUY", position_size=0, execution_state="PENDING")
@@ -326,6 +369,19 @@ def test_no_trade_long_defer_recovers_when_regime_lifts(env):
     assert recovered["executed"] == 1
     assert sizing.call_args.kwargs["regime_mult"] == 0.3
 
+
+def test_owner_timeout_never_publishes_late_regime_audit(env):
+    env.regime_context.to_dict = lambda: {"regime": "RISK_ON"}
+    block = env.blocked(env.regime_context)
+    env.regime_assess.side_effect = block.query
+    audit = {}
+    result = env.risk._auto_execute_preflight(
+        env.row["date"], logger=env.logger, check_daily_loss_circuit=env.daily,
+        entry_data_owner=env.scheduler, regime_audit=audit)
+    assert result["reason"] == "entry_data_unavailable" and audit == {}
+    env.join_workers()
+    assert audit == {}
+    env.service.execute_instruction.assert_not_called()
 
 
 @pytest.mark.parametrize("method,phase", [("get_full_market_context", "context"),
@@ -816,6 +872,8 @@ def _load_real_regime_with_fake_providers(env):
     av = SimpleNamespace(get_spy_context=Mock(side_effect=AssertionError("unexpected AV fallback")),
                          get_vix_or_none=Mock(side_effect=AssertionError("unexpected AV fallback")))
     env.module("app.data", __path__=[])
+    env.load("app.data.vix_source", "app/data/vix_source.py")
+    env.load("app.data.market_env_truth", "app/data/market_env_truth.py")
     env.module("app.data.market_data_router", MarketDataRouter=object,
                get_market_data_router=lambda: router)
     env.module("app.data.alphavantage_provider", AlphaVantageProvider=object,

@@ -91,7 +91,8 @@ def _load_metadata(ids: Sequence[int]) -> Dict[int, Dict[str, Any]]:
         )
         for row in rows:
             out[int(row["id"])] = {
-                "fees_est": float(row["fees_est"] or 0.0),
+                "fees_est": (float(row["fees_est"])
+                             if row["fees_est"] is not None else None),
                 "data_quality": str(row["data_quality"] or ""),
                 "metadata_json": row["metadata_json"] or "{}",
             }
@@ -286,10 +287,14 @@ def main() -> int:
         if bars is None:
             excluded[f"bars:{error}"] += 1
             continue
-        fee = float(meta["fees_est"] or 0.0)
-        if fee <= 0:
-            fee = float(eng._fee_of(tr) or 0.0)
+        fee_raw = meta["fees_est"]
+        if fee_raw is None:
+            fee_raw = eng._fee_of(tr)
             excluded["fee_fallback"] += 1
+        if fee_raw is None:
+            excluded["fee_unknown"] += 1
+            continue
+        fee = float(fee_raw)
         exit_cfg = eng._get_factor_exit_config(
             tr["conditions"], factor_rules, direction=tr["direction"])
         prepared.append({

@@ -368,5 +368,78 @@ class TestConfigContainerIntegration:
             assert config.risk.vix_warning_threshold == 20.0
 
 
+class TestReloadLastKnownGood:
+    """坏 YAML/缺文件不得清空现役配置，也不得被热重载器计为成功。"""
+
+    def setup_method(self):
+        ConfigContainer.reset()
+
+    def teardown_method(self):
+        ConfigContainer.reset()
+
+    def _container(self, tmp_path, monkeypatch):
+        import app.core.config_container as cc_mod
+
+        root = tmp_path / "candidate-root"
+        (root / "app" / "core").mkdir(parents=True)
+        (root / "config").mkdir()
+        yaml_path = root / "config" / "unified_config.yaml"
+        yaml_path.write_text(
+            "risk:\n  signal_quality:\n    min_confidence: 0.81\n", encoding="utf-8")
+        monkeypatch.setattr(
+            cc_mod, "__file__", str(root / "app" / "core" / "config_container.py"))
+        return ConfigContainer(), yaml_path
+
+    @pytest.mark.parametrize(
+        "failure",
+        ["malformed", "missing", "empty", "comments", "false", "empty_list", "empty_dict"])
+    def test_reload_failure_preserves_complete_old_state(self, tmp_path, monkeypatch, failure):
+        cfg, yaml_path = self._container(tmp_path, monkeypatch)
+        old_yaml = dict(cfg._yaml_raw)
+        old_flat = dict(cfg._config_dict)
+        old_trade_mode = cfg.trade_env
+        invalid_contents = {
+            "malformed": "risk: [unterminated\n",
+            "empty": "",
+            "comments": "# only a comment\n",
+            "false": "false\n",
+            "empty_list": "[]\n",
+            "empty_dict": "{}\n",
+        }
+        if failure == "missing":
+            yaml_path.unlink()
+        else:
+            yaml_path.write_text(invalid_contents[failure], encoding="utf-8")
+
+        with pytest.raises(RuntimeError, match="保留上一份有效配置"):
+            cfg.reload()
+
+        assert cfg._yaml_raw == old_yaml
+        assert cfg._config_dict == old_flat
+        assert cfg.trade_env == old_trade_mode
+        assert cfg.get_dotted("risk.signal_quality.min_confidence") == 0.81
+
+    @pytest.mark.parametrize("invalid_yaml", ["risk: [unterminated\n", ""])
+    def test_hot_reloader_counts_failure_and_recovers_after_fix(
+            self, tmp_path, monkeypatch, invalid_yaml):
+        from app.config_mgmt.hot_reloader import ConfigHotReloader
+
+        cfg, yaml_path = self._container(tmp_path, monkeypatch)
+        reloader = ConfigHotReloader(cfg, cooldown_seconds=0)
+        yaml_path.write_text(invalid_yaml, encoding="utf-8")
+
+        reloader._reload()
+        assert reloader.stats["reload_count"] == 0
+        assert reloader.stats["error_count"] == 1
+        assert cfg.get_dotted("risk.signal_quality.min_confidence") == 0.81
+
+        yaml_path.write_text(
+            "risk:\n  signal_quality:\n    min_confidence: 0.82\n", encoding="utf-8")
+        reloader._reload()
+        assert reloader.stats["reload_count"] == 1
+        assert reloader.stats["error_count"] == 1
+        assert cfg.get_dotted("risk.signal_quality.min_confidence") == 0.82
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--cov=app/core/config_container", "--cov-report=term-missing"])

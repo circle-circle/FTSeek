@@ -393,3 +393,252 @@ class TestRouterMAFallback:
         av.get_spy_context.assert_called_once()
         assert ctx.spy_ma20 == 550.0
         assert ctx.score == 8
+
+
+class TestRegimeReadCaliber:
+    @pytest.fixture(autouse=True)
+    def isolated(self, monkeypatch):
+        import app.playbook.config as config
+        MarketRegimeGate._assess_cache = None
+        monkeypatch.setattr(config, "get_playbook_config", lambda: Mock(get=lambda *args: True))
+        yield
+        MarketRegimeGate._assess_cache = None
+
+    def test_actual_router_basis_and_proxy_receipt(self, monkeypatch):
+        from datetime import datetime, timedelta
+        from app.data.market_data_router import MarketDataRouter
+        from app.data.vix_source import VIX_READ_RECEIPT
+        monkeypatch.setattr("app.data.vix_source.is_vixy_proxy_window", lambda: True)
+        router = MarketDataRouter.__new__(MarketDataRouter)
+        router.futu = Mock()
+        router.futu.get_quote.side_effect = lambda symbol: {
+            "price": 550.0 if symbol == "US.SPY" else 24.0,
+            "update_time": "2026-11-25 10:00:00",
+        }
+        router._spy_ma200_cache = 520.0
+        router._spy_ma20_cache = 545.0
+        router._spy_ma50_cache = 540.0
+        router._spy_ma200_cache_time = datetime.now()
+        router._spy_ma200_cache_ttl = timedelta(minutes=30)
+        av = Mock()
+        router.av = av
+        ctx = MarketRegimeGate(router, av).assess(publish_cache=False)
+        assert ctx.spy_price_basis == "futu_last_price"
+        assert ctx.spy_quote_time == "2026-11-25 10:00:00"
+        assert ctx.vix == 20.4
+        assert ctx.vix_observation["value"] == 20.4
+        assert ctx.vix_observation["source"] == "vixy_proxy_live"
+        assert ctx.vix_observation["unit"] == "vix_points_estimated"
+        assert ctx.vix_observation["is_proxy"] is True
+        assert ctx.vix_observation["as_of"] is None
+        assert ctx.vix_observation["quote_time"] == "2026-11-25 10:00:00"
+        assert ctx.trend_score == 5 and ctx.volatility_score == pytest.approx(0.4)
+        assert ctx.score == 5.4 and ctx.regime == MarketRegime.RISK_ON
+        av.get_spy_context.assert_not_called()
+        av.get_vix_or_none.assert_not_called()
+        assert VIX_READ_RECEIPT.get() is None
+        assert MarketRegimeGate._assess_cache is None
+
+    def test_av_ma_fallback_does_not_relabel_router_price(self, mock_router, mock_av):
+        mock_router.get_spy_context.return_value.update(
+            spy_price_basis="futu_last_price", spy_quote_time="raw-provider-time")
+        mock_av.get_spy_context.return_value.update(spy_price_basis="other")
+        ctx = MarketRegimeGate(mock_router, mock_av).assess()
+        assert ctx.spy_price_basis == "futu_last_price"
+        assert ctx.spy_quote_time == "raw-provider-time"
+        assert ctx.vix_observation["source"] == "unknown"
+        assert ctx.vix_observation["is_proxy"] is None
+        assert ctx.vix_observation["unit"] == "unknown"
+        assert ctx.vix_observation["quote_time"] is None
+
+    @pytest.mark.parametrize("vix", [14.9, 15, 20, 20.01, 21.99, 22, 29.99, 30])
+    @pytest.mark.parametrize("up", [False, True])
+    def test_components_preserve_original_policy(self, mock_router, mock_av, vix, up):
+        from app.playbook.market_regime import score_to_regime_value, vix_score
+        mock_router.get_spy_context.return_value = {
+            "spy_price": 550 if up else 490, "spy_ma20": 540,
+            "spy_ma50": 530 if up else 560, "spy_ma200": 520,
+        }
+        mock_router.get_vix_or_none.return_value = vix
+        ctx = MarketRegimeGate(mock_router, mock_av).assess()
+        points = vix_score(vix, smooth_20_22=True)
+        assert ctx.trend_score == (5 if up else -5)
+        assert ctx.volatility_score == points
+        assert ctx.score == round(ctx.trend_score + points, 4)
+        assert ctx.regime.value == score_to_regime_value(ctx.score)
+        assert (ctx.top_n, ctx.position_multiplier, ctx.min_strength) == {
+            "risk_on": (10, 1.0, 50), "cautious": (8, 0.5, 60),
+            "risk_off": (3, 0.3, 70), "no_trade": (0, 0.0, 999),
+        }[ctx.regime.value]
+
+    def test_missing_is_not_a_twenty_point_observation(self, monkeypatch, mock_router, mock_av):
+        monkeypatch.setattr("time.sleep", lambda seconds: None)
+        mock_router.get_spy_context.return_value = {
+            "spy_price": 490, "spy_ma20": 540, "spy_ma50": 560, "spy_ma200": 520,
+        }
+        mock_router.get_vix_or_none.return_value = None
+        mock_av.get_vix_or_none.return_value = None
+        ctx = MarketRegimeGate(mock_router, mock_av).assess()
+        assert ctx.vix == 20.0 and ctx.vix_uncertain is True
+        assert ctx.vix_observation["value"] is None
+        assert ctx.vix_observation["source"] == "unavailable"
+        assert ctx.trend_score == -5 and ctx.volatility_score is None
+        assert ctx.score == -5 and ctx.regime == MarketRegime.RISK_OFF
+        assert mock_router.get_vix_or_none.call_count == 2
+        assert mock_av.get_vix_or_none.call_count == 2
+
+    def test_cache_retains_assessment_time(self, mock_router, mock_av):
+        gate = MarketRegimeGate(mock_router, mock_av)
+        first = gate.assess()
+        second = gate.assess(publish_cache=False)
+        assert second is first
+        assert second.assessed_at == first.assessed_at
+        assert second.vix_observation["read_at"] == first.vix_observation["read_at"]
+        mock_router.get_vix_or_none.assert_called_once()
+
+    def test_receipt_resets_on_exception_and_nested_reads(self):
+        from types import SimpleNamespace
+        from app.data.vix_source import VIX_READ_RECEIPT, record_vix_read
+        from app.playbook.market_regime import _read_vix_with_receipt
+        outer = {}
+        token = VIX_READ_RECEIPT.set(outer)
+        try:
+            def failed():
+                record_vix_read(19, "fred", as_of="2026-11-20")
+                raise RuntimeError("read failed")
+            with pytest.raises(RuntimeError, match="read failed"):
+                _read_vix_with_receipt(SimpleNamespace(get_vix_or_none=failed))
+            assert VIX_READ_RECEIPT.get() is outer and outer == {}
+            value, receipt = _read_vix_with_receipt(SimpleNamespace(get_vix_or_none=lambda: 18))
+            assert value == 18 and receipt["source"] == "unknown"
+            assert VIX_READ_RECEIPT.get() is outer
+        finally:
+            VIX_READ_RECEIPT.reset(token)
+
+    def test_concurrent_receipts_do_not_cross_sources(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        from types import SimpleNamespace
+        from app.data.vix_source import record_vix_read
+        from app.playbook.market_regime import _read_vix_with_receipt
+        barrier = Barrier(2)
+        def read(value, source):
+            def fetch():
+                record_vix_read(value, source, as_of="2026-11-20")
+                barrier.wait(timeout=2)
+                return value
+            return _read_vix_with_receipt(SimpleNamespace(get_vix_or_none=fetch))
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            a = pool.submit(read, 18, "fred")
+            b = pool.submit(read, 21, "vixy_proxy_live")
+            assert a.result()[1]["source"] == "fred"
+            assert b.result()[1]["source"] == "vixy_proxy_live"
+
+    @pytest.mark.parametrize("phase,source", [
+        ("TRADING", "finnhub_vixy"), ("TRADING", "fred"),
+        ("WEEKEND", "fred"), ("WEEKEND", "finnhub_vixy"),
+    ])
+    def test_av_cache_preserves_original_observation(self, monkeypatch, phase, source):
+        from datetime import datetime
+        from app.core.scheduler_triggers import MarketPhase
+        from app.data.alphavantage_provider import AlphaVantageProvider
+        from app.playbook.market_regime import _read_vix_with_receipt
+        monkeypatch.setattr("app.core.scheduler_triggers.get_market_phase", lambda: MarketPhase[phase])
+        av = AlphaVantageProvider.__new__(AlphaVantageProvider)
+        slot = "vix" if source == "finnhub_vixy" else "vix_fred"
+        av.cache = {slot: {"vix": 18.5, "source": source, "as_of": "2026-11-20",
+                           "quote_time": 100 if source == "finnhub_vixy" else None}}
+        av.cache_time = {slot: datetime.now()}
+        monkeypatch.setattr(av, "_fetch_live_vix", Mock(return_value=None))
+        monkeypatch.setattr(av, "_fetch_fred_vix", Mock(return_value=None))
+        value, receipt = _read_vix_with_receipt(av)
+        assert value == 18.5
+        assert receipt["source"] == ("finnhub_vixy_proxy" if source == "finnhub_vixy" else "fred")
+        assert receipt["as_of"] == "2026-11-20"
+        assert receipt["unit"] == ("vix_points_estimated" if source == "finnhub_vixy" else "vix_points")
+        assert receipt["quote_time_basis"] == "provider_raw"
+        assert receipt["quote_time"] == ("100" if source == "finnhub_vixy" else None)
+        assert (av._fetch_live_vix.call_count + av._fetch_fred_vix.call_count) <= 1
+
+    @pytest.mark.parametrize("publish", [True, False])
+    @pytest.mark.parametrize("source", ["fred", "finnhub_vixy"])
+    def test_av_actual_fetch_receipt_without_cache_publication(self, monkeypatch, source, publish):
+        from types import SimpleNamespace
+        from app.core.scheduler_triggers import MarketPhase
+        from app.data.alphavantage_provider import AlphaVantageProvider
+        from app.data.quote_cache_policy import DATA_CACHE_PUBLICATION_ALLOWED
+        from app.playbook.market_regime import _read_vix_with_receipt
+        monkeypatch.setenv("FINNHUB_API_KEY", "test-only")
+        monkeypatch.setattr("app.core.scheduler_triggers.get_market_phase", lambda: (
+            MarketPhase.TRADING if source == "finnhub_vixy" else MarketPhase.WEEKEND))
+        response = SimpleNamespace(status_code=200, text="DATE,VIXCLS\n2026-11-20,18.7\n",
+                                   raise_for_status=lambda: None, json=lambda: {"c": 22, "t": 1795188600})
+        http = Mock(return_value=response)
+        monkeypatch.setattr("requests.get", http)
+        av = AlphaVantageProvider.__new__(AlphaVantageProvider)
+        av.cache, av.cache_time = {}, {}
+        token = DATA_CACHE_PUBLICATION_ALLOWED.set(publish)
+        try:
+            value, receipt = _read_vix_with_receipt(av)
+        finally:
+            DATA_CACHE_PUBLICATION_ALLOWED.reset(token)
+        assert value == 18.7
+        assert receipt["source"] == ("fred" if source == "fred" else "finnhub_vixy_proxy")
+        assert receipt["as_of"] is not None
+        assert receipt["quote_time"] == (None if source == "fred" else "1795188600")
+        assert bool(av.cache) is publish and bool(av.cache_time) is publish
+        http.assert_called_once()
+
+
+class TestRegimeAuditCardinality:
+    @pytest.mark.parametrize("n,verdict", [(0, "INSUFFICIENT"), (9, "INSUFFICIENT"),
+                                           (10, "WARNING_CONST"), (11, "WARNING_CONST")])
+    def test_threshold_and_missing_stages(self, n, verdict):
+        from scripts.shadow_field_cardinality import regime_audit_cardinality
+        rows = [{"regime_reads": {"preflight": {"trend_score": -5}}} for _ in range(n)]
+        report = regime_audit_cardinality(rows)
+        field = next(r for r in report["fields"] if r["stage"] == "preflight" and r["field"] == "trend_score")
+        assert field["n"] == n and field["unique"] == (1 if n else 0)
+        assert field["verdict"] == verdict and field["unit"] == "score_points"
+        missing = next(r for r in report["fields"] if r["stage"] == "sizing" and r["field"] == "trend_score")
+        assert missing["n"] == 0 and missing["missing"] == n
+        assert report["record_only"] is True
+
+    def test_variation_and_observation_units(self):
+        from scripts.shadow_field_cardinality import regime_audit_cardinality
+        rows = [{"regime_reads": {"sizing": {
+            "trend_score": i % 2,
+            "vix_observation": {"value": None, "unit": "unknown", "source": "unavailable"},
+        }}} for i in range(10)]
+        report = regime_audit_cardinality(rows)
+        fields = {r["field"]: r for r in report["fields"] if r["stage"] == "sizing"}
+        assert fields["trend_score"]["unique"] == 2 and fields["trend_score"]["verdict"] == "OK"
+        assert fields["vix_observation.value"]["n"] == 0
+        assert fields["vix_observation.value"]["unit"] == "vix_observation.unit"
+        assert fields["vix_observation.quote_time"]["unit"] == "provider_raw"
+        assert fields["vix_observation.read_at"]["unit"] == "utc_iso8601"
+
+    def test_explicit_cli_is_read_only_and_warning_exits_zero(self, monkeypatch, tmp_path, capsys):
+        import json
+        from scripts import shadow_field_cardinality as audit
+        path = tmp_path / "sizing.jsonl"
+        row = {"regime_reads": {"preflight": {"regime": "risk_off"}}}
+        path.write_text("\n".join(json.dumps(row) for _ in range(10)))
+        collect = Mock(side_effect=AssertionError("legacy database collection must not run"))
+        monkeypatch.setattr(audit, "collect", collect)
+        monkeypatch.setattr("sys.argv", ["audit", "--regime-audit", str(path)])
+        assert audit.main() == 0
+        report = json.loads(capsys.readouterr().out)
+        assert report["row_count"] == 10
+        assert any(r["verdict"] == "WARNING_CONST" for r in report["fields"])
+        collect.assert_not_called()
+
+    def test_default_cli_keeps_legacy_collection(self, monkeypatch, capsys):
+        import json
+        from scripts import shadow_field_cardinality as audit
+        collect = Mock(return_value=[])
+        monkeypatch.setattr(audit, "collect", collect)
+        monkeypatch.setattr("sys.argv", ["audit", "--days", "7", "--json"])
+        assert audit.main() == 0
+        assert json.loads(capsys.readouterr().out) == []
+        collect.assert_called_once_with(7)

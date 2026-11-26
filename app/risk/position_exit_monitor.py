@@ -1370,8 +1370,10 @@ class ExitMonitor:
                 )
 
                 # 接近止损预警 (不干预退出逻辑, 仅通知)
+                # trail_state 传入以读取规则本轮写入的 enforcing_stop (执行线单一真源)
                 self._check_approaching_stop(
                     position, current_price, effective_atr, entry_price, direction,
+                    trail_state,
                 )
 
             except Exception as e:
@@ -2216,34 +2218,58 @@ class ExitMonitor:
     def _check_approaching_stop(
         self, position, current_price: float, effective_atr: float,
         entry_price: float, direction: str,
+        trail_state: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """接近止损预警 — 当价格距 atr_stop 线 < 1.5 ATR 时发出告警
+        """接近止损预警 — 当价格距**实际生效**止损线 < 1.5 ATR 时发出告警
 
         不干预退出逻辑, 仅发送通知到:
           - WebSocket risk_alert (Dashboard 实时展示)
           - PushHub RISK_ALERT (DingTalk/飞书)
+
+        2026-11-20 (DEB-20261120 §R2): 止损线改为优先读 trailing_stop 规则本轮写入的
+          `trail_state["enforcing_stop"]` (= compute_stop_lines 的 final_stop, 已含
+          hard_stop 帽 / 成本缓冲 / initial_sl 地板)。原实现自行推算
+          `entry − effective_atr × atr_mult`, 与执行线不同源: 实测 US.MU 告警显示
+          669.47 (距 3.2%) 而执行线是 690.587 (距 0.71%), 接近程度被低估约 4.5×;
+          且当 ATR 走 `|entry-initial_sl|/2` 代理时, 该公式循环恒等于 initial_sl。
+          规则本轮未产出线时 (如 profit_atr<=0 且无 guardian 提前 return None) 才回退
+          旧公式, 并显式标注 line=fallback, 不再冒充执行线。
         """
         if effective_atr <= 0 or entry_price <= 0:
             return
 
         symbol = getattr(position, 'symbol', '?')
 
-        # 计算 atr_stop 线 (与 trailing_stop.py 一致: entry ± 4.0×ATR)
-        atr_mult = 4.0
-        try:
-            _policy = self._load_exit_policy_dict()
-            atr_mult = float(
-                _policy.get("exit_rules", {}).get("atr_stop", {}).get(
-                    "multiplier_by_profit", {}).get("initial", 2.0)
+        # 优先: 规则本轮算出的生效线 (单一真源, 不在此处重算公式)
+        atr_stop = None
+        line_source = "fallback"
+        if isinstance(trail_state, dict):
+            _enforcing = trail_state.get("enforcing_stop")
+            if isinstance(_enforcing, (int, float)) and _enforcing > 0:
+                atr_stop = float(_enforcing)
+                line_source = "enforcing"
+
+        if atr_stop is None:
+            # 回退: 规则本轮未产出生效线。此线**不是**执行线, 仅作近似预警。
+            atr_mult = 4.0
+            try:
+                _policy = self._load_exit_policy_dict()
+                atr_mult = float(
+                    _policy.get("exit_rules", {}).get("atr_stop", {}).get(
+                        "multiplier_by_profit", {}).get("initial", 2.0)
+                )
+            except Exception:
+                pass
+            atr_stop = (entry_price - effective_atr * atr_mult if direction == "LONG"
+                        else entry_price + effective_atr * atr_mult)
+            logger.debug(
+                f"[接近止损] {symbol} 无 enforcing_stop, 回退 entry±{atr_mult}×ATR 近似线 "
+                f"${atr_stop:.2f} (非执行线)"
             )
-        except Exception:
-            pass
 
         if direction == "LONG":
-            atr_stop = entry_price - effective_atr * atr_mult
             sl_distance = current_price - atr_stop  # 正=安全, 负=已穿
         else:
-            atr_stop = entry_price + effective_atr * atr_mult
             sl_distance = atr_stop - current_price  # 正=安全, 负=已穿
 
         sl_distance_atr = sl_distance / effective_atr if effective_atr > 0 else 99.0
@@ -2267,7 +2293,7 @@ class ExitMonitor:
             f"[接近止损] {symbol} {direction} "
             f"current=${current_price:.2f} atr_stop=${atr_stop:.2f} "
             f"distance={sl_distance_atr:.1f}ATR ({sl_distance_pct:.1f}%) "
-            f"severity={severity}"
+            f"severity={severity} line={line_source}"
         )
 
         # 通知 1: WebSocket → Dashboard 实时展示
@@ -2281,6 +2307,7 @@ class ExitMonitor:
                 "current_price": round(current_price, 2),
                 "atr_stop": round(atr_stop, 2),
                 "sl_distance_atr": round(sl_distance_atr, 2),
+                "stop_line_source": line_source,
             })
         except Exception:
             pass
@@ -2323,7 +2350,7 @@ class ExitMonitor:
         try:
             daily_atr = self._calc_atr_from_kline(symbol)
         except Exception as e:
-            logger.debug(f"ATR 获取失败 {symbol}: {e}")
+            self._warn_atr_failure(symbol, f"ATR 获取异常 {type(e).__name__}: {e}")
 
         if daily_atr <= 0:
             if cached:
@@ -2442,9 +2469,30 @@ class ExitMonitor:
 
         return self._vix_cached  # 返回旧缓存或 None
 
+    def _warn_atr_failure(self, symbol: str, detail: str) -> None:
+        """ATR 取数失败可见化 (2026-11-20, DEB-20261120 §R3) — 每标的 300s 节流。
+
+        原实现失败只落 DEBUG 或静默 `return 0.0` ⇒ 根因不可见: 实测 US.MU 单日 1408 次
+        `[ATR底限]` 告警, 却查不到任何一次取数失败的原因; 而进程外用同一条 API 路径实调
+        `ret=0 rows=277 ATR14=64.17` 完好, 共享日K缓存也有该标的 276 根 ⇒ 失败发生在
+        进程内且被吞掉。本函数**只加可见性, 不改任何 ATR 取值与止损行为**。
+        节流窗与 `_get_atr` 的 300s 缓存对齐, 避免每 15s 一轮的告警风暴。
+        """
+        now = time.time()
+        if not hasattr(self, "_atr_fail_warn_ts"):
+            self._atr_fail_warn_ts = {}
+        if now - self._atr_fail_warn_ts.get(symbol, 0) < 300:
+            return
+        self._atr_fail_warn_ts[symbol] = now
+        logger.warning(
+            f"[ATR取数失败] {symbol}: {detail} → ATR=0, 止损将走底限代理 "
+            f"(300s 内同标的不重复告警)"
+        )
+
     def _calc_atr_from_kline(self, symbol: str) -> float:
         """从日 K 线计算 ATR (14 周期) + 中位 TR 底限"""
         if not self._quote_ctx:
+            self._warn_atr_failure(symbol, "quote_ctx 未就绪 (None/False)")
             return 0.0
 
         try:
@@ -2498,8 +2546,14 @@ class ExitMonitor:
                     logger.warning(f"[silent_except:position_exit_monitor.py] {_silent_e}")
 
                 return atr
+
+            self._warn_atr_failure(
+                symbol,
+                f"日K未达可用条件 ret={ret} rows={0 if data is None else len(data)} "
+                f"msg={getattr(data, 'msg', None)} (需 ret=0 且 rows>=15)"
+            )
         except Exception as e:
-            logger.debug(f"ATR 计算失败 {symbol}: {e}")
+            self._warn_atr_failure(symbol, f"日K请求异常 {type(e).__name__}: {e}")
 
         return 0.0
 

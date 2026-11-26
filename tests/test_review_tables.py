@@ -26,6 +26,59 @@ class TestReviewDatabase:
     
     def test_init(self, db):
         assert db.db_path.exists()
+
+    def test_explicit_paths_use_actual_distinct_files(self, tmp_path):
+        """A 库写入不得泄漏到 B 库；连接真实文件必须与构造路径一致。"""
+        path_a = tmp_path / "review_a.db"
+        path_b = tmp_path / "review_b.db"
+        db_a = ReviewDatabase(str(path_a))
+        db_b = ReviewDatabase(str(path_b))
+        trade = {
+            "id": "isolated-a", "code": "AAPL", "action": "LONG",
+            "entry_price": 100.0, "quantity": 1,
+            "entry_time": datetime.now().isoformat(),
+        }
+        db_a.add_trade_review(trade)
+
+        assert db_a.get_trade_review("isolated-a")["code"] == "AAPL"
+        assert db_b.get_trade_review("isolated-a") is None
+        with db_a.get_connection() as conn:
+            actual = Path(conn.execute("PRAGMA database_list").fetchone()[2]).resolve()
+        assert actual == path_a.resolve()
+
+    def test_explicit_relative_path_is_normalized_at_construction(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        db = ReviewDatabase("relative_review.db")
+        assert db.db_path == (tmp_path / "relative_review.db").resolve()
+        with db.get_connection() as conn:
+            actual = Path(conn.execute("PRAGMA database_list").fetchone()[2]).resolve()
+        assert actual == db.db_path
+
+    def test_default_path_keeps_review_pool_route(self, monkeypatch, tmp_path):
+        """只有规范化后与默认 review 槽位一致的路径才复用池连接。"""
+        import sqlite3
+
+        default_path = tmp_path / "default_review.db"
+        pooled = sqlite3.connect(str(default_path))
+        pooled.row_factory = sqlite3.Row
+
+        class FakePool:
+            def __init__(self):
+                self.names = []
+
+            def connection(self, name):
+                self.names.append(name)
+                return pooled
+
+        pool = FakePool()
+        monkeypatch.setattr("app.storage.db_pool.get_db_path", lambda name: default_path)
+        monkeypatch.setattr("app.storage.db_pool.get_pool", lambda: pool)
+        db = ReviewDatabase(str(default_path))
+        assert pool.names and set(pool.names) == {"review"}
+        with db.get_connection() as conn:
+            actual = Path(conn.execute("PRAGMA database_list").fetchone()[2]).resolve()
+        assert actual == default_path.resolve()
+        pooled.close()
     
     def test_add_trade_review(self, db):
         trade_data = {

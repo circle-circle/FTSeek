@@ -94,6 +94,48 @@ class TestBoundedFetch:
         pb._pb_exit_bounded_fetch("t-harvest", lambda: {}, 1.0)
         assert pb._pb_exit_price_cache_view(["US.DDD"]) == {"US.DDD": {"price": 7.5}}
 
+    def test_timed_out_single_quote_harvested_with_symbol_context(self):
+        """单标的返回 {"price": ...}，收编时必须补回 symbol，不能按批量形状丢弃。"""
+
+        def _slow_single():
+            time.sleep(0.2)
+            return {"price": 7.5}
+
+        normalize = lambda q: {"US.SINGLE": q}
+        pb._pb_exit_bounded_fetch(
+            "single:US.SINGLE", _slow_single, 0.01, result_to_quotes=normalize)
+        time.sleep(0.35)
+        pb._pb_exit_bounded_fetch(
+            "single:US.SINGLE", lambda: {}, 0.01, result_to_quotes=normalize)
+        assert pb._pb_exit_price_cache_view(["US.SINGLE"]) == {
+            "US.SINGLE": {"price": 7.5}}
+
+    def test_late_result_keeps_completion_time_instead_of_new_ttl(self):
+        """迟到结果按线程完成时刻计龄，收编时不得刷新成一份新报价。"""
+        previous_max_age = pb._PB_EXIT_PRICE_CACHE_MAX_AGE
+        pb._PB_EXIT_PRICE_CACHE_MAX_AGE = 0.05
+        try:
+            def _slow_batch():
+                time.sleep(0.2)
+                return {"US.LATE": {"price": 9.0}}
+
+            pb._pb_exit_bounded_fetch("t-late-age", _slow_batch, 0.01)
+            time.sleep(0.35)
+            pb._pb_exit_bounded_fetch("t-late-age", lambda: {}, 0.01)
+            assert pb._pb_exit_price_cache_view(["US.LATE"]) == {}
+        finally:
+            pb._PB_EXIT_PRICE_CACHE_MAX_AGE = previous_max_age
+
+    def test_late_single_priceless_result_does_not_create_cache_entry(self):
+        normalize = lambda q: {"US.EMPTY": q}
+        pb._pb_exit_bounded_fetch(
+            "single:US.EMPTY", lambda: (time.sleep(0.2), {"price": 0})[1],
+            0.01, result_to_quotes=normalize)
+        time.sleep(0.35)
+        pb._pb_exit_bounded_fetch(
+            "single:US.EMPTY", lambda: {}, 0.01, result_to_quotes=normalize)
+        assert pb._pb_exit_price_cache_view(["US.EMPTY"]) == {}
+
 
 class TestPriceCacheFallback:
     def test_view_returns_recent_and_drops_expired(self):

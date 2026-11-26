@@ -402,8 +402,23 @@ def restore_positions_from_db(scheduler):
 
                 # P0 (2026-06-14): 从 trail_state_store 恢复 current_sl + peak
                 try:
-                    from app.risk.trail_state_store import get_trail_state_store
-                    _ts = get_trail_state_store().load(symbol)
+                    from app.risk.trail_state_store import (
+                        get_trail_state_store, is_stale_for_position,
+                    )
+                    _ts, _ts_updated = get_trail_state_store().load_with_ts(symbol)
+                    # 2026-11-20 (DEB-20261120 §R4): store 按 symbol 单键 ⇒ 同标的换仓后
+                    #   旧状态会被恢复进新仓 (实测 US.MU 六月残留污染当前仓的
+                    #   entry_session/entry_session_ratio/lowest_price)。早于本仓入场
+                    #   超过 24h 的存储态判为异仓残留, 整条不恢复。
+                    if _ts and is_stale_for_position(
+                            _ts_updated, getattr(position, "entry_time", None)):
+                        logger.warning(
+                            f"[trail_state·陈旧丢弃] {symbol} 存储态 updated_at={_ts_updated} "
+                            f"早于本仓 entry_time={getattr(position, 'entry_time', None)} "
+                            f"⇒ 判为同标的历史仓残留, 整条不恢复 "
+                            f"(防 entry_session/entry_session_ratio/lowest_price 跨仓污染)"
+                        )
+                        _ts = None
                     if _ts:
                         _ts_sl = float(_ts.get("current_sl", 0) or 0)
                         if _ts_sl > 0:

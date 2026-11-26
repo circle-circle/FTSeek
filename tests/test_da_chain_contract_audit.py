@@ -162,6 +162,146 @@ def test_checkpoint_audit_preserves_model_prompt_and_as_of_lineage(tmp_path):
     assert len(row["user_prompt_sha256"]) == 64
 
 
+def _capital_payload():
+    return {"code": "US.AMD", **{
+        f"capital_{side}_{size}": 0.0
+        for side in ("in", "out") for size in ("super", "big", "mid", "small")
+    }}
+
+
+def test_source_counts_are_explicitly_collected_not_rendered():
+    stats = M.source_stats({"news": [{"id": "1"}], "research": [{"id": "1"}]},
+                           "2026-11-20")
+    assert stats["basis"] == "collected_before_render"
+    aggregate = M.aggregate_source_stats({"US.AMD": stats})
+    assert aggregate["basis"] == "collected_before_render"
+    assert aggregate["rendered_items"] is None
+    findings = M.summarize({}, {"source_aggregate": aggregate}, {}, {})
+    duplicate = next(f for f in findings if f["area"] == "source_duplicate")
+    assert duplicate["basis"] == "collected_before_render"
+    assert "未证明" in duplicate["message"]
+
+
+def test_input_visibility_detects_collected_distribution_but_intraday_only():
+    collected = {"capital_distribution": _capital_payload()}
+    original = json.dumps(collected, sort_keys=True)
+    prompt = "## 资金面 (分时)\n- 最新主力流入: N/A\n- 大单流入: -10\n"
+    result = M.input_visibility(collected, prompt, {})
+    assert result["basis"] == "saved_user_prompt_sections"
+    assert result["capital"]["numeric_field_count"] == 8
+    assert result["capital"]["prompt_mode"] == "intraday"
+    assert result["capital"]["distribution_not_rendered"] is True
+    assert result["capital"]["intraday_main_missing"] is True
+    assert json.dumps(collected, sort_keys=True) == original
+
+
+def test_distribution_words_in_other_sections_do_not_prove_rendering():
+    prompt = "## 最新新闻\n资金面 主力净流入 超大单净 大单净 主力占比\n"
+    result = M.input_visibility({"capital_distribution": _capital_payload()}, prompt, {})
+    assert result["capital"]["prompt_mode"] == "missing"
+    assert result["capital"]["distribution_not_rendered"] is True
+
+
+def test_visible_distribution_and_healthy_empty_calendar_have_no_gap():
+    collected = {
+        "capital_distribution": _capital_payload(),
+        "earnings_calendar": {"_quality": "ok", "next_earnings": None,
+                              "all_upcoming": [], "lookahead_days": 7},
+    }
+    prompt = ("## 资金面\n- 主力净流入: 0.00亿\n- 超大单净: 0\n"
+              "- 大单净: 0\n- 主力占比: 0.00%\n"
+              "## 财报日历\n- 未来7日无财报\n")
+    result = M.input_visibility(collected, prompt, {})
+    assert result["capital"]["prompt_mode"] == "distribution"
+    assert result["capital"]["distribution_not_rendered"] is False
+    assert result["earnings"]["collected_state"] == "healthy_empty"
+    assert result["earnings"]["healthy_empty_not_rendered"] is False
+
+
+def test_distribution_labels_without_values_do_not_prove_rendering():
+    prompt = ("## 资金面\n- 主力净流入: N/A\n- 超大单净: N/A\n"
+              "- 大单净: N/A\n- 主力占比: N/A\n")
+    view = M.input_visibility({"capital_distribution": _capital_payload()}, prompt, {})
+    assert view["capital"]["prompt_mode"] == "unrecognized"
+    assert view["capital"]["distribution_not_rendered"] is True
+
+
+def test_distribution_prompt_accepts_saved_crlf_line_endings():
+    prompt = ("## 资金面\r\n- 主力净流入: +0.30亿\r\n- 超大单净: -10\r\n"
+              "- 大单净: 100\r\n- 主力占比: 0.25%\r\n")
+    view = M.input_visibility({"capital_distribution": _capital_payload()}, prompt, {})
+    assert view["capital"]["prompt_mode"] == "distribution"
+    assert view["capital"]["distribution_not_rendered"] is False
+
+
+def test_partial_or_failed_capital_is_not_labeled_complete():
+    partial = _capital_payload()
+    partial["capital_in_super"] = float("nan")
+    for payload in (partial, {**_capital_payload(), "_error": "timeout"}, {}):
+        result = M.input_visibility({"capital_distribution": payload}, "## 最新新闻\n", {})
+        assert result["capital"]["collected_state"] != "complete"
+        assert result["capital"]["distribution_not_rendered"] is False
+
+
+def test_missing_prompt_is_unknown_not_a_proven_rendering_gap():
+    result = M.input_visibility({"capital_distribution": _capital_payload()}, "", {})
+    assert result["prompt_available"] is False
+    assert result["capital"]["prompt_mode"] == "unknown"
+    assert result["capital"]["distribution_not_rendered"] is False
+
+
+def test_calendar_empty_requires_explicit_healthy_status():
+    for payload, state in (({}, "unknown"), ({"_error": "timeout"}, "failed"),
+                           ({"next_earnings": {"date": "2026-11-23"}}, "upcoming")):
+        result = M.input_visibility({"earnings_calendar": payload}, "## 最新新闻\n", {})
+        assert result["earnings"]["collected_state"] == state
+        assert result["earnings"]["healthy_empty_not_rendered"] is False
+    result = M.input_visibility({"earnings_calendar": {
+        "_quality": "ok", "next_earnings": None, "all_upcoming": [], "lookahead_days": 7,
+    }}, "## 最新新闻\n", {})
+    assert result["earnings"]["healthy_empty_not_rendered"] is True
+    assert result["earnings"]["lookahead_days"] == 7
+
+
+def test_full_task_quality_is_not_full_source_status_or_render_coverage():
+    collected = {"_quality": {"total": 19, "ok": 19},
+                 "_source_status": {"news": "ok", "news_v2": "ok", "research": "empty",
+                                    "sentiment": "failed", "snapshot": "unknown"}}
+    result = M.input_visibility(collected, "## 最新新闻\n", {})
+    coverage = result["coverage"]
+    assert coverage["reported_task_total"] == 19
+    assert coverage["explicit_status_count"] == 4
+    assert coverage["reported_full_with_untracked_sources"] is True
+    assert coverage["rendered_coverage_pct"] is None
+    complete = {"_quality": {"total": 1, "ok": 1}, "_source_status": {"news": "ok"}}
+    assert M.input_visibility(complete, "## 最新新闻\n", {})["coverage"][
+        "reported_full_with_untracked_sources"] is False
+
+
+def test_visibility_checkpoint_and_findings_keep_date_rejection_not_injection(tmp_path):
+    raw = {"symbol": "US.AMD", "collected": {
+        "capital_distribution": _capital_payload(),
+        "earnings_calendar": {"_quality": "ok", "next_earnings": None, "all_upcoming": []},
+        "_quality": {"total": 19, "ok": 19}, "_source_status": {"news": "ok"},
+    }, "user_prompt": "## 资金面 (分时)\n- 最新主力流入: N/A\n",
+        "event_context": {"injected": False, "reason": "brief_date_mismatch"}}
+    path = tmp_path / "US.AMD.raw.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    before = path.read_bytes()
+    result = M.audit_checkpoints(tmp_path, "2026-11-20")
+    view = result["input_visibility"]["US.AMD"]
+    assert view["event"]["injected"] is False
+    assert view["event"]["reason"] == "brief_date_mismatch"
+    findings = M.summarize(result["price"], result, {}, {})
+    areas = {f["area"] for f in findings}
+    assert {"capital_render_gap", "earnings_render_gap", "source_status_gap",
+            "event_not_injected"} <= areas
+    event_finding = next(f for f in findings if f["area"] == "event_not_injected")
+    assert event_finding["severity"] == "info"
+    assert event_finding["reasons"] == {"brief_date_mismatch": 1}
+    assert path.read_bytes() == before
+
+
 def _make_stage_db(path: Path):
     conn = sqlite3.connect(path)
     conn.execute("""
@@ -420,3 +560,46 @@ def test_main_includes_feedback_clock_in_readonly_report(tmp_path, monkeypatch, 
     report = json.loads(capsys.readouterr().out)
     assert report["feedback_clock"] == {"status": "sentinel"}
     assert report["read_only"] is True
+
+
+def test_main_reports_real_checkpoint_visibility_without_mutating_inputs(tmp_path, capsys):
+    day = "2026-11-20"
+    checkpoint = tmp_path / day
+    checkpoint.mkdir()
+    path = checkpoint / "US.AMD.raw.json"
+    path.write_text(json.dumps({
+        "symbol": "US.AMD", "collected": {
+            "capital_distribution": _capital_payload(),
+            "earnings_calendar": {"_quality": "ok", "next_earnings": None, "all_upcoming": []},
+            "_quality": {"total": 19, "ok": 19}, "_source_status": {"news": "ok"},
+        }, "user_prompt": "## 资金面 (分时)\n- 最新主力流入: N/A\n",
+        "event_context": {"injected": False, "reason": "brief_date_mismatch"},
+    }), encoding="utf-8")
+    before = path.read_bytes()
+    before_entries = set(tmp_path.iterdir())
+    before_files = {item: item.read_bytes() for item in tmp_path.rglob("*") if item.is_file()}
+    args = ["--date", day, "--checkpoint-root", str(tmp_path),
+            "--db", str(tmp_path / "missing.db"),
+            "--memory-db", str(tmp_path / "missing-memory.db")]
+    assert M.main([*args, "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["input_visibility"]["US.AMD"]["capital"]["prompt_mode"] == "intraday"
+    summary = report["input_visibility_summary"]
+    assert summary["symbols"] == summary["prompt_available"] == 1
+    assert summary["distribution_not_rendered"] == summary["intraday_main_missing"] == 1
+    assert summary["healthy_empty_calendar_not_rendered"] == 1
+    assert summary["reported_full_with_untracked_sources"] == 1
+    assert summary["event_not_injected_reasons"] == {"brief_date_mismatch": 1}
+    assert summary["rendered_coverage_pct"] is None
+    assert report["sources"]["basis"] == "collected_before_render"
+    assert {f["area"] for f in report["findings"]} >= {
+        "capital_render_gap", "earnings_render_gap", "source_status_gap", "event_not_injected",
+    }
+    assert M.main(args) == 0
+    text = capsys.readouterr().out
+    assert "sources (collected, not rendered):" in text
+    assert "input_visibility:" in text
+    assert path.read_bytes() == before
+    assert set(tmp_path.iterdir()) == before_entries
+    assert {item: item.read_bytes() for item in tmp_path.rglob("*")
+            if item.is_file()} == before_files

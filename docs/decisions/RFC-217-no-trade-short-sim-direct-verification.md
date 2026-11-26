@@ -47,7 +47,7 @@
 **验证**：隔离构造 preflight=RISK_ON、实验态=NO_TRADE、sizing=RISK_OFF 的不同 context：BUY 原样早拦，SELL_SHORT 原3次调用、乘数0.3及执行尺寸保持，审计保留不同stage。原仓严格隔离10文件 **539 passed /43.93s /exit0**，受保护边界尝试为空，日志 `/tmp/regime-caliber-20261126-k1wfp6l1/final-integrated-v2.log`；完整范围/失败定位/缓存/只读基数消费限制见 DEB-20261122 §15。不是自然成交或双向净期望证明。
 
 **状态/下一步**：本批未提交/推送/部署/重启；现役 RFC-217 部署状态不因本地附加审计而改变。后续经授权上线再观察覆盖；方向权限调整或 Phase B 另行评审，不以强制多空配比或放宽执行质量门制造样本。
-## 6. 2026-11-26 保真修正：LONG 首层拦截按轮暂缓（本地已改，未重启）
+## 6. 2026-11-26 保真修正：LONG 首层拦截按轮暂缓（已部署 14:57 CST）
 
 §1「不改 LONG 权限」的执行口径修正为：NO_TRADE 轮 LONG/BUY **本轮**不进评估，指令保持 PENDING，不写 `SKIP`/`skip_reason`；留痕走 `exec_gate_audit`（`gate=no_trade_short_exp_long`, `transient=True`）。sizing 第二层（非 SHORT 乘数 0.0）、SHORT 0.3、SIM-only/LIVE fail-close、cohort 与预注册判据全部不变。
 

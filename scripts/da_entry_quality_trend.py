@@ -12,19 +12,27 @@
   regime 为收养时近似值（peak 重置=entry、regime 硬编码 RANGE），与信号入场不同量纲，
   混入会虚高死单率。故 headline 死单率只算**真实信号**，补录行单列（artifact）不抹账。
   详见 scripts/utils/da_sample.py。实证：11 月表观 22.8% → 真实信号 15.8%（与 10 月持平）。
+空转指标（2026-11-19 D4，RFC-145 §4 B3 / RFC-215 §4 D4）：「同指令 ≥20 轮空转 且当日
+  executed=0」= DA 产出会被自己 chase 帽锁死的计划 ⇒ 生成侧噪音成本。数据全部来自**既有**
+  产物（pullback_limit_shadow.jsonl 的 chase_cap_violation 行 + playbook_instructions.executed），
+  不新增机制、不新增采集。锚读数（RFC-145 §1, 窗 ≤2026-10-17）: 2167 轮 / 89 (指令,日) 对 /
+  中位 10 / 最大 71 / ≥20 轮 40 对。join 键 = (decision_id, date)（决策 id 的日期段是
+  生成夜 ET，与交易日用 shadow 行自身 date 字段，勿用 id 反推）。
 用法：PYTHONPATH=. venv/bin/python scripts/da_entry_quality_trend.py --start 2026-07-01
 """
 import argparse
 import json
 import sqlite3
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from scripts.utils.da_sample import split_signal_artifact
 
 ROOT = Path(__file__).resolve().parents[1]
 DB = ROOT / "data" / "ftseek_us.db"
+SHADOW_JSONL = ROOT / "data" / "shadow" / "pullback_limit_shadow.jsonl"
 DEAD_MFE_PCT = 0.3
+IDLE_MIN_ROUNDS = 20  # RFC-145 §4 B3 预注册阈值（≥20 轮）；改阈值 = 重新落档
 
 
 def _connect():
@@ -67,6 +75,84 @@ def breakeven_dead_rate(dead_avg_bps, live_avg_bps):
         return None
     loss = abs(dead_avg_bps) if dead_avg_bps is not None else 0.0
     return live_avg_bps / (live_avg_bps + loss) if (live_avg_bps + loss) > 0 else None
+
+
+def load_chase_cap_rounds(start, path=SHADOW_JSONL):
+    """读既有 pullback_limit_shadow.jsonl（只读），按 (decision_id, date) 数 chase_cap_violation 轮。
+
+    返回 Counter；文件缺失返回 None（不伪造零——「没数据」≠「零空转」）。
+    不新增采集：该 jsonl 由既有 PULLBACK_LIMIT 影子写方维护，本报表只读。
+    """
+    if not Path(path).exists():
+        return None
+    pairs = Counter()
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # 坏行跳过，不计数（同坏行不进分母的既有纪律）
+            if r.get("type") != "chase_cap_violation":
+                continue
+            if str(r.get("date") or "") < start:
+                continue
+            dec = r.get("decision_id")
+            if not dec:
+                continue
+            pairs[(dec, str(r.get("date")))] += 1
+    return pairs
+
+
+def load_executed_map(conn, decision_ids):
+    """playbook_instructions.executed 按 (decision_id, date) → bool；只读 mode=ro。
+
+    decision_id 无对应指令行 ⇒ 键缺席（调用方归 unknown，不误判为未执行）。
+    """
+    ids = sorted(set(decision_ids))
+    if not ids:
+        return {}
+    out = {}
+    for i in range(0, len(ids), 500):
+        chunk = ids[i:i + 500]
+        q = conn.execute(
+            "SELECT decision_id, date, executed FROM playbook_instructions"
+            " WHERE decision_id IN (%s)" % ",".join("?" * len(chunk)), chunk)
+        for dec, d, ex in q:
+            out[(dec, str(d))] = bool(ex)
+    return out
+
+
+def idle_churn_metrics(pairs, executed_map, min_rounds=IDLE_MIN_ROUNDS):
+    """RFC-145 §4 B3 指标：同指令 ≥min_rounds 轮空转 且当日 executed=0（纯函数，可测）。
+
+    pairs: Counter{(decision_id, date): rounds}；executed_map: {(decision_id, date): bool}。
+    unknown = ≥min_rounds 但指令行缺席（找不到就如实单列，不当未执行）。
+    """
+    values = sorted(pairs.values())
+    ge20 = [k for k in pairs if pairs[k] >= min_rounds]
+    idle = [k for k in ge20 if executed_map.get(k) is False]
+    unknown = [k for k in ge20 if k not in executed_map]
+    by_month = defaultdict(list)
+    for k in idle:
+        by_month[k[1][:7]].append(pairs[k])
+    monthly = [{"month": m, "idle_pairs": len(v), "idle_rounds": sum(v)}
+               for m, v in sorted(by_month.items())]
+    return {
+        "min_rounds": min_rounds,
+        "rounds_total": sum(values),
+        "pairs_total": len(values),
+        "median_rounds": (values[len(values) // 2] if values else None),
+        "max_rounds": (values[-1] if values else None),
+        "pairs_ge_min": len(ge20),
+        "idle_pairs": len(idle),
+        "idle_rounds": sum(pairs[k] for k in idle),
+        "executed_pairs_ge_min": sum(1 for k in ge20 if executed_map.get(k) is True),
+        "unknown_pairs_ge_min": len(unknown),
+        "monthly": monthly,
+    }
 
 
 def analyze(rows):
@@ -114,11 +200,12 @@ def analyze(rows):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="DA 入场质量趋势 KPI（死单率）")
+    parser = argparse.ArgumentParser(description="DA 入场质量趋势 KPI（死单率 + 空转指标）")
     parser.add_argument("--start", default="2026-07-01")
     parser.add_argument("--json", default=None)
     args = parser.parse_args()
-    report = analyze(_load(_connect(), args.start))
+    conn = _connect()
+    report = analyze(_load(conn, args.start))
     print("== DA entry-quality KPI (真实信号) | start=%s | n=%d ==" % (args.start, report["n"]))
     print("  dead(MFE<0.3%%)=%d (%.1f%%) avg=%.2fbps | live=%d avg=%.2fbps" % (
         report["dead_n"], report["dead_rate_pct"] or 0, report["dead_avg_bps"] or 0,
@@ -131,6 +218,27 @@ def main():
     print("  monthly dead-rate trend (LLM/流程改进 KPI):")
     for m in report["monthly"]:
         print("    %s n=%3d dead=%4.1f%% netbps=%7.2f" % (m["month"], m["n"], m["dead_rate_pct"], m["net_bps"] or 0))
+    # ── 空转指标 (RFC-145 §4 B3 / RFC-215 §4 D4): 同指令 ≥20 轮空转 且当日 executed=0 ──
+    pairs = load_chase_cap_rounds(args.start)
+    if pairs is None:
+        report["idle_churn"] = None
+        print("  [idle-churn] pullback_limit_shadow.jsonl 缺失 ⇒ 无数据 (不伪造零)")
+    else:
+        executed_map = load_executed_map(conn, [k[0] for k in pairs])
+        idle = idle_churn_metrics(pairs, executed_map)
+        report["idle_churn"] = idle
+        print("  [idle-churn] start=%s | chase_cap_violation rounds=%d pairs=%d (median %s, max %s)" % (
+            args.start, idle["rounds_total"], idle["pairs_total"],
+            idle["median_rounds"], idle["max_rounds"]))
+        print("    pairs >= %d rounds: %d | idle(>= %d ∧ executed=0): %d (rounds %d)"
+              " | executed: %d | unknown(无指令行): %d" % (
+                  idle["min_rounds"], idle["pairs_ge_min"], idle["min_rounds"],
+                  idle["idle_pairs"], idle["idle_rounds"],
+                  idle["executed_pairs_ge_min"], idle["unknown_pairs_ge_min"]))
+        if idle["monthly"]:
+            print("    monthly idle trend (DA 生成侧噪音成本):")
+            for m in idle["monthly"]:
+                print("      %s idle_pairs=%d idle_rounds=%d" % (m["month"], m["idle_pairs"], m["idle_rounds"]))
     if args.json:
         Path(args.json).write_text(json.dumps(report, ensure_ascii=False, indent=2))
         print("wrote", args.json)

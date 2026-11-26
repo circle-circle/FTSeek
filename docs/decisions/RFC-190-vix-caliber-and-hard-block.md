@@ -246,3 +246,16 @@ DEB §59 的 FRED 最近有效观测、全源 as-of、同日利差、动态经�
 
 不变项：任何阈值/仓位/DA prompt/`vix_data.json` 的 vix·source·as_of 均未动。
 测试：13 例，变异 4 红；重标脚本 `scripts/vixy_beta_calibration.py`（手动，无 cron）。
+
+## 13. 第八轮（2026-11-26）：Playbook 同调用口径与多阶段留痕（本地 Phase A）
+
+用户要求避免极端单向并按建议优化；本批先接通原取数的可见性，不改本 RFC 的换源/阈值/真值注入裁决。完整实现与验收见 `docs/debates/DEB-20261122-trading-system-full-chain-and-survival-review.md` §15。
+
+- Router/AV 的既有标量 VIX 调用通过 ContextVar 回执带 source/as_of/provider 原始 quote_time；不新增调用，不用全局“最新来源”猜标签。FRED 单位 vix_points、VIXY×0.85 单位 vix_points_estimated；未知来源如实 unknown，全源失败 observation.value=None，不把 ctx.vix=20 展示兜底冒充观测。
+- RegimeContext 增加 UTC read_at/assessed_at、真实 SPY basis/quote_time、原 trend_score/volatility_score；Futu 价格标 futu_last_price，未提供 basis 的 AV 回退仍 unknown。原始 provider 时间不臆造时区或新鲜度；读取时间不等于观测时间。
+- 原 preflight、实验态、sizing 分别 assess，记录到既有 sizing_delta/reprice；成交时评估另存。**未实现或激活同轮显式复用**；regime_snapshot_used=False 只指此点，原120s/30s类缓存仍可复用，不能说每次 assess 都新取数。早退/LONG 早拦/MOM 专用 reprice 不在完整覆盖中。
+- 只读 `scripts/shadow_field_cardinality.py --regime-audit PATH` 消费既有 sizing_delta JSONL，n≥10且distinct<2标 WARNING_CONST；不接交易/通知/cron、始终exit0、旧CLI不变。仅有效dict行；空文件/坏行/重复缓存与稳定市场须人工核，VIX基数跨口径不可当同口径统计。
+
+**验证**：原仓严格隔离10文件 **539 passed /43.93s /exit0**，`/tmp/regime-caliber-20261126-k1wfp6l1/final-integrated-v2.log`，受保护边界尝试为空；5保护SHA、7关键AST与5函数 if 序列一致，范围限制见 DEB。Kimi 核心代码只读审查无严重/必须修项，未独立重跑测试。
+
+**状态**：未提交/推送/部署/重启；不改数值、0.85、源优先级、TTL、任何风险/方向门、RFC-216/217 判据或 DA prompt。标签准确不等于代理准确、新鲜或有edge；没有证明利润改善。A2 真值注入、代理标定、换源/阈值及 Phase B 仍需各自证据与授权，不能由本轮代批。

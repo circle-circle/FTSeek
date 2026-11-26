@@ -148,7 +148,8 @@ def load_trades(since: str, until: str | None) -> list[dict]:
     conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     sql = ("SELECT id, symbol, direction, entry_time, exit_time, entry_price, exit_price, "
-           "quantity, realized_pnl, exit_reason, mfe_pct, mae_pct, config_version, "
+           "quantity, realized_pnl, pnl_net, fees_est, fees_source, "
+           "exit_reason, mfe_pct, mae_pct, config_version, "
            "decision_id, metadata_json "
            "FROM trade_records WHERE source_type='PLAYBOOK_SIM' AND exit_time IS NOT NULL "
            "AND entry_price > 0 AND quantity > 0 ORDER BY entry_time")
@@ -172,7 +173,18 @@ def load_trades(since: str, until: str | None) -> list[dict]:
             "id": r["id"], "symbol": r["symbol"], "direction": r["direction"].upper(),
             "entry_et": entry_et, "exit_et": exit_et,
             "entry": float(r["entry_price"]), "live_exit": float(r["exit_price"] or 0),
-            "qty": float(r["quantity"]), "live_pnl": float(r["realized_pnl"] or 0),
+            "qty": float(r["quantity"]),
+            # live_pnl 是历史字段名，实际一直装毛利；保留以免旧消费方静默改义。
+            # 新代码必须分别读 live_gross/live_net/live_fee_est。
+            "live_pnl": float(r["realized_pnl"] or 0),
+            "live_gross": float(r["realized_pnl"] or 0),
+            "live_net": (
+                float(r["pnl_net"]) if r["pnl_net"] is not None
+                else (float(r["realized_pnl"] or 0) - float(r["fees_est"])
+                      if r["fees_est"] is not None else None)
+            ),
+            "live_fee_est": float(r["fees_est"]) if r["fees_est"] is not None else None,
+            "fees_source": r["fees_source"],
             "live_reason": r["exit_reason"] or "", "live_mfe": float(r["mfe_pct"] or 0),
             "config_version": r["config_version"] or "",
             # 重放器 DEAD_SIGNAL 的 Phase0 reentry 呼吸窗判据 (decision_id 前缀),
@@ -559,13 +571,27 @@ def replay_trade(tr: dict, bars: list[dict], exit_cfg: dict, var: dict,
 # 聚合
 # ────────────────────────────────────────────────────────────
 
-def _fee_of(tr: dict) -> float:
-    """从实盘单笔反推费用 = 毛盈亏 - 净盈亏; 异常(>3%名义)回退 0."""
+def _fee_of(tr: dict) -> float | None:
+    """返回单笔费用；费用证据缺失或异常时返回 None，绝不静默当零。
+
+    当前账本约定：realized_pnl=毛、fees_est=费、pnl_net=净。优先使用明确费用列，
+    其次用毛−净反推。无新口径字段的旧外部字典仍按历史 live_pnl=净兼容；
+    load_trades 总会提供新字段，因此缺失费用不会被该兼容分支掩盖。
+    """
     sign = 1.0 if tr["direction"] == "LONG" else -1.0
     gross = tr["qty"] * sign * (tr["live_exit"] - tr["entry"])
-    fee = gross - tr["live_pnl"]
+    if tr.get("live_fee_est") is not None:
+        fee = float(tr["live_fee_est"])
+    else:
+        if "live_net" in tr:
+            net = tr.get("live_net")
+        else:
+            net = tr.get("live_pnl")  # 旧外部调用方的历史约定：live_pnl=净
+        if net is None:
+            return None
+        fee = gross - float(net)
     notional = tr["qty"] * tr["entry"]
-    return fee if 0 <= fee <= 0.03 * notional else 0.0
+    return fee if 0 <= fee <= 0.03 * notional else None
 
 
 SPLIT_DATE = "2026-07-20"  # 当前退出配置时代 (dd=0.8 07-19 起) — 宪章口径2: 新旧窗口分层
@@ -618,15 +644,14 @@ def main() -> None:
     factor_rules, params = _load_configs()
     trades = load_trades(args.since, args.until)
     print(f"交易: {len(trades)} 笔 PLAYBOOK_SIM 已平仓 (since {args.since})")
-    if not trades:
-        return
 
-    bars_map = collect_bars(trades, args.refresh_bars, e_days=args.e_days)
+    # 零候选窗口也不得连接 OpenD 或保留旧产物；后续统一落诊断报告。
+    bars_map = collect_bars(trades, args.refresh_bars, e_days=args.e_days) if trades else {}
 
     # 组装每笔的 bar 序列 + 因子退出配置
     # _bars: entry→live exit (baseline 保真, 口径与 07-25 版一致);
     # _bars_ext: entry→entry+e_days (方案E隔夜回放用; baseline 不受 ext 影响 — PRE_CLOSE 日0先收编)
-    runnable, skipped = [], 0
+    runnable, skipped, skipped_fee_unknown = [], 0, 0
     for tr in trades:
         seq_ext: list[dict] = []
         end_ext = max(tr["exit_et"].date(), tr["entry_et"].date() + timedelta(days=args.e_days))
@@ -647,24 +672,45 @@ def main() -> None:
         tr["_bars_ext"] = seq_ext if len(seq_ext) >= 5 else seq
         tr["_exit_cfg"] = _get_factor_exit_config(tr["conditions"], factor_rules,
                                                   direction=tr["direction"])
-        tr["_fee"] = _fee_of(tr)
+        fee = _fee_of(tr)
+        if fee is None:
+            skipped_fee_unknown += 1
+            continue
+        tr["_fee"] = fee
         runnable.append(tr)
-    print(f"可回放: {len(runnable)} 笔 (缺 bar 跳过 {skipped})")
-    if not runnable:
-        return
+    print(f"可回放: {len(runnable)} 笔 (缺 bar 跳过 {skipped}; 费用未知跳过 {skipped_fee_unknown})")
 
-    live_sum = sum(t["live_pnl"] for t in runnable)
-    variants = _variants()
+    live_sum_gross = sum(t["live_gross"] for t in runnable)
+    live_sum_net = sum(t["live_net"] for t in runnable)
+    live_sum_fees = sum(t["_fee"] for t in runnable)
     report: dict = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "since": args.since, "until": args.until,
         "trades_total": len(trades), "trades_replayed": len(runnable),
-        "live_sum_net": round(live_sum, 2),
+        "live_sum_gross": round(live_sum_gross, 2),
+        "live_sum_fees": round(live_sum_fees, 2),
+        "live_sum_net": round(live_sum_net, 2),
+        "exclusions": {"no_bars": skipped, "fee_unknown": skipped_fee_unknown},
+        "fee_coverage": {
+            "known_n": len(runnable), "unknown_n": skipped_fee_unknown,
+            "sources": sorted({str(t.get("fees_source") or "unknown") for t in runnable}),
+            "policy": "费用未知即跳过，不静默当零；净值优先 pnl_net，缺失时毛利−fees_est",
+        },
         "slippage_bps": args.slippage_bps,
         "params": params,
         "validation": {},
         "variants": {},
     }
+    if not runnable:
+        # 必须覆盖旧产物：全样本不可回放时，下游不得继续读到上一轮的变体结论。
+        report["status"] = "NO_CANDIDATE_TRADES" if not trades else "NO_REPLAYABLE_TRADES"
+        report["frozen_by_fidelity"] = True
+        Path(args.out).write_text(json.dumps(report, ensure_ascii=False, indent=1))
+        print("⛔ 无可回放样本：仅输出诊断，variants 为空；旧产物已被覆盖。")
+        print(f"产出: {args.out}")
+        return
+
+    variants = _variants()
 
     # ── 验证: live_baseline vs 实盘记录 ──
     base_var = variants[0]
@@ -699,6 +745,19 @@ def main() -> None:
         "per_trade": base_details,
     }
 
+    report["validation"]["fidelity_ok"] = report["validation"]["reason_match_pct"] >= 0.80
+    report["frozen_by_fidelity"] = not report["validation"]["fidelity_ok"]
+    if report["frozen_by_fidelity"]:
+        # 文档既定纪律必须成为机器门：失败时只留 baseline 诊断，不生成可裁决变体。
+        Path(args.out).write_text(json.dumps(report, ensure_ascii=False, indent=1))
+        v = report["validation"]
+        print(f"\n[验证] baseline vs 实盘: reason一致 {v['reason_match_pct']:.0%}, "
+              f"退出价差 median {v['exit_pct_delta_median']:.3f}% "
+              f"p90 {v['exit_pct_delta_p90']:.3f}%, MFE差 median {v['mfe_delta_median']:.3f}%")
+        print("⛔ 保真门未过 (reason_match < 0.80)：冻结全部变体，仅输出诊断。")
+        print(f"产出: {args.out}")
+        return
+
     # ── 变体网格: 双序各跑 (含 07-20 分层 + pess 逐笔明细) ──
     baseline_rows: dict = {}
     e_rows: dict = {}
@@ -717,7 +776,7 @@ def main() -> None:
                 censored = use_ext and tr["direction"] == "SHORT" and rp["reason"] == "REPLAY_EOD"
                 results.append({"id": tr["id"], "day": tr["entry_et"].strftime("%Y-%m-%d"),
                                 "symbol": tr["symbol"], "dir": tr["direction"], "net": round(net, 2),
-                                "live_net": tr["live_pnl"], "reason": rp["reason"],
+                                "live_net": tr["live_net"], "reason": rp["reason"],
                                 "held_min": round(rp["held_min"], 1), "censored": censored})
             entry = report["variants"].setdefault(var["name"], {})
             entry[ordering] = aggregate(results)
@@ -784,12 +843,13 @@ def main() -> None:
     vb = report["variants"]["live_baseline"]
     base_lo = min(vb["pess"]["sum_net"], vb["opt"]["sum_net"])
     base_hi = max(vb["pess"]["sum_net"], vb["opt"]["sum_net"])
-    print(f"[校准] 实盘 live_sum={live_sum:.0f} vs 回放 baseline={base_lo:.0f}~{base_hi:.0f} "
-          f"→ 回放固有偏差 {(base_lo - live_sum):+.0f}~{(base_hi - live_sum):+.0f} "
+    print(f"[校准] 实盘 live_sum_net={live_sum_net:.0f} (毛 {live_sum_gross:.0f} − 费 {live_sum_fees:.0f}) "
+          f"vs 回放 baseline={base_lo:.0f}~{base_hi:.0f} "
+          f"→ 回放固有偏差 {(base_lo - live_sum_net):+.0f}~{(base_hi - live_sum_net):+.0f} "
           f"(bar影线>轮询采样, 变体排序不受影响)")
     print(f"\n{'variant':<24} {'n':>4} {'sum$区间':>13} {'Δbaseline$':>11} "
           f"{'exp$':>9} {'WR':>5} {'RR':>5} {'杀赢':>5} {'救亏':>5} {'≥07-20Δ':>8}")
-    print(f"{'live_实盘记录':<24} {len(runnable):>4} {live_sum:>13.0f}")
+    print(f"{'live_实盘记录':<24} {len(runnable):>4} {live_sum_net:>13.0f}")
     for var in variants:
         name = var["name"]
         vd = report["variants"][name]

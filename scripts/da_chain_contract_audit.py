@@ -248,6 +248,94 @@ def _dedupe_key(item: Dict[str, Any]) -> Optional[Tuple[str, str]]:
     return ("title", title) if title else None
 
 
+def input_visibility(collected: Dict[str, Any], user_prompt: str,
+                     event: Dict[str, Any]) -> Dict[str, Any]:
+    sections = {}
+    parts = re.split(r"^##[ \t]+([^\n]+)\n?", user_prompt.replace("\r\n", "\n"),
+                     flags=re.MULTILINE)
+    for index in range(1, len(parts), 2):
+        sections[parts[index].strip()] = parts[index + 1]
+    prompt_available = bool(user_prompt.strip())
+    distribution = collected.get("capital_distribution")
+    numeric_fields = [
+        f"capital_{side}_{size}"
+        for side in ("in", "out") for size in ("super", "big", "mid", "small")
+        if isinstance(distribution, dict)
+        and not isinstance(distribution.get(f"capital_{side}_{size}"), bool)
+        and _f(distribution.get(f"capital_{side}_{size}")) is not None
+    ]
+    if isinstance(distribution, dict) and "_error" in distribution:
+        capital_state = "failed"
+    elif len(numeric_fields) == 8:
+        capital_state = "complete"
+    elif numeric_fields:
+        capital_state = "partial"
+    else:
+        capital_state = "missing"
+    distribution_section = sections.get("资金面", "")
+    intraday_section = sections.get("资金面 (分时)", "")
+    distribution_visible = all(re.search(
+        rf"^- {label}:[ \t]*[+-]?\d+(?:\.\d+)?{unit}[ \t]*$",
+        distribution_section, re.MULTILINE,
+    ) for label, unit in (("主力净流入", "亿"), ("超大单净", ""),
+                          ("大单净", ""), ("主力占比", "%")))
+    capital_mode = ("unknown" if not prompt_available else
+                    "distribution" if distribution_visible else
+                    "intraday" if intraday_section else
+                    "unrecognized" if "资金面" in sections else "missing")
+    earnings = collected.get("earnings_calendar")
+    if isinstance(earnings, dict) and "_error" in earnings:
+        earnings_state = "failed"
+    elif isinstance(earnings, dict) and earnings.get("next_earnings"):
+        earnings_state = "upcoming"
+    elif (isinstance(earnings, dict) and earnings.get("_quality") == "ok"
+          and earnings.get("next_earnings") is None and earnings.get("all_upcoming") == []):
+        earnings_state = "healthy_empty"
+    else:
+        earnings_state = "unknown"
+    quality = collected.get("_quality")
+    quality = quality if isinstance(quality, dict) else {}
+    statuses = collected.get("_source_status")
+    statuses = statuses if isinstance(statuses, dict) else {}
+    explicit_count = sum(value in ("ok", "empty", "failed", "disabled")
+                         for value in statuses.values())
+    total, ok = _f(quality.get("total")), _f(quality.get("ok"))
+    return {
+        "basis": "saved_user_prompt_sections",
+        "prompt_available": prompt_available,
+        "capital": {
+            "collected_state": capital_state,
+            "numeric_field_count": len(numeric_fields),
+            "prompt_mode": capital_mode,
+            "distribution_not_rendered": (prompt_available and capital_state == "complete"
+                                          and not distribution_visible),
+            "intraday_main_missing": bool(re.search(
+                r"^- 最新主力流入:\s*N/A\s*$", intraday_section, re.MULTILINE)),
+        },
+        "earnings": {
+            "collected_state": earnings_state,
+            "lookahead_days": earnings.get("lookahead_days") if isinstance(earnings, dict) else None,
+            "section_present": "财报日历" in sections if prompt_available else None,
+            "healthy_empty_not_rendered": (prompt_available and earnings_state == "healthy_empty"
+                                          and "财报日历" not in sections),
+        },
+        "coverage": {
+            "reported_task_total": total,
+            "reported_task_ok": ok,
+            "explicit_status_count": explicit_count,
+            "source_statuses": statuses,
+            "reported_full_with_untracked_sources": bool(
+                total is not None and total > 0 and ok == total and explicit_count < total),
+            "rendered_coverage_pct": None,
+        },
+        "event": {
+            "injected": event.get("injected") if isinstance(event.get("injected"), bool) else None,
+            "reason": event.get("reason"),
+            "brief_id": event.get("brief_id"),
+        },
+    }
+
+
 def source_stats(collected: Dict[str, Any], trade_date: str) -> Dict[str, Any]:
     """新闻/研报/社区的时间与同稿统计. 只描述, 不修改 prompt 输入."""
     section_rows = {
@@ -310,6 +398,7 @@ def source_stats(collected: Dict[str, Any], trade_date: str) -> Dict[str, Any]:
         latest_age = (date.fromisoformat(trade_date) - max(sent_dates)).days
 
     return {
+        "basis": "collected_before_render",
         "items": len(items),
         "by_section": {k: len(v) for k, v in section_rows.items() if isinstance(v, list)},
         "publish_time_missing": dict(pub_missing),
@@ -335,6 +424,8 @@ def source_stats(collected: Dict[str, Any], trade_date: str) -> Dict[str, Any]:
 
 def aggregate_source_stats(per_symbol: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     out: Dict[str, Any] = {
+        "basis": "collected_before_render",
+        "rendered_items": None,
         "symbols": len(per_symbol),
         "items": 0,
         "publish_time_missing": Counter(),
@@ -383,6 +474,7 @@ def audit_checkpoints(ckpt_dir: Path, trade_date: str) -> Dict[str, Any]:
 
     price: Dict[str, Dict[str, Any]] = {}
     sources: Dict[str, Dict[str, Any]] = {}
+    visibility: Dict[str, Dict[str, Any]] = {}
     raw_context: Dict[str, Dict[str, Any]] = {}
     for raw_path in raw_files:
         raw = _read_json(raw_path) or {}
@@ -394,6 +486,8 @@ def audit_checkpoints(ckpt_dir: Path, trade_date: str) -> Dict[str, Any]:
         sources[symbol] = source_stats(collected, trade_date)
         user_prompt = str(raw.get("user_prompt") or "")
         event = raw.get("event_context") or raw.get("_event_context") or {}
+        event = event if isinstance(event, dict) else {}
+        visibility[symbol] = input_visibility(collected, user_prompt, event)
         raw_context[symbol] = {
             "raw_saved_at": raw.get("saved_at"),
             "event_as_of": event.get("as_of"),
@@ -465,6 +559,7 @@ def audit_checkpoints(ckpt_dir: Path, trade_date: str) -> Dict[str, Any]:
         "price": price,
         "sources": sources,
         "source_aggregate": aggregate_source_stats(sources),
+        "input_visibility": visibility,
         "debates": debates,
         "debate_states": dict(state_counts),
         "partial_agreed_true": partial_true,
@@ -972,16 +1067,45 @@ def summarize(price: Dict[str, Dict[str, Any]], debate: Dict[str, Any],
         findings.append({
             "severity": "high",
             "area": "source_time",
-            "message": "研报无任何发布时间 (模型无法判断时效)",
+            "basis": "collected_before_render",
+            "message": "采集层研报缺少可识别时间字段，未证明实际 prompt 缺少时效信息",
             "count": agg["render_time_missing"].get("research", 0),
         })
     if agg.get("duplicate_extra_items"):
         findings.append({
             "severity": "medium",
             "area": "source_duplicate",
-            "message": "跨栏目/同栏目同稿重复, 不能当独立证据",
+            "basis": "collected_before_render",
+            "message": "采集层存在同稿重复，未证明实际 prompt 重复；同稿不能当独立证据",
             "count": agg["duplicate_extra_items"],
             "cross_section_extra_items": agg.get("cross_section_extra_items", 0),
+        })
+    visibility = debate.get("input_visibility") or {}
+    for area, section, flag, message in (
+        ("capital_render_gap", "capital", "distribution_not_rendered",
+         "已采集完整资金分布，但保存的 prompt 未检出预期格式的资金分布数值"),
+        ("earnings_render_gap", "earnings", "healthy_empty_not_rendered",
+         "财报日历来源健康且窗口为空，但保存的 prompt 未呈现财报日历栏目"),
+        ("source_status_gap", "coverage", "reported_full_with_untracked_sources",
+         "任务成功数满额，但显式来源状态未覆盖任务数；不能代表实际输入完整"),
+    ):
+        symbols = sorted(s for s, v in visibility.items() if v[section][flag])
+        if symbols:
+            findings.append({
+                "severity": "medium", "area": area,
+                "basis": ("collected_source_status" if section == "coverage"
+                          else "collected_vs_saved_user_prompt_sections"),
+                "message": message, "count": len(symbols), "symbols": symbols,
+            })
+    rejected = {s: v["event"] for s, v in visibility.items()
+                if v["event"]["injected"] is False}
+    if rejected:
+        findings.append({
+            "severity": "info", "area": "event_not_injected",
+            "basis": "saved_event_context_metadata",
+            "message": "共享事件未注入，按保存的原因留痕；日期拒绝不等于闸门故障",
+            "count": len(rejected), "symbols": sorted(rejected),
+            "reasons": dict(Counter(v["reason"] or "unknown" for v in rejected.values())),
         })
     # 2026-10-23: challenger_agreed_raw is intentionally retained for audit;
     # canonical classification is challenger_verdict_state. Do not re-flag
@@ -1055,6 +1179,25 @@ def main(argv: Optional[List[str]] = None) -> int:
     memory = memory_audit(Path(args.memory_db), Path(args.db), args.date)
     feedback_clock = feedback_clock_audit(Path(args.db), args.date)
     findings = summarize(base["price"], base, stages, memory)
+    visibility = base.get("input_visibility", {})
+    visibility_summary = {
+        "symbols": len(visibility),
+        "prompt_available": sum(v["prompt_available"] for v in visibility.values()),
+        "capital_prompt_modes": dict(Counter(v["capital"]["prompt_mode"]
+                                             for v in visibility.values())),
+        "distribution_not_rendered": sum(v["capital"]["distribution_not_rendered"]
+                                         for v in visibility.values()),
+        "intraday_main_missing": sum(v["capital"]["intraday_main_missing"]
+                                     for v in visibility.values()),
+        "healthy_empty_calendar_not_rendered": sum(v["earnings"]["healthy_empty_not_rendered"]
+                                                   for v in visibility.values()),
+        "reported_full_with_untracked_sources": sum(v["coverage"]["reported_full_with_untracked_sources"]
+                                                    for v in visibility.values()),
+        "event_not_injected_reasons": dict(Counter(v["event"]["reason"] or "unknown"
+                                                   for v in visibility.values()
+                                                   if v["event"]["injected"] is False)),
+        "rendered_coverage_pct": None,
+    }
     report = {
         "schema": "da_chain_contract_audit/v1",
         "date": args.date,
@@ -1064,6 +1207,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         "price_summary": dict(Counter(v.get("status") for v in base["price"].values())),
         "sources": base["source_aggregate"],
         "source_by_symbol": base["sources"],
+        "input_visibility": visibility,
+        "input_visibility_summary": visibility_summary,
         "debate_states": base["debate_states"],
         "partial_agreed_true": base["partial_agreed_true"],
         "debates": base["debates"],
@@ -1085,11 +1230,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"DA contract audit {args.date} (read-only)")
     print("price:", json.dumps(report["price_summary"], ensure_ascii=False))
     s = report["sources"]
-    print("sources:", json.dumps({k: s.get(k) for k in (
-        "items", "publish_time_missing", "render_time_missing", "stale_over_7d",
+    print("sources (collected, not rendered):", json.dumps({k: s.get(k) for k in (
+        "basis", "rendered_items", "items", "publish_time_missing", "render_time_missing", "stale_over_7d",
         "duplicate_groups", "duplicate_extra_items",
         "cross_section_duplicate_groups", "cross_section_extra_items")},
         ensure_ascii=False))
+    print("input_visibility:", json.dumps(visibility_summary, ensure_ascii=False))
     print("debate:", json.dumps(report["debate_states"], ensure_ascii=False),
           "raw_agreed_true=", len(report["partial_agreed_true"]),
           "(canonical state is challenger_verdict_state)")

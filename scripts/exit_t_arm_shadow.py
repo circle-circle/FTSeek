@@ -189,14 +189,18 @@ def compute(trades: list[dict], factor_rules: dict, params: dict,
             slippage_bps: float) -> dict:
     by_ordering: dict[str, list[dict]] = {"pess": [], "opt": []}
     skipped = 0
+    skipped_fee_unknown = 0
     for tr in trades:
+        fee = erb._fee_of(tr)
+        if fee is None:
+            skipped_fee_unknown += 1
+            continue
         bars = _load_cached_bars(tr["symbol"], tr["entry_et"], tr["exit_et"])
         if bars is None:
             skipped += 1
             continue
         exit_cfg = erb._get_factor_exit_config(
             tr["conditions"], factor_rules, direction=tr["direction"])
-        fee = erb._fee_of(tr)
         for ordering in ("pess", "opt"):
             base_rp = erb.replay_trade(
                 tr, bars, exit_cfg, {"name": "adaptive_live"}, params, ordering,
@@ -224,7 +228,8 @@ def compute(trades: list[dict], factor_rules: dict, params: dict,
         "params": {"baseline": BASE_ADAPTIVE, "t_arm": T_ADAPTIVE,
                    "slippage_bps": slippage_bps, "stress_bps": STRESS_BPS},
         "sample": {"trades_total": len(trades), "replayed": len(by_ordering["pess"]),
-                   "skipped_no_bars": skipped, "distinct_days": len(days),
+                   "skipped_no_bars": skipped, "skipped_fee_unknown": skipped_fee_unknown,
+                   "distinct_days": len(days),
                    "n": len(by_ordering["pess"])},
         "by_ordering": {},
         "caveats": [
@@ -286,7 +291,8 @@ def render(report: dict) -> None:
     print("RFC-154 T 臂影子 (adaptive min DD 0.4 → 0.8) — 只读")
     sample = report["sample"]
     print(f"样本: trades={sample['trades_total']} replayed={sample['replayed']} "
-          f"days={sample['distinct_days']} skipped_no_bars={sample['skipped_no_bars']}")
+          f"days={sample['distinct_days']} skipped_no_bars={sample['skipped_no_bars']} "
+          f"skipped_fee_unknown={sample.get('skipped_fee_unknown', 0)}")
     for ordering in ("pess", "opt"):
         block = report["by_ordering"][ordering]
         b, t, d = block["baseline"], block["t_arm"], block["delta"]

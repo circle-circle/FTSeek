@@ -18,9 +18,33 @@ import logging
 from typing import Dict, Any, Optional
 from enum import Enum
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
+from app.data.vix_source import VIX_READ_RECEIPT
+from app.data.market_env_truth import caliber_label, is_proxy_source
 from app.data.market_data_router import MarketDataRouter, get_market_data_router
 from app.data.alphavantage_provider import AlphaVantageProvider, get_alpha_vantage_provider
+
+
+def _read_vix_with_receipt(source):
+    receipt = {}
+    token = VIX_READ_RECEIPT.set(receipt)
+    try:
+        value = source.get_vix_or_none()
+    finally:
+        VIX_READ_RECEIPT.reset(token)
+    if receipt.get("value") != value:
+        receipt = {}
+    origin = receipt.get("source")
+    proxy = is_proxy_source(origin) if origin else None
+    unit = "vix_points_estimated" if proxy else "vix_points" if origin == "fred" else "unknown"
+    return value, {
+        "value": value, "source": origin or "unknown",
+        "caliber": caliber_label(origin), "is_proxy": proxy,
+        "as_of": receipt.get("as_of"), "quote_time": receipt.get("quote_time"),
+        "quote_time_basis": "provider_raw", "unit": unit,
+        "read_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 logger = logging.getLogger(__name__)
 
@@ -49,11 +73,13 @@ class RegimeContext:
     top_n: int  # Screener 筛选数量
     position_multiplier: float  # 仓位倍率
     min_strength: int  # 最低信号强度要求
-    vix_uncertain: bool = False  # RFC-060: VIX 取不到真实值时为 True, regime 判定不可信
-    # [DEB-20260924 F5-B'影子] 盘前 spy_price 口径遥测 (record-only, 不影响主判定):
-    #   spy_price 现为日K口径 (盘前=昨收, regime_log 4/4 逐日实证 + 9/21 距MA20 0.11% 翻转实例)。
-    #   影子字段双算"若用盘前 pre_price 会怎样", 攒 5-10 个交易日后裁决是否 enforce。
-    spy_price_basis: str = "kline_last_close"   # kline_last_close | pre_price(仅遥测标注, 主判定不变)
+    vix_uncertain: bool = False  # 仅标记全源失败，不代表已验证代理误差或报价新鲜度。
+    spy_price_basis: str = "unknown"
+    spy_quote_time: Optional[str] = None
+    assessed_at: Optional[str] = None
+    trend_score: Optional[float] = None
+    volatility_score: Optional[float] = None
+    vix_observation: Optional[Dict[str, Any]] = None
     spy_pre_price: float = 0.0                  # 盘前时段快照 pre_price (0=不可用)
     score_shadow: Optional[float] = None        # 用 pre_price 重算的 score (None=无双算/无差异)
     regime_shadow: Optional[str] = None         # score_shadow 对应的 regime 值
@@ -73,6 +99,11 @@ class RegimeContext:
             "min_strength": self.min_strength,
             "vix_uncertain": self.vix_uncertain,
             "spy_price_basis": self.spy_price_basis,
+            "spy_quote_time": self.spy_quote_time,
+            "assessed_at": self.assessed_at,
+            "trend_score": self.trend_score,
+            "volatility_score": self.volatility_score,
+            "vix_observation": dict(self.vix_observation) if self.vix_observation is not None else None,
             "spy_pre_price": self.spy_pre_price,
             "score_shadow": self.score_shadow,
             "regime_shadow": self.regime_shadow,
@@ -184,12 +215,12 @@ class MarketRegimeGate:
         - VIX < 15: +3 (低波动，市场平静)
         - VIX 15-20: +1 (正常波动)
         - VIX 20-30: -2 (高波动，市场紧张；RFC-216 开关开启时 20–22 连续 +1→-2)
-        - VIX > 30: -5 (极高波动，市场恐慌)
+        - VIX >= 30: -5 (极高波动，市场恐慌)
         
         Regime 映射：
         - score >= 5: RISK_ON (top_n=10, multiplier=1.0)
-        - score 0-4: CAUTIOUS (top_n=8, multiplier=0.5)  # 2026-07-21: 5→8 见 L251 注释
-        - score -5 to -1: RISK_OFF (top_n=3, multiplier=0.3)
+        - 0 <= score < 5: CAUTIOUS (top_n=8, multiplier=0.5)
+        - -5 <= score < 0: RISK_OFF (top_n=3, multiplier=0.3)
         - score < -5: NO_TRADE (top_n=0, multiplier=0.0)
         """
         score = 0
@@ -209,13 +240,17 @@ class MarketRegimeGate:
         spy_ma50 = 0.0
         spy_ma200 = 0.0
         spy_change_pct = 0.0
-        
+        spy_price_basis = "unknown"
+        spy_quote_time = None
+
         # 优先使用 MarketDataRouter (MA20/MA50/MA200 同源自 Futu 日K, 2026-07-03 起 Router 已返回)
         if self.router:
             try:
                 spy_ctx = self.router.get_spy_context()
                 if spy_ctx:
                     spy_price = spy_ctx.get("spy_price", 0.0)
+                    spy_price_basis = spy_ctx.get("spy_price_basis", "unknown")
+                    spy_quote_time = spy_ctx.get("spy_quote_time")
                     spy_ma200 = spy_ctx.get("spy_ma200", 0.0)
                     spy_ma20 = spy_ctx.get("spy_ma20", 0.0)
                     spy_ma50 = spy_ctx.get("spy_ma50", 0.0)
@@ -231,6 +266,8 @@ class MarketRegimeGate:
                 if av_spy_ctx:
                     if spy_price == 0:
                         spy_price = av_spy_ctx.get("spy_price", 0.0)
+                        spy_price_basis = av_spy_ctx.get("spy_price_basis", "unknown")
+                        spy_quote_time = av_spy_ctx.get("spy_quote_time")
                     spy_ma20 = av_spy_ctx.get("spy_ma20", 0.0)
                     spy_ma50 = av_spy_ctx.get("spy_ma50", 0.0)
                     if spy_change_pct == 0:
@@ -248,17 +285,18 @@ class MarketRegimeGate:
         # 修复: 用 get_vix_or_none(), 拿不到真实值则重试一次 (等 FRED 缓存刷新),
         #   仍拿不到则标记 vix_uncertain, regime 判定降级保守.
         vix = None
+        vix_observation = None
         vix_uncertain = False
         if self.router:
             try:
-                vix = self.router.get_vix_or_none()
+                vix, vix_observation = _read_vix_with_receipt(self.router)
                 if vix is not None:
                     logger.info(f"[Regime] VIX from Router: {vix:.2f}")
             except Exception as e:
                 logger.warning(f"[Regime] Failed to get VIX from Router: {e}")
         if vix is None and self.av:
             try:
-                vix = self.av.get_vix_or_none()
+                vix, vix_observation = _read_vix_with_receipt(self.av)
                 if vix is not None:
                     logger.info(f"[Regime] VIX from AlphaVantage: {vix:.2f}")
             except Exception as e:
@@ -269,18 +307,24 @@ class MarketRegimeGate:
             _time.sleep(2)
             if self.router:
                 try:
-                    vix = self.router.get_vix_or_none()
+                    vix, vix_observation = _read_vix_with_receipt(self.router)
                 except Exception:
                     pass
             if vix is None and self.av:
                 try:
-                    vix = self.av.get_vix_or_none()
+                    vix, vix_observation = _read_vix_with_receipt(self.av)
                 except Exception:
                     pass
         if vix is None:
             # 所有源失败: 用 20.0 兜底但标记不确定, 避免 regime 误判
             vix = 20.0
             vix_uncertain = True
+            vix_observation = {
+                "value": None, "source": "unavailable", "caliber": "全源失败，20.0仅为兜底展示值",
+                "is_proxy": None, "as_of": None, "quote_time": None,
+                "quote_time_basis": "provider_raw", "unit": "unknown",
+                "read_at": datetime.now(timezone.utc).isoformat(),
+            }
             logger.warning("[Regime] VIX 所有源均失败, 使用兜底 20.0 (regime 判定不可信)")
         
         # 评分计算
@@ -311,6 +355,9 @@ class MarketRegimeGate:
                 score -= 1
                 logger.debug(f"[Regime] SPY < MA200: -1")
         
+        trend_score = score
+        volatility_score = None
+
         # 4. 波动率 (VIX)
         # RFC-060: VIX 不确定时跳过 VIX 评分 — 兜底 20.0 会给 -2 误判 CAUTIOUS.
         # RFC-216: 可选 20–22 连续过渡，避免 VIXY 代理在 20 附近微小抖动造成
@@ -328,6 +375,7 @@ class MarketRegimeGate:
         else:
             _vix_points = vix_score(vix, smooth_20_22=_vix_smooth_20_22)
             score += _vix_points
+            volatility_score = _vix_points
             logger.debug(
                 f"[Regime] VIX分项={_vix_points:+.2f} "
                 f"(smooth_20_22={_vix_smooth_20_22})")
@@ -403,7 +451,7 @@ class MarketRegimeGate:
                     # 影子与主判定不同档 = F5 缺陷的真实暴露日, WARNING 级留痕 (可 grep 攒证据)
                     logger.warning(
                         f"[Regime][F5影子] 盘前价双算翻转 regime: {regime.value}(score={score}, "
-                        f"spy_price=昨收{spy_price:.2f}) → {regime_shadow}(score={score_shadow}, "
+                        f"spy_price={spy_price:.2f}({spy_price_basis})) → {regime_shadow}(score={score_shadow}, "
                         f"pre_price={spy_pre_price:.2f}) | 主判定不变(record-only, enforce 待裁决)")
 
         ctx = RegimeContext(
@@ -415,6 +463,12 @@ class MarketRegimeGate:
             spy_ma50=spy_ma50,
             spy_ma200=spy_ma200,
             spy_change_pct=spy_change_pct,
+            spy_price_basis=spy_price_basis,
+            spy_quote_time=str(spy_quote_time) if spy_quote_time is not None else None,
+            assessed_at=datetime.now(timezone.utc).isoformat(),
+            trend_score=trend_score,
+            volatility_score=volatility_score,
+            vix_observation=vix_observation,
             score=score,
             top_n=top_n,
             position_multiplier=position_multiplier,

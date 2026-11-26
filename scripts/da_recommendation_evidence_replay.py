@@ -29,6 +29,7 @@ def replay(trade_date: str) -> dict:
     rows = []
     status_counts = Counter()
     event_status_counts = Counter()
+    visibility_basis_counts = Counter()
     direction_counts = Counter()
     totals = Counter()
     prompt_mismatch_symbols = []
@@ -43,7 +44,7 @@ def replay(trade_date: str) -> dict:
         candidate = _candidate_from_analysis(analysis)
         prompt_before = llm_synth._format_data_for_prompt(collected)
         collected_before = json.dumps(collected, ensure_ascii=False, sort_keys=True, default=str)
-        evidence = build_recommendation_evidence(collected, analysis, candidate)
+        evidence = build_recommendation_evidence(collected, analysis, candidate, user_prompt=raw.get("user_prompt"))
         prompt_after = llm_synth._format_data_for_prompt(collected)
         collected_after = json.dumps(collected, ensure_ascii=False, sort_keys=True, default=str)
         if prompt_before != prompt_after:
@@ -78,6 +79,7 @@ def replay(trade_date: str) -> dict:
         totals["evidence_gaps"] += len(counter["evidence_gaps"])
         status_counts[counter["status"]] += 1
         event_status_counts[events["status"]] += 1
+        visibility_basis_counts[events["visibility_basis"]] += 1
         direction_counts[price["direction"]] += 1
         rows.append({
             "symbol": symbol,
@@ -86,6 +88,7 @@ def replay(trade_date: str) -> dict:
             "news_references": len(references),
             "unique_stories": len({item["story_id"] for item in references}),
             "prompt_visible_news_references": sum(bool(item["prompt_visible"]) for item in references),
+            "visibility_basis": events["visibility_basis"],
             "news_time_parsed": sum(item["published"]["status"] == "PARSED" for item in references),
             "claims": lineage["claim_count"],
             "linked_claims": lineage["linked_claim_count"],
@@ -117,6 +120,7 @@ def replay(trade_date: str) -> dict:
         "totals": dict(sorted(totals.items())),
         "counter_evidence_status": dict(sorted(status_counts.items())),
         "event_reference_status": dict(sorted(event_status_counts.items())),
+        "visibility_basis": dict(sorted(visibility_basis_counts.items())),
         "direction_pre_gate": dict(sorted(direction_counts.items())),
         "rows": rows,
     }

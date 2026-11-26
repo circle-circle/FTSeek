@@ -15,12 +15,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
+          cache-dependency-path: requirements.lock
 
       - name: Install dependencies
         run: |
@@ -34,10 +37,19 @@ jobs:
           python -m pytest tests/ -q --tb=short \
             --junitxml=test-results/full.xml
 
-      - name: Syntax check all modified files
+      - name: Syntax and undefined-name checks on modified files
         run: |
-          git diff --name-only HEAD~1 -- '*.py' 2>/dev/null | \
-            xargs -r python -m py_compile
+          changed_files="$(git diff --name-only HEAD~1 -- '*.py')" || {
+            echo "Unable to compute modified Python files" >&2
+            exit 1
+          }
+          if [ -z "$changed_files" ]; then
+            echo "No modified Python files; checks not applicable"
+          else
+            printf '%s\n' "$changed_files"
+            printf '%s\n' "$changed_files" | xargs -d '\n' python -m py_compile
+            printf '%s\n' "$changed_files" | xargs -d '\n' python scripts/check_undefined_names.py
+          fi
 
       - name: Upload test results
         uses: actions/upload-artifact@v4

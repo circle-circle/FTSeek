@@ -7,7 +7,7 @@
 只拦截真问题, 忽略字符串前向注解 (如 def f(x: "np.ndarray") — pyflakes 会报但运行时无害).
 
 用法: check_undefined_names.py <file1.py> <file2.py> ...
-退出码: 0=通过, 1=发现真 undefined name.
+退出码: 0=通过, 1=发现真 undefined name, 2=检查工具不可用或执行失败.
 """
 import sys
 import io
@@ -16,9 +16,11 @@ try:
     from pyflakes import api as pyflakes_api
     from pyflakes import reporter as pyflakes_reporter
     from pyflakes.messages import UndefinedName
-except Exception:
-    # pyflakes 不可用 → 放行 (不阻断提交)
-    sys.exit(0)
+except Exception as exc:
+    # 检查工具不可用是门禁故障，不能静默放行；安装 requirements.lock 后重试。
+    print(f"❌ check_undefined_names: pyflakes 不可用 ({type(exc).__name__}: {exc}); "
+          "请先 pip install -r requirements.lock", file=sys.stderr)
+    sys.exit(2)
 
 
 def _line_col_in_string_annotation(source_lines, lineno, col, name):

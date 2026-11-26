@@ -82,7 +82,7 @@ def main() -> int:
                 ex = ""
             if (dq or "") not in ("clean", "real") or ex:
                 bad.add(rid)
-            fees[rid] = float(fee or 0.0)
+            fees[rid] = float(fee) if fee is not None else None
         con.close()
     trades = [t for t in trades if t["id"] not in bad]
     print(f"A10 排除后: {len(trades)} 笔 (剔 {len(bad)})")
@@ -111,7 +111,7 @@ def main() -> int:
     print(f"bars 缓存: {len(bars_map)}/{len(need)} (缺 {len(missing)}: {missing[:5]})")
 
     # ── attach (复刻引擎 main(), e_days=0: 几何臂不涉及隔夜延伸) ──
-    runnable, skipped = [], 0
+    runnable, skipped, skipped_fee_unknown = [], 0, 0
     for tr in trades:
         seq: list = []
         d = tr["entry_et"].date()
@@ -128,9 +128,12 @@ def main() -> int:
         tr["_exit_cfg"] = eng._get_factor_exit_config(tr["conditions"], factor_rules,
                                                       direction=tr["direction"])
         tr["_fee"] = eng._fee_of(tr)
-        tr["_fees_est"] = fees.get(tr["id"], 0.0)
+        tr["_fees_est"] = fees.get(tr["id"])
+        if tr["_fee"] is None or tr["_fees_est"] is None:
+            skipped_fee_unknown += 1
+            continue
         runnable.append(tr)
-    print(f"可回放: {len(runnable)} 笔 (缺bar跳过 {skipped})")
+    print(f"可回放: {len(runnable)} 笔 (缺bar跳过 {skipped}; 费用未知跳过 {skipped_fee_unknown})")
     if not runnable:
         return 2
     all_days = {tr["entry_et"].strftime("%Y-%m-%d") for tr in runnable}
@@ -175,7 +178,7 @@ def main() -> int:
     be_live = sum(1 for tr in runnable if tr["live_reason"] == "SL_BREAKEVEN")
     be_lo, be_hi = round(be_live * 0.75), round(be_live * 1.25)
     base_net_sum = sum(base_p[tr["id"]]["net"] for tr in runnable)
-    live_net_sum = sum(tr["live_pnl"] - tr["_fees_est"] for tr in runnable)
+    live_net_sum = sum(tr["live_net"] for tr in runnable)
     fid = {
         "reason_match_pct": round(rm_pct, 3), "gate": 0.80,
         "exit_pct_delta_median_pp": round(med_delta, 4), "gate_median": 0.35,

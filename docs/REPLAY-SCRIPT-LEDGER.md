@@ -5,6 +5,12 @@
 > `load_trades` / `fetch_bars`(带缓存) / `collect_bars` / `replay_trade` / `_fee_of` / `aggregate` / `_parse_et`
 > **公约**: 新写回放脚本必须 `import exit_replay_backtest` 取原语, 只写差异逻辑;
 > 禁止再手搓取 bar/缓存/费用/交易加载。违者同"控制环路未入账"处理。
+> **费用与保真契约 (2026-11-26 增)**：`realized_pnl`=毛、`fees_est`=费、`pnl_net`=净；
+> 历史键 `live_pnl` 为兼容仍装毛利，新调用方读 `live_gross/live_net/live_fee_est`。
+> 费用未知时 `_fee_of` 返回 `None`，调用方必须显式跳过，禁止静默当零；官方入口
+> `reason_match_pct < 0.80` 时仅输出 baseline 诊断，不产出可裁决变体；零候选或
+> 零可回放样本同样覆盖旧产物并写诊断状态，禁止沿用上一轮变体。详见
+> `docs/debates/DEB-20261126-correctness-evidence-and-reliability-fixes.md`。
 > **公约附则 (2026-09-07 增, DEB-20260907 §7.4)**: 被本公约指定为"单一入口"的模块
 > **必须有 import 级钉子** (`tests/test_replay_engine_import_smoke.py`)。根因: 引擎在
 > 提交 14e9a544 (P2a 搬家) 后 ImportError 36 小时, 全量回归 0 红、6 个复用方被打穿

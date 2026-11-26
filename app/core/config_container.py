@@ -324,8 +324,8 @@ class ConfigContainer:
         # ── 统一配置字典 (从 unified_config.yaml 加载) ──
         self._config_dict: Dict[str, Any] = {}
         self._yaml_raw: Dict[str, Any] = {}  # 原始 YAML 结构 (保留嵌套)
-        self._load_unified_config()
-        
+        self._config_load_ok = self._load_unified_config()
+
         self._initialized = True
     
     # ============================================================
@@ -437,40 +437,44 @@ class ConfigContainer:
             return [ConfigContainer._expand_env_vars(item) for item in value]
         return value
 
-    def _load_unified_config(self) -> None:
-        """从 unified_config.yaml 加载全部配置到内存字典.
+    def _load_unified_config(self) -> bool:
+        """从 unified_config.yaml 加载全部配置到内存字典，并返回 YAML 是否加载成功。
 
         加载顺序 (2026-09-08 根治, 原为 YAML 嵌套在 loader import 的 try 内):
           ① YAML 全量 —— 唯一真源, 路径由 __file__ 推导, **不依赖任何 import**,
              永远先加载 (它决定 _yaml_raw, 即 get_dotted 的唯一数据源);
           ② config_loader 导出节 —— 覆盖式补充 (保持原"loader 优先"语义), 失败仅降级。
 
-        原缺陷 (实锤 2026-09-08 DA cron): `from config.config_loader import get_config`
-        在 DA/UE 这类**外部 workdir 进程**里被单文件 `config.py` 遮蔽 →
-        `No module named 'config.config_loader'; 'config' is not a package` →
-        异常冒泡使 **YAML 补充加载整段被跳过** → _yaml_raw 永空 →
-        该进程内所有 get_dotted() 静默返回代码 default (配置形同不存在)。
-        教训: 降级路径不得寄生在上游可选依赖的 try 块内 — import 失败 ≠ 配置不可读。
+        本函数只写当前实例。reload() 在独立候选实例上调用它，成功后才替换现役状态；
+        YAML 缺失、坏内容、空文档或非 mapping 均返回 False，由 reload 保留 last-known-good。
         """
         # ── ① YAML 全量 (不依赖 import, 永不因 loader 失败而丢失) ──
         try:
             import yaml
             yaml_path = Path(__file__).resolve().parent.parent.parent / "config" / "unified_config.yaml"
-            if yaml_path.exists():
-                with open(yaml_path) as f:
-                    full_cfg = yaml.safe_load(f) or {}
-                # 展开 ${VAR} 环境变量占位符 (修复 DingTalk webhook URL 等)
-                full_cfg = ConfigContainer._expand_env_vars(full_cfg)
-                # 原始 YAML 结构 (供 get_dotted 嵌套访问) — SSOT
-                self._yaml_raw = {k.lower(): v for k, v in full_cfg.items()}
-                for key, val in full_cfg.items():
-                    if isinstance(val, (dict, list)):
-                        self._config_dict[key.lower()] = val
-            else:
+            if not yaml_path.exists():
                 logger.warning(f"[ConfigContainer] unified_config.yaml 不存在: {yaml_path}")
+                return False
+            with open(yaml_path, encoding="utf-8") as f:
+                full_cfg = yaml.safe_load(f)
+            # None/[]/false/0 不得被 `or {}` 洗成合法空配置；本系统没有“空 YAML
+            # 即全部使用代码默认值”的安全热重载语义，空 mapping 同样拒绝。
+            if not isinstance(full_cfg, dict) or not full_cfg:
+                logger.warning(
+                    f"[ConfigContainer] YAML 顶层必须是非空 mapping，实际为 "
+                    f"{type(full_cfg).__name__}: {full_cfg!r}")
+                return False
+            # 展开 ${VAR} 环境变量占位符 (修复 DingTalk webhook URL 等)
+            full_cfg = ConfigContainer._expand_env_vars(full_cfg)
+            # 原始 YAML 结构 (供 get_dotted 嵌套访问) — SSOT
+            self._yaml_raw = {k.lower(): v for k, v in full_cfg.items()}
+            for key, val in full_cfg.items():
+                if isinstance(val, (dict, list)):
+                    self._config_dict[key.lower()] = val
         except Exception as e:
             # R5 留痕: YAML 是 get_dotted 唯一数据源, 加载失败 = 全进程配置退化为代码默认值
             logger.warning(f"[ConfigContainer] YAML 加载失败 (get_dotted 将只返回代码默认值): {e}")
+            return False
 
         # ── ② config_loader 导出节 (可选; 外部 workdir 可能被同名模块遮蔽) ──
         try:
@@ -493,6 +497,7 @@ class ConfigContainer:
             "[ConfigContainer] 已加载 %d 个配置节 (yaml_raw=%d 节)",
             len(self._config_dict), len(self._yaml_raw)
         )
+        return True
     
     @classmethod
     def get_instance(cls) -> 'ConfigContainer':
@@ -507,9 +512,18 @@ class ConfigContainer:
         cls._instance = None
     
     def reload(self):
-        """重新加载配置"""
-        self._initialized = False
-        self.__init__()
+        """重新加载配置；失败时完整保留 last-known-good。
+
+        原实现先清空现役字典再解析 YAML，且解析失败不抛错，导致坏 YAML 被热重载器
+        计为成功。现在在独立候选实例中完成加载，成功后一次性替换 __dict__；候选
+        失败不会触碰现役配置，并向 ConfigHotReloader 抛出异常。
+        """
+        candidate = object.__new__(type(self))
+        candidate._initialized = False
+        candidate.__init__()
+        if not getattr(candidate, "_config_load_ok", False):
+            raise RuntimeError("配置重载失败：已保留上一份有效配置")
+        self.__dict__ = candidate.__dict__
 
     # ── 兼容 config_mgmt 模块 (期望 ConfigLoader 接口) ──
     @property

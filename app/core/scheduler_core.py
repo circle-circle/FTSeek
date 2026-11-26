@@ -1873,8 +1873,20 @@ class TradingScheduler:
                     # open_positions.current_sl 可能过期 (ExitMonitor 只更新内存),
                     # trail_state_store 每 60s 持久化一次, 数据更新
                     try:
-                        from app.risk.trail_state_store import get_trail_state_store
-                        _ts = get_trail_state_store().load(symbol)
+                        from app.risk.trail_state_store import (
+                            get_trail_state_store, is_stale_for_position,
+                        )
+                        _ts, _ts_updated = get_trail_state_store().load_with_ts(symbol)
+                        # 2026-11-20 (DEB-20261120 §R4): 与 position_monitor 恢复点同判据 —
+                        #   早于本仓入场超过 24h 的存储态属同标的历史仓残留, 整条不恢复。
+                        if _ts and is_stale_for_position(
+                                _ts_updated, getattr(position, "entry_time", None)):
+                            logger.warning(
+                                f"[trail_state·陈旧丢弃] {symbol} 存储态 updated_at={_ts_updated} "
+                                f"早于本仓 entry_time={getattr(position, 'entry_time', None)} "
+                                f"⇒ 判为同标的历史仓残留, 整条不恢复"
+                            )
+                            _ts = None
                         if _ts:
                             _ts_sl = float(_ts.get("current_sl", 0) or 0)
                             if _ts_sl > 0:

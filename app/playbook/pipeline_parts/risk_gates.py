@@ -215,12 +215,21 @@ def no_trade_short_regime_mult(direction, exp_active: bool) -> float:
     return 0.0
 
 
+def _record_regime_snapshot(sink, stage, context, logger):
+    if sink is not None:
+        try:
+            sink[stage] = context.to_dict()
+        except Exception as error:
+            logger.warning(f"[playbook] regime 审计快照失败，不影响原门禁: {error}", exc_info=True)
+
+
 def _auto_execute_preflight(
     today: str,
     *,
     check_daily_loss_circuit: Callable[[str], Optional[Dict[str, Any]]],
     logger,
     entry_data_owner=None,
+    regime_audit=None,
 ) -> Optional[Dict[str, Any]]:
     """auto_execute 前置闸；只有入口 owner 路径有界化只读 regime 输入。"""
     try:
@@ -255,6 +264,7 @@ def _auto_execute_preflight(
                         "reason": "entry_data_unavailable",
                         "skipped_reason": "entry_data_unavailable",
                         "query_label": error.query_label}
+        _record_regime_snapshot(regime_audit, "preflight", regime_ctx, logger)
         from app.playbook.market_regime import MarketRegime
         from app.us_pipeline.risk_state_machine import RiskStateMachine, RiskState
         if regime_ctx.regime == MarketRegime.NO_TRADE:

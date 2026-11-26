@@ -1154,6 +1154,7 @@ class DailyReviewGenerator:
                 'max_single_symbol': '',
                 'single_trade_share_abs': None,
             }
+            base['trades'] = []
             if capital:
                 base['equity_snapshot'] = {
                     'current_equity': capital.get('current_equity'),
@@ -1198,6 +1199,7 @@ class DailyReviewGenerator:
         return {
             'total_trades': len(all_trades),
             'closed_trades': len(closed_trades),
+            'trades': list(closed_trades),
             'winning_trades': len(winning),
             'losing_trades': len(closed_trades) - len(winning),
             'total_pnl': round(total_pnl, 2),

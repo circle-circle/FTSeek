@@ -384,13 +384,27 @@ ADJUDICATED: dict[str, dict] = {
                 "出处: RFC-097 §预注册判据 docs/decisions/RFC-097-earnings-criterion-anchor-and-entry-band.md。",
     },
     "entry_anchor_dual": {
-        # 〔2026-10-22 重看: live n=2178/300; 预注册第一腿「影子期≥10 交易日」已自满 (~10-20)。
-        #   ⚠️缺口: 结算器仍缺 (eval_script=None, 10-15 注记「阶段1 裁决前必补」) ⇒
-        #   列 P2 建结算器, 建成前不判。〕
-        "read_at": "2026-10-22", "recheck_after": "2026-11-05", "needs_user": False,
-        "note": "n 轴达标 (anchor_recorded=1120≥300) 但预注册第一腿「影子期≥10 个交易日」未达 "
-                "(现 6 日, 10-07 起, ~10-20 满) ⇒ 不构成待裁; 结算器仍缺 (eval_script=None, "
-                "阶段1 裁决前必补, RFC-123 阶段1 未授权不动)。",
+        # 〔2026-11-19 重看 (D2 结清, RFC-215 §4): 旧记载「结算器仍缺 (eval_script=None)、
+        #   建成前不判」自 10-23 起即为过期 — scripts/entry_anchor_dual_eval.py 实存
+        #   (mtime 2026-10-23), 11-12 已跑出 verdict=MANUAL_REVIEW; 该句自我阻断把阶段0 裁决
+        #   多挡了 27 天, 本条就地更正。计数轴实测归位 (2026-11-19): live
+        #   where:anchor_recorded=True = 9173 (全文件 17276 行); 结算器 11-12 快照
+        #   anchor_rows=8115 (total_rows 16218) — 同一谓词、同一文件, 数字差=快照时点差
+        #   (10-22 旧记 2178 亦同轴旧快照), 判据①-④ 比率口径以结算器行为准。
+        #   11-19 用户裁「按建议执行」= RFC-215 §5 案A ⇒ REGISTRY 同日已转 KILLED
+        #   (verdict_history 记否决理由); 采集不停: config
+        #   playbook.execution_parameters.entry_anchor_dual_shadow_enabled 维持 true —
+        #   判据 KILLED ≠ 采集停 (先例: 须先核 _CONSUMER_ACK/消费方, 另裁)。〕
+        "read_at": "2026-11-19", "recheck_after": "2026-11-26", "needs_user": False,
+        "note": "11-12 结算器读数 (generated_at=2026-11-12T21:58:28-05:00): verdict="
+                "MANUAL_REVIEW; 四判据 = period_days 27≥10 PASS / missing_rate 0.0<0.01 "
+                "PASS / divergence_rate 0.3787≥0.05 PASS / ③ NOT_COMPUTABLE_COUNTERFACTUAL "
+                "(行内只有 gen_triggered/gen_path, 无生成锚成交 PnL) / ④ 无同窗前向基线。"
+                "悬 7 天无人裁 ⇒ 2026-11-19 用户裁「按建议执行」= RFC-215 §5 案A: 阶段1 "
+                "不立项 (REGISTRY 状态已转 KILLED + verdict_history 记否决理由); 重开条件 "
+                "= RFC-215 §2.5 四条同时满足。遗留: 采集停/不停**另裁** "
+                "(recheck_after=2026-11-26 闹钟), 停采须先核消费方 (_CONSUMER_ACK), "
+                "现维持 true。",
     },
     "penetration_shadow": {
         # 〔2026-10-22 重看: live n=203/20; 09-21 读数=假设集 None (未调 LLM) 不判 ⇒
@@ -1325,11 +1339,12 @@ REGISTRY: list[ShadowItem] = [
         count_mode="distinct:collected_at",
     ),
 
-    # ── RFC-123 阶段0 双锚影子 (DEB-20261007 F1, 2026-10-07 用户裁「按建议执行」) ──
+    # ── RFC-123 阶段0 双锚影子 (DEB-20261007 F1, 2026-10-07 用户裁「按建议执行」;
+    #    2026-11-19 用户裁「按建议执行」= RFC-215 §5 案A ⇒ 阶段1 不立项, 转 KILLED) ──
     ShadowItem(
         id="entry_anchor_dual",
         name="入场锚双轨影子 (生成锚 vs 执行锚, RFC-123 阶段0)",
-        status=ShadowStatus.OBSERVING,
+        status=ShadowStatus.KILLED,
         description="RFC-123 阶段0: entry_price 一列两义 (生成锚被 reprice 逐轮覆盖为执行锚, "
                     "实测 66.4% 指令已改写, 偏差中位 1.01%/p90 3.65%, E18)。写方 pipeline.py "
                     "_emit_entry_shadow 在 ETS 行加嵌套 dual_anchor 块 (生成锚=planned_entry→"
@@ -1348,22 +1363,46 @@ REGISTRY: list[ShadowItem] = [
                             "300 = 按 ETS 日均 ~150 行×2 交易日余量; 判据①-④的比率口径以指令×日去重)",
         eval_script="scripts/entry_anchor_dual_eval.py",
         eval_on_demand=True,
-        no_adjudication_reason="PERIOD_GATE: 8/10 交易日 (截至 2026-10-16); 只读读数已建, 10/20 后重跑; 质量腿需生成锚反事实回放.",
         created="2026-10-07",
+        last_evaluated="2026-11-12",
         verdict_history=[
             {"date": "2026-10-07", "verdict": "PHASE0_SHADOW_STARTED",
              "evidence": "DEB-20261007 F1 用户裁「按建议执行」落地: pipeline.py 模块级纯函数 "
                          "_resolve_generated_anchor/_anchor_trigger_geometry + _emit_entry_shadow "
                          "dual_anchor 块 + YAML 开关 entry_anchor_dual_shadow_enabled=true。"
                          "立起动机含自曝#11: 污染列已 3 次毒化本 DEB 分析 (E12/E13 伪影)。"},
+            {"date": "2026-11-19", "verdict": "KILLED (阶段1 不立案; RFC-215 §5 案A)",
+             "evidence": "阶段0 结算器 2026-11-12 读数 verdict=MANUAL_REVIEW (①② PASS; ③ "
+                         "NOT_COMPUTABLE_COUNTERFACTUAL — 行内只有 gen_triggered/gen_path, "
+                         "无生成锚成交 PnL, 反事实从未采集; ④ 无同窗前向基线), 悬 7 天无人裁。"
+                         "用户裁「按建议执行」= 案A, 否决理由: ①③ 是阶段1 唯一经济性判据且"
+                         "可预见期内结构性不可算; ② RFC-215 §2.4 以 217 笔独立人群 (10-07→"
+                         "11-18, 31 交易日, 9,173 锚行, bar 覆盖 217/217) 给出反向读数 — 把模型 "
+                         "planned_entry 当限价锚执行 ⇒ fill 112 / miss 105, miss 组实际合计 "
+                         "+$1,402.65 (91 赢/14 亏), 成交侧改善仅 +$219.65 ⇒ 净 −$1,183, 即"
+                         "「够不到模型价」是当前组合唯一的正向筛选器而非执行缺陷 (RFC-123 附A "
+                         "68~76% 不可达在 10 倍样本上复现为 66.4%); ③ C16 (判据字典, 2026-10-30 "
+                         "终局) 已关闭同轴且双侧禁止; ④ OKR-2026-11 KR4「到期无结论 → 自动 "
+                         "KILLED, 不再无限期观测」— 影子期 10-20 已满、11-12 出读数。"
+                         "重开条件 = RFC-215 §2.5 四条同时满足。采集不停 (见 notes)。"},
         ],
-        notes="阶段0=只埋点记录分歧, 判定仍完全用现行 effective_anchor (RFC-123 原文)。"
-              "eval_script 待攒样后补 (阶段1 裁决前须先写结算器, 防「有入口无出口」— 台账 :172 教训)。"
-              "回滚: YAML 开关 false + systemctl restart (playbook.* 热重载穿不透), 数据留档。"
-              "2026-10-15 审计读数: anchor_recorded=True 行 **1120 ≥ min_n=300** ✓ (覆盖 6 个 "
-              "distinct 日 10-07~10-14) — 但预注册判据第一腿是「影子期 ≥10 个交易日」∧①-④, "
-              "现仅 6 日 ⇒ **n 轴达标 ≠ 判据达标** (双轴陷阱, 同 eth_relative_volume_gate 10-08 "
-              "形态); 未擅改 min_n (改=重裁), ADJUDICATED 已挂 10-15 说明, ~10-20 满 10 交易日。",
+        notes="KILLED 只否「阶段1 (锚持久化分离)」的立项, 不否双锚分歧记录本身 — E18 族读数 "
+              "(66.4% 指令被改写/偏差中位 1.01%/p90 3.65%) 仍被 C16/RFC-145 引用为几何口径"
+              "依据。〔D2 结清 2026-11-19 (RFC-215 §4): 旧注「eval_script 待攒样后补, 阶段1 "
+              "裁决前须先写结算器」过期 — scripts/entry_anchor_dual_eval.py 实存 (2026-10-23 "
+              "建), 11-12 已跑出读数, 本条 eval_script 字段早已填。〕计数轴对应关系 (实测 "
+              "2026-11-19): 本条 n 轴 = count_mode where:anchor_recorded=True, live n=9173 "
+              "(全文件 17276 行); 结算器 anchor_rows=8115 (11-12 快照, total_rows 16218) — "
+              "同一谓词、同一文件 (data/entry_timing_shadow.jsonl), 数字差=快照时点差 "
+              "(10-22 旧记 2178 亦同轴旧快照); 判据①-④ 比率口径以结算器行为准。采集不停: "
+              "config_key entry_anchor_dual_shadow_enabled 维持 true — 写方 trigger_flow.py "
+              "只读该 YAML 键, 不读本条状态 (判据 KILLED ≠ 采集停, 先例: 判据退役不自动停采, "
+              "须先核 _CONSUMER_ACK/消费方) — 停/不停**另裁**, ADJUDICATED 同日条目挂 "
+              "2026-11-26 闹钟; 若裁停采: YAML 开关 false + systemctl restart (playbook.* "
+              "热重载穿不透), 数据一律保留不删。复活: 须 RFC-215 §2.5 四条同时满足 + 新预注册 "
+              "留痕, 不许只翻状态。〔2026-10-15 审计读数留痕: anchor_recorded=True 行 1120 "
+              "≥ min_n=300 但影子期仅 6/10 日 — n 轴达标 ≠ 判据达标 (双轴陷阱); min_n 未擅改 "
+              "(改=重裁)。〕",
     ),
     ShadowItem(
         id="execution_tca_spread_shadow",
@@ -5372,6 +5411,19 @@ _CONSUMER_ACK: dict[str, str] = {
         "scripts/data_freshness_watchdog.py (产物新鲜度) 只读消费; 二者是审计/巡检面, "
         "不改订单、仓位、退出。采集保留 ⇒ 显式认领, 不占周检噪音预算; 若将来停采, 须先拆 "
         "W7/freshness 依赖或确认其可缺失。"),
+    # 2026-11-19 (RFC-215 §5 案A 落地日) grep 实测认领: 判据 KILLED ≠ 采集退役。
+    "entry_anchor_dual": (
+        "2026-11-19 判阶段1 不立案 (KILLED, RFC-215 §5 案A) 当日 grep 实测: 产物 "
+        "data/entry_timing_shadow.jsonl 仍被两个 cron 活跃脚本只读消费 — "
+        "① scripts/daily_invariant_check.py W7 (cron 5 5 * * 2-6, :908 _W7_ETS): "
+        "ets 行的 ctx 路径 change_percent 是 W7 昨收分母对账的**陈旧侧**原料 "
+        "(join 键 inst_id; 审计/巡检面, 不改订单、仓位、退出); "
+        "② scripts/rfc123_planned_entry_anchor_backtest.py (cron 53 5 * * 2-6 "
+        "--daily): RFC-123 §G 第2层日更重放的唯一数据源 — 正是它 11-19 产出 "
+        "217 笔配对反向读数 (RFC-215 §2.4 案A 否决理由的**证据来源**), 停采 = "
+        "断自家否决证据的复跑链。二者均为只读, 采集保留 ⇒ 显式认领, 不占周检噪音"
+        "预算; 停采与否**另裁** (须先拆 W7/重放依赖), ADJUDICATED 同日条目挂 "
+        "2026-11-26 闹钟。"),
     # ── 2026-10-03 清理批新增认领 (终态但产物仍喂生产链, 逐条写理由) ──────────────
     "premarket_peer_shadow": (
         "2026-10-03 清理批判 KILLED 时实测确认: **采集必须保留** — "

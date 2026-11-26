@@ -359,3 +359,26 @@ systemctl restart ftseek-us && PYTHONPATH=. ./venv/bin/python scripts/startup_sm
 
 代码批提交 **`1c7cc31bc`**（6文件 +580/−14：3 app + 2 tests + 本DEB），已推送 `origin/rfc-060-phase1-hotfixes`（cfe5c8209..1c7cc31bc）。推送前用户选择运行 **L3 深度安全审查：0 findings**。README/handoff 含他会话未提交条目，**未带入本批**（其工作树更新仍在，归各自批次）；本归账节随后续纯文档提交落账。生产运行进程即此代码（14:13重启验收），提交不改变任何运行行为。
 
+## 13. 2026-11-20 17:1x CST · ERROR 告警核查：修复生效的首次真实出场尝试，ETH 零成交 HELD 属既有设计，非回归
+
+**触发**：error_alert 推「[playbook平仓失败] US.MU EXIT_PENDING intent=fa2bd339…」（17:02:14，pending 122s>宽限120s）。用户令「请核查确认修复」。
+
+### 13.1 证据链（全部只读实核）
+
+1. **修复生效的直接证据**：MU 归位 Playbook 后，**原规则首次对 MU 真实触发** —— 17:00:09（04:00:09 ET，盘前窗开启第一分钟）ext 退出链按 `SL_TRAIL_LOCK` 决策：peak759.57 → MFE 7.74% → breakeven_triggered=true、adaptive drawdown 1.2%（max档）、参考价=BE净线 **705.6846**（fee-aware cushion 0.0971%）。决策元数据带 `_peak_recovery` 审计锚 ⇒ 用的是本次恢复保住的真峰值，不是 entry 重置值。
+2. **订单真实状态**（券商只读）：SELL LIMIT 6@**705.68** order **8399937**，remark `ext_exit_SL_TRAIL_LOCK…`，04:00:09 创建 → **04:01:10 CANCELLED_ALL，dealt=0**（60s 限价超时，`EXT_EXIT_LIMIT_TIMEOUT_S=60`，lifecycle 自己撤的）。腿表：sequence1 LIMIT **TERMINAL**/dealt_qty=0/broker_status=CANCELLED_ALL。当前 MU 盘前价 **690.44** ⇒ 卖限价高于市价 ~2.2%，**不成交是必然**，不是卡单歧义。券商持仓仍 LONG 6@705，无丢失。
+3. **HELD 是设计分支**：`exit_lifecycle.resume()` :886-888 —— session=ETH ∧ LIMIT 腿 TERMINAL ⇒ `exit_eth_partial_fill_held` HELD，**刻意不在盘前薄流动性里补市价腿**。intent 未结算 ⇒ MU 进 blocked_exits ⇒ 快循环 120s 宽限后升 ERROR（每小时冷却重复一次，属预期噪音）。
+4. **自动出口已存在且覆盖本 intent**：RTH 开盘（22:30 CST / 09:30 ET）后 `_release_eth_held_exit_for_rth_takeover`（pipeline.py:3454）判 error=exit_eth_partial_fill_held ∧ session=ETH ∧ rth_open ∧ dealt=0 ∧ 本地仓仍在 ⇒ `archive_and_delete(rth_intraday_takeover)` 释放 close_key ⇒ RTH 规则链重评 MU（现价远低于线）⇒ 新意图市价腿收口。先例：10/1 US.ACN 同形态（RFC-127 影子即因它立项）；`rth_zero_fill_autorelease` C2 明确不碰 ETH（归自身 escalation），cron 日志 `session_not_rth` skip 正是该边界在正确工作。ext cron 每分钟 resume 同一 intent，**不重复下单**（订单计数恒1）。
+
+### 13.2 判定
+
+- **不是本次源头修复的回归**：修复前 MU 无 Playbook 账，这条出场链对 MU 根本不存在（错落主线静态止损）；修复后原移动/回撤止盈**第一次真实工作**即命中既有 ETH-HELD 设计边界。因果方向是「保护恢复 ⇒ 暴露既有已知缺口」，不是「修复制造故障」。
+- **不是真卡单**：撤单回执终态明确、零成交、仓位完整、无身份歧义；告警文案「仓位可能卡住/无止损保护」是通用模板，本例实际状态=等待 RTH 接管的在途退出。
+- **无需人工干预**：手动释放只会让 ext cron 下一分钟重建同价限价意图（同样不成交）；正确出口就是 22:30 自动移交。不改任何代码/参数/ intent 数据。
+
+### 13.3 未验证 / 观察点
+
+- **22:30 CST 开盘后的自动移交与实际平仓尚未发生**（核查时 17:14 ET 04:14 盘前）——判据：`rth_intraday_takeover` 归档行 + MU trade1934 exit_time/exit_reason 落账 + 券商持仓清零；命中前不得称已验证。
+- 等待期内 ERROR 每小时重复属预期；若 22:40 后 intent 仍未释放/未平，才按真故障升级核查。
+- ETH 限价=BE净线导致深亏仓盘前必不成交、只能等 RTH —— 这是既有保守设计（薄流动性不市价卖），要不要改属策略裁决，**本批不动**（与 RFC-127 阶段1 预注册同轴，不插队）。
+
