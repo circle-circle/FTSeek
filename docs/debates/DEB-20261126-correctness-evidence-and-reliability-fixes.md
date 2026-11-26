@@ -1,6 +1,6 @@
 # DEB-20261126 · 正确性、证据口径与工程可靠性修复
 
-- 状态：**已实施，定向回归通过；未提交、未重启、未做生产自然验证**
+- 状态：**已实施并提交推送；未重启、未做生产自然验证**
 - 来源：用户对另一 Agent 优化分析的复查意见，及用户「按照建议进行优化修复，有把握的可以直接落地」授权。
 - 边界：本批恢复既定契约，不新增策略门、不改退出参数、不调整仓位/方向权限、不碰四锁。
 
@@ -97,4 +97,4 @@ PYTHONPATH=. ./venv/bin/python -m pytest \
 - 未运行全量 pytest、未运行 GitHub Actions、未做生产自然退出/坏 YAML 运维演练、未重启服务。
 - 模块级网络型回放 import 冒烟 7 项被刻意 deselect，避免在本验证中触达 OpenD；不代表这些路径完成网络验证。
 - 当前工作树含其他会话 WIP，不能借本批重启把未授权源码一并上线。部署前须重新核在途出场及 `git status --porcelain -- app/ scripts/`，只隔离本批生产文件，再按 `systemctl restart ftseek-us` + 启动冒烟执行。
-- 未提交、未推送；本文件只记录当前工作树实施状态。
+- 全量归账提交 `567f09cbc`（185 文件）已推送 `rfc-060-phase1-hotfixes`，并已 fast-forward 合并/推送 `main`；两远端同 SHA。合并 main 后两轮变更测试均 678/679，失败分别为 signed-quantity 与 query_error-mom 的既有负载时序问题；所在文件单跑 146 passed、signed-quantity 目标单跑 20 passed，未冒称主线全绿。

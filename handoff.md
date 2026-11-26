@@ -5,9 +5,9 @@
 ## 2026-11-26 17:4x CST · 【正确性/证据口径修复】迟到single+配置LKG+复盘库隔离+回放保真+日K/CI，228项定向回归通过，未重启
 
 - **结论**：按用户「按照建议进行优化修复，有把握的可以直接落地」完成复核后修复。恢复既定契约，不新增策略门、不改退出参数/方向权限/四锁：① single 迟到结果补 symbol 并按完成时刻计龄；② ConfigContainer 候选快照加载，坏YAML/缺文件保留last-known-good且热重载不再虚报成功；③ ReviewDatabase 显式路径连接真实独立文件，删除复盘库生产写入豁免；④ 回放显式毛/费/净、费用未知跳过，官方入口保真<0.80只出诊断不出变体；⑤ 日K跨进程flock+唯一临时文件+成功才清dirty、重试逐物理请求预占配额；⑥ CI缓存/浅检出/空跑及pyflakes缺依赖静默放行修复。独立复查再补修空/假值YAML、ATR NULL费用、BE净对净及零候选/零可回放旧产物覆盖问题。旧 `live_pnl` 保持毛利兼容，新增 `live_gross/live_net/live_fee_est`；历史产物不覆写，绝对净额类须按新口径重跑，配对差不一概作废。详 `docs/debates/DEB-20261126-correctness-evidence-and-reliability-fixes.md`。
-- **凭据**：本批改动上述生产文件、对应测试、CI/requirements.lock及本DEB/handoff；`app/playbook/pipeline.py` 等其他会话既有WIP原样保留，未提交、未推送、未重启。生产库只读coverage：932笔中930笔净/费齐全且毛−费=净一致，2笔缺费用改显式跳过。
+- **凭据**：本批改动上述生产文件、对应测试、CI/requirements.lock及本DEB/handoff；`app/playbook/pipeline.py` 等其他会话既有WIP按用户「所有未提交」授权一并归账。全量提交 `567f09cbc`（185文件），已推送 `rfc-060-phase1-hotfixes` 并 fast-forward 合并/推送 `main`，两远端同SHA；服务未重启。生产库只读coverage：932笔中930笔净/费齐全且毛−费=净一致，2笔缺费用改显式跳过。
 - **验证**：全部24个变更/新增测试文件实跑 **679 passed / 1 warning**；完整定向命令见DEB§5，**228 passed / 7 deselected / 2 warnings**；补充配置治理回归**73 passed / 1 failed**，唯一失败为既有`default_method`/`simulated_mode_force_options`/`reasoning_effort`三死键（同组近期已登记），与本批reload无关；补充Futu provider相邻回归**120 passed**。本批py_compile、pyflakes、`git diff --check`全过；`python -S`模拟缺pyflakes实测exit2。棘轮家族**96 passed / 2 failed**：`.qoder/worktrees`重复计入致except:pass总数1814（主树907+.qoder 907）及其他WIP 5处W6命中；本批文件同口径复查 `owned_hygiene_hits=[]`，未调基线。
-- **未验证**：未跑全量pytest/GitHub Actions/生产自然退出或坏YAML运维演练；7项网络型回放import冒烟刻意deselect避免触达OpenD；未做重启冒烟，未提交。
+- **未验证**：未跑全量pytest/GitHub Actions/生产自然退出或坏YAML运维演练；7项网络型回放import冒烟刻意deselect避免触达OpenD；未做重启冒烟。合并main后两轮变更测试均678/679，分别出现signed-quantity与query_error-mom不同时序失败；所在文件单跑146 passed、signed-quantity目标单跑20 passed，按既有负载时序问题记录，未冒称主线全绿。
 - **下一步**：部署前重新核在途出场及 `git status --porcelain -- app/ scripts/`，隔离本批生产文件，禁止夹带其他WIP；获发布授权后 `systemctl restart ftseek-us` + `PYTHONPATH=. ./venv/bin/python scripts/startup_smoke_check.py --wait 90`，观察退出取价与配置热载。CI/离线回放脚本随下次调用生效，旧净额读数另按新口径重跑勘误。**最后更新：2026-11-26。**
 
 ## 2026-11-26 15:0x CST · 【RFC-217 暂缓修正部署】用户授权重启完成，启动冒烟7/7；三仓与风险状态不变
