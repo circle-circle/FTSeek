@@ -2,6 +2,14 @@
 
 > **写入约定（2026-11-11 起）**：每条交接必须带三件可核凭据 —— `**凭据**`（commit sha / 改动文件数，`git show --stat` 可核）、`**验证**`（可复跑命令 + 日志路径，不写“已通过”）、`**未验证**`（显式列出没验的部分，无则写“无”）。自述≠事实，这三行是给下一个人核的。
 
+## 2026-11-26 22:54 CST · 【部署收口】日K lost-dirty 同锁 + RFC-217 SIM-only 镜像边界已重启生效；启动冒烟 7/7，代码已推送
+
+- **结论**：按用户「请重启、部署、提交、推送」执行本批两项正确性修复上线。`systemctl restart ftseek-us` 后 MainPID `109261`，22:53:22 CST 启动，active/running；启动冒烟 **7/7 exit0**。重启前后 SIM 持仓 BA/BABA/GS 三笔不变，LIVE 无仓；两套出场账本非 BOOKED intent / 非 TERMINAL leg 均 0。当前实验/权限边界不变，未新增策略门、未改 cohort/阈值/方向权限/四锁。
+- **凭据**：代码提交 `29c4a757dd0ec7b70eda771b44bd0401668a9bfd`（7 文件，337+/8-；`git show --stat` 可核），已推送 `origin/main`（`2bfaea477..29c4a757d`）。两处生产源码工作树 SHA256 与 HEAD blob 一致；部署详 correctness DEB §9。本条与 §9 随后续文档提交推送；保留 DEB-20261125 既有 WIP 未提交。
+- **验证**：重启前/后只读 SQL `/tmp/ftseek-opt-two-fixes-20261126-pre-restart-ledger.json`、`/tmp/ftseek-opt-two-fixes-20261126-pre-restart-final.json`；`PYTHONPATH=. ./venv/bin/python scripts/startup_smoke_check.py --wait 90` → `/tmp/ftseek-opt-two-fixes-20261126-startup-smoke.log`（ConfigValidator/漂移/热重载/SSOT 0 BLOCKING/双臂安全/退出快循环/零 Traceback-CRITICAL）。此前针对性 40、正确性 229、行为/LIVE 455 passed 日志见 §8.3。
+- **未验证**：未跑全量 pytest/GitHub Actions；未做生产自然日 K 并发落盘、未来 SHORT live-arm 自然镜像、完整 tick/订单簿回放、收益显著性检验；未补齐 trade metadata/outbox 标记。收益未证，正确性修复不等于盈利改善。
+- **下一步**：下一 RTH 仅观察自然链路与日 K 缓存/配额遥测，不人工造单、不清 UNKNOWN 锁、不重置峰值/累计止损；RFC-217 维持原结算与硬停，标记完整性 record-only 另案。**最后更新：2026-11-26。**
+
 ## 2026-11-26 22:4x CST · 【按建议实施】日K lost-dirty 同锁修复 + RFC-217 SIM-only 覆盖 live-arm SHORT 镜像能力；当前实验/权限不变，未重启未部署
 
 - **结论**：按用户「按照建议执行优化逻辑」实施 correctness DEB §7.4 第 1/2 项。日 K：`_daily_disk_lock` 改 RLock，生产侧缓存/time/dirty/save 同锁，防旧快照清掉新 dirty；隔离复现修复后 `lost_update_reproduced=false`。SIM-only：`no_trade_short_sim_experiment_active()` 保留原 LIVE-capable 闸，并在 ALLOW=true+arm enabled 时复用共享 `evaluate_live_arm_gate(SELL_SHORT)` 探测 real-target SHORT 镜像能力；可接受或读取失败则实验 off。当前 ALLOW=false/probe LONG，`experiment_active=true` 不变；不新增策略门，不改 cohort/阈值/方向权限/SHORT 0.3/LONG 拦截/硬停/四锁。标记完整性仍 record-only 另案。详 correctness DEB §8、RFC-217 §7。

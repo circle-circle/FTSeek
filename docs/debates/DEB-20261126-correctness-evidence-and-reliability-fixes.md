@@ -200,3 +200,12 @@ PYTHONPATH=. ./venv/bin/python -m pytest tests/test_rfc080_research_pin.py \
 - 未跑全量 pytest/GitHub Actions；未做生产自然日 K 并发落盘、未来 SHORT live-arm 自然镜像、完整 tick/订单簿回放或收益显著性检验；未补齐 RFC-217 trade metadata/outbox 标记。
 - 本批仅本地源码/测试/文档，**未重启、未部署、未提交、未推送**。Python 源码须重启才生效；后续若用户明确授权部署，先核在途出场 SQL 与 `git status --porcelain -- app/ scripts/`，只隔离本批生产文件，不夹带其他 WIP，再 `systemctl restart ftseek-us` + `PYTHONPATH=. ./venv/bin/python scripts/startup_smoke_check.py --wait 90`。
 - 回滚：revert 本批源码补丁；若只需停实验，配置 `no_trade_short_sim_experiment_enabled=false` 热载即恢复 NO_TRADE 全禁旧门，已开仓位仍由原退出链管理。
+
+## 9. 部署、重启与推送凭据（2026-11-26 22:54 CST）
+
+- 授权：用户明确「请重启、部署、提交、推送」。本批仅上线 §8 两项正确性修复；DEB-20261125 既有 WIP 保留未提交，`app/ scripts/` 重启前无其他待上线改动。
+- 提交/推送：代码提交 `29c4a757dd0ec7b70eda771b44bd0401668a9bfd`（7 文件，337+/8-），`git push origin main` 为 `2bfaea477..29c4a757d`；远端 `refs/heads/main` 同 SHA。两处生产源码工作树 SHA256 与 HEAD blob 一致：`futu_lv3_provider.py=5b07a0bd21c1d1fa0c9e8d2635936fe19dbe58a428e5bc47fc1a687e742dda17`，`risk_gates.py=22f6803d53467984acee7f5aa1649c1783014535182eaf222f73d3c08b19d377`。
+- 重启前只读核：SIM `trade_records` 未平 BA/BABA/GS（id 1939/1950/1951），LIVE 未平 0；`playbook_exits.db` 与 `exit_ledger.db` 非 BOOKED intent 均 0、非 TERMINAL leg 均 0。凭据 `/tmp/ftseek-opt-two-fixes-20261126-pre-restart-ledger.json`、`/tmp/ftseek-opt-two-fixes-20261126-pre-restart-final.json`。
+- 重启：22:53:04 CST 执行 `systemctl restart ftseek-us`；22:53:22 CST 新 MainPID `109261`，active/running，NRestarts=0。重启后只读复查持仓与出场账本同前。
+- 启动冒烟：`PYTHONPATH=. ./venv/bin/python scripts/startup_smoke_check.py --wait 90` 于 22:53:42 CST **7/7 exit0**：ConfigValidator、漂移检测、热重载、SSOT 审计 0 BLOCKING、双臂安全确认、退出快循环、零 Traceback/CRITICAL。日志 `/tmp/ftseek-opt-two-fixes-20261126-startup-smoke.log`。
+- 未验证：全量 pytest/GitHub Actions、生产自然日 K 并发落盘、未来 SHORT live-arm 自然镜像、完整 tick/订单簿回放、收益显著性检验仍未做；RFC-217 标记完整性仍 record-only 另案。下一步仅观察自然链路，不人工造单、不清 UNKNOWN 锁、不重置峰值/累计止损。
