@@ -2,6 +2,14 @@
 
 > **写入约定（2026-11-11 起）**：每条交接必须带三件可核凭据 —— `**凭据**`（commit sha / 改动文件数，`git show --stat` 可核）、`**验证**`（可复跑命令 + 日志路径，不写“已通过”）、`**未验证**`（显式列出没验的部分，无则写“无”）。自述≠事实，这三行是给下一个人核的。
 
+## 2026-11-26 15:0x CST · 【RFC-217 暂缓修正部署】用户授权重启完成，启动冒烟7/7；三仓与风险状态不变
+
+- **凭据**：用户明确「重启」，另经交互批准本地提交。本地 commit `9532275dc`，6文件，只含 LONG 按轮暂缓修正、所需测试夹具/恢复用例、契约说明与 DEB§11/RFC§6/handoff；Phase A及其他会话改动保持未提交，本轮未推送。`systemctl restart ftseek-us` 于14:57:37 CST完成，PID36694→55482，active/running，NRestarts0。重启前相对09:09启动时间唯一更新生产源码为 `auto_execute_flow.py`；重启期间全量app/scripts Python及两配置SHA未变。
+- **验证**：`PYTHONPATH=. ./venv/bin/python scripts/startup_smoke_check.py --wait 90` **7/7 exit0**，日志 `/tmp/ftseek-opt-20261126/startup-smoke.log`；Kimi独立复跑亦7/7。库mode=ro/query_only重启前后核：BA23/BABA47/GS5股SHORT三仓的id、方向、股数、入价、入时均一致；两个exit ledger未BOOKED=0、entry outbox未BOOKED=0；`data/deb0815_stoploss_state.json`内容完全一致。前后快照 `/tmp/ftseek-opt-20261126/restart-precheck.json` / `restart-postcheck.json`。
+- **测试实录**：重启前4文件回归两轮各221 passed/1 failed，失败分别为signed-quantity和query_error-knife，均为0.04s夹具边界/时序；对应单跑通过（`restart-targeted-regression.log` 2 passed、`restart-targeted-final.log` 4 passed）。新增恢复用例现明确验证连续两轮NO_TRADE保持PENDING且只审计一次、第三轮RISK_OFF恢复；本轮不把整集写成全绿，不修改超时/生产逻辑。详DEB§11.7。
+- **未验证**：休市期间无自然NO_TRADE执行及regime回落成交证据；冒烟只证明启动设施/模式/退出循环，不证明利润或全部退出策略。mtime只证明这些在途源码早于旧启动时刻、重启未新引入它们，不证明所有懒加载模块/测试均被旧进程执行。
+- **下一步**：11-27交易时段观察NO_TRADE LONG暂缓审计与regime恢复后的原质量门；SHORT实验继续原cohort/n≥30或10交易日判据，现有持仓沿原退出链。不自动恢复11-25终态指令、不调整多空配比/风险阈值；本条部署凭据及RFC/DEB续记随本文档批提交推送（Phase A代码按用户裁保持未提交）。**最后更新：2026-11-26。**
+
 ## 2026-11-26 13:3x CST · 【明显错误清理】RFC-217 LONG 首层拦截改回按轮暂缓（一处代码，本地未重启）；上轮四条建议经数据全部否决
 
 - **结论**：用户令「不过度保守、找明显错误、执行优化」。只读复核后，上轮四条建议（确认 TTL 复验 / TP 吞咽 / 严格盘内计划 / LONG 持夜取消）均被数据或既有判据否决，**不动作**；唯一落地的是一处保真修正：NO_TRADE 实验轮的 LONG 首层拦截原先写**当日终态** `SKIP`+`skip_reason`（regime 回落也不恢复、回滚开关也救不回），比 RFC-217「不改 LONG 权限」更严，且与 2026-11-12 已修的「暂时态写终态字段」同病根。现改为按轮暂缓（`exec_gate_audit` `gate=no_trade_short_exp_long`/`transient=True`，指令保持 PENDING）；sizing 第二层、SHORT 0.3、LIVE 闸、cohort、预注册判据不变。NO_TRADE 期间 LONG 仍不能开仓——这是纠错不是增收项。
@@ -10,6 +18,32 @@
 - **未验证**：未做重启冒烟（未重启）；扩大回归的 26 例既有失败未定位；11.3 的 regime×方向期望为描述性统计（n 低于 A1 成规线），未做样本外验证；SHORT 持夜与假日敞口的反事实净收益未算。
 - **归账更正**：上一条所记「PID 4164761 / 未部署 Phase A」已失效——服务于 **2026-11-26 09:09:18 CST 被另一会话重启**（PID 36694，NRestarts 0，无 handoff、无对应 commit），运行中的进程已加载 Phase A 14 文件及其他会话的全部在途 WIP（mtime 均早于重启）。本次重启前核：在途出场 0（BA/BABA/GS 三仓 SHORT 隔夜持仓，库内状态完整）、重启后仅本批 1 个生产文件变更。
 - **下一步**：① 用户授权后 `systemctl restart ftseek-us` + `PYTHONPATH=. ./venv/bin/python scripts/startup_smoke_check.py --wait 90`（11-27 半日市 13:00 ET 收盘前完成即可）；② **留裁**：弱市 LONG 授权——09-01 起 risk_off LONG −36.9/笔(n=37) 对 SHORT +20.4/笔(n=26)，是否另立预注册实验由用户裁，不代答（C15 禁方向硬护栏）；③ lessons 575/578「强制收盘平仓」与 C17 冲突仍待另批；④ 26 例既有 `_check_intraday_trigger` 失败建议由入场取数改动方定位。**最后更新：2026-11-26。**
+
+## 2026-11-26 · 【持仓反转/双向复盘】不是三仓大赚回吐；TP阈值跨界、旧确认、LONG终态与盘后亏损延后已定位，零策略变更
+
+- **结论**：18:34 ET冻结ask遥测BA/BABA/GS毛浮亏−111.09/−202.57/−100.95，合计**−414.61USD**（非同步、GS age120s/价差0.66%，非日净值）。BA观测MFE0.3465%、GS0.0589%、BABA0，不能一概“大赚后吐”，未平占位不裁KR2/A11。11-25 SPY开→收+1.92%、低→收+3.06%而较昨收−0.29%，慢日线偏空与盘内反弹共存，VIX不是方向保证。11-17–25 DA已平39：32赢/7亏、胜率82.05%、均盈19.40/均亏125.81USD、净−259.74，描述尾部不裁edge。
+- **链路**：BABA固定TP以fill重算RR1.476923<出场1.5被禁用，日志与metadata双锚；下单81.92取整RR已1.4989，非仅滑点或入场RR绕过，未达TP不能归因本亏。10:39确认后chase正确拦10轮，11:17帽上81.92下单/81.88成交；ST_CONFIRMED无消费年龄复验。LLY/MRK原BUY被NO_TRADE实验写SKIP，后轮先跳SKIP、regime改善不自动恢复同条BUY；不自动改回。earlytight30分钟局部有效、β=1.0，超窗回初始宽线；BE未达阈值非arm故障。16:01 BABA ask86.88>SL86.43已被ETH规则识别，因未BE明确defer初始亏损止损；盈利侧脚本仍有执行权。三仓16:01 EOD兜底豁免日志真实，完整PRE_CLOSE豁免链未穷举。原计划价/当日了结/失效文本不等价机器约束。
+- **凭据**：本批仅2既有MD：DEB-20261125新增§10+本条；零代码/config/prompt/DB/订单改动、未提交/推送/重启；原service PID4164761/NRestarts0，Phase A14源码/测试及5保护SHA与基线差异空，旧文档完整保留。原RFC-217指令5766/5774带实验标记，初始sizing回执NO_TRADE/.3/47与5股；不以午后RISK_OFF移出cohort，仍3成交/1已平+9.96、预注册不变。
+- **验证**：GLM独立复算、Qwen源码+日志机制定位，主线程实际读 `afterhours_exit_shadow.jsonl:32520-32522/32062`、三仓日K及mode=ro/query_only指定trade/instruction；源码 `exit_engine.py:561-611/748-783`、`entry_confirm_gate.py:464-466`、`auto_execute_flow.py:600-607/1061-1072`、`db.py:1051-1067`、ETH规则/执行白名单亲核。原始日志 `ftseek_us.log-20261126:5902/6994/7180/7181` 与 `ftseek_us.log:818-820`，主线程局部closed SQL投影 `/tmp/ftseek-reversal-review-20261126/closed-payoff-evidence.json`。本轮未重跑官方评分/代码测试；Kimi实际读§10/原始盘口/日志/源码，严重及中等项无，仅把“合法下单”缩为“下单价符合chase帽”，主线程已更正。最终 `git diff --check -- docs/debates/DEB-20261125-flat-all-empty-spin-and-deploy-ledger-reconciliation.md handoff.md` 与SHA/旧文保留复核见DEB§10.7。
+- **未验证**：完整tick/早期BABA瞬时穿线、真实可成交/借券全成本、全部PRE_CLOSE/W_WEEK分支、fill时各stage同快照、各门/原计划反事实净收益、现货VIX/外部新闻；源码历史82/223不是新30日统计。不把行情反弹、无BE或吞TP单独当本亏因果。
+- **下一步**：先审TP计划→取整→fill→退出可执行契约、确认新鲜度/NO_TRADE授权期限，再裁咨询vs严格计划与持夜/假日敞口；双向按setup质量和净期望，不凑50/50/反手/放大SHORT/松门/清peak或tripped。不重开C14/C15/C16/C17或新同轴影子，行为调整另案RFC/一次一变量/具体授权；Phase A发布另需授权，原实验与11-30OKR结算不变。**最后更新：2026-11-26。**
+
+## 2026-11-26 · 【11-25收盘只读复查】新开3SHORT，已平净+215中旧仓+205.04；新实验仅1平+9.96，优先核计划/报价/持夜与日报混窗
+
+- **结论**：下单与已平退出真实完成，但不判“端到端全部正常”或空头已有edge。DA17桥接当时15S/2L，实验前NO_TRADE15轮跳过、10:30后107轮进入执行，CAT/BABA/GS三笔新开；CAT当日已平+9.96、BABA/GS未平，另旧BA在仓。11-25已平4笔毛231.70−估费16.70=净**+215.00**，其中旧11-24仓CAT/AVGO/BABA贡献**+205.04**，不是RFC-217收益。实验标记10条/成交3/已平1，保持原预注册，不与RFC-216/qwen post混算。DA whole n146净−24.8369bps/−1587.23；post n39净−17.4678bps/−259.74，80%日等权CI含0/MDE80=80.04，功效不足、按方案B本次不触发Kill/Pivot。
+- **问题**：BABA原反弹83.95且禁止81.90下追空，实际81.88、确认至成交约38分钟并持夜；CAT/GS同有原计划价→reprice/fill语义差异，不能当绕过机器门或必然亏损。盘后17:20ET遥测三空仓均underwater_no_extended_loss_stop/hold_no_stop，按回补ask估毛浮亏合计−407.67USD（非已实现/非当日净值变化）；延长时段亏损侧不执行止损是已裁政策而非已证程序故障。有效SL仍初始，早期紧线有分钟/MFE适用边界，不凭旧DB快照裁失效；11-26休市/11-27半日市风险与DA日内计划语义优先裁清，不直接砍隔夜/强平。日报8.3/excellent及4已平/17指令混窗，不是当日新开转化或OKR达标。event_context35份日期不匹配；主交易日志无ERROR≠全根日志无错（12ERROR含外围报价/回填/不变量62违反）。LateFill有audit/tca/接管，但CAT/BABA无outbox，仅decision_id可复原实验关联，不宣称outbox三笔完整。
+- **凭据**：本批仅2既有MD（DEB-20261125新增§9+本条），未提交/推送/重启；所有源码/config/prompt/DB/订单本批零改动，Phase A仍未部署。独立过程/经济复算与主线程实际行核，Kimi/claim-review只读审查；完整口径、日志行号、SQL与限制见 `docs/debates/DEB-20261125-flat-all-empty-spin-and-deploy-ledger-reconciliation.md` §9。
+- **验证**：官方独立CLI `env -C /tmp PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/opt/ftseek/FTSeek-US /opt/ftseek/FTSeek-US/venv/bin/python /opt/ftseek/FTSeek-US/scripts/okr_2026_11_scoring.py --as-of 2026-11-25` exit0；GLM不import app、按评分器SQL+ERA谓词mode=ro/query_only逐行复算，主线程再核trade1944–1951/指令5765/5766/5774/outbox。as_of不限制SQL上界，实际最大trade_date=11-25；CI/MDE是日等权每日净bps、非名义加权净bps严格区间。纯文档复查未跑代码测试。
+- **未验证**：真实券商成交能力/报价准确度、假日风险预算充分性、各门/原计划/持夜反事实净收益、方向因果、全部LateFill恢复归因覆盖；未外联核现货VIX/新闻。不把快循环在线当完整保护：已实证盘后水下不提交亏损止损，来源=`afterhours_exit_shadow.jsonl:32298-32300`/`exit_monitor_flow.py:71-76`/`shadow_registry.py:3308`，不能用前段早期紧SL日志推为永久生效。
+- **下一步**：先核有效止损/降级报价时点与假日持夜、BABA确认态龄、DA咨询vs严格计划，再分批补LateFill实验归因/event_context日期与日报新开/当日退出双口径。**不强配50/50、不放大SHORT、不松VIX/chase/VWAP、不清peak/tripped/UNKNOWN；策略行为改动及Phase A发布均须独立授权。** 原RFC-217按n≥30或10交易日结算与既有硬停；11-30OKR结算不顺延。**最后更新：2026-11-26。**
+
+## 2026-11-26 · 【VIX/方向设计 Phase A】同调用来源/时点/分项与原多阶段审计本地落地；539项隔离回归，未部署、不改方向权限
+
+- **结论**：用户要求避免极端偏单向并「按建议执行优化调优落地」。先修如实披露：ContextVar VIX同调用receipt（source/as_of/provider原始quote_time/UTC read_at/单位）、SPY实际basis、原趋势/波动分项；原preflight/实验态/sizing分别assess写入既有sizing_delta/reprice，成交时评估独立；显式只读基数CLI消费旧载体，n≥10且distinct<2只警告，旧CLI/cron/通知不变。**没有reuse/enforce开关或全局共享，LONG权限/SHORT0.3/RFC-217/四锁/所有风险门不变，不强凑多空50/50。** regime_snapshot_used=False只指没有新增显式共享，原120s/30s缓存仍可复用，assess不等于新fetch。
+- **凭据**：7app源+1script+6既有tests+4MD，共18文件，未提交/推送/重启。范围及SHA=`/tmp/regime-caliber-20261126-k1wfp6l1/final-scope.json`，前像before.zip/文档docs-before-final.zip；权威实现/限制/失败纠错见 `docs/debates/DEB-20261122-trading-system-full-chain-and-survival-review.md` §15，RFC-190§13、RFC-217§5。并发代理误加PhaseB由原代理精确逆操作移出至agent-unused，主线程亲核无残留后重测，未整文件还原。
+- **验证**：`env -C /tmp PYTHONDONTWRITEBYTECODE=1 FUTU_DISABLE_DAEMON=1 /opt/ftseek/FTSeek-US/venv/bin/python /tmp/regime-caliber-20261126-k1wfp6l1/run_checks.py` ⇒ **539 passed/43.93s/exit0**（final-integrated-v2.log，受保护socket/DNS/生产非只读SQLite/data写尝试空，3主模块原仓）。5保护SHA/7关键AST与5函数if序列相同（protected-policy-check.json/branch-conditions-check.json），非全数据保护证明。Kimi只读核心实际diff/日志无严重或必须修项，未独立跑pytest；旧/rgbd及失败/守卫非空日志不是正式凭据。
+- **未验证**：未部署/自然记录/收益或命中率/代理新鲜度/准确度；AV basis可unknown；预检早退/LONG早拦/MOM专用reprice未完整覆盖，缺键不等于放行；generation文本不等于快照。基数仅有效dict行，缺文件/坏行/稳定行情/缓存重复需人工核，VIX数值distinct跨source/unit不作同口径统计，exit0不证明数据完整。现役单向权限尚未改变，本批不证明方向问题已解决，不复活退休观测或新增经济实验。
+- **下一步**：获本批发布/重启授权后核在途出场和app/scripts WIP，不夹带他人；按systemctl+启动冒烟部署，再观察既有自然记录与只读基数。PhaseB快照消费/方向权限须独立评审、影子/前向证据与具体授权；RFC-217继续原预注册结算，不顺手调VIX阈值/追价门。**最后更新：2026-11-26。**
 
 ## 2026-11-25 23:4x CST · 【RFC-217 NO_TRADE SHORT实验】用户裁直接验证已部署激活；首轮链路自然验证成立，零成交属chase_cap/VWAP门生效；收益待样本
 

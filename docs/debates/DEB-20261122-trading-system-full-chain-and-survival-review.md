@@ -289,3 +289,48 @@ F1 预算/期限/再暂停/责任、F2 自动核证/恢复/解锁仍待裁；本
 - **UNKNOWN**：`da_event_prompt_canary`（.env.us `DA_EVENT_CONTEXT_INJECT=1` 但产物冻结 11-13，`da_event_inject_report` 无调度——注入开着、记录停了，须查）；`broker_capacity`/`broker_stop_drift`/`exit_intent_reaper`/`backfill_fidelity` 产物缺失 = 设计内休眠（SIM 无 REAL 单/零检出/探针未跑），非断采；`instruction_conflict_shadow` 12.6d 未刷，疑事件驱动无冲突。
 
 **边界**：本盘点不能据此裁 KR4 或退役——逐项六面零引用未跑、生产消费方路由未定（DEB 已证不可 mass-batch）、`current_n` 恒 0 须 `refresh_counts`、mtime 只证写方活不证判据可裁；KEEP5 之外名额归属须用户裁决。
+
+## 15. VIX 与方向设计优化：Phase A 本地 record-only 落地（2026-11-26）
+
+### 15.1 授权与问题拆分
+
+用户要求「我需要检查当前的逻辑和设计是否合理，不要极端偏单向」，随后「按建议执行优化调优落地」。本批先修可核证的口径与时点披露，不把这句话扩张成所有交易门的豁免。
+
+VIX 表示波动而非涨跌方向；VIXY×0.85 是经验代理，不是现货恒等换算，偏差可双向。方向集中还涉及 SPY 趋势评分和 RFC-217 已批准的 NO_TRADE SHORT-only SIM 权限，不能通过强制多空 50/50、调整 VIX 阈值或随意放开 LONG 来解决。普通生成侧 NO_TRADE 拦截不等于 DA 直写指令的生成门；不能把 DA 样本都称作生成/执行换档。
+
+**本批仅 Phase A**：如实记录原始读数与原有分别评估。没有实现/激活同轮快照 reuse/enforce 开关，没有修改任何方向、仓位、阈值或实验判据。Phase B 快照消费以及方向权限调整须独立评审、影子/前向证据和具体授权；RFC-217 继续原实验，不结案。
+
+### 15.2 实际改动与消费端
+
+| 落点 | 本地实现 | 保持不变 |
+|---|---|---|
+| `vix_source` / Router / AV | ContextVar 回执绑定同一次标量取数；保留 source、as_of、provider 原始 quote_time | 原优先级、0.85、窗口、标量返回、TTL、重试、缓存发布保护 |
+| `market_regime` | `vix_observation` 明示口径、单位、UTC read_at；SPY basis/quote_time、UTC assessed_at、trend_score/volatility_score | 原分项、分档、top_n、乘数、min_strength；缺 VIX 跳过分项、展示20及原降级行为 |
+| `risk_gates` / pipeline / auto_execute | 函数局部审计 sink 记录原 preflight、实验态、逐指令 sizing；复用既有 sizing_delta/reprice 行；附原 generation 文本 | 原 assess 调用与原 gate；未新增取数或全局共享；成交时 `playbook_service` 仍独立评估 |
+| `shadow_field_cardinality` | 显式 `--regime-audit PATH` 只读既有 sizing_delta JSONL，输出 stage/field 的 n、missing、unique、unit；n≥10 且 unique<2 标 WARNING_CONST | 默认 CLI、既有 DEGEN 判据/退出码、cron/通知不变；新模式始终 exit0，不产生交易动作 |
+
+新回执中的现货为 `vix_points`，代理为 `vix_points_estimated`，未知为 `unknown`；趋势/波动分项是评分点，非收益率。全源失败的 observation.value=None，旧 ctx.vix=20 仅为兜底展示，不冒充真实20点观测。Futu SPY 真读到报价才标 `futu_last_price`；AV 未提供 basis 时仍标 unknown。MA 保持日K计算，不把价格一律称为昨收。
+
+### 15.3 必须保留的解读限制
+
+1. `read_at` 是取数返回时间，不是行情观测时间；`assessed_at` 不是成交时间。Futu quote_time 不臆造时区，Finnhub 保留原 epoch；缺 provider 时间就如实缺失，未验证报价新鲜度。
+2. 三处分别调用 assess **不等于三次新取数**：原类缓存正常120s、不确定30s仍保留；`publish_cache=False` 也可读已有效缓存。`regime_snapshot_used=False` 仅表示本批没有新增显式共享快照消费，**不表示没有缓存复用**。
+3. 覆盖仅为到达既有载体的指令：预检早退未持久化该 sink；LONG 早拦不进入 reprice；MOM 专用 reprice 未接此字段；sizing 分支未评估就没有 sizing 键。缺键不等于无风险或许可，不把这批记录当完整多空机会池。
+4. generation_regime_text 是原文本，不反向推算为结构化生成快照；成交时评估保持独立，不用轮首时间冒充成交时间。审计失败不改变原门禁，sizing_delta 的存量异常吞行方式未改。
+5. 基数报告的 row_count/missing 基于有效 dict 行，不是物理行数；缺文件/坏行可能为空/跳过，exit0 不是数据完好证明。重复轮/缓存、稳定行情、单一来源也会恒定；WARNING_CONST 只提示核查。VIX value 的 distinct 可跨 source/unit，unit 是 observation.unit 指针，不作同口径统计；设计常量 `regime_snapshot_used=False` 不参与退化判定。
+
+### 15.4 验证凭据与过程纠错
+
+- **范围**：7 个 app 源 + 1 个纯读 scripts 消费端 + 6 个既有测试文件；另更新本 DEB、RFC-190、RFC-217、handoff，共18文件；未提交/推送/重启。证据目录 `/tmp/regime-caliber-20261126-k1wfp6l1/`，源码 SHA 锁定于 `final-scope.json`，前像 `before.zip`，文档当前前像 `docs-before-final.zip`。
+- **正式整合**：`env -C /tmp PYTHONDONTWRITEBYTECODE=1 FUTU_DISABLE_DAEMON=1 /opt/ftseek/FTSeek-US/venv/bin/python /tmp/regime-caliber-20261126-k1wfp6l1/run_checks.py` ⇒ **539 passed / 43.93s / exit0**，`final-integrated-v2.log`；禁止真实 socket/DNS、生产非只读 SQLite、生产 data 文件写，`BOUNDARY_VIOLATIONS=[]`，三个主模块路径均原仓。使用 `--noconftest -p no:cacheprovider`，并逐例清 regime 类缓存，不借生产 fixture 豁免；没有跑全仓。
+- **分组定位**：`final-caliber.log` 113、`final-entry.log` 360、`final-compat-v3.log` 59 均 exit0/边界空；合计532是追加基数7例前的同组结果，不与最终539累加。
+- **静态保护**：`protected-policy-check.json` 核2配置、止损 state、AGENT/AGENTS 五项 SHA 与前像相同，7个取数/评分关键函数 AST 相同；`branch-conditions-check.json` 核五函数全部 if 条件序列相同。仅证明这些保护范围，不外推全部生产数据或他人 WIP 无变化。
+- **测试守卫**：真实 Router/FRED/Finnhub 叶函数在 fake provider/HTTP 下运行；覆盖代理/现货/未知/缺数、时间/单位、缓存不伪刷新、线程/重入、禁止迟到发布，分别调用和 SHORT 0.3/LONG 拦截保持；基数新模式禁止调用旧 DB collector，旧 CLI 路径也保留。工程绿不证明净期望。
+- **过程纠错**：首轮隔离捕获旧夹具访问生产影子/库，未放宽守卫。后修假依赖 now_utc、数字 sizing、fake package 纯模块、S1 kwargs、黑窗默认观测隔离及全局冻结 datetime 污染；保留失败定位日志，不用旧红/绿当最终证据。另一代理曾并发插入未纳入本批的 Phase B/global shared state；主线程暂停两文件写入，由原代理精确逆操作，未整文件还原，产物移至 `agent-unused/`，亲核最终 diff 无残留后才重跑。旧 `/tmp/rgbd-*` 试跑非正式凭据。
+- **独立审查**：Kimi 只读实际差集、原上下文与日志，核心 Phase A 未发现严重/必须修改项；未亲跑 pytest，其日志复核不冒充独立实测。缓存/AV unknown/早退/MOM 覆盖限制已按意见明确。
+
+### 15.5 当前状态与下一步
+
+这是**本地技术口径/留痕落地，尚未部署**，不证明已减少亏损、提高命中率或修正了当前单向权限。四锁、毕业门、UNKNOWN、峰值/tripped、出入场风控不动；不重启 scan_loop、不复活已退役 regime_divergence_shadow、不新增采集器/经济实验/cron/prompt/推送。
+
+下一步先获本批发布/重启授权，核在途出场与 app/scripts WIP，不夹带其他批次；部署后按现有管线观察来源/时间/缺键覆盖与自然多阶段记录，再决定是否进入独立 Phase B。评估方向权限须分清生成、门禁、执行质量、成交、费用后双向样本，不强凑50/50；RFC-217 的 n≥30或10交易日/提前裁停及所有硬闸继续原样。

@@ -38,8 +38,19 @@
 - 激活日（11-25）恰为 NO_TRADE 日，可即时自然验证：SHORT 进触发评估、LONG 被拦、零 Traceback
 - 未验证：收益假设本身；LIVE 路径仅单测级（生产 LIVE 冻结不可能自然触达）
 
+## 5. 2026-11-26 执行口径补充（Phase A 本地，非实验变更）
+
+用户后续要求避免极端偏单向并按建议优化。本批仅披露来源与原各阶段时点，**不结案/扩张本实验**：NO_TRADE 的 LONG 双层拦截、SHORT 0.3、SIM-only/LIVE fail-close、原 cohort 与 n≥30或10交易日/提前裁停全部不变，未刷新本实验收益样本。
+
+原 preflight、轮级实验态、逐指令 sizing 仍各自 assess；新增函数局部审计快照进既有 sizing_delta/reprice，不启用共享/reuse/enforce。regime_snapshot_used=False 仅表示没有新增显式共享，原120s/30s缓存仍可复用。generation_regime_text 保留原文，不能推算为生成快照；成交时 playbook_service 评估仍独立。预检早退、LONG 早拦、MOM 专用 reprice 等不在完整覆盖，缺键不等于放行或完整机会池。
+
+**验证**：隔离构造 preflight=RISK_ON、实验态=NO_TRADE、sizing=RISK_OFF 的不同 context：BUY 原样早拦，SELL_SHORT 原3次调用、乘数0.3及执行尺寸保持，审计保留不同stage。原仓严格隔离10文件 **539 passed /43.93s /exit0**，受保护边界尝试为空，日志 `/tmp/regime-caliber-20261126-k1wfp6l1/final-integrated-v2.log`；完整范围/失败定位/缓存/只读基数消费限制见 DEB-20261122 §15。不是自然成交或双向净期望证明。
+
+**状态/下一步**：本批未提交/推送/部署/重启；现役 RFC-217 部署状态不因本地附加审计而改变。后续经授权上线再观察覆盖；方向权限调整或 Phase B 另行评审，不以强制多空配比或放宽执行质量门制造样本。
 ## 6. 2026-11-26 保真修正：LONG 首层拦截按轮暂缓（本地已改，未重启）
 
 §1「不改 LONG 权限」的执行口径修正为：NO_TRADE 轮 LONG/BUY **本轮**不进评估，指令保持 PENDING，不写 `SKIP`/`skip_reason`；留痕走 `exec_gate_audit`（`gate=no_trade_short_exp_long`, `transient=True`）。sizing 第二层（非 SHORT 乘数 0.0）、SHORT 0.3、SIM-only/LIVE fail-close、cohort 与预注册判据全部不变。
 
 原因、数据与否决项见 DEB-20261125 §11。本修正不扩张实验、不改收益假设；已上线进程在重启前仍按旧写法（当日终态）。
+
+**部署续记（2026-11-26 14:57 CST）**：用户明确授权重启及本地提交，commit `9532275dc`只提交本修正及配套测试/说明，Phase A与其他在途改动未提交、未推送。`systemctl restart ftseek-us`成功，PID55482；官方启动冒烟7/7 exit0，日志 `/tmp/ftseek-opt-20261126/startup-smoke.log`。BA/BABA/GS三仓与持久化stoploss状态前后不变，两出场账本/entry outbox均无在途。连续两轮NO_TRADE暂缓、第三轮RISK_OFF恢复的隔离行为用例通过；休市无自然执行证据，启动通过不等于盈利假设成立。详DEB§11.7，本续记随部署凭据批提交推送。
