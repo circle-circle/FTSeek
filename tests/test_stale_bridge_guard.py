@@ -324,6 +324,72 @@ class TestBridgeConsistentRead:
         monkeypatch.setattr(builtins, "open", fake_open)
         assert pl._read_bridge_raw(str(p)) is None
 
+    def test_s19_same_mtime_size_identity_swap_aborts(self, tmp_path, monkeypatch):
+        """RFC-218 §23 (§22.9 #2): 保持 mtime/size 的身份替换 (rename+utime 还原)
+        旧 (mtime_ns,size) 校验可穿透; inode/dev 四点核对必须拒。"""
+        import builtins
+        import os as _os
+        p = tmp_path / "bridge.json"
+        old = b'{"candidates": [0]}'
+        new = b'{"candidates": [1]}'   # 同长度
+        assert len(old) == len(new)
+        p.write_bytes(old)
+        st0 = p.stat()
+        real_open = builtins.open
+
+        class RacingFile:
+            def __init__(self, *a, **k):
+                self._f = real_open(*a, **k)
+
+            def read(self, *a):
+                data = self._f.read(*a)
+                swap = tmp_path / "swap.json"
+                swap.write_bytes(new)
+                _os.replace(str(swap), str(p))          # 新 inode
+                _os.utime(p, ns=(st0.st_atime_ns, st0.st_mtime_ns))  # mtime 还原
+                return data
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                self._f.close()
+                return False
+
+        def fake_open(file, *a, **k):
+            if str(file) == str(p):
+                return RacingFile(file, *a, **k)
+            return real_open(file, *a, **k)
+
+        monkeypatch.setattr(builtins, "open", fake_open)
+        assert p.stat().st_size == st0.st_size  # 前提: size 不变
+        assert pl._read_bridge_raw(str(p)) is None
+
+    def test_s20_probe_to_open_identity_swap_aborts(self, tmp_path, monkeypatch):
+        """RFC-218 §23: stat(探测) 与 open 之间被同 mtime/size 替换 → st_before≠st_open
+        (inode) → 拒。旧校验只看读后 mtime/size, 会接受替换后的旧快照误归属。"""
+        import builtins
+        import os as _os
+        p = tmp_path / "bridge.json"
+        old = b'{"candidates": [0]}'
+        new = b'{"candidates": [1]}'
+        p.write_bytes(old)
+        st0 = p.stat()
+        real_open = builtins.open
+        swapped = {"done": False}
+
+        def fake_open(file, *a, **k):
+            if str(file) == str(p) and not swapped["done"]:
+                swapped["done"] = True
+                swap = tmp_path / "swap.json"
+                swap.write_bytes(new)
+                _os.replace(str(swap), str(p))
+                _os.utime(p, ns=(st0.st_atime_ns, st0.st_mtime_ns))
+            return real_open(file, *a, **k)
+
+        monkeypatch.setattr(builtins, "open", fake_open)
+        assert pl._read_bridge_raw(str(p)) is None
+
 
 def _mkdb():
     conn = sqlite3.connect(":memory:")

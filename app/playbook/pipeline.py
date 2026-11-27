@@ -1015,17 +1015,33 @@ def _read_bridge_raw(path):
 
     返回 (raw_bytes, mtime); 缺失/读取失败/读取期间被改写 → None。
     稳定性校验在解析与动态池注入之前完成 — 不稳定文件不解析、不注入、不消耗基线。
+
+    RFC-218 §23 硬化 (§22.9 #2): 旧校验只比 (mtime_ns, size) — 保持 mtime/size 的
+    身份替换 (rename 覆盖 + utime 还原) 可穿透。现四元组 (dev, ino, mtime_ns, size)
+    三点核对: 路径 stat(读前) ↔ fstat(打开的 inode) ↔ fstat(读后) ↔ 路径 stat(读后):
+      - inode/dev 变化 → 探测与读取之间文件被替换 (即使 mtime/size 相同) → 拒;
+      - 打开 inode 读前后 mtime_ns/size 变化 → 原地写入 → 拒。
+    稳定文件四点全等 ⇒ 逐字节旧行为。残余 (不夸大): 原地写+同 size+utime 还原
+    仍理论可穿透; SHA 基线绑定实际读入内容, 下一轮重载原则上发现新 SHA。
     """
     import os as _os
     try:
         st_before = _os.stat(path)
         with open(path, "rb") as _f:
+            st_open = _os.fstat(_f.fileno())
             raw = _f.read()
+            st_fd_after = _os.fstat(_f.fileno())
         st_after = _os.stat(path)
     except Exception:
         return None
-    if (st_before.st_mtime_ns, st_before.st_size) != (st_after.st_mtime_ns, st_after.st_size):
-        logger.warning(f"[playbook] bridge读取期间文件被改写 (稳定性校验失败) → 视作未就绪: {path}")
+
+    def _sig(st):
+        return (st.st_dev, st.st_ino, st.st_mtime_ns, st.st_size)
+
+    if (_sig(st_before) != _sig(st_open)
+            or _sig(st_open) != _sig(st_fd_after)
+            or _sig(st_before) != _sig(st_after)):
+        logger.warning(f"[playbook] bridge读取期间文件被改写/替换 (稳定性校验失败) → 视作未就绪: {path}")
         return None
     return raw, st_after.st_mtime
 

@@ -643,16 +643,148 @@ def _live_mirror_gate_decision(
     return decision
 
 
+# ── RFC-218 §23: NO_TRADE SHORT 实验指令 LIVE 镜像隔离 (§22.9 #5) ─────────────────
+# 病灶: 镜像入口未按 no_trade_short_exp 排除实验指令。当前 live 闸只收 LONG/BUY
+#   (live_arm_gate LIVE_PROBE_DIRECTION_REJECTED) ⇒ 本路径今日零流量、零行为变化;
+#   但未来 SHORT 真实目标门获允许时, 跨 regime 遗留的 SIM-only 实验指令仍可能被镜像。
+# 合同 (纵深防御, SHORT 实盘授权前的必备隔离):
+#   - no_trade_short_exp 标记 (内存 ∨ 持久化源 metadata) → 排除 (标记=cohort SSOT,
+#     §10.3 实验身份以指令身份确定, 不以成交时 regime 重划);
+#   - SHORT ∧ reprice_audit.regime_reads.sizing.regime==no_trade → 排除 (实验执行
+#     次级证据, 覆盖标记写失败但 reprice 审计在库的情形);
+#   - SHORT ∧ 两源 metadata 均不可读 (缺失/坏 blob/行缺失/读失败/无 id) → fail-closed
+#     排除 (无法排除实验身份的 SHORT 不镜像; SHORT 实盘授权裁决时须复核本谓词);
+#   - LONG/BUY 无标记 → 永不被本谓词排除 (实验仅 SHORT)。
+# 持久化源 = SIM/research lane (镜像恒 SIM→LIVE); 内存 metadata 可能滞后于 sizing
+#   期的 merge_instruction_metadata ⇒ 持久化读为权威, 内存只能追加排除不能撤销。
+# 回滚: revert 本批 commit (无开关; 今日零流量 ⇒ 无运行时差异)。
+
+
+def _parse_metadata_blob(blob: Any) -> Optional[Dict[str, Any]]:
+    """dict → 原样; JSON str → 解析; 其余/不可解析/非 dict → None (不可核验)。"""
+    if isinstance(blob, dict):
+        return blob
+    if isinstance(blob, str):
+        try:
+            parsed = json.loads(blob)
+        except (TypeError, ValueError):
+            return None
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _no_trade_short_exp_marker(metadata: Optional[Dict[str, Any]]) -> bool:
+    # 存在性判定 (非 truthy): 空 dict 标记也是标记; 仅 None/缺失 = 无标记。
+    return bool(isinstance(metadata, dict)
+                and metadata.get("no_trade_short_exp") is not None)
+
+
+def _no_trade_sizing_regime(metadata: Optional[Dict[str, Any]]) -> bool:
+    """reprice_audit.regime_reads.sizing.regime == no_trade (实验执行次级证据)。"""
+    if not isinstance(metadata, dict):
+        return False
+    audit = metadata.get("reprice_audit")
+    if not isinstance(audit, dict):
+        return False
+    reads = audit.get("regime_reads")
+    if not isinstance(reads, dict):
+        return False
+    sizing = reads.get("sizing")
+    if not isinstance(sizing, dict):
+        return False
+    return str(sizing.get("regime") or "").upper() == "NO_TRADE"
+
+
+def _is_no_trade_short_experiment_instruction(
+    instruction: Dict[str, Any], *, source_db=None
+) -> tuple:
+    """Return (is_experiment, reason)。合同见上方注释块。
+
+    source_db 可注入 (测试); 默认 route_playbook_db("sim")。读失败对 SHORT
+    fail-closed (持久化不可读 + 内存不可读 ⇒ 排除), 对 LONG 无影响。
+    """
+    direction = str(instruction.get("direction") or "").upper()
+    is_short = direction in ("SELL_SHORT", "SHORT")
+
+    mem_md = _parse_metadata_blob(instruction.get("metadata"))
+    if _no_trade_short_exp_marker(mem_md):
+        return True, "no_trade_short_exp_marker_in_memory"
+    if not is_short:
+        return False, ""
+
+    persisted_md = None
+    persisted_readable = False
+    inst_id = instruction.get("id")
+    if inst_id is not None:
+        try:
+            if source_db is None:
+                from app.playbook.db import route_playbook_db
+                source_db = route_playbook_db("sim")
+            row = source_db.get_instruction_by_id(int(inst_id))
+            if row is not None:
+                blob = row.get("metadata_json")
+                if blob is None:
+                    # 行存在且 metadata 为空 = 一次成功的持久化读 (库内无标记)。
+                    persisted_readable = True
+                    persisted_md = {}
+                else:
+                    persisted_md = _parse_metadata_blob(blob)
+                    persisted_readable = persisted_md is not None
+        except Exception as exc:
+            logger.warning(
+                f"[playbook] 实验隔离持久化 metadata 读取失败 "
+                f"(SHORT fail-closed): id={inst_id} err={exc}",
+                exc_info=True,
+            )
+    if _no_trade_short_exp_marker(persisted_md):
+        return True, "no_trade_short_exp_marker_persisted"
+    if _no_trade_sizing_regime(persisted_md) or _no_trade_sizing_regime(mem_md):
+        return True, "no_trade_sizing_regime_audit"
+    if persisted_readable or mem_md is not None:
+        return False, ""
+    return True, "short_metadata_unverifiable_fail_closed"
+
+
 def _mirror_instruction_to_live_if_allowed(
     instruction: Dict[str, Any],
     live_db,
     *,
     mirror: Optional[Callable] = None,
     gate_decision: Optional[Callable] = None,
+    experiment_check: Optional[Callable] = None,
 ):
-    """Return (mirror_id, gate); a rejected gate never writes LIVE."""
+    """Return (mirror_id, gate); a rejected gate never writes LIVE.
+
+    RFC-218 §23: 实验隔离先于臂闸 —— NO_TRADE SHORT 实验指令 (SIM-only cohort)
+    绝不进入 LIVE 镜像, 独立于臂闸状态。隔离拒绝走与臂闸拒绝相同的 (None, gate)
+    合同, 调用方日志/推送路径不变。
+    """
     mirror = mirror or _mirror_instruction_to_live
     gate_decision = gate_decision or _live_mirror_gate_decision
+    experiment_check = experiment_check or _is_no_trade_short_experiment_instruction
+    try:
+        _is_exp, _exp_reason = experiment_check(instruction)
+    except Exception as _exp_err:
+        # 谓词自身异常: SHORT fail-closed / LONG fail-open (实验仅 SHORT)。
+        logger.warning(
+            f"[playbook] 实验隔离谓词异常: {instruction.get('symbol')} err={_exp_err}",
+            exc_info=True,
+        )
+        _is_short = str(instruction.get("direction") or "").upper() in ("SELL_SHORT", "SHORT")
+        _is_exp = _is_short
+        _exp_reason = "experiment_check_error_fail_closed" if _is_short else ""
+    if _is_exp:
+        return None, {
+            "allowed": False,
+            "reasons": [{
+                "code": "NO_TRADE_SHORT_EXP_ISOLATION",
+                "message": (
+                    "NO_TRADE SHORT experiment instruction excluded from LIVE mirror "
+                    f"({_exp_reason})"
+                ),
+            }],
+        }
     gate = gate_decision(live_db, instruction)
     if not gate.get("allowed"):
         return None, gate

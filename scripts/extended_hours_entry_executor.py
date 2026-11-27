@@ -223,6 +223,45 @@ _EXT_BLACKLIST_CANON = ROOT / "data" / "shadow" / "ext_blacklist"
 _FIRST_HIT_PUSH_MAX_ATTEMPTS = 3
 
 
+# ── RFC-218 §23 (§22.9 #4): 观测台账/通知去重 原子性 ─────────────────────────────
+# 病灶: 影子台账与首命中 state 均为无锁读-改-写 + 共享 <name>.json.tmp — 重叠调用
+#   (cron tick 重叠/多线程) 可能漏计 ticks、丢 mode 记录、tmp 互踩。生产是否有外层
+#   互斥未核, 不声称已发生并发损坏; 本批按 _push_once 去重既有范式补 flock + 唯一 tmp。
+# 语义不变: 文档格式/去重合同/提醒合同逐字保留; dry 是否必须静默 = 独立裁决项 (本批不动)。
+# 锁为阻塞 LOCK_EX (临界区=本地文件 IO; 通知 helper 临界区含 sync push, 日级事件可接受);
+#   观测锁与通知锁分离不嵌套 ⇒ 无死锁。回滚: revert 本批 commit。
+
+
+@contextlib.contextmanager
+def _observation_lock(lock_path):
+    """观测面互斥 (flock LOCK_EX, 阻塞式短临界区); 锁文件与台账同目录族。"""
+    lock_path = Path(lock_path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _atomic_write_json(path, doc):
+    """mkstemp 唯一 tmp + os.replace 原子落盘 (替代共享 .json.tmp, 防重叠调用互踩)。"""
+    path = Path(path)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f"{path.name}.", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as tmp:
+            json.dump(doc, tmp, ensure_ascii=False, indent=1)
+        os.replace(tmp_name, str(path))
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
 def _ext_blacklist_guard_enabled() -> bool:
     """独立开关 (进程 env, cron 每 tick fresh-import): 默认 OFF, 未知值 fail-closed 旧行为。
 
@@ -254,6 +293,9 @@ def _record_ext_blacklist(symbol, session, item, blocked, source=None):
     污染成"几票次"。首 tick 价/涨幅=事件当时读数, 后续 tick 只累加 ticks/last_ts。
     守卫 ON 时也落 (mode=blocked 审计); OFF 时 mode=shadow (供给面不变的差分证据)。
     写盘失败绝不影响下单路径 (观测面与决策面解耦)。
+
+    RFC-218 §23: 读-改-写在 _observation_lock 内串行化 + 唯一 tmp 原子落盘
+    (§22.9 #4, 防重叠调用漏计/丢 mode); 通知在锁外 (独立去重锁, 不嵌套)。
     """
     if not blocked and not _ext_blacklist_shadow_enabled():
         return
@@ -262,65 +304,64 @@ def _record_ext_blacklist(symbol, session, item, blocked, source=None):
         day = now_et.strftime("%Y-%m-%d")
         path = EXT_BLACKLIST_DIR / (day + ".json")
         EXT_BLACKLIST_DIR.mkdir(parents=True, exist_ok=True)
-        try:
-            doc = json.loads(path.read_text())
-        except (OSError, ValueError):
-            doc = {}
-        rows = doc.get("rows") or {}
-        key = "%s:%s" % (session, symbol)
-        prev = rows.get(key)
-        _mode = "blocked" if blocked else "shadow"
-        _ts = now_et.isoformat()
-        _is_new = prev is None
-        # RFC-218 §19: 旧 mode 必须在下方 prev["mode"]=_mode 覆写前捕获, 否则升级旧行时
-        #   既有 ticks 会被误归到「新 mode」(迁移失真)。_prev_mode 仅供 modes 迁移用。
-        _prev_mode = prev.get("mode") if prev else None
-        # 同理旧 last_ts 也须在覆写前捕获: 迁移记录的「旧 mode 末次观测」应是真实旧时点,
-        #   而非本次升级命中的新时点 (migrated=True 已标重建, 但可得的真值不应丢弃)。
-        _prev_last_ts = prev.get("last_ts") if prev else None
-        if prev:
-            prev["ticks"] = int(prev.get("ticks") or 1) + 1
-            prev["last_ts"] = _ts
-            prev["mode"] = _mode
-        else:
-            it = item or {}
-            prev = {"symbol": symbol, "session": session,
-                    "mode": _mode,
-                    "source": it.get("_source") or source,
-                    "chg_pct": round(float(it.get("chg") or 0), 2),
-                    "px": round(float(it.get("px") or 0), 4),
-                    "volume": int(it.get("vol") or 0),
-                    "first_ts": _ts, "last_ts": _ts, "ticks": 1}
-            rows[key] = prev
-        # RFC-218 §19 (P3 mode provenance): 分模式累计次数/首末时点。此前后续命中直接覆写
-        #   顶层 mode ⇒ shadow→blocked→rollback shadow 会抹掉各阶段真实次数。现顶层 mode/ticks
-        #   保留 (最新态/总次数, 向后兼容既有 36 契约), 另以 modes 分模式留痕。
-        modes = prev.get("modes")
-        if not isinstance(modes, dict):
-            modes = {}
-            if not _is_new:
-                # 升级旧行: 无法回溯历史分模式拆分, 保守把既有 ticks 归到「上一已知 mode」
-                #   并标 migrated=True (重建非实测, 不冒充逐 mode 观测)。新行从 tick1 精确分模式。
-                _old_mode = _prev_mode or _mode
-                modes[_old_mode] = {
-                    "ticks": int(prev.get("ticks") or 1) - 1,
-                    "first_ts": prev.get("first_ts") or _ts,
-                    "last_ts": _prev_last_ts or _ts,
-                    "migrated": True}
-            prev["modes"] = modes
-        mrec = modes.get(_mode)
-        if not isinstance(mrec, dict):
-            mrec = {"ticks": 0, "first_ts": _ts, "last_ts": _ts}
-            modes[_mode] = mrec
-        mrec["ticks"] = int(mrec.get("ticks") or 0) + 1
-        mrec["last_ts"] = _ts
-        if not mrec.get("first_ts"):
-            mrec["first_ts"] = _ts
-        doc["et_date"] = day
-        doc["rows"] = rows
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=1))
-        os.replace(str(tmp), str(path))
+        with _observation_lock(EXT_BLACKLIST_DIR.parent / "ext_blacklist.lock"):
+            try:
+                doc = json.loads(path.read_text())
+            except (OSError, ValueError):
+                doc = {}
+            rows = doc.get("rows") or {}
+            key = "%s:%s" % (session, symbol)
+            prev = rows.get(key)
+            _mode = "blocked" if blocked else "shadow"
+            _ts = now_et.isoformat()
+            _is_new = prev is None
+            # RFC-218 §19: 旧 mode 必须在下方 prev["mode"]=_mode 覆写前捕获, 否则升级旧行时
+            #   既有 ticks 会被误归到「新 mode」(迁移失真)。_prev_mode 仅供 modes 迁移用。
+            _prev_mode = prev.get("mode") if prev else None
+            # 同理旧 last_ts 也须在覆写前捕获: 迁移记录的「旧 mode 末次观测」应是真实旧时点,
+            #   而非本次升级命中的新时点 (migrated=True 已标重建, 但可得的真值不应丢弃)。
+            _prev_last_ts = prev.get("last_ts") if prev else None
+            if prev:
+                prev["ticks"] = int(prev.get("ticks") or 1) + 1
+                prev["last_ts"] = _ts
+                prev["mode"] = _mode
+            else:
+                it = item or {}
+                prev = {"symbol": symbol, "session": session,
+                        "mode": _mode,
+                        "source": it.get("_source") or source,
+                        "chg_pct": round(float(it.get("chg") or 0), 2),
+                        "px": round(float(it.get("px") or 0), 4),
+                        "volume": int(it.get("vol") or 0),
+                        "first_ts": _ts, "last_ts": _ts, "ticks": 1}
+                rows[key] = prev
+            # RFC-218 §19 (P3 mode provenance): 分模式累计次数/首末时点。此前后续命中直接覆写
+            #   顶层 mode ⇒ shadow→blocked→rollback shadow 会抹掉各阶段真实次数。现顶层 mode/ticks
+            #   保留 (最新态/总次数, 向后兼容既有 36 契约), 另以 modes 分模式留痕。
+            modes = prev.get("modes")
+            if not isinstance(modes, dict):
+                modes = {}
+                if not _is_new:
+                    # 升级旧行: 无法回溯历史分模式拆分, 保守把既有 ticks 归到「上一已知 mode」
+                    #   并标 migrated=True (重建非实测, 不冒充逐 mode 观测)。新行从 tick1 精确分模式。
+                    _old_mode = _prev_mode or _mode
+                    modes[_old_mode] = {
+                        "ticks": int(prev.get("ticks") or 1) - 1,
+                        "first_ts": prev.get("first_ts") or _ts,
+                        "last_ts": _prev_last_ts or _ts,
+                        "migrated": True}
+                prev["modes"] = modes
+            mrec = modes.get(_mode)
+            if not isinstance(mrec, dict):
+                mrec = {"ticks": 0, "first_ts": _ts, "last_ts": _ts}
+                modes[_mode] = mrec
+            mrec["ticks"] = int(mrec.get("ticks") or 0) + 1
+            mrec["last_ts"] = _ts
+            if not mrec.get("first_ts"):
+                mrec["first_ts"] = _ts
+            doc["et_date"] = day
+            doc["rows"] = rows
+            _atomic_write_json(path, doc)
         # RFC-218 §19: 首个自然命中 → 待裁提醒 (只提示裁决, 不自动激活)。仅真实生产路径;
         #   按标的去重 (state 文件), 异常绝不影响下单路径。
         # RFC-218 §22 (P1-B): 每次命中都调用 (不再只限新建行) — helper 内按标的去重+失败重试;
@@ -347,38 +388,40 @@ def _notify_ext_blacklist_first_hit(symbol, session, blocked):
         return
     try:
         state_path = EXT_BLACKLIST_DIR.parent / "ext_blacklist_first_hit_notified.json"
-        try:
-            state = json.loads(state_path.read_text())
-        except (OSError, ValueError):
-            state = {}
-        if not isinstance(state, dict):
-            return
-        entry = state.get(symbol)
-        if isinstance(entry, str):      # 旧格式 = 已成功通知
-            return
-        _attempts = 0
-        if isinstance(entry, dict):
-            if entry.get("notified"):
+        # RFC-218 §23: state 读-改-写 (含 sync push) 锁内串行 — 防重叠调用双推/丢 attempts。
+        with _observation_lock(state_path.with_suffix(".lock")):
+            try:
+                state = json.loads(state_path.read_text())
+            except (OSError, ValueError):
+                state = {}
+            if not isinstance(state, dict):
                 return
-            _attempts = int(entry.get("attempts") or 0)
-            if _attempts >= _FIRST_HIT_PUSH_MAX_ATTEMPTS:
+            entry = state.get(symbol)
+            if isinstance(entry, str):      # 旧格式 = 已成功通知
                 return
-        from app.push.hub import push_text_safe
-        _mode_txt = "blocked(守卫ON)" if blocked else "shadow(守卫OFF)"
-        _ok = push_text_safe(
-            f"[EXT黑名单·待裁] 首个自然命中 {symbol} ({session}, {_mode_txt})。"
-            f"EXT_BLACKLIST_GUARD 激活须用户单独裁决 (RFC-218 §17/§19, 预注册臂供给面变量); "
-            f"本提醒≠启用。台账 data/shadow/ext_blacklist/ ; 裁决输入=§17.4 历史差分+影子台账"
-            f"+「QCOM 禁令是否仍成立」复核。",
-            sync=True)
-        _ts = _now_et().isoformat()
-        if _ok:
-            state[symbol] = _ts
-        else:
-            state[symbol] = {"notified": False, "attempts": _attempts + 1, "last_attempt": _ts}
-            print(f"[ext_entry] blacklist first-hit 推送失败 (第{_attempts + 1}/"
-                  f"{_FIRST_HIT_PUSH_MAX_ATTEMPTS}次), 保留待处理后续重试: {symbol}")
-        state_path.write_text(json.dumps(state, ensure_ascii=False))
+            _attempts = 0
+            if isinstance(entry, dict):
+                if entry.get("notified"):
+                    return
+                _attempts = int(entry.get("attempts") or 0)
+                if _attempts >= _FIRST_HIT_PUSH_MAX_ATTEMPTS:
+                    return
+            from app.push.hub import push_text_safe
+            _mode_txt = "blocked(守卫ON)" if blocked else "shadow(守卫OFF)"
+            _ok = push_text_safe(
+                f"[EXT黑名单·待裁] 首个自然命中 {symbol} ({session}, {_mode_txt})。"
+                f"EXT_BLACKLIST_GUARD 激活须用户单独裁决 (RFC-218 §17/§19, 预注册臂供给面变量); "
+                f"本提醒≠启用。台账 data/shadow/ext_blacklist/ ; 裁决输入=§17.4 历史差分+影子台账"
+                f"+「QCOM 禁令是否仍成立」复核。",
+                sync=True)
+            _ts = _now_et().isoformat()
+            if _ok:
+                state[symbol] = _ts
+            else:
+                state[symbol] = {"notified": False, "attempts": _attempts + 1, "last_attempt": _ts}
+                print(f"[ext_entry] blacklist first-hit 推送失败 (第{_attempts + 1}/"
+                      f"{_FIRST_HIT_PUSH_MAX_ATTEMPTS}次), 保留待处理后续重试: {symbol}")
+            _atomic_write_json(state_path, state)
     except Exception as exc:
         print(f"[ext_entry] blacklist first-hit 提醒失败 (不影响交易): "
               f"{type(exc).__name__}: {exc}")
@@ -972,38 +1015,38 @@ def _record_afterhours_halfday_divergence(session):
         day = now_et.strftime("%Y-%m-%d")
         path = EXT_AFTERHOURS_HALF_DAY_DIR / (day + ".json")
         EXT_AFTERHOURS_HALF_DAY_DIR.mkdir(parents=True, exist_ok=True)
-        try:
-            doc = json.loads(path.read_text())
-        except (OSError, ValueError):
-            doc = {}
-        if not isinstance(doc, dict):
-            doc = {}
-        _mode = "blocked" if _ext_afterhours_halfday_guard_enabled() else "shadow"
-        _ts = now_et.isoformat()
-        doc["et_date"] = day
-        doc["session"] = "afterhours"
-        doc["static_end_hhmm"] = static_end
-        doc["half_day_end_hhmm"] = capped_end
-        doc["mode"] = _mode
-        doc["ticks"] = int(doc.get("ticks") or 0) + 1
-        doc["last_ts"] = _ts
-        if not doc.get("first_ts"):
-            doc["first_ts"] = _ts
-        modes = doc.get("modes")
-        if not isinstance(modes, dict):
-            modes = {}
-            doc["modes"] = modes
-        mrec = modes.get(_mode)
-        if not isinstance(mrec, dict):
-            mrec = {"ticks": 0, "first_ts": _ts, "last_ts": _ts}
-            modes[_mode] = mrec
-        mrec["ticks"] = int(mrec.get("ticks") or 0) + 1
-        mrec["last_ts"] = _ts
-        if not mrec.get("first_ts"):
-            mrec["first_ts"] = _ts
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=1))
-        os.replace(str(tmp), str(path))
+        # RFC-218 §23: 读-改-写锁内串行 + 唯一 tmp 原子落盘 (§22.9 #4); 通知在锁外。
+        with _observation_lock(EXT_AFTERHOURS_HALF_DAY_DIR.parent / "ext_afterhours_halfday.lock"):
+            try:
+                doc = json.loads(path.read_text())
+            except (OSError, ValueError):
+                doc = {}
+            if not isinstance(doc, dict):
+                doc = {}
+            _mode = "blocked" if _ext_afterhours_halfday_guard_enabled() else "shadow"
+            _ts = now_et.isoformat()
+            doc["et_date"] = day
+            doc["session"] = "afterhours"
+            doc["static_end_hhmm"] = static_end
+            doc["half_day_end_hhmm"] = capped_end
+            doc["mode"] = _mode
+            doc["ticks"] = int(doc.get("ticks") or 0) + 1
+            doc["last_ts"] = _ts
+            if not doc.get("first_ts"):
+                doc["first_ts"] = _ts
+            modes = doc.get("modes")
+            if not isinstance(modes, dict):
+                modes = {}
+                doc["modes"] = modes
+            mrec = modes.get(_mode)
+            if not isinstance(mrec, dict):
+                mrec = {"ticks": 0, "first_ts": _ts, "last_ts": _ts}
+                modes[_mode] = mrec
+            mrec["ticks"] = int(mrec.get("ticks") or 0) + 1
+            mrec["last_ts"] = _ts
+            if not mrec.get("first_ts"):
+                mrec["first_ts"] = _ts
+            _atomic_write_json(path, doc)
         # RFC-218 §21: 首个自然分歧日 → 待裁提醒 (提醒≠启用)。仅真实生产路径;
         #   按 ET 日去重 (state 文件); 异常绝不影响下单路径。
         # RFC-218 §22 (P1-B): 每个分歧 tick 都调用 (不再只限 ticks==1) — helper 内按日去重+
@@ -1029,39 +1072,51 @@ def _notify_ext_afterhours_halfday_first_hit(day, blocked):
         return
     try:
         state_path = EXT_AFTERHOURS_HALF_DAY_DIR.parent / "ext_afterhours_halfday_first_hit_notified.json"
-        try:
-            state = json.loads(state_path.read_text())
-        except (OSError, ValueError):
-            state = {}
-        if not isinstance(state, dict):
-            return
-        entry = state.get(day)
-        if isinstance(entry, str):      # 旧格式 = 已成功通知
-            return
-        _attempts = 0
-        if isinstance(entry, dict):
-            if entry.get("notified"):
+        # RFC-218 §23: state 读-改-写 (含 sync push) 锁内串行 — 防重叠调用双推/丢 attempts。
+        with _observation_lock(state_path.with_suffix(".lock")):
+            try:
+                state = json.loads(state_path.read_text())
+            except (OSError, ValueError):
+                state = {}
+            if not isinstance(state, dict):
                 return
-            _attempts = int(entry.get("attempts") or 0)
-            if _attempts >= _FIRST_HIT_PUSH_MAX_ATTEMPTS:
+            entry = state.get(day)
+            if isinstance(entry, str):      # 旧格式 = 已成功通知
                 return
-        from app.push.hub import push_text_safe
-        _mode_txt = "blocked(守卫ON)" if blocked else "shadow(守卫OFF)"
-        _ok = push_text_safe(
-            f"[EXT盘后半日市·待裁] 首个自然分歧日 {day} ({_mode_txt})。"
-            f"今日 NYSE 提前收盘, 静态盘后窗 17:00-19:59 ET 对已收市市场放行; "
-            f"EXT_AFTERHOURS_HALF_DAY_GUARD 激活须用户单独裁决 (RFC-218 §20/§21, "
-            f"预注册臂供给面变量); 本提醒≠启用。台账 data/shadow/ext_afterhours_halfday/ ; "
-            f"裁决输入=§20.3 全分钟扫描+影子台账+时段语义复核。",
-            sync=True)
-        _ts = _now_et().isoformat()
-        if _ok:
-            state[day] = _ts
-        else:
-            state[day] = {"notified": False, "attempts": _attempts + 1, "last_attempt": _ts}
-            print(f"[ext_entry] afterhours half-day first-hit 推送失败 (第{_attempts + 1}/"
-                  f"{_FIRST_HIT_PUSH_MAX_ATTEMPTS}次), 保留待处理后续重试: {day}")
-        state_path.write_text(json.dumps(state, ensure_ascii=False))
+            _attempts = 0
+            if isinstance(entry, dict):
+                if entry.get("notified"):
+                    return
+                _attempts = int(entry.get("attempts") or 0)
+                if _attempts >= _FIRST_HIT_PUSH_MAX_ATTEMPTS:
+                    return
+            from app.push.hub import push_text_safe
+            _mode_txt = "blocked(守卫ON)" if blocked else "shadow(守卫OFF)"
+            # RFC-218 §23: 文案按 mode 分流 — 守卫已激活时不得再发「激活须裁决/提醒≠启用」
+            # (激活后该措辞失真); shadow 模式保留原待裁文案逐字不变。
+            if blocked:
+                _text = (
+                    f"[EXT盘后半日市·守卫ON] 首个自然分歧日 {day} ({_mode_txt})。"
+                    f"今日 NYSE 提前收盘, 静态盘后窗 17:00-19:59 ET 已按日历 cap 至 16:59 ET "
+                    f"(RFC-218 §23 激活, 只缩不扩); 本提醒=审计留痕。"
+                    f"台账 data/shadow/ext_afterhours_halfday/ ; "
+                    f"回滚=.env.us EXT_AFTERHOURS_HALF_DAY_GUARD=0 (下一 tick 即生效)。")
+            else:
+                _text = (
+                    f"[EXT盘后半日市·待裁] 首个自然分歧日 {day} ({_mode_txt})。"
+                    f"今日 NYSE 提前收盘, 静态盘后窗 17:00-19:59 ET 对已收市市场放行; "
+                    f"EXT_AFTERHOURS_HALF_DAY_GUARD 激活须用户单独裁决 (RFC-218 §20/§21, "
+                    f"预注册臂供给面变量); 本提醒≠启用。台账 data/shadow/ext_afterhours_halfday/ ; "
+                    f"裁决输入=§20.3 全分钟扫描+影子台账+时段语义复核。")
+            _ok = push_text_safe(_text, sync=True)
+            _ts = _now_et().isoformat()
+            if _ok:
+                state[day] = _ts
+            else:
+                state[day] = {"notified": False, "attempts": _attempts + 1, "last_attempt": _ts}
+                print(f"[ext_entry] afterhours half-day first-hit 推送失败 (第{_attempts + 1}/"
+                      f"{_FIRST_HIT_PUSH_MAX_ATTEMPTS}次), 保留待处理后续重试: {day}")
+            _atomic_write_json(state_path, state)
     except Exception as exc:
         print(f"[ext_entry] afterhours half-day first-hit 提醒失败 (不影响交易): "
               f"{type(exc).__name__}: {exc}")

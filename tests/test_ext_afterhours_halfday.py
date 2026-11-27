@@ -415,6 +415,20 @@ def test_first_hit_guard_on_text_blocked(canon_ledger, push_spy, monkeypatch):
     assert _read_ledger(canon_ledger)["mode"] == "blocked"
 
 
+def test_first_hit_guard_on_text_no_stale_adjudication(canon_ledger, push_spy, monkeypatch):
+    # §23: 守卫 ON 后文案不得再含「激活须裁决/提醒≠启用」(激活后失真), 须含 cap+审计+回滚锚点。
+    monkeypatch.setenv("EXT_AFTERHOURS_HALF_DAY_GUARD", "1")
+    mod._record_afterhours_halfday_divergence("afterhours")
+    text = push_spy[0][0]
+    assert "单独裁决" not in text and "本提醒≠启用" not in text
+    assert "cap" in text and "审计" in text and "EXT_AFTERHOURS_HALF_DAY_GUARD=0" in text
+    # shadow 模式文案逐字保留待裁语义 (对照)。
+    monkeypatch.setenv("EXT_AFTERHOURS_HALF_DAY_GUARD", "0")
+    monkeypatch.setattr(mod, "_now_et", _at(datetime(2026, 12, 24, 17, 0, tzinfo=ET)))
+    mod._record_afterhours_halfday_divergence("afterhours")
+    assert "待裁" in push_spy[1][0] and "本提醒≠启用" in push_spy[1][0]
+
+
 def test_first_hit_push_failure_never_propagates(canon_ledger, monkeypatch):
     import app.push.hub as hub
 
