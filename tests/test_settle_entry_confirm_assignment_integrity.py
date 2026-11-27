@@ -11,7 +11,9 @@
   4. 无成交 + 终态冲突 ⇒ unresolved + 哨兵 (不补 0, 不入 resolved 分母);
   5. 同键多 decision_id / 多成交命中 ⇒ identity 冲突哨兵 + unresolved (防御);
   6. assignment_integrity 块逐臂披露, total = 分臂和;
-  7. main 的 tail_joined 取全部 tail_rows 的 decision_id (含 ABANDONED 行)。
+  7. main 的 tail_joined 取全部 tail_rows 的 decision_id (含 ABANDONED 行);
+  8. §15: open trade 存在但未平 ⇒ unresolved（不得先记弃单净 0）；
+  9. §15: still_triggers 非 bool（None/缺键/字符串/0/1）⇒ invalid + unresolved。
 本文件只修计量实现的契约, 不改 RFC-158 判据阈值文本。
 """
 import json
@@ -252,6 +254,8 @@ def test_main_tail_joined_includes_abandoned_decision_ids(tmp_path, monkeypatch)
         return {d: joined[d] for d in ids if d in joined}
 
     monkeypatch.setattr(st, "load_trade_by_decision", _spy)
+    monkeypatch.setattr(st, "load_trade_existence_by_decision",
+                        lambda ids: set(joined).intersection(map(str, ids)))
     assert st.main() == 0
     # rfc153_progress 另有一次调用 (本 fixture 无 FADE_SHORT ⇒ 空列表);
     # 钉死: 含 confirmed did 的那次 tail 调用必须同时含 abandoned did。
@@ -292,3 +296,110 @@ def test_assigned_n_counts_unique_keys_not_rows():
     assert report["arms"]["holdout"]["assigned_n"] == 1
     assert report["arms"]["treatment"]["abandoned_n"] == 2
     assert _integrity(report, "treatment")["duplicate_extra_rows_n"] == 2
+
+
+# ── ⑰ 全 ABANDONED + open trade ⇒ unresolved，不得先记实际净 0 ─────────────────
+def test_all_abandoned_with_open_trade_is_unresolved():
+    rows = [_row(9001, "treatment", False, "d-open"),
+            _row(9001, "treatment", False, "d-open")]
+    report = st.tail_objective(rows, {}, {"d-open"})
+    arm = report["arms"]["treatment"]
+    assert arm["assigned_n"] == 1
+    assert arm["resolved_n"] == 0
+    assert arm["unresolved_n"] == 1
+    assert arm["abandoned_n"] == 0
+    assert arm["net_sum"] == 0.0
+    ig = _integrity(report, "treatment")
+    assert ig["open_trade_unresolved_n"] == 1
+    assert ig["terminal_state_invalid_n"] == 0
+
+
+# ── ⑱ 终态冲突 + open trade ⇒ unresolved，同时保留两类哨兵 ─────────────────────
+def test_terminal_conflict_with_open_trade_is_unresolved():
+    rows = [_row(9002, "treatment", True, "d-open"),
+            _row(9002, "treatment", False, "d-open")]
+    report = st.tail_objective(rows, {}, {"d-open"})
+    arm = report["arms"]["treatment"]
+    assert arm["resolved_n"] == 0
+    assert arm["unresolved_n"] == 1
+    ig = _integrity(report, "treatment")
+    assert ig["open_trade_unresolved_n"] == 1
+    assert ig["terminal_conflict_n"] == 1
+    assert ig["terminal_conflict_unresolved_n"] == 1
+
+
+# ── ⑲ holdout + open trade 同样 unresolved ────────────────────────────────────
+def test_holdout_with_open_trade_is_unresolved():
+    report = st.tail_objective(
+        [_row(9003, "holdout", True, "h-open")], {}, {"h-open"})
+    arm = report["arms"]["holdout"]
+    assert arm["resolved_n"] == 0
+    assert arm["unresolved_n"] == 1
+    assert arm["abandoned_n"] == 0
+    assert _integrity(report, "holdout")["open_trade_unresolved_n"] == 1
+
+
+# ── ⑳ closed trade 与 existence 同时存在时，已平净额仍优先 ─────────────────────
+def test_closed_trade_takes_priority_over_open_existence_marker():
+    joined = {"d-1": {"net": -25.0, "exit_reason": "SL_INITIAL"}}
+    report = st.tail_objective(
+        [_row(9004, "treatment", False, "d-1")], joined, {"d-1"})
+    arm = report["arms"]["treatment"]
+    assert arm["resolved_n"] == 1
+    assert arm["closed_trade_n"] == 1
+    assert arm["net_sum"] == -25.0
+    assert _integrity(report, "treatment")["open_trade_unresolved_n"] == 0
+
+
+# ── ㉑ 非 bool still_triggers 一律 invalid + unresolved，不归零 ─────────────────
+@pytest.mark.parametrize("bad", [None, "false", "true", 0, 1, []])
+def test_non_bool_terminal_state_is_invalid_unresolved(bad):
+    report = st.tail_objective([_row(9005, "treatment", bad, "d-bad")], {})
+    arm = report["arms"]["treatment"]
+    assert arm["resolved_n"] == 0
+    assert arm["unresolved_n"] == 1
+    assert arm["abandoned_n"] == 0
+    assert arm["net_sum"] == 0.0
+    assert _integrity(report, "treatment")["terminal_state_invalid_n"] == 1
+
+
+def test_missing_terminal_state_is_invalid_unresolved():
+    row = _row(9006, "treatment", False, "d-missing")
+    del row["still_triggers"]
+    report = st.tail_objective([row], {})
+    assert report["arms"]["treatment"]["resolved_n"] == 0
+    assert report["arms"]["treatment"]["abandoned_n"] == 0
+    assert _integrity(report, "treatment")["terminal_state_invalid_n"] == 1
+
+
+# ── ㉒ main 同时接 closed PnL 与 open existence，且 open 不进 resolved ──────────
+def test_main_tail_uses_open_trade_existence(tmp_path, monkeypatch):
+    rows = [_row(9007, "treatment", False, "open-1")]
+    for row in rows:
+        row.update({"schema": st.SCHEMA_V2, "type": "entry_confirm", "symbol": "US.TAIL",
+                    "direction": "LONG", "opp_cost_pct": 0.1})
+    fwd = tmp_path / "forward.jsonl"
+    fwd.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    out = tmp_path / "latest.json"
+    monkeypatch.setattr(st, "FWD", fwd)
+    monkeypatch.setattr(st, "OUT", out)
+    monkeypatch.setattr(st, "load_sim_pnl", lambda _: [])
+    monkeypatch.setattr(st, "load_fills", lambda _: {})
+    monkeypatch.setattr(st, "load_trade_by_decision", lambda ids: {})
+    existence_calls = []
+
+    def _existence(ids):
+        existence_calls.append(list(ids))
+        return {"open-1"}
+
+    monkeypatch.setattr(st, "load_trade_existence_by_decision", _existence)
+    assert st.main() == 0
+    assert existence_calls == [["open-1"]]
+    tail = json.loads(out.read_text(encoding="utf-8"))["current_cohort"]["tail_objective"]
+    arm = tail["arms"]["treatment"]
+    assert arm["assigned_n"] == 1
+    assert arm["resolved_n"] == 0
+    assert arm["unresolved_n"] == 1
+    assert arm["abandoned_n"] == 0
+    assert tail["assignment_integrity"]["treatment"]["open_trade_unresolved_n"] == 1
+    assert "open trade" in tail["resolution_contract"]

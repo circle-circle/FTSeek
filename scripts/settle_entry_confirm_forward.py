@@ -395,6 +395,32 @@ def load_trade_by_decision(decision_ids):
     return out
 
 
+def load_trade_existence_by_decision(decision_ids):
+    """返回存在任意 PLAYBOOK_SIM 成交记录的 decision_id 集合（含未平仓；只读）。
+
+    与 load_trade_by_decision 分工：后者只提供已平仓净额，供 RFC-153/resolved PnL；
+    本函数只回答「实际成交是否存在」。tail 必须同时用两者——全 ABANDONED 但存在
+    open trade 时是 unresolved，不得在平仓前先记实际净额 0，平仓后又改写历史。
+    SELECT DISTINCT 同时使同一 decision_id 多成交行只产生一个存在性标记。
+    """
+    ids = sorted({str(d) for d in decision_ids if d})
+    if not ids:
+        return set()
+    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+    out = set()
+    try:
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            q = ",".join("?" for _ in chunk)
+            for r in con.execute(
+                    f"SELECT DISTINCT decision_id FROM trade_records WHERE decision_id IN ({q}) "
+                    "AND source_type='PLAYBOOK_SIM'", chunk):
+                out.add(str(r[0]))
+    finally:
+        con.close()
+    return out
+
+
 def _tail_arm_stats(assigned, resolved, unresolved_n):
     nets = [float(r["net"]) for r in resolved]
     sl = [r for r in resolved if (r.get("exit_reason") or "") == "SL_INITIAL"]
@@ -454,25 +480,31 @@ def _assignment_key(row):
     return ("row", id(row), arm)
 
 
-def _resolve_assignment(group, arm, joined):
-    """把一个 assignment 的终态行组解析为单一结局 (或 unresolved) + 完整性旗标。
+def _resolve_assignment(group, arm, joined, actual_trade_ids):
+    """把一个 assignment 的终态行组解析为单一结局（或 unresolved）+ 完整性旗标。
 
-    优先级 (DEB-20261128 §14.6):
-      1. 实际成交 ground truth: 任一 decision_id 在 joined 有已平 PLAYBOOK_SIM ⇒ closed_trade
-         (即使终态行含 ABANDONED — 竞态弃单但实际已成交, 以真实成交为准);
-      2. 无成交 + 全 ABANDONED (treatment) ⇒ abandoned 净 0;
-      3. 无成交 + 全 CONFIRMED/holdout ⇒ unresolved (不补 0);
-      4. 无成交 + 终态冲突 ⇒ unresolved + 冲突哨兵 (未核清不得入 resolved 分母);
-      5. 同键多 decision_id / 多成交命中 ⇒ identity 冲突哨兵 + unresolved (防御, 实测 0)。
+    优先级（DEB-20261128 §14.6/§15）：
+      1. 实际已平成交 ground truth ⇒ closed_trade（即使终态行含 ABANDONED）；
+      2. 仅有未平仓实际成交 ⇒ unresolved（不得先记弃单净 0）；
+      3. still_triggers 非 bool ⇒ unresolved + invalid 哨兵（未知不归零）；
+      4. 无成交 + 全 ABANDONED（treatment）⇒ abandoned 净 0；
+      5. 无成交 + 全 CONFIRMED/holdout / 终态冲突 ⇒ unresolved；
+      6. 同键多 decision_id / 多成交命中 ⇒ identity 冲突哨兵 + unresolved。
     """
     flags = {"duplicate": len(group) > 1,
              "extra_rows": max(0, len(group) - 1),
              "terminal_conflict": False,
              "conflict_resolved_by_trade": False,
              "conflict_unresolved": False,
-             "identity_conflict": False}
+             "identity_conflict": False,
+             "open_trade_unresolved": False,
+             "terminal_state_invalid": False}
     dids = sorted({str(r.get("decision_id") or "") for r in group} - {""})
-    states = {bool(r.get("still_triggers")) for r in group}
+    # type(...) is bool 而非 bool(...)：None→False、字符串"false"→True 都会伪造终态。
+    flags["terminal_state_invalid"] = any(
+        type(r.get("still_triggers")) is not bool for r in group)
+    states = {r.get("still_triggers") for r in group
+              if type(r.get("still_triggers")) is bool}
     conflict = len(states) > 1
     flags["terminal_conflict"] = conflict
     date = min((str(r.get("date") or "") for r in group if r.get("date")), default="")
@@ -486,6 +518,14 @@ def _resolve_assignment(group, arm, joined):
         return ({"date": date, "net": float(trade["net"]),
                  "exit_reason": trade.get("exit_reason"),
                  "resolved_from": "closed_trade"}, flags)
+    if any(d in actual_trade_ids for d in dids):
+        # 成交存在但只有 open/无效结局：等待平仓，不得把实际敞口伪装成弃单净 0。
+        flags["open_trade_unresolved"] = True
+        flags["conflict_unresolved"] = conflict
+        return None, flags
+    if flags["terminal_state_invalid"]:
+        flags["conflict_unresolved"] = conflict
+        return None, flags
     if arm == "treatment" and states == {False}:
         return ({"date": date, "net": 0.0, "exit_reason": None,
                  "resolved_from": "abandoned"}, flags)
@@ -493,15 +533,20 @@ def _resolve_assignment(group, arm, joined):
     return None, flags
 
 
-def tail_objective(rows, joined):
-    """Compare resolved assignments — 按 (inst_id,arm) 折叠唯一 assignment, 每 assignment
-    resolve 一次; 实际成交 ground truth 优先; 终态冲突未核清不入 resolved 分母。
+def tail_objective(rows, joined, actual_trade_ids=None):
+    """Compare resolved assignments — 按 (inst_id,arm) 折叠唯一 assignment。
+
+    actual_trade_ids = 任意实际 PLAYBOOK_SIM 成交（含 open）的 decision_id 集合；
+    None 时回退 joined 键集，保持旧直接调用语义。closed PnL 优先，open trade/非法
+    still_triggers 均 unresolved；终态冲突未核清不入 resolved 分母。
 
     RFC-158 §10.2 预注册口径 = resolved assignment, 非 jsonl 行数。gate 跨线程
     stale-snapshot 孤儿重建竞态 (DEB-20261128 §14.5) 会写重复/冲突终态行 ⇒ 逐行计会
     重复计 assignment 并把冲突弃单错记净 0。本函数对重复/冲突鲁棒, 并以
     assignment_integrity 哨兵披露 (修计量实现, 不改 RFC-158 判据阈值)。
     """
+    if actual_trade_ids is None:
+        actual_trade_ids = set(joined)
     arms = {}
     integrity = {}
     resolved_by_arm_day = {"treatment": defaultdict(list), "holdout": defaultdict(list)}
@@ -515,15 +560,18 @@ def tail_objective(rows, joined):
         unresolved_n = 0
         counters = {"duplicate_assignment_n": 0, "duplicate_extra_rows_n": 0,
                     "terminal_conflict_n": 0, "terminal_conflict_resolved_by_trade_n": 0,
-                    "terminal_conflict_unresolved_n": 0, "identity_conflict_n": 0}
+                    "terminal_conflict_unresolved_n": 0, "identity_conflict_n": 0,
+                    "open_trade_unresolved_n": 0, "terminal_state_invalid_n": 0}
         for group in assigned:
-            item, flags = _resolve_assignment(group, arm, joined)
+            item, flags = _resolve_assignment(group, arm, joined, actual_trade_ids)
             counters["duplicate_assignment_n"] += int(flags["duplicate"])
             counters["duplicate_extra_rows_n"] += flags["extra_rows"]
             counters["terminal_conflict_n"] += int(flags["terminal_conflict"])
             counters["terminal_conflict_resolved_by_trade_n"] += int(flags["conflict_resolved_by_trade"])
             counters["terminal_conflict_unresolved_n"] += int(flags["conflict_unresolved"])
             counters["identity_conflict_n"] += int(flags["identity_conflict"])
+            counters["open_trade_unresolved_n"] += int(flags["open_trade_unresolved"])
+            counters["terminal_state_invalid_n"] += int(flags["terminal_state_invalid"])
             if item is None:
                 unresolved_n += 1
                 continue
@@ -629,15 +677,16 @@ def tail_objective(rows, joined):
             "total": {k: integrity["treatment"][k] + integrity["holdout"][k]
                       for k in integrity["treatment"]},
             "rule": ("assignment=(inst_id,arm) fallback decision_id; closed-trade ground truth "
-                     "priority; terminal conflict without trade => unresolved (never zero); "
-                     "DEB-20261128 §14.6"),
+                     "priority; open trade or non-bool terminal state => unresolved; terminal "
+                     "conflict without closed trade => unresolved + sentinel; DEB-20261128 §15"),
         },
         "resolution_contract": (
             "resolved assignment (not jsonl rows): dedup by (inst_id,arm); closed PLAYBOOK_SIM "
-            "trade by decision_id takes ground-truth priority; treatment all-abandoned with no "
-            "trade = 0 realized PnL; confirmed/holdout without closed trade = unresolved; "
-            "terminal-state conflict without trade = unresolved + sentinel (never zero, never "
-            "in resolved denominator); unresolved rows never converted to zero"),
+            "trade by decision_id takes ground-truth priority; any open trade or non-bool "
+            "still_triggers = unresolved; treatment all-abandoned with no actual trade = 0 "
+            "realized PnL; confirmed/holdout without closed trade = unresolved; terminal-state "
+            "conflict without closed trade = unresolved + sentinel (never zero, never in "
+            "resolved denominator); unresolved rows never converted to zero"),
         "diagnostics_only": ["win_rate", "M1_avoidance", "M2_opp_cost", "M3_direction_gap",
                              "M4_short_window_value", "E2_small_winner_floor"],
     }
@@ -929,7 +978,11 @@ def main():
     # 全 ABANDONED 但 gate 竞态有成交的 assignment 也能按实际成交 ground truth 对账。
     # 取数超集不改既有 confirmed 行的 joined 条目 (当前数据无全弃单有成交例)。
     tail_joined = load_trade_by_decision([r.get("decision_id") for r in tail_rows])
-    tail = tail_objective(tail_rows, tail_joined)
+    # §15：另取任意实际成交存在性（含 open）。已平仓净额与 open 存在性分工，
+    # 防止「全 ABANDONED + open trade」在平仓前被错记净 0；不改 RFC-153 loader。
+    tail_actual_trade_ids = load_trade_existence_by_decision(
+        [r.get("decision_id") for r in tail_rows])
+    tail = tail_objective(tail_rows, tail_joined, tail_actual_trade_ids)
 
     _m1 = a_t.get("avoidance_rate") is not None and a_t["avoidance_rate"] >= MIN_AVOID
     _m2 = (a_t.get("opp_cost_mean_pct") is not None
