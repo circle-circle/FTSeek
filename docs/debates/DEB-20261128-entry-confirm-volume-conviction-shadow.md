@@ -534,7 +534,7 @@ updated: 2026-11-28
   四红为既有/无关工作树病灶：except:pass 899→1817、pipeline.py 3700→3793、其他 app 文件 W6
   日志栈基线外增长、Hermes 幽灵 job `68cc76b16ebd`；本批未改这些文件，不顺带修、不调基线。
 - 未跑全量 pytest/CI，不声称全绿；未做收益回测，计量硬化不代表策略收益改善。
-- 当前为未提交工作树；回滚=还原本批 script/test/文档变更，无运行时服务回滚。下一自然 cron
+- 结算器硬化代码提交=`6b9208355`；回滚=还原该提交，无运行时服务回滚。下一自然 cron
   06:37 CST 需核新哨兵与临时端到端读数一致。gate live 竞态及 Step 1A 仍各待独立裁决。
 
 **最后更新：2026-11-28。**
@@ -580,6 +580,7 @@ updated: 2026-11-28
   `duplicate_assignment_n` 不再因该根因增长。
 - 回滚=还原 `app/playbook/entry_confirm_gate.py` + `systemctl restart ftseek-us` + 启动冒烟；
   结算器硬化可独立保留。无 config/registry/cron 改动。
-- 当前仍未 commit；Step 1A/1B/2A/2B 与任何新量能开关仍须用户另裁。
+- gate+文档提交=`d10df98da`；推送分支=`fix/20261128-entry-confirm-integrity-race`。
+  Step 1A/1B/2A/2B 与任何新量能开关仍须用户另裁。
 
 **最后更新：2026-11-28。**
