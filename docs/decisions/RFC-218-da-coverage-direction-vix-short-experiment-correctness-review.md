@@ -1001,6 +1001,8 @@ RFC-217 归档：10 条带标记指令、3 笔成交、仅 1 笔已平 CAT `+$9.
 
 **激活裁定**：`.env.us` 置 `PLAYBOOK_BLACKLIST_FINAL_GUARD=1`（与 §16 同纪律：依据=**禁止语义/风控一致性**，非收益）。激活前影子探针（`/tmp/rfc218_s19_final_guard_shadow.log`）：今日真实指令集差分 ∅（今日 0 条指令，半日市）；合成注入 OFF 泄漏被禁 3/3、ON 拦截 3/3、ON 误伤非禁 0/2 ⇒ 激活对当前生产候选零误伤。历史 2 条 QCOM PENDING（id 264/457，6/7 月）被日期过滤今日不可执行，执行侧兜底对其仍有效。
 
+**部署凭据**：提交 `84a66bc1d457836529aa72b0e30b3a5622b6cdbe` 已推送 origin/main（`18724eda5..84a66bc1d`）；`systemctl restart ftseek-us` → 新 PID **171822**（16:42:50 CST），`/proc/171822/environ` 实含 `PLAYBOOK_BLACKLIST_FINAL_GUARD=1`（且 `DA_CAPITAL_CODE_FIX` 不存在、`EXT_BLACKLIST_GUARD=0`）；启动冒烟 **7/7 exit0**（`/tmp/rfc218_s19_startup_smoke.log`）。重启前/后快照（`/tmp/rfc218_s19_pre_restart.json`/`_post_restart.json`）：SIM SHORT BA 23/BABA 47/GS 5、LIVE 0、outbox 22 全 BOOKED 逐字不变；重启后日志 0 Traceback/CRITICAL。
+
 **刻意不做（§18.3 低优先级排队不变）**：topup 异常清空整池（当前 disabled）、self-managed 边界、符号别名/大小写归一、合并日志 blocked count、positions 真实缝测试 —— 同域低优先级另批收口，不与本批捆绑。
 
 ### 19.2 P1 · 资金 provider→消费者完整有效性合同（§18.2 两个激活阻塞项闭合 · 保持 OFF）
