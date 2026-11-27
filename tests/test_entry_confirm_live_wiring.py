@@ -75,9 +75,11 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(ecg, "_FORWARD_PATH", tmp_path / "entry_confirm_forward.jsonl")
     ecg._PENDING.clear()
     ecg._POST_WATCH.clear()
+    ecg._TERMINAL.clear()
     yield db, tmp_path
     ecg._PENDING.clear()
     ecg._POST_WATCH.clear()
+    ecg._TERMINAL.clear()
     conn.close()
 
 
@@ -337,6 +339,7 @@ def test_orphan_self_heals_after_restart_with_trace(env):
     r = [x for x in db.get_instructions_by_date(_DATE) if x["symbol"] == "US.ORPH"][0]
     assert ecg.gate_at_execute(dict(r), db, {"entry_price": 50.0}, _T0, _cfg_t()) == "defer"
     ecg._PENDING.clear()                      # 模拟进程重启
+    ecg._TERMINAL.clear()                     # tombstone 同属进程内存，重启一并消失
     r2 = [x for x in db.get_instructions_by_date(_DATE) if x["symbol"] == "US.ORPH"][0]
     assert json.loads(r2["metadata_json"])["entry_confirm"]["status"] == ecg.ST_PENDING
     assert ecg.defer_pending(dict(r2), _T0) is False, (
@@ -351,6 +354,31 @@ def test_orphan_self_heals_after_restart_with_trace(env):
         f"重建窗口未走完判定: {confirmed}"
     assert ecg.gate_at_execute(dict(r3), db, {"entry_price": 50.0}, _T0 + timedelta(seconds=121),
                                _cfg_t()) == "execute"
+
+
+def test_stale_pending_after_terminal_does_not_rebuild_with_real_db(env):
+    """真 DB 接线：sweep CONFIRMED 后，旧 PENDING 快照不得再造第二确认窗。
+
+    清 tombstone 模拟进程内存丢失，强制走 fresh DB read；forward 仍只能有一条终态行。
+    """
+    db, tmp = env
+    _save(db, "US.STALE", "BUY", 50.0)
+    r = [x for x in db.get_instructions_by_date(_DATE) if x["symbol"] == "US.STALE"][0]
+    cfg = _cfg_t()
+    assert ecg.gate_at_execute(dict(r), db, {"entry_price": 50.0}, _T0, cfg) == "defer"
+    stale = [x for x in db.get_instructions_by_date(_DATE)
+             if x["symbol"] == "US.STALE"][0]
+    ecg.sweep_entry_confirmations(
+        _Sched({"US.STALE": 50.5}), db, _T0 + timedelta(seconds=121))
+    ecg._TERMINAL.clear()                     # 强制覆盖 fresh-read 防线
+    before = (tmp / "entry_confirm_forward.jsonl").read_text(encoding="utf-8").splitlines()
+    assert ecg.gate_at_execute(dict(stale), db, {"entry_price": 50.0},
+                               _T0 + timedelta(seconds=122), cfg) == "execute"
+    assert not ecg._PENDING
+    after = (tmp / "entry_confirm_forward.jsonl").read_text(encoding="utf-8").splitlines()
+    assert after == before
+    fresh = [x for x in db.get_instructions_by_date(_DATE) if x["symbol"] == "US.STALE"][0]
+    assert json.loads(fresh["metadata_json"])["entry_confirm"]["status"] == ecg.ST_CONFIRMED
 
 
 def test_holdout_arm_split_is_deterministic_and_zero_in_production():

@@ -130,6 +130,12 @@ _STATE_KEY = "entry_confirm"     # metadata_json 下的旗标键
 # 内存 pending 表: inst_id -> arm 快照。有界 (TTL 清理 + 上限防泄漏)。
 _PENDING: Dict[int, Dict[str, Any]] = {}
 _PENDING_MAX = 200
+# 终态 tombstone：防止 auto_execute 持有 sweep 判定前的 PENDING 快照，在 _PENDING.pop
+# 与终态写库之间把同一 inst 误诊为重启孤儿并重建。进程重启后本表自然清空，改由 fresh
+# DB read 识别终态；真正 PENDING 孤儿不受阻。TTL+上限防长期驻留。
+_TERMINAL: Dict[int, Tuple[str, datetime]] = {}
+_TERMINAL_TTL_SEC = 3600
+_TERMINAL_MAX = 1000
 # v2 弃单后观测表 (纯观测, 不进 _agg): inst_id -> {symbol/direction/anchor/mid_arm/
 # abandoned_at/m5/m10}。重启丢失可接受 (观测非交易路径), 有界同上。
 _POST_WATCH: Dict[int, Dict[str, Any]] = {}
@@ -420,6 +426,47 @@ def _write_forward_row(row: Dict[str, Any]) -> None:
                        exc_info=True)
 
 
+def _remember_terminal(inst_id: int, status: str, now_et: datetime) -> None:
+    """记录终态世代，阻断 stale PENDING 快照的孤儿重建；只作并发防护。"""
+    _TERMINAL[inst_id] = (status, now_et)
+    if len(_TERMINAL) > _TERMINAL_MAX:
+        oldest = min(_TERMINAL, key=lambda k: _TERMINAL[k][1])
+        _TERMINAL.pop(oldest, None)
+
+
+def _terminal_action(inst_id: int, now_et: datetime) -> Optional[str]:
+    """终态已见 ⇒ confirmed 类放行 / abandoned 类继续拦；过期 tombstone 交给 fresh read。"""
+    hit = _TERMINAL.get(inst_id)
+    if hit is None:
+        return None
+    status, terminal_at = hit
+    if (now_et - terminal_at).total_seconds() > _TERMINAL_TTL_SEC:
+        _TERMINAL.pop(inst_id, None)
+        return None
+    return "defer" if status in (ST_ABANDONED, ST_EXPIRED) else "execute"
+
+
+def _fresh_terminal_action(db, inst_id: int, now_et: datetime) -> Optional[str]:
+    """孤儿重建前 fresh DB read：区分真重启 PENDING 与跨线程 stale snapshot。
+
+    仅明确的已知非 PENDING entry_confirm 状态参与拦截；读取失败/无记录/PENDING/未知态
+    都返回 None，保留既有孤儿恢复与 fail-open 路径。明确终态同时补 tombstone。
+    """
+    try:
+        fresh = db.get_instruction_by_id(int(inst_id))
+    except Exception as _e:
+        logger.warning(f"[EntryConfirm] 孤儿重建前 fresh read 失败 inst={inst_id}: {_e}",
+                       exc_info=True)
+        return None
+    if not isinstance(fresh, dict):
+        return None
+    status = str(read_state(fresh).get("status") or "")
+    if status not in (ST_CONFIRMED, ST_ABANDONED, ST_EXPIRED, ST_HOLDOUT, ST_HEALED):
+        return None
+    _remember_terminal(inst_id, status, now_et)
+    return "defer" if status in (ST_ABANDONED, ST_EXPIRED) else "execute"
+
+
 # ══════════════════════════════════════════════════════════════════
 # auto_execute 侧: arm / 放行 / 孤儿自愈
 # ══════════════════════════════════════════════════════════════════
@@ -471,6 +518,21 @@ def _gate_inner(inst, db, reprice_params, now_et, cfg, scheduler):
 
     # ── 孤儿: 旗标说 pending 但内存无 (重启) — 先尝试重建窗口, 重建不了才放行 ──
     if st == ST_PENDING and inst_id not in _PENDING:
+        # DEB-20261128 §14.5：sweep 已终态、auto_execute 仍持旧 PENDING 快照时，
+        # 不得重建第二生命周期。先查进程 tombstone（覆盖 pop→DB write 窄窗），再 fresh
+        # DB read（覆盖重启/表失效）；两者均不能证明终态时才进入既有真孤儿恢复。
+        _terminal_hit = _terminal_action(inst_id, now_et)
+        if _terminal_hit is not None:
+            logger.info(f"[EntryConfirm] {inst.get('symbol')} stale PENDING 命中终态 tombstone "
+                        f"⇒ {_terminal_hit}，不重建重复确认窗")
+            return _terminal_hit
+        _fresh_hit = _fresh_terminal_action(db, inst_id, now_et)
+        if _fresh_hit is not None:
+            logger.info(f"[EntryConfirm] {inst.get('symbol')} stale PENDING 经 fresh DB "
+                        f"确认为终态 ⇒ {_fresh_hit}，不重建重复确认窗")
+            return _fresh_hit
+        if inst_id in _PENDING:
+            return "defer"               # fresh read 期间已被其他线程恢复，禁止重复覆盖
         _restored = _restore_arm(inst, state, now_et, cfg, reprice_params)
         if _restored is not None:
             if len(_PENDING) >= _PENDING_MAX:
@@ -877,6 +939,7 @@ def _judge_one(scheduler, db, inst_id: int, arm: Dict[str, Any],
 
     # 超期 (市场关闭/取价长期失败) ⇒ EXPIRED, 不计入样本
     if arm.get("expire_at") and now_et > arm["expire_at"]:
+        _remember_terminal(inst_id, ST_EXPIRED, now_et)
         _PENDING.pop(inst_id, None)
         _write_state(db, inst_id, {"status": ST_EXPIRED,
                                    "armed_at": arm["armed_at"].isoformat(),
@@ -964,6 +1027,7 @@ def _judge_one(scheduler, db, inst_id: int, arm: Dict[str, Any],
     elif still and grace is not None:
         grace_outcome = "recovered"            # grace 期内回正 ⇒ 确认 (v2 救回噪声杀的路径)
 
+    _remember_terminal(inst_id, ST_CONFIRMED if still else ST_ABANDONED, now_et)
     _PENDING.pop(inst_id, None)
     _grace_trace = (None if grace is None else {
         "sweeps_used": int(arm.get("grace_sweeps") or 0) - int(grace["left"]),

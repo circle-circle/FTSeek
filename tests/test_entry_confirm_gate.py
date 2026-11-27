@@ -46,6 +46,14 @@ class _FakeDB:
         self.merged = []
         self.skips = []
         self.fail = False
+        self.fresh = None
+        self.fresh_reads = []
+
+    def get_instruction_by_id(self, inst_id):
+        if self.fail:
+            raise RuntimeError("db down")
+        self.fresh_reads.append(inst_id)
+        return dict(self.fresh) if isinstance(self.fresh, dict) else None
 
     def merge_instruction_metadata(self, inst_id, patch):
         if self.fail:
@@ -106,10 +114,12 @@ def _isolate(tmp_path, monkeypatch):
     """每例隔离: 清内存 pending + 弃单后观测表 + 产物重定向到 tmp (绝不写生产影子)。"""
     ecg._PENDING.clear()
     ecg._POST_WATCH.clear()
+    ecg._TERMINAL.clear()
     monkeypatch.setattr(ecg, "_FORWARD_PATH", tmp_path / "entry_confirm_forward.jsonl")
     yield
     ecg._PENDING.clear()
     ecg._POST_WATCH.clear()
+    ecg._TERMINAL.clear()
 
 
 CFG_ON = {"enabled": True, "delay_sec": 120, "holdout_pct": 0, "ttl_sec": 600}
@@ -613,6 +623,74 @@ def test_orphan_heal_survives_db_failure():
     db.fail = True
     inst = _inst(meta={"entry_confirm": {"status": ecg.ST_PENDING}})
     assert ecg.gate_at_execute(inst, db, {"entry_price": 100.0}, _now(), CFG_ON) == "execute"
+
+
+@pytest.mark.parametrize("still,expected", [(True, "execute"), (False, "defer")])
+def test_stale_pending_snapshot_never_rebuilds_after_sweep_terminal(still, expected):
+    """真实顺序：arm→保存旧 PENDING 快照→sweep 终态→旧快照重入。
+
+    fresh DB 刻意仍返回 PENDING，模拟 _PENDING.pop→终态写库窄窗；tombstone 必须
+    独立阻断重建。confirmed 放行 / abandoned 继续拦，forward 不得出现第二终态行。
+    """
+    db = _FakeDB()
+    t0 = _now()
+    cfg = {**CFG_ON, "grace_sweeps": 0}
+    assert ecg.gate_at_execute(_inst(), db, {"entry_price": 100.0}, t0, cfg,
+                               scheduler=_FakeSched(100.0)) == "defer"
+    pending_state = db.merged[-1][1]["entry_confirm"]
+    stale = _inst(meta={"entry_confirm": pending_state})
+    db.fresh = stale                         # pop→write 窗口：fresh read 也仍可能是 PENDING
+    result = ecg.sweep_entry_confirmations(
+        _FakeSched(101.0 if still else 99.0), db, t0 + timedelta(seconds=121))
+    assert result["confirmed"] == int(still)
+    assert result["abandoned"] == int(not still)
+    assert 1 not in ecg._PENDING
+    rows_before = ecg._FORWARD_PATH.read_text().splitlines()
+    db.fresh_reads.clear()
+    assert ecg.gate_at_execute(stale, db, {"entry_price": 100.0},
+                               t0 + timedelta(seconds=122), cfg) == expected
+    assert db.fresh_reads == [], "有效 tombstone 应先于 fresh read 阻断窄窗"
+    assert 1 not in ecg._PENDING
+    assert ecg._FORWARD_PATH.read_text().splitlines() == rows_before
+
+
+@pytest.mark.parametrize("status,expected", [
+    (ecg.ST_CONFIRMED, "execute"),
+    (ecg.ST_ABANDONED, "defer"),
+    (ecg.ST_EXPIRED, "defer"),
+    (ecg.ST_HOLDOUT, "execute"),
+    (ecg.ST_HEALED, "execute"),
+])
+def test_fresh_db_terminal_blocks_orphan_rebuild_after_tombstone_loss(status, expected):
+    """tombstone 属进程内存；重启清空后由真实 fresh state 阻止旧 PENDING 重建。"""
+    db = _FakeDB()
+    t0 = _now()
+    pending = {"status": ecg.ST_PENDING,
+               "armed_at": (t0 - timedelta(seconds=60)).isoformat(),
+               "anchor": 100.0, "direction": "LONG", "delay_sec": 120,
+               "ttl_sec": 600, "ruler": "legacy"}
+    stale = _inst(meta={"entry_confirm": pending})
+    db.fresh = _inst(meta={"entry_confirm": {"status": status}})
+    assert ecg.gate_at_execute(stale, db, {"entry_price": 101.0}, t0, CFG_ON) == expected
+    assert db.fresh_reads == [1]
+    assert 1 not in ecg._PENDING
+    assert ecg._TERMINAL[1][0] == status
+
+
+def test_true_orphan_with_fresh_pending_still_restores_window():
+    """fresh read 也是 PENDING ⇒ 真孤儿，既有恢复语义不得被新守卫误伤。"""
+    db = _FakeDB()
+    t0 = _now()
+    pending = {"status": ecg.ST_PENDING,
+               "armed_at": (t0 - timedelta(seconds=60)).isoformat(),
+               "anchor": 100.0, "direction": "LONG", "delay_sec": 120,
+               "ttl_sec": 600, "ruler": "legacy"}
+    stale = _inst(meta={"entry_confirm": pending})
+    db.fresh = stale
+    assert ecg.gate_at_execute(stale, db, {"entry_price": 101.0}, t0, CFG_ON) == "defer"
+    assert db.fresh_reads == [1]
+    assert ecg._PENDING[1]["restored"] is True
+    assert ecg._PENDING[1]["anchor"] == 100.0
 
 
 # ══════════════════════════════════════════════════════════════

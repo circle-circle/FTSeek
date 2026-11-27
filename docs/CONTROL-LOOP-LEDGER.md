@@ -9,6 +9,15 @@
 > 为唯一主轴。下方该行保留的 RFC-141 阈值、无对照臂和赢家地板描述仅为历史留档，
 > 不再驱动现役 PASS/FAIL；实际机器口径以 `current_cohort.tail_objective` 为准。
 > 同日追加 `supply_selection` 纯记录血缘，覆盖两臂、终态、弃单后路径和重启恢复；不改变判定。
+> **2026-11-28 assignment 完整性哨兵**：`current_cohort.tail_objective.assignment_integrity` 按
+> treatment/holdout/total 披露重复 assignment、冲突终态、身份冲突；已平成交优先，未核清冲突不得入
+> resolved 分母。后续硬化新增 `open_trade_unresolved_n`（实际成交存在但未平 ⇒ unresolved，禁止先记弃单
+> 净 0）与 `terminal_state_invalid_n`（`still_triggers` 非 bool ⇒ unresolved，禁止 None/字符串布尔强转）。
+> 非零计数须结合 gate 重复终态日志与 trade_records 对账；哨兵非零不等于判据 FAIL，样本门仍按 RFC-158 §10。
+> **2026-11-28 源头竞态修复**：sweep 终态先写进程 tombstone 再 pop，auto_execute 的旧 PENDING 快照不得
+> 重建第二确认窗；tombstone 缺失时再经 fresh `get_instruction_by_id` 识别终态，真 PENDING 孤儿仍续窗。
+> 02:56:45 CST 重启生效（PID242602，冒烟7/7）。失效观察=stale PENDING 重建日志/重复 assignment 是否再增；
+> 修复后尚无自然竞态事件，不把契约绿冒充生产自然终证。
 
 ---
 

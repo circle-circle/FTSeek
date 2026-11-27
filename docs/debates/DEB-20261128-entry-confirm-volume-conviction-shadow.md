@@ -468,3 +468,118 @@ updated: 2026-11-28
   无判据转向。契约 + 变异测试见 `tests/test_settle_entry_confirm_assignment_integrity.py`。
 
 **最后更新：2026-11-28。**
+
+---
+
+## 15. 第 4 轮复查（2026-11-28，Kimi；§14 整合与 5b68635c1 实码复核）
+
+> 性质：对当前磁盘版 DEB、结算器实码与契约的独立复查；仅追加记录，不改 §1–§14、不改代码。
+> **结论：§14 已逐项回应 §13，方向与修正合同合理；5b68635c1 的去重/成交优先/冲突隔离实现与文档一致，当前读数可复现。发现两个当前数据未命中的防御性边界，建议小批补硬；它们不改变本次 before/after 数值，也不要求撤回当前修复。**
+
+### 15.1 已独立验证
+
+- 六项 P0 均已有明确修正合同：固定 T0+120s 两臂 landmark、veto 反事实经济口径、assignment 去重/冲突隔离、资金流 v1 退出主假设、VWAP 无量纲单位、局部 120s 确认窗量比。统计功效、决策日期和到期机制仍是实施前须实际填定的参数，不因写入共识就视为已有证据。
+- 实码 `_assignment_key` / `_resolve_assignment` / `tail_objective` 与 §14.6 一致；main 已对全部 tail_rows 的 decision_id 取数，包含 ABANDONED。
+- 独立复跑目标 + 既有契约：**21 passed, 71 deselected**（`tests/test_settle_entry_confirm_assignment_integrity.py` + `tests/test_entry_confirm_gate.py` 指定 tail 集合）。
+- 全脚本以 `OUT=/tmp/entry_confirm_recheck_20261128.json` 独立跑通，rc=0；复现 treatment assigned/resolved=147/127、coverage=0.8639，holdout=46/41、0.8913，integrity dup=7/conflict=1/resolved_by_trade=1，verdict 仍 INSUFFICIENT。未覆盖生产 latest 之外的 DB/配置，生产输出路径未写。
+
+### 15.2 两个残余防御性边界（当前数据零命中）
+
+1. **全 ABANDONED 但实际存在未平仓成交时，仍会过早记净 0。** `load_trade_by_decision` 只返回已平仓交易（`settle_entry_confirm_forward.py:386-392`）；未平仓成交不在 joined，随后 `_resolve_assignment` 的 `states=={False}` 分支会记 abandoned=0（`:489-491`）。若未来竞态产生「全 ABANDONED + open trade」，该 assignment 会先错误 resolved，平仓后又改写成 closed_trade。
+   - 建议 joined 同时携带 open-trade existence/state；只要实际成交存在且未平，就统一 unresolved，不得进入 abandoned=0。补「全弃单+open」「冲突+open」「holdout+open」三例。
+2. **`bool(None)` 会把未知终态伪装成 ABANDONED。** 当前 `states={bool(r.get("still_triggers")) ...}`（`:475`）；缺失/None/非法值都会变 False。虽然当前 200 行非 bool 命中=0，但计量合同应保持「未知不归零」。
+   - 建议 strict bool 校验；任何非 bool 作为 terminal_state_invalid/unresolved + 哨兵，不参与全 ABANDONED 判定。补 None、缺键、字符串 `"false"` 三例，防止字符串也被 `bool()` 误转为 True。
+
+### 15.3 边界与后续不变量
+
+- 当前全库无同一 decision_id 多 trade 行，当前 cohort 也无「全 ABANDONED + 任意成交」或非 bool still_triggers；因此 §15.2 是防御性硬化，**不是对当前修复数值的否定**。
+- gate 跨线程 stale-snapshot 重建竞态仍是未修的 live 根因；本轮未改 app/、未重启、未下单。结算器鲁棒不等于源头已愈合。
+- Step 1A/1B/2A/2B 仍未实施、仍须用户另裁；本轮不授予开关激活或 Step 3 权限。
+
+**最后更新：2026-11-28。**
+
+---
+
+## 16. §15 两项防御边界硬化落地（2026-11-28；record-only 结算器）
+
+> 授权边界：用户「继续」→ 只实施 §15.2 两项结算器计量硬化；不改 gate、config、注册表、cron，
+> 不启动 Step 1 量能影子，不修 live 竞态。服务无需重启（盘后 cron fresh-import）。
+
+### 16.1 实现
+
+- 新增 `load_trade_existence_by_decision`：只读 `SELECT DISTINCT decision_id`，返回任意 PLAYBOOK_SIM
+  实际成交集合（含 open）。与既有已平仓 PnL loader 分工，RFC-153 调用语义不变。
+- `tail_objective(..., actual_trade_ids=None)` 新增可选存在性集合；main 同时传 closed PnL 与
+  open/existence。已平成交仍优先；仅有 open trade ⇒ unresolved，禁止全 ABANDONED 先记净 0。
+- `still_triggers` 改 strict bool；None/缺键/字符串/0/1/列表均不再布尔强转，转 unresolved。
+- `assignment_integrity` 新增 `open_trade_unresolved_n` / `terminal_state_invalid_n`，逐臂+total；
+  `resolution_contract` 同步。哨兵失效模式已登记 `docs/CONTROL-LOOP-LEDGER.md` 顶部现行覆盖。
+
+### 16.2 契约与变异验证
+
+- 新文件由 16 → **28 passed**（新增 open 三态、closed 优先、六种非 bool、缺键、main 接线等 12 个计数例）；
+  与既有 tail 合同合跑 **33 passed, 71 deselected**。
+- 变异①关闭 open-trade 分支 ⇒ **4 failed / 24 passed**；还原后 28 绿。
+- 变异②恢复布尔强转并关闭 invalid 哨兵 ⇒ **7 failed / 21 passed**；还原后 28 绿。
+  两次均以 `/tmp/settle_entry_confirm_hardening_post.py` SHA256 核验还原。
+- py_compile 两文件 + `scripts/check_undefined_names.py` 均 exit 0。
+- 全脚本写 `/tmp/entry_confirm_hardened_20261128.json` rc=0；arms/comparison/daily_paired/sample_gate/
+  verdict/verdict_why 与硬化前 `/tmp/entry_confirm_recheck_20261128.json` **逐块相等**。
+  新 open 哨兵当前=4，逐笔核为 BA/GS/META/BABA 四个 CONFIRMED 未平 assignment；全弃单+open=0，
+  非法终态=0，故当前经济数值零变化。日志 `/tmp/entry_confirm_hardened_20261128.log`。
+
+### 16.3 回归边界与未验证
+
+- 棘轮/治理/根锚点回归：**223 passed, 4 failed**，日志 `/tmp/p03_hardening_ratchet_regress.log`。
+  四红为既有/无关工作树病灶：except:pass 899→1817、pipeline.py 3700→3793、其他 app 文件 W6
+  日志栈基线外增长、Hermes 幽灵 job `68cc76b16ebd`；本批未改这些文件，不顺带修、不调基线。
+- 未跑全量 pytest/CI，不声称全绿；未做收益回测，计量硬化不代表策略收益改善。
+- 当前为未提交工作树；回滚=还原本批 script/test/文档变更，无运行时服务回滚。下一自然 cron
+  06:37 CST 需核新哨兵与临时端到端读数一致。gate live 竞态及 Step 1A 仍各待独立裁决。
+
+**最后更新：2026-11-28。**
+
+---
+
+## 17. gate stale-snapshot 孤儿重建竞态源头修复（2026-11-28；用户「继续」）
+
+> 本节是 §14.5 所述 live 根因的后续独立修复记录；不改 `eval_confirm`、门阈值、holdout、
+> sizing 或方向判定。Step 1A 量能影子仍未启动。
+
+### 17.1 修复合同
+
+- **第一层：进程内 terminal tombstone。** sweep 在 `_PENDING.pop` 前先记
+  `inst_id→(terminal_status, now_et)`；CONFIRMED/HOLDOUT/HEALED 类允许执行，
+  ABANDONED/EXPIRED 继续 defer。即使 fresh DB 在 pop→终态写库窄窗仍读 PENDING，也不得重建。
+  tombstone TTL=3600s、上限 1000，进程重启自然清空。
+- **第二层：孤儿恢复前 fresh DB read。** 调既有 `PlaybookDB.get_instruction_by_id`；已知终态
+  禁止重建并补 tombstone。fresh read 失败、无记录、仍为 PENDING 或未知态均回落既有孤儿恢复/
+  fail-open，不改变真重启孤儿续窗语义。
+- fresh read 期间若 `_PENDING` 已被其他线程恢复 ⇒ defer，禁止重复覆盖。
+- 结算器 §16 的 open/invalid 防御保留；源头防护与计量兜底是两层，不互相替代。
+
+### 17.2 契约、变异与部署验证
+
+- gate 全契约 **84 passed**；真实 PlaybookDB 接线 **17 passed**；加 direction persistence 与
+  assignment integrity 合跑 **131 passed**。覆盖 CONFIRMED/ABANDONED 旧快照、五种 fresh 终态、
+  真 PENDING 孤儿仍恢复、真实 DB 在 tombstone 清空后仍不重建且 forward 行数不增。
+- 变异①摘除 tombstone 门 ⇒ **2 failed / 82 passed**；还原 84 绿。
+  变异②摘除 fresh-read 门 ⇒ **6 failed / 95 passed**（含真实 DB 例）；还原后两臂 **101 passed**。
+  两次均按 `/tmp/entry_confirm_gate_racefix_post.py` SHA256 核验还原。
+- py_compile + `check_undefined_names.py` exit 0；scoped diff check 通过。
+- 棘轮/治理/根锚点回归 **223 passed, 4 failed**（`/tmp/entry_confirm_racefix_ratchet.log`）；
+  四红与 §16 同一组无关既有病灶，本批未新增红、不修无关面、不调基线。
+- 部署前核 app/scripts 仅本任务 gate+settler 改动；4 个既有 PLAYBOOK_SIM 仓 BA/GS SHORT、
+  BABA/META LONG。`systemctl restart ftseek-us` 于 **2026-11-28 02:56:45 CST** 生效，
+  PID **226603→242602**；启动冒烟 **7/7**，启动段零 Traceback/CRITICAL，重启前后四仓逐项一致。
+
+### 17.3 未验证 / 回滚 / 后续
+
+- 修复后尚无自然 stale-snapshot 竞态事件；只声明**代码生效 + 合成/真实 DB 契约通过**，不声称
+  自然生产竞态已终证。后续交易日观察 `stale PENDING ... 不重建重复确认窗` 日志及
+  `duplicate_assignment_n` 不再因该根因增长。
+- 回滚=还原 `app/playbook/entry_confirm_gate.py` + `systemctl restart ftseek-us` + 启动冒烟；
+  结算器硬化可独立保留。无 config/registry/cron 改动。
+- 当前仍未 commit；Step 1A/1B/2A/2B 与任何新量能开关仍须用户另裁。
+
+**最后更新：2026-11-28。**
