@@ -197,7 +197,7 @@ def test_day_doc_idempotent_recompute():
     b = mod.derive_day_doc(rows, TODAY)
     assert a == b
     assert a["ticks"] == 2
-    assert a["indices"]["HK.800700"]["open_chg_pct"] == -1.0
+    assert a["indices"]["HK.800700"]["first_obs_chg_pct"] == -1.0   # B3: 首观测语义命名
     assert a["indices"]["HK.800700"]["latest_chg_pct"] == 2.0
     assert any(e["kind"] == "sign_cross_up" for e in a["events"])
 

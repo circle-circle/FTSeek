@@ -201,5 +201,7 @@ class TestDayDocFiniteGuard:
     def test_friday_real_snapshot_idempotent_regression(self):
         stored = json.loads(VERIFY_SNAPSHOT.read_text(encoding="utf-8"))
         recomputed = mod.derive_day_doc(stored["tick_rows"], stored["date"])
-        # 真实数据全有限 → 守卫不改变任何输出, 幂等重算逐字一致
-        assert json.loads(json.dumps(recomputed)) == stored
+        # 真实数据全有限 → 守卫不改变任何值; B3 后 schema v2 命名, 显式投影回 v1 逐字一致
+        # (旧值保留, 仅命名/schema 元数据变更; 投影映射见 tests/hk_day_doc_v1_compat.py)
+        from tests.hk_day_doc_v1_compat import project_day_doc_to_v1
+        assert json.loads(json.dumps(project_day_doc_to_v1(recomputed))) == stored

@@ -2,8 +2,8 @@
 
 用户裁决 (2026-11-27): 「港股的波动趋势，不仅仅只是看个股，看行业和动态趋势，可以作为
 信息参考输入，打港股和美股的时间差」。本批 = 影子先行第一步 (DEB-20261127-hk-us-sector-
-trend-context): 只读 OpenD 快照 → 指数 / 行业篮子 / ADR 港股腿 的日内序列 + 翻红/翻绿
-事件 → ``data/shadow/hk_us_linkage/<HK交易日>.json``。
+trend-context): 只读 OpenD 快照 → 指数 / 行业篮子 / ADR 港股腿 的日内序列 + 相对前收穿零
+sign_cross 事件 (采样观测穿零, 非趋势反转) → ``data/shadow/hk_us_linkage/<HK交易日>.json``。
 
 硬边界 (本批零判定消费):
   - 不接 DA prompt / sizing / gates / 方向判定; 不下单; 不落库; 不推送 (无料不推, 观测
@@ -33,15 +33,21 @@ from zoneinfo import ZoneInfo
 CST = ZoneInfo("Asia/Shanghai")  # HKT == CST (UTC+8), 港股时段与服务器时区一致
 
 OUT_DIR = Path("data/shadow/hk_us_linkage")
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2          # B3: rollup 语义命名 (first_obs/obs_high/obs_low + 指数 day_high/day_low 分列)
 MAX_TICK_ROWS = 40          # 预期 ~24 tick/日 (含两收盘锚), 40 留余量防异常刷屏
 FLAT_BAND_PP = 0.05         #  breadth 平盘带: |chg| < 0.05 个百分点记 flat (单位声明见 UNITS)
 
 # 量纲声明 (军规 2026-09-02: 新字段必带单位 + 契约断言)。
 UNITS = {
     "chg_pct": "percent",            # (last/prev_close - 1) * 100
-    "high_chg_pct": "percent",
-    "low_chg_pct": "percent",
+    "first_obs_chg_pct": "percent",  # B3: 首个采样观测 chg (非交易所开盘; open_price 未接入)
+    "obs_high_chg_pct": "percent",   # B3: 采样观测 chg 极大值 (非真实盘中最高)
+    "obs_low_chg_pct": "percent",    # B3: 采样观测 chg 极小值 (非真实盘中最低)
+    "day_high_chg_pct": "percent",   # B3: 交易所报盘中最高 chg (仅指数; 缺失→None 不回退)
+    "day_low_chg_pct": "percent",    # B3: 交易所报盘中最低 chg (仅指数; 缺失→None 不回退)
+    "latest_chg_pct": "percent",     # 末个采样观测 chg
+    "high_chg_pct": "percent",       # tick 级指数: 该 tick 交易所 high chg (真值源, 未动)
+    "low_chg_pct": "percent",        # tick 级指数: 该 tick 交易所 low chg (真值源, 未动)
     "chg_pct_eq": "percent",         # 行业等权均值
     "dispersion_pp": "percent_points",  # 行业内 max-min chg
     "turnover_hkd": "HKD_absolute",
@@ -240,7 +246,11 @@ def is_stale_tick(tick, today_str):
 
 
 def derive_events(target, series):
-    """翻红/翻绿事件: 相邻 tick chg 符号穿越 0 (负→非负 = sign_cross_up, 反之 down)。"""
+    """sign_cross_up/down 事件: 相邻采样观测间相对前收 chg 穿零 (负→非负 = up, 反之 down)。
+
+    B3 语义声明: 这是采样观测穿零, **不是趋势反转**; ~15min 采样可能漏掉区间内穿越;
+    None 观测跳过 (prev 取最近非 None)。「翻红/翻绿」仅为口语说法, 消费端不得当反转信号。
+    """
     events = []
     prev = None
     for point in series:
@@ -259,12 +269,15 @@ def derive_events(target, series):
 
 
 def _rollup(series):
+    """采样观测 rollup (B3 语义命名): first_obs=首观测 (非交易所开盘), obs_high/obs_low=
+    采样 chg 极值 (非真实盘中高低), latest=末观测。真实盘中高低仅指数 day_high/day_low
+    (交易所报, 分列); 稀疏采样不得被消费端当完整日内路径。"""
     vals = [p["chg_pct"] for p in series if p.get("chg_pct") is not None]
     if not vals:
-        return {"open_chg_pct": None, "high_chg_pct": None,
-                "low_chg_pct": None, "latest_chg_pct": None}
-    return {"open_chg_pct": vals[0], "high_chg_pct": max(vals),
-            "low_chg_pct": min(vals), "latest_chg_pct": vals[-1]}
+        return {"first_obs_chg_pct": None, "obs_high_chg_pct": None,
+                "obs_low_chg_pct": None, "latest_chg_pct": None}
+    return {"first_obs_chg_pct": vals[0], "obs_high_chg_pct": max(vals),
+            "obs_low_chg_pct": min(vals), "latest_chg_pct": vals[-1]}
 
 
 def derive_day_doc(tick_rows, date_str):
@@ -284,8 +297,9 @@ def derive_day_doc(tick_rows, date_str):
               ({"ts": t["ts"], "chg_pct": (t.get("indices") or {}).get(code, {}).get("low_chg_pct")}
                for t in tick_rows) if p["chg_pct"] is not None]
         roll = _rollup(series)
-        roll["high_chg_pct"] = max(hi) if hi else roll["high_chg_pct"]
-        roll["low_chg_pct"] = min(lo) if lo else roll["low_chg_pct"]
+        # B3: 交易所真实盘中高/低分列 (不再覆写采样极值); 缺失→None, 不回退采样值冒充。
+        roll["day_high_chg_pct"] = max(hi) if hi else None
+        roll["day_low_chg_pct"] = min(lo) if lo else None
         roll["name"] = INDEX_NAMES.get(code, code)
         roll["latest_turnover_hkd"] = last_idx.get("turnover")
         roll["series"] = series
