@@ -377,3 +377,63 @@ def test_report_without_recon_is_unchanged():
     body = das.build_summary_report([], {"trades": 0, "pnl": 0.0, "positions": 0, "errors": 0},
                                     "2026-08-27")
     assert "权益对账" not in body
+
+
+# ================== RFC-171 §8: 前收上一交易日跳假日 ==================
+
+class TestPrevTradeDateHolidayAware:
+    """[RFC-171 §8 hotfix 2026-11-27] _prev_us_trade_date 跳周末+假日 (与 §6/§7 同源).
+
+    病灶: 原 `while weekday>=5` 只跳周末 → 感恩节次日 11-27 prev=11-26(休市) 收盘窗恒无
+    样本 (休市日采样停摆) → prev_close=None → 权益桥接恒 not_judgeable。修复: 复用离线
+    get_last_trade_date (跳周末+假日, 不触网)。_equity_at 收盘印纪律不变。
+    """
+
+    @pytest.fixture(autouse=True)
+    def _offline_calendar(self, monkeypatch):
+        # 强制日历走硬编码降级层 (不读 API 热缓存、不发网络) ⇒ 测试确定性 (同 §6/§7)。
+        from app.utils import holiday_calendar as _hc
+        monkeypatch.setattr(_hc.TradingHolidayCalendar, "_cached_trading_day",
+                            lambda self, market, d: None)
+
+    def test_thanksgiving_next_day_prev_wednesday(self):
+        assert das._prev_us_trade_date("2026-11-27") == "2026-11-25"   # 跳 11-26 感恩节
+
+    def test_thanksgiving_itself_prev_wednesday(self):
+        assert das._prev_us_trade_date("2026-11-26") == "2026-11-25"
+
+    def test_presidents_day_next_prev_friday(self):
+        assert das._prev_us_trade_date("2026-02-17") == "2026-02-13"   # 跳 2-16 总统日+周末
+
+    def test_independence_observed_next_prev_thursday(self):
+        assert das._prev_us_trade_date("2026-07-06") == "2026-07-02"   # 跳 7-3 observed+周末
+
+    def test_normal_tuesday_unchanged(self):
+        assert das._prev_us_trade_date("2026-11-24") == "2026-11-23"
+
+    def test_monday_skips_weekend_unchanged(self):
+        assert das._prev_us_trade_date("2026-11-30") == "2026-11-27"   # 11-27 半日市仍是交易日
+
+    def test_post_holiday_bridge_closes_on_true_prev_print(self, tmp_path):
+        # 端到端: 11-27 前收印落在真上一交易日 11-25 收盘边界 (CST 11-26 05:00 EST),
+        # 休市日 11-26 边界 (CST 11-27 05:00) 无样本。修复前 prev=11-26 → None →
+        # not_judgeable; 修复后 prev=11-25 → 命中真实收盘印 → 桥接闭合 verdict=ok。
+        db = tmp_path / "ftseek_us.db"
+        conn = sqlite3.connect(str(db))
+        conn.execute(
+            "CREATE TABLE trade_records (id INTEGER PRIMARY KEY, symbol TEXT, "
+            "trade_date TEXT, exit_time TEXT, exit_price REAL, realized_pnl REAL, "
+            "fees_est REAL, pnl_net REAL)")
+        conn.execute(
+            "CREATE TABLE capital_state (id INTEGER PRIMARY KEY, current_equity REAL, "
+            "last_update TEXT, trade_env INTEGER DEFAULT 1)")
+        conn.commit()
+        conn.close()
+        _put_equity(db, "2026-11-26T05:00:18.000000", 97000)   # 11-25 收盘印 (真前收)
+        _put_equity(db, "2026-11-28T05:00:15.000000", 96500)   # 11-27 收盘印 → C=-500
+        _put_trade(db, "US.AAA", "2026-11-27T10:00:00-05:00", 10.0, -400.0, 30.0, -430.0)
+        _put_trade(db, "US.BBB", "2026-11-27T11:00:00-05:00", 10.0, 100.0, 20.0, 80.0)
+        r = _recon(db, broker=-200.0, session_date="2026-11-27", trade_date="2026-11-27")
+        assert r["verdict"] == "ok", r.get("reason")
+        assert r["equity_change"] == -500.0
+        assert abs(r["residual"]) <= das.EQUITY_RECON_TOLERANCE_USD

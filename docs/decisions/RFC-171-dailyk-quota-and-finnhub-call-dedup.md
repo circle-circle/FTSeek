@@ -182,3 +182,94 @@
 pdt_guard、position_exit_monitor.is_us_market_open、market_hours、timezone.is_market_open、
 pilot_policy.previous_local_trading_day（纯本地日历）、shadow_tracker/ue_quote（自带 2026 表，
 fail-closed，仅受上条时间炸弹约束）。
+
+## §8 同源假日缺陷批续（2026-11-27）：daily_alert_summary 权益桥接前收跳假日 + 会话窗审计闭合
+
+> 承接 §7 后用户裁「继续」，处理 §7.6 排队中的报表域站点（先核口径再裁）＋ timezone 会话窗
+> 逐消费方审计（只读）。本批修 1 处报表域 L1 缺陷，闭合 1 项审计排队（无交易缺陷），新发现
+> 1 项半日边界排队（不动）。交易行为域一律不动。
+
+### 8.1 病灶（报表域，与 §6/§7 同根因类）
+
+`scripts/daily_alert_summary.py:431 _prev_us_trade_date` `while d.weekday()>=5` 只跳周末 →
+感恩节次日 11-27 的 prev=11-26（休市）收盘窗恒无样本（休市日采样停摆：实证 11-26 全天 726
+样本末条 22:53 CST=09:53 ET；11-25 收盘印 CST 11-26 05:00:18=96992.388 存在，11-26 收盘窗
+CST 11-27 05:00~05:15 **空**）→ `prev_close=None` → 权益桥接恒 `not_judgeable`（前收缺失）。
+单消费方 :579 `prev_close = _equity_at(conn, _cst_close_boundary(_prev_us_trade_date(trade_date)), ...)`。
+
+### 8.2 设计注释裁定（不盲改，先核口径）
+
+旧 docstring「跳假日内权益不变, 取最近样本即正确前收」＋调用方注释「假日后的周一必然走到
+这里…明示这是预期而非探针坏了」＝**当年无假日日历时的保守妥协，非安全要求**。核心安全纪律
+在 `_equity_at`（只取收盘**后**首样本＝真实收盘印、窗内无样本即 None、**不兜底盘中样本**）
+——本修复逐字保留。口径已核：`snapshot_time`/`last_update` = CST naive ISO（微秒），
+`_cst_close_boundary` = 16:00 ET + EDT/EST offset（EST+13h）；`capital_state.trade_env=1`
+单环境匹配 history。裁定：docstring 本意（权益休市日不变 → 真前收=上一**交易日**收盘印）
+恰支持假日感知；修复是把查找边界从休市日（恒无样本）移到真上一交易日（有真实收盘印），
+消除盲点而非推翻设计、不放宽采样窗。
+
+### 8.3 改动（单变量，复用 §7 同款 helper）
+
+`_prev_us_trade_date` 改 `get_last_trade_date(strptime(trade_date,"%Y-%m-%d") - timedelta(days=1))`
+（离线 `is_us_holiday`，周末→热缓存→硬编码 US_HOLIDAYS，10 次防死循环，不触网；对 naive
+输入直接当 ET naive、不做 CST→ET 转换 ⇒ 无跨日错位）。调用方注释更新（prev 已假日感知，
+此分支现仅属真采样断流/重启）；**reason 标签「前收 (休市/采样停摆时属预期)」逐字保留**
+（`test_missing_prev_close_sample_says_so` 断言含「休市」「预期」钉死）。`_equity_at` /
+`_cst_close_boundary` / 采样窗 15min / 容差 $50 / 桥接恒等式 C≈G+U 全部未动。
+
+### 8.4 验收（可复核）
+
+- 契约 **31 passed**（24 既有 ＋ 7 新增 `TestPrevTradeDateHolidayAware`：感恩节次日 11-27→11-25 /
+  感恩节当日 11-26→11-25 / 总统日 02-17→02-13 / 独立日 observed 07-06→07-02 / 正常周二 /
+  周一跳周末 11-30→11-27 ＋ 端到端桥接闭合例〔真前收印落 11-25 边界、休市日无样本 → verdict=ok
+  C=-500〕；autouse 压 `_cached_trading_day=None` 离线确定性同 §6/§7）
+  `PYTHONPATH=. ./venv/bin/python -m pytest tests/test_daily_alert_equity_recon.py -q`
+  → `/tmp/rfc171_s8_equity_contracts.log`。既有 `test_prev_trade_date_skips_weekend`
+  （8-31→8-28、9-1→8-31）仍绿。
+- 变异敏感性：周末-only 旧逻辑 → `not_judgeable`（红）/ 假日感知 → `ok` C=-500（绿）
+  → `/tmp/rfc171_s8_mutation.log`（`MUTATION_RED_THEN_GREEN_OK`）。
+- 真实数据（`mode=ro`+`query_only`）：`_prev_us_trade_date("2026-11-27")="2026-11-25"`，
+  `_equity_at` 命中 `prev_close=96992.388`（修复前 None）。
+- 相邻 daily_alert 簇（pnl/log_sources/hk_retired/log_prefix）**41 passed**
+  → `/tmp/rfc171_s8_adj.log`。`py_compile` + `check_undefined_names.py` exit0。
+- 调度＝**Hermes cron**（ET 17:00 → CST 次日 05:00）fresh-import；`app/` 无 import（仅
+  `reconciler.py:559` 注释提及）→ **无需重启服务**；下一跑 CST 11-28 05:00 生效。
+
+### 8.5 回滚
+
+还原 `_prev_us_trade_date` 为 `while d.weekday()>=5` 循环（删懒导入）；Hermes cron
+fresh-import 无需重启。无配置项、无冻结参数、无采样纪律变更。
+
+### 8.6 影子先行豁免说明
+
+同 §6.5/§7.5：L1 报表数据面缺陷修复（不改交易判据/阈值/采样纪律），用户裁「继续」承接
+§7.6 报表域审计队列，以契约＋变异＋真实数据＋相邻回归落地，不走多日影子 A/B。
+
+### 8.7 会话窗逐消费方审计闭合（§7.6 排队项，只读，**无交易缺陷，不修**）
+
+复用既有 `scripts/deb20261009_session_caliber_probe.py`（含半日市 13:00 对拍）＋直接 grep 核验
+（探针留痕 `/tmp/rfc171_s8_session_probe.log`）：
+
+- `timezone.is_pre_market` / `is_after_hours`：**零消费方死代码**（探针普查 0 调用/0 文件；
+  `order_executor.py:5030` 的 `is_after_hours` 是局部变量来自 `get_market_phase()`，
+  `order_tracker.py:264` 是 bool 形参，均非 timezone 调用）。
+- `timezone.market_phase_now`：消费方仅 `datetime_utils` re-export ＋ `web_dashboard/routes/trade.py:618`
+  展示；其下游 `signal_expires_at` 亦零消费方。假日 weekday 误标 phase 仅影响展示/无人用的
+  过期分钟，无交易消费。
+- **真交易源 `scheduler_triggers.get_market_phase()`（59 调用/30 文件）已假日＋半日感知**：
+  P0-D1 2026-05-14 :116 `is_us_holiday` 当 WEEKEND；R-8b 2026-08-23 :135 `get_us_close_minutes_et`
+  动态收盘（`US_EARLY_CLOSE_DATES` 含 11-27 13:00）。order_executor 盘后路由经此，无假日/半日缺陷。
+- `timezone.get_market_session`（2 消费方 `position_sync:304` / `order_tracker:82`）经
+  DEB-20260903 #8 复用 `is_market_open` 动态收盘（§7 已核假日感知）。
+
+结论：§7.6「timezone 会话窗」排队项**闭合＝无缺陷**；死代码清理（is_pre_market/is_after_hours）
+属另案（删除须六面零引用审计，本批不动）。
+
+### 8.8 新发现排队（本批不动，一次一变量）
+
+- **半日市 `_cst_close_boundary` 固定 16:00 ET**：今日 11-27 半日 13:00 ET 收，今收边界仍
+  CST 11-28 05:00（16:00 ET）；若采样随半日收盘停摆则今收窗空 → `today_close=None`（与假日
+  prev 缺陷同族但属**半日变量**）。今日收盘（CST 11-28 02:00）后方可实证采样是否半日门控，
+  须另核另裁，本批不动。
+- §7.6 其余排队项不变：`exit_monitor.get_market_hours_us`（交易行为域须影子＋另裁）、
+  shadow_tracker/ue_quote 2026 表（2027+ 时间炸弹）、shared_kernel/signal_pipeline 良性 weekend-only。

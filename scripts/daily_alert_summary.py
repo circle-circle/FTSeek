@@ -429,11 +429,22 @@ def _cst_close_boundary(trade_date: str) -> str:
 
 
 def _prev_us_trade_date(trade_date: str) -> str:
-    """前一交易日 (跳周末; 跳假日内权益不变, 取最近样本即正确前收)."""
+    """前一交易日 (跳周末+假日; 复用离线 get_last_trade_date, 不触网).
+
+    [RFC-171 §8 hotfix 2026-11-27] 与 §6/§7 同源缺陷: 原 `while d.weekday()>=5` 只跳
+    周末 → 感恩节次日 11-27 的 prev=11-26 (休市) 收盘窗恒无样本 (休市日采样停摆, 实证
+    11-26 全天 726 样本末条 22:53 CST=09:53 ET) → prev_close=None → 权益桥接恒
+    not_judgeable。旧 docstring 理由「跳假日内权益不变, 取最近样本即正确前收」本意正是
+    假日感知: 权益在休市日不变, 故真正前收=上一**交易日**收盘印 (11-25), 而非休市日
+    (11-26, 无样本)。改用 timezone.get_last_trade_date (DEB-20260904 #135 已假日感知:
+    离线 is_us_holiday, 周末→热缓存→硬编码 US_HOLIDAYS, 10 次防死循环, 不触网; 对 naive
+    输入直接当 ET naive 不做 CST→ET 转换, 无跨日错位), 传 today-1 得严格上一交易日。
+    **_equity_at「只取真实收盘印、窗内无样本即 None、不兜底盘中样本」纪律逐字不变** ——
+    本修复只把查找边界从休市日 (恒无样本) 移到真上一交易日 (有真实收盘印), 不放宽采样窗。
+    """
+    from app.utils.timezone import get_last_trade_date
     d = datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=1)
-    while d.weekday() >= 5:
-        d -= timedelta(days=1)
-    return d.strftime("%Y-%m-%d")
+    return get_last_trade_date(d)
 
 
 def _equity_at(conn, boundary_cst: str, trade_env=None):
@@ -580,8 +591,9 @@ def get_us_equity_reconciliation(trade_date: str, db_path: Path = None, broker_f
         if today_close is None or prev_close is None:
             miss = []
             if prev_close is None:
-                # 美股假日后的周一必然走到这里 (实证 7/3 独立日观察日全天仅 86 样本且末条在
-                # 22:44 CST, 7/4 仅 16 条 — 休市日采样本就停摆), 明示这是预期而非探针坏了。
+                # [RFC-171 §8] prev 已假日感知, 假日后前收=真上一交易日收盘印, 正常必命中;
+                # 此分支现仅属真采样断流/重启 (历史实证 7/3 独立日观察日休市采样停摆末条
+                # 22:44 CST)。reason 文案保留「休市/预期」措辞 (契约钉死), 非假日预期。
                 miss.append("前收 (休市/采样停摆时属预期)")
             if today_close is None:
                 miss.append("今收")
