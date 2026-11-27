@@ -1346,3 +1346,66 @@ RFC-217 归档：10 条带标记指令、3 笔成交、仅 1 笔已平 CAT `+$9.
 - 半日市守卫：`.env.us` 改 `EXT_AFTERHOURS_HALF_DAY_GUARD=0`（或删行），cron 下一 tick 即回旧静态窗，无需重启；影子 `EXT_AFTERHOURS_HALF_DAY_SHADOW=0` 停写盘。
 - 镜像隔离/bridge 硬化/观测原子性：revert 本批 commit＋`systemctl restart ftseek-us`（app/ 部分）；EXT 观测部分经 cron fresh-import 随 revert 即回退。无新开关（三者今日零流量/只拒不稳定/只防并发，回滚无运行时差异风险）。
 - 与 §16/§17/§19/§20/§21/§22 各开关互不牵连。
+
+## 24. 实施记录 IX（2026-11-27 · 短K样本不足显式 N/A · `DA_SHORTK_NA` 独立开关默认 OFF · 正式输入变量未激活）
+
+> 本节追加，不改 §§0–23 历史。承接 §23.8 #7 输入修复队列（短K UNKNOWN＝下一批单变量）。
+> 授权：用户裁「请按照建议执行落地优化」＋审计输入层队列；本批**影子就绪、不激活**——
+> 这是正式输入呈现变量（模型可见内容变化），激活 BLOCKED §10.4 单变量 A/B，不得当纯遥测直接上线。
+
+### 24.1 病灶（隔离合成检查实锤）
+
+- skill 仓 `llm_synth._format_data_for_prompt` K线技术面块：窗口不足时 MA5/10/20/60（需 5/10/20/60 根）、
+  chg5（需 6）、chg20（需 21）、量比（需 20）全部**零填充** → prompt 渲染
+  `MA60: 0.00 / +0.0% / 0.00x` 伪值。LLM 被要求判趋势/支撑阻力，却可能把「不可算」当「真实为 0」
+  （短K「震荡」误读样本已列 §0/§15.7）。
+- 本批探针：n=3 时 OFF 渲染 MA5..MA60 全 0.00、5/20 日涨跌全 +0.0%、量比 0.00x（`/tmp/rfc218_s24_off_sweep.py` C 段对照）。
+
+### 24.2 修复合同（只动呈现层，计算一行不动）
+
+- `config.py` 新增独立开关 `DA_SHORTK_NA`（默认 0；刻意不复用 `DA_CAPITAL_CODE_FIX`/`DA_INPUT_FULL`，互不捆绑）。
+- **OFF＝逐字节旧渲染**（else 分支原 f-string 逐字保留）；ma*/avg_vol_20/vol_ratio/chg* 计算行逐字未动。
+- ON：
+  1. 样本不足指标 → `N/A(仅N根,需M)`（逐指标窗口：MA5/10/20/60=5/10/20/60、chg5=6、chg20=21、量比=20）；
+  2. 标题实际根数 `## 技术面 ({n}日K线)`（OFF 保留「60日」旧标题）；
+  3. 覆盖行 `K线覆盖: {close>0根数}/{n}根close>0 | 末根: {time}`（缺数据不编数据）；
+  4. 警示「N/A=样本不足不可算, 不得按0解读; 趋势/均线结论只能基于可算指标, 不得以N/A指标推断震荡或方向」；
+  5. 量比 ≥20 根但 20 日均量=0 → `N/A(20日均量为0)`（与样本不足文案区分）；
+  6. K线明细行（近N日K线）与非技术面段落逐字节不动；`DA_INPUT_FULL` 截断正交（ON 标题=实际根数，明细仍按截断）。
+- 空 K线（n=0）两态均无技术面段（既有 `if klines:` 门不动）。
+
+### 24.3 验证矩阵（全部可复跑，`PYTHONDONTWRITEBYTECODE=1`）
+
+| 项 | 结果 | 凭据 |
+|---|---|---|
+| 新契约 `tests/test_da_shortk_na.py` | **30 passed** | `/tmp/rfc218_s24_newtests.log` |
+| OFF 逐字节扫描：合成 n 网格 0/1/3/5/6/10/20/21/60/61＋零量 n=25/61＋零close n=61 × DA_INPUT_FULL T/F（26 组）＋35 份 11-25 真实冻结 checkpoint＋ON 抽查 18 项 | **checks=79 fails=0 SWEEP_ALL_OK** | `/tmp/rfc218_s24_off_sweep.log`（探针 `/tmp/rfc218_s24_off_sweep.py`） |
+| 变异（`_sk` 样本不足仍返回数值 → ON 契约红）→恢复 sha 核验 | **3 红→恢复 30 绿**，sha `4b535772ed1b` 一致 | `/tmp/rfc218_s24_mutation_{red,green}.log` |
+| py_compile venv＋cron `venv/bin/python3.11` 双解释器 | exit0×2 | `/tmp/rfc218_s24_transform.log` |
+| DA 相邻（capital/output/fundamental/prompt_injection） | **1F/143P**；唯一失败＝既有 PROMPT_HASH 漂移（backup 预载同断言同值 `80176956bfbb≠c7444d67ce58`，非本批引入；§15 的 2 个 prompt_injection 失败现已绿） | `/tmp/rfc218_s24_adjacent.log`＋`_output_baseline.log` |
+
+- 本测试只验呈现层正确，不证收益；未跑全量 pytest/CI。DB 未触；零订单/付费 LLM/激活。
+- 既有 1 相邻失败（output_contract PROMPT_HASH 漂移）为基线存量 record-only 不修（repo 测试 vs 仓外 skill 模板指纹漂移，另案）；不声称全绿。
+
+### 24.4 部署
+
+- 仓外 DA 两文件（`config.py`/`llm_synth.py`），carrier/cron fresh-import 即生效；**无 app/ 改动、无需重启**。
+- 备份 `*.bak-20261127-rfc218-shortk`＋SHA256：config pre=`41cf45334304` post=`2ddbb5947c51`；llm_synth pre=`5136c1e43685` post=`4b535772ed1b`（备份=pre 逐字核验）。`.env.us` **未加** `DA_SHORTK_NA` 行（未设＝默认 OFF，fresh-import 冒烟 `DA_SHORTK_NA=False`，生产逐字节不变）。
+- 仓内产物：`tests/test_da_shortk_na.py`＋本节＋handoff 条目，提交推送（sha 见 handoff 同日条目）。
+- 变换在 DA 主批（21:00 CST 起跑）结束后执行，脚本自检 pgrep 拒跑（防中断在跑 DA）。
+
+### 24.5 收益边界（与 §9/§15/§22.8/§23.7 一致）
+
+- **无任何收益证据**。呈现层正确化≠盈利；ON 态模型方向/分值行为变化未验证。
+- 激活须 §10.4 单变量 A/B（n≥120/≥20 独立 ET 日/预注册 MDE），且不与资金分布/其他输入变量捆绑；
+  「N/A 进 prompt」不得直接当「模型更保守/更准」的证据。
+
+### 24.6 回滚
+
+- `.env.us` 加 `DA_SHORTK_NA=0`（或删行）→ 逐字节旧渲染；或恢复备份（sha 核验）。
+- 与 `DA_CAPITAL_CODE_FIX`/`DA_INPUT_FULL`/EXT 各开关互不牵连。
+
+### 24.7 未闭合排队
+
+- §23.8 队列不变；健康空财报三态/来源状态/挑战者事实一致性/news UTC→ET 各自独立批单变量。
+- 短K ON 态的「震荡误读率」前后对比属 A/B 预注册指标，本批不测不声称。
