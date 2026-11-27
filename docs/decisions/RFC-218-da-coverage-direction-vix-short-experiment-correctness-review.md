@@ -1692,3 +1692,31 @@ RFC-217 归档：10 条带标记指令、3 笔成交、仅 1 笔已平 CAT `+$9.
 - news UTC→ET 另案；事件预期差/价格响应/持仓期风险/执行可行性（用户优先补充二~五）属研究→可执行指令缺口，另案预注册。
 - HK→US 联动（§25）采集器已落地，首个真实 tick 周一 09:37 CST；DA 注入 `DA_HK_CONTEXT` 未建未激活，BLOCKED n≥60 HK 交易日＋行业级传导命中率研究＋§10.4 A/B＋用户单独裁决。
 - 本批 ON 态「挑战者误判率/弃权准确率」前后对比属 A/B 预注册指标，本批不测不声称。
+
+---
+
+## §29 链路事实边界审计（Batch A · record-only · 2026-11-28）
+
+> 用户裁「同意，港股数据现阶段更适合候选发现与背景输入，按照建议执行」。外部审计指控「设计目标/已实现/已激活/有交易价值混述」，本批逐项对照正式源码核实落档，**零行为变更**。详见 `DEB-20261128-da-chain-fact-boundary-audit.md`。
+
+### 29.1 表述修正（A1）
+- 同源≠同见：挑战者看 `_challenger_data_view` 过滤/截断子集（新闻/研报/社区截断 600，未识别段丢弃）；§28 ON 只补「数据源状态」。一致性合同＝关键事件 ID/版本/价格/时点/单位/缺失状态一致＋显式列出挑战者未见材料。
+- score≠conf≠tier：score_band{8/6/3} → merge 中文五档±1（仅独立 AGREE 升）→ gate decision_conf(0.50±0.20/−0.15)→tier → adapter conf（另含同向分差衰减/弃权 0.50）。「+1」是中文档位非胜率。
+- 候选预算≠sizing：0.3 是仓位乘数（instruction_builder:89 等），DA 候选预算=主池 top_n+2，无 regime 乘数。$0/无效价已有代码硬拒（candidate_eligibility.positive_number＋min_price＋admission）。
+
+### 29.2 真值表（A3 · 567 行真实函数 · 契约 41 绿）
+- MEDIUM 恒不「优」、LOW 恒「差」；HIGH+PARTIAL/明确反对→「中」；同向永不 SKIP/不覆写 score；|分差|>3→SKIP 仅真反向。
+- **新发现（钉死待裁）**：merge 用 `_self_debate`、gate/adapter 用 `_fallback` 判独立 → T2/T3 独立挑战者 AGREE 在 merge 升档但 gate/adapter 不 +0.20（合成 18 行，全 fallback_independent）。修复须另案影子量化＋裁决，本批不修。
+
+### 29.3 视图差异清单（A2 · 744 checkpoint）/ 漏斗审计（A4 · 4025 候选）
+- OFF full=13933/trunc=1448/dropped=87；数据源状态 103 次 OFF dropped→ON full。
+- 漏斗 REJECT 1972/PASS 12/UNKNOWN 2041；reject 主因 low_atr 1583、price_floor 40（代码硬拒触发）。
+
+### 29.4 港股定位与后续
+- 港股＝候选发现/背景输入（用户已裁），非方向信号；美股腿未采集（代码自标 DEFERRED）。
+- 后续单变量批：B1 有限值入口（HK 采集器，见 DEB-20261128-hk-collector-finite-guard）；B2 成分时点/状态、B3 字段语义、C 美股腿、D 增量+可交易性研究预注册、E DA_HK_CONTEXT 注入（默认 OFF＋§10.4 A/B＋用户裁决）。各批不捆绑。
+
+### 29.5 凭据 / 未验证 / 回滚
+- 凭据：`tests/test_da_chain_truth_table.py`（41 绿）；`data/shadow/da_chain_audit/2026-11-28/{truth_table,view_manifest,funnel_audit}.json`；探针 `/tmp/rfc218_s29_*.py`。
+- 未验证：独立性分歧历史发生数（台账 n=10 缺 challenger_tier）；合成真值表非收益证据。
+- 回滚：纯文档/影子产物/测试，删除即回滚，无生产影响。
