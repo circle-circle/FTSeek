@@ -1172,3 +1172,88 @@ RFC-217 归档：10 条带标记指令、3 笔成交、仅 1 笔已平 CAT `+$9.
 - revert 本批 commit＋重启（注册表回退）；或仅删注册项（看板不可见但写方/提醒仍在）。
 - 停提醒/停写盘：`.env.us` `EXT_AFTERHOURS_HALF_DAY_SHADOW=0`（cron fresh-import 即生效，无分歧落盘⇒无首命中）；守卫回滚=`EXT_AFTERHOURS_HALF_DAY_GUARD=0`（本就 OFF）。
 - 与 §16/§17/§19/§20 各开关互不牵连；state 文件删除仅导致对应日重新提醒一次，无交易影响。
+
+## §22 独立审计正确性批（2026-11-27）：未知净额统一合同＋EXT 推送送达合同＋NO_TRADE 实验跨轮预 sizing＋黑名单异常可见性（3 P1＋1 P2，纯正确性，无收益声称）
+
+### 22.0 背景与病灶（用户转发独立审计，隔离合成检查实锤）
+
+审计以真实函数隔离合成复核确认四处合同分歧/缺口（**函数合同分歧已确认；未证明当前生产存在缺失行/已污染正式 DA 判断/已发生实盘泄漏**）：
+
+1. **P1-A 净额三套读数分叉**（`daily_review.py:1167` / `lesson_injector.py:339`）：
+   | 输入 | 官方评分净额 | 日报净额(旧) | 教训helper净额(旧) |
+   |---|---|---|---|
+   | 毛10、费未知、净未知 | 不可测 | 10 | 10 |
+   | 毛10、费4、净缺失 | 6 | 10 | 6 |
+   日报可能把毛利当净利；缺费时教训 helper 回退毛收益；教训验证存在用该 helper 更新经验分值/有效期的消费链 ⇒ 未知收益可自证经验正确。
+2. **P1-B EXT 推送失败仍记"已通知"**（`extended_hours_entry_executor.py:348/1009`＋`app/push/hub.py:448`）：`push_text_safe(sync=True)` 返回 bool，**False=失败不抛异常**。两个首命中 helper 不查返回值直接写去重 state。审计以真实 helper AST＋内存路径复现：第一次 hub False→仍登记 notified；第二次因 notified 存在→永不重试。且写方只在首命中调 helper ⇒ 只修"失败不登记"不够，还需有限重试路径。
+3. **P1-C（潜伏）NO_TRADE 实验跨轮预 sizing 绕过**（`auto_execute_flow.py:1116` / `db.py:908`）：某轮 reprice 写正 position_size→暂缓未下单→下一轮 SELECT * 回读已有股数→进入 NO_TRADE 实验轮→正股数跳过部分 regime 重评、实验 sizing 及 cohort 写入。隔离分支复核确认已有数量被原样保留。**非已证明的当前 DA 事故**（DA 生成端通常不预 sizing，归档三笔实验成交有标记）；风险在跨轮/其他生成路径，生产命中次数未知。
+4. **P2 黑名单配置异常静默变空名单**（`watchlist_manager.py:81–87`）：内部读取异常被捕获后只打 debug 返回空列表，外层守卫当正常空名单，外层 warning 接不到真实异常。**已确认的是异常可见性缺口**；既定 fail-open 行为本批不改 fail-close（须另行裁决）。
+
+### 22.1 P1-A 修复：未知净额单一真源（app/review/net_basis.py 新增）
+
+- `resolve_net_pnl(trade)->Optional[float]`，与官方评分器 `scripts/okr_2026_11_scoring._row_net/_num` **逐字同语义**（490 组合 parity 矩阵契约钉死）：①`pnl_net` 已知有限值→原样保留；②净缺失→**仅当** `realized_pnl`(毛)∧`fees_est`(费) 均已知才回算 毛−费；③其余→None（不可测）。**未知绝不归零、绝不用毛顶替**；None/""/NaN/inf/非数→缺失。
+- `daily_review._generate_summary`：聚合只覆盖可测样本（`_measurable_pairs`）；胜率/均额/losing/fake_wins/最大单笔分母=可测笔数；新增覆盖面披露键 `net_measurable_n`/`net_unknown_count`（空日 base 亦含）；`pnl_basis` 保持 "net:" 前缀；毛口径 `total_pnl_gross` 仅供渲染不参与裁决。`_calculate_review_score` 胜率同改 closed∧可测净口径。
+- `lesson_injector._trade_net_pnl` 委托 helper（Optional）；`validate_lessons` 剔除不可测样本（premarket/high_signal 两臂），**无可测样本→不更新**（未知收益不自证经验正确）；返回 dict 形态不变。**不清空、不重打分、不改写历史教训**。
+- `scheduler_triggers._format_daily_review`：`net_unknown_count>0` 时追加「（N 笔净额未知, 未计入净额/净胜率）」；旧 JSON 无键→不追加（向后兼容）。
+- **完整旧数据（pnl_net 在场）结果逐字不变**（契约测试以完整数据 fixture 原断言 5/5/3 钉死）。
+
+### 22.2 P1-B 修复：EXT 首命中推送送达合同（确认成功才登记＋有限重试）
+
+- 两 helper（黑名单/半日市）同改：`_ok=push_text_safe(...,sync=True)`；**True→state[key]=ISO 时间戳字符串（旧格式保留=已通知）**；**False→`{"notified":False,"attempts":N,"last_attempt":ts}`＋print 警告，保留待处理**；旧字符串条目=成功→去重跳过；dict 已 notified 或 `attempts≥_FIRST_HIT_PUSH_MAX_ATTEMPTS(=3)`→跳过（防无限刷屏）；**抛异常→不写 state**（既有契约钉死）。
+- **调用方改为每次命中/tick 都调 helper**（移除 `if _is_new`/`if ticks==1` 门），重试路径真实存在；helper 自身去重保证成功后不重发。
+- 测试覆盖**真实 False 合同**（spy 返回 False，不只覆盖"桩抛异常"）：False→下次重试→成功登记；3 次耗尽停止；旧字符串去重；后续 tick 重试。仍走 `app/push/hub`，零直连 notifier/webhook。
+- 改善待裁事项可见性，**不改交易规则**；两守卫保持 OFF。
+
+### 22.3 P1-C 修复：NO_TRADE 实验放行独立核对最终数量（同源重算，非二次缩放）
+
+- `auto_execute_flow`：`_nt_exp_resizing = (_nt_short_exp ∧ _inst_ps>0 ∧ direction∈{SELL_SHORT,SHORT})`；放行条件 `if (_inst_ps<=0 or _nt_exp_resizing) and _new_sl>0:` → 实验轮携带正股数也**强制走同源 SSOT 重算**（regime 重评＋实验 sizing＋cohort 写入），并 info log 留痕。
+- **不是把已有股数再乘 0.3**：重算从 SSOT 出发，已按 RISK_OFF 缩过的数量不会重复缩小（幂等契约：12→12 钉死）；实验轮外携带股数逐字节不变（控制契约钉死）。零新开关、零方向/阈值/仓位政策变更。
+
+### 22.4 P2 修复：黑名单读取异常可见性（fail-open 保持）
+
+- `_get_global_blacklist` except：`logger.debug`→`logger.warning(..., exc_info=True)`（W4/W6 双棘轮合规），**保留 fail-open 返回 []**。异常即停新仓（fail-close）须另行裁决，本批不改。测试覆盖"真实 getter 内部吞异常"（WARNING＋栈＋fail-open 空列表）。
+
+### 22.5 相邻测试隔离修补（本批附带，零生产语义变更）
+
+1. `tests/test_daily_review.py` fixture 原只有 `realized_pnl`(毛) 无 `pnl_net`/`fees_est` — 旧断言把"毛当净"缺口掩盖。补齐两列成**完整旧数据**，原断言 (5/5/3) 逐字保留钉死不变性；新增全未知（0 胜/覆盖 5 笔未知/毛口径如实披露）与部分未知（分母=可测 3 笔，win_rate=1.0 非 3/5）两例。
+2. `tests/playbook/test_blacklist_final_guard.py` 两个 **DB 闩**测试（`test_guardrail_skip_latch_pending_only`/`_non_pending_state`）未隔离开关：§19 激活（`.env.us:232 PLAYBOOK_BLACKLIST_FINAL_GUARD=1`，16:41）后写入侧守卫把 QCOM/LCID/TME 在 save 时即转 SKIP，污染"已执行不改"断言。**生产闩本身正确**（mark() 三断言全过；`PLAYBOOK_BLACKLIST_FINAL_GUARD=0` 环境覆跑 2 passed 实证）。修补=两测试显式 `_flag(monkeypatch,"0")` 与激活态解耦。诊断链：单独跑红→stash 本批 app/scripts 重跑**仍红**（HEAD 既有）→env 覆跑绿→定位激活泄漏。
+3. `tests/test_review_source_attribution.py::test_weekly_signal_funnel_reports_source_direction`（`no such column: row_kind`）为**已知既有红点**（handoff.md 2026-11-11 前后条目已列「weekly row_kind 1」；fixture 表结构落后于 10-27 `ROW_KIND_EXCLUDE_PLACEHOLDER_SQL`），stash 重跑同样红 ⇒ 非本批引入，**本批不修不掩盖**（另案）。
+
+### 22.6 验证（全部 PYTHONDONTWRITEBYTECODE=1，venv pytest）
+
+- 批内契约 **869 passed/1 skipped**（skip=既有 real-JSON 门）：`PYTHONPATH=. ./venv/bin/python -m pytest tests/review/test_net_basis_contract.py tests/review/test_daily_pnl_basis_render.py tests/review/test_lesson_outcome_validation.py tests/test_daily_review.py tests/test_watchlist_blacklist_visibility.py tests/test_ext_blacklist_guard.py tests/test_ext_afterhours_halfday.py tests/playbook/test_entry_data_bounded_fetch.py tests/playbook/test_blacklist_final_guard.py -q` → `/tmp/rfc218_s22_contracts.log`。新增契约含：490 组合 parity 矩阵、审计合成表两行、summary 覆盖面/分母、review-score 净胜率、教训未知剔除、EXT False→重试→成功/耗尽/旧格式去重/后续 tick 重试（两 helper）、跨轮 40→12＋cohort vix=22/score=-5、幂等 12→12、实验轮外 40 不变、黑名单 WARNING+栈+fail-open。
+- EXT 相邻全 glob **7F/376P** FAILED 与 §19 基线 **IDENTICAL**（`/tmp/rfc218_s22_ext_adj.log`＋`_norm.txt` diff ∅）；§21 选择集（glob 减半日市）**7F/288P** IDENTICAL（`/tmp/rfc218_s22_ext_adj_s21sel.log`；284 基线+4 新增；383=291+88+4 口径对账）。
+- Playbook 相邻 `tests/playbook/ tests/test_symbol_registry_p1p2.py` **18F/1572P** FAILED 与 §19 基线 **IDENTICAL**（`/tmp/rfc218_s22_pb_adj_rerun.log`＋`_norm.txt` diff ∅；1569 基线+3 新增）。首跑 20F/1570P 的 2 额外失败经 §22.5#2 诊断为激活泄漏并修补后复跑一致。
+- Review 相邻 **1F/822P/1s**（`/tmp/rfc218_s22_review_adj_rerun.log`）：唯一失败=§22.5#3 已知既有 weekly row_kind；其余全绿。
+- 变异 **5 红→恢复绿**（sha256 逐字节还原核验）：M1 net_basis 毛回退+归零（216 红）；M2a/M2b EXT 忽略返回值（各 3 红）；M3 sizing 条件回退（2 红）；M4 watchlist warning→debug（2 红）。日志 `/tmp/rfc218_s22_M*_{red,green}.log`， runner `/tmp/rfc218_s22_mutate.py`。
+- `py_compile` venv＋cron python3.11 双解释器 exit0；`scripts/check_undefined_names.py` 7 生产文件 exit0。
+- W4/W5/W6 日志卫生：`_check_log_hygiene` 全仓扫描 **W4 status=ok grew=[] new_files=[]**，watchlist_manager 2→1 **healed**；W5/W6 本批 7 文件逐文件 HEAD 对比 **零新增**（W6 全仓 drift 为 HEAD 既有存量：position_sync/risk_gates/trail_state_store/late_fill_evidence 等，非本批文件，另案）。
+- DB 全程 `mode=ro`+`query_only`；零订单/付费 LLM/方向/阈值/仓位政策/live 权限变更；零清空/重打分/历史教训改写。
+
+### 22.7 部署（重启批：app/ 运行时改动）
+
+- 提交 `5405c5f7a`（14 文件 +755/-49：7 生产＋7 测试；`git show --stat` 可核）＋本 §22＋handoff 条目（补记提交）；推送 origin/main。
+- 重启前快照 `/tmp/rfc218_s22_pre_restart.json`（§21 形态，脚本 `/tmp/rfc218_s22_pre_restart.py`）：SIM SHORT BA 23/BABA 47/GS 5、outbox 22 全 BOOKED、PENDING 4395、今日 0 指令、被禁 PENDING 28 存量；在途出场核对＝trade_records 未平=3 仓一致（全 PLAYBOOK_SIM）、LIVE 0、`exit_ledger.exit_intents/exit_legs` 0/0；`git status --porcelain -- app/ scripts/` 干净（仅本批已提交）。
+- `systemctl restart ftseek-us` → 新 PID **191013**（20:15:52 CST）；启动冒烟 **7/7 exit0** `/tmp/rfc218_s22_startup_smoke.log`；重启后快照 `/tmp/rfc218_s22_post_restart.json` 除 PID 外**逐项 IDENTICAL**；`/proc/191013/environ`：EXT_AFTERHOURS_HALF_DAY_GUARD=0/SHADOW=1、EXT_BLACKLIST_GUARD=0/SHADOW=1、PLAYBOOK_BLACKLIST_GUARD=1/FINAL_GUARD=1、**无 DA_CAPITAL_CODE_FIX**；重启后日志段（272 行）0 Traceback/CRITICAL。
+- 生效路径：日报/教训/复盘评分随服务重启加载；EXT 两 helper 经 cron fresh-import 即生效；无新开关、无 .env 变更（FINAL_GUARD=1/BLACKLIST_GUARD=1 维持 §19 激活态，EXT 两守卫与半日市守卫维持 OFF，DA_CAPITAL_CODE_FIX 维持未设）。
+
+### 22.8 收益边界（与 §9/§18.5/§19.5/§20.4/§21.5 一致）
+
+- **本批没有任何收益改善证据**。四处修复均为读数/送达/实验隔离/可见性正确性，不改方向/阈值/仓位/退出/live 权限；完整旧数据结果不变；未知样本从"伪净利/伪胜场/自证经验"中剔除是**口径正确化**，不是盈利补丁。
+- 资金分布修复**正确表述**（ supersede 早期"修复尚未实现"）：双路径修复＋八字段/有限数值/非 bool/缺失 provenance 合同＋独立开关**已有实现与测试记录**（§8/§15，35/35 逐字节复验），但 `DA_CAPITAL_CODE_FIX` 保持未设、正式输入未激活，**开启态的模型及收益效果未证明**；本体在仓外，本轮未读取验证。
+
+### 22.9 未闭合排队（审计边界，本批不修不掩盖）
+
+1. **adapter 刷新≠新版候选进指令库**（`generation_flow.py:111–117` 按日完成标记先检）：bridge 更新 AAA+BBB→adapter 刷新成功→当日完成标记存在→不检查新版 supply/不补 BBB。**语义未裁决**：同日重跑仅更新研究候选，还是构成新指令生成事件？裁决前不强制全量重生成、不删完成标记（删标记可能恢复重复生成/长步阻塞旧问题）。
+2. **bridge 稳定性检查硬化空间**：目前主要比较 mtime/size，相同 mtime/size 的身份替换旧快照可能被接受；但 SHA 绑定实际读到的内容，下一轮原则上能发现新 SHA。**不夸大为已发生混合字节/错误成交**。
+3. **EXT 半日市守卫仍 OFF**：实现＋观测闭环已有（§20/§21），开启只缩结束至 16:59 不扩 13:00–16:00 起点；半日市 17:00–19:59 旧窗仍开放=**未激活的已知政策残余**，非新增代码回归。激活裁决优先排队（本批无授权未启用）。
+4. **EXT 观测副作用与并发边界**：规范路径 dry=True 可能仍写观测并触发提醒；半日市观测 writer 位于 executor 互斥锁之前；无锁读-改-写＋共享临时文件重叠调用可能漏计/丢 mode。**生产是否有外层互斥未核，不声称已发生并发损坏**。dry 是否必须静默＋观测写入/通知去重原子性须明确（独立批）。
+5. **未来 SHORT 实盘镜像隔离未闭合**（`risk_gates.py:646–659`）：镜像入口未按 no_trade_short_exp 排除历史实验指令；未来 SHORT 真实目标门获允许时跨 regime 遗留实验指令仍可能被镜像。**当前非实盘泄漏证明；SHORT 实盘授权前必须先补该隔离**。
+6. 净额合同同域残余（本批范围外）：Obsidian 明细 'pnl' 映射（`daily_review.py:1767`，writer `obsidian_writer.py:863` `:+.2f` 遇 None 会崩）；周/月报 SQL COALESCE（~1533–1538）；`_analyze_overnight_risk`（~1107）。
+7. §19.6/§21.6 队列不变：资金激活 BLOCKED §10.4 A/B；EXT 黑名单 GUARD 激活 BLOCKED 用户裁 QCOM 禁令适用性；短 K UNKNOWN/健康空财报/来源状态/挑战者事实一致性逐批单变量；watchlist 异常即停新仓（fail-close）另行裁决。
+
+### 22.10 回滚
+
+- revert 本批 commit＋`systemctl restart ftseek-us`（日报/教训/评分/sizing 回退）；EXT helper 经 cron fresh-import 随 revert 即回退。
+- 无开关可回滚（本批零新开关）；state 文件新格式条目（dict）旧代码读为"非字符串→未通知"会重发一次提醒，无交易影响；删除 state 文件仅导致重新提醒一次。
+- 与 §16/§17/§19/§20/§21 各开关互不牵连；测试隔离修补（§22.5）随 revert 一并回退。
