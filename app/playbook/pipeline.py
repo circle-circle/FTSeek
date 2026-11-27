@@ -858,6 +858,7 @@ def _check_bridge_health_and_alert(context: str) -> None:
 #   (健康检查读的是文件态, 不是内存态). 修复: run_generate 入口探测重载.
 _bridge_reloaded_date = None
 _bridge_reloaded_mtime = None
+_bridge_reloaded_sha = None
 
 
 def _bridge_mtime(trade_date: str):
@@ -870,18 +871,37 @@ def _bridge_mtime(trade_date: str):
         return None
 
 
+def _bridge_content_sha(trade_date: str):
+    """当日 bridge 文件内容 sha256 (内容绑定版本; 缺失/不可读 → None)。"""
+    try:
+        import hashlib as _hashlib
+        path = f"/opt/ftseek/FTSeek-US/data/opportunity_scan_{trade_date}.json"
+        with open(path, "rb") as _f:
+            return _hashlib.sha256(_f.read()).hexdigest()
+    except Exception:
+        return None
+
+
 def _record_bridge_loaded_baseline(bridge, mtime=None) -> None:
-    """Record the version baseline for an already-loaded Bridge adapter."""
-    global _bridge_reloaded_date, _bridge_reloaded_mtime
+    """Record the version baseline for an already-loaded Bridge adapter.
+
+    版本与本次实际读入内容绑定 (A2): 优先取 adapter 携带的 _source_sha256 /
+    _source_mtime (由 _try_load_bridge 一致读取后附上), 而非探测期 mtime —
+    避免"读旧内容/采新 mtime"或探测与读取之间被替换导致的错误归属。
+    旧 adapter 无内容版本 → sha=None, 运行期据此走迁移刷新。
+    """
+    global _bridge_reloaded_date, _bridge_reloaded_mtime, _bridge_reloaded_sha
     if bridge is None or type(bridge).__name__ != "BridgeVotingAdapter":
         return
     trade_date = str(getattr(bridge, "_trade_date", "") or "")
     if not trade_date:
         return
-    if mtime is None:
-        mtime = _bridge_mtime(trade_date)
+    source_mtime = getattr(bridge, "_source_mtime", None)
+    if source_mtime is None:
+        source_mtime = mtime if mtime is not None else _bridge_mtime(trade_date)
     _bridge_reloaded_date = trade_date
-    _bridge_reloaded_mtime = mtime
+    _bridge_reloaded_mtime = source_mtime
+    _bridge_reloaded_sha = getattr(bridge, "_source_sha256", None)
 
 
 # [DEB-20260902-stale-bridge P1-① 2026-09-02] 陈旧 bridge 交易日滚动重载 —
@@ -920,13 +940,19 @@ def _reload_bridge_if_landed(scheduler) -> None:
     成功 → 替换 scheduler.voting_coordinator (该属性仅 __init__ 写入, 运行期无其他写者);
     失败/未就绪 → 静默返回 (缺失告警由 _check_bridge_health_and_alert #1 兜底).
     """
-    global _bridge_reloaded_date, _bridge_reloaded_mtime
+    global _bridge_reloaded_date, _bridge_reloaded_mtime, _bridge_reloaded_sha
     try:
         _today = _today_et_str()
         _mtime = _bridge_mtime(_today)
-        if (_bridge_reloaded_date == _today
-                and _bridge_reloaded_mtime == _mtime):
-            return
+        _sha = _bridge_content_sha(_today)
+        # 幂等: 内容未变 → 不重复读盘/注入。sha 为权威版本 (内容绑定);
+        # 旧基线无 sha 时退回 mtime 判定 (保持旧语义; 刷新后即建立 sha 绑定)。
+        if _bridge_reloaded_date == _today:
+            if _bridge_reloaded_sha is not None:
+                if _sha is not None and _sha == _bridge_reloaded_sha:
+                    return
+            elif _mtime is not None and _mtime == _bridge_reloaded_mtime:
+                return
         vc = getattr(scheduler, "voting_coordinator", None)
         _is_bridge = vc is not None and type(vc).__name__ == "BridgeVotingAdapter"
         _stale = False
@@ -940,11 +966,20 @@ def _reload_bridge_if_landed(scheduler) -> None:
                 # still keeps the P0-2 one-load semantics. Only a bridge that
                 # was already loaded today can be "refreshed"; the first load
                 # of a same-day adapter remains a no-op.
-                if (_bridge_reloaded_date != _today
-                        or _bridge_reloaded_mtime is None
-                        or _mtime is None
-                        or _mtime == _bridge_reloaded_mtime):
+                # 2026-11-27 (A2 内容绑定): 版本以实际读入内容 sha 为权威 —
+                #   同 mtime 重写也能刷新; 探测与读取之间被替换不误归属 (基线取
+                #   adapter 携带的读入版本); 旧 adapter 缺 sha → 迁移刷新一次。
+                if _bridge_reloaded_date != _today:
                     return
+                if _bridge_reloaded_sha is not None:
+                    if _sha is None or _sha == _bridge_reloaded_sha:
+                        return
+                else:
+                    # 旧 adapter 缺内容版本 → 退回 mtime 变化判定; 一旦刷新即由
+                    # _try_load_bridge 附上 sha, 建立内容绑定 (迁移, 不永远返回)。
+                    if (_mtime is None or _bridge_reloaded_mtime is None
+                            or _mtime == _bridge_reloaded_mtime):
+                        return
                 _same_day_refresh = True
             else:
                 if not _stale_bridge_reload_enabled():
@@ -975,8 +1010,29 @@ def _reload_bridge_if_landed(scheduler) -> None:
         logger.warning(f"[playbook] P0-2 bridge重载探测异常(不阻断): {_rl_e}")
 
 
+def _read_bridge_raw(path):
+    """一致读取 bridge 原始字节 + 稳定性校验 (A2 要求5/6: 原子替换/并发写入防护)。
+
+    返回 (raw_bytes, mtime); 缺失/读取失败/读取期间被改写 → None。
+    稳定性校验在解析与动态池注入之前完成 — 不稳定文件不解析、不注入、不消耗基线。
+    """
+    import os as _os
+    try:
+        st_before = _os.stat(path)
+        with open(path, "rb") as _f:
+            raw = _f.read()
+        st_after = _os.stat(path)
+    except Exception:
+        return None
+    if (st_before.st_mtime_ns, st_before.st_size) != (st_after.st_mtime_ns, st_after.st_size):
+        logger.warning(f"[playbook] bridge读取期间文件被改写 (稳定性校验失败) → 视作未就绪: {path}")
+        return None
+    return raw, st_after.st_mtime
+
+
 def _try_load_bridge() -> Optional[BridgeVotingAdapter]:
     """加载今日 bridge 文件。不存在 → None (调用方 fallback 到决策适配器)。"""
+    import hashlib as _hashlib
     import json as _json
     import os as _os
     from app.utils.timezone import get_trade_date
@@ -987,12 +1043,17 @@ def _try_load_bridge() -> Optional[BridgeVotingAdapter]:
     if not _os.path.exists(bridge_path):
         return None
 
+    _read = _read_bridge_raw(bridge_path)
+    if _read is None:
+        logger.warning(f"[playbook] bridge文件读取失败或不稳定: {bridge_path}")
+        return None
+    raw, _source_mtime = _read
     try:
-        with open(bridge_path) as f:
-            data = _json.load(f)
+        data = _json.loads(raw)
     except Exception as e:
         logger.warning(f"[playbook] bridge文件读取失败: {e}")
         return None
+    _source_sha = _hashlib.sha256(raw).hexdigest()
 
     candidates = data.get("candidates", [])
     if not candidates:
@@ -1062,7 +1123,10 @@ def _try_load_bridge() -> Optional[BridgeVotingAdapter]:
     except Exception as _e:
         logger.warning(f"[playbook] bridge候选注入pool失败(非致命): {_e}")
 
-    return BridgeVotingAdapter(by_symbol, data.get("trade_date", _today_str))
+    _adapter = BridgeVotingAdapter(by_symbol, data.get("trade_date", _today_str))
+    _adapter._source_sha256 = _source_sha
+    _adapter._source_mtime = _source_mtime
+    return _adapter
 
 
 def _direction_conditioned_ic_net(direction: str, bearish_hits, bullish_hits,

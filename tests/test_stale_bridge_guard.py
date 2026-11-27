@@ -55,6 +55,7 @@ def fresh_bridge(monkeypatch):
     monkeypatch.setattr(pl, "_try_load_bridge", lambda: adapter)
     monkeypatch.setattr(pl, "_bridge_reloaded_date", None)
     monkeypatch.setattr(pl, "_bridge_reloaded_mtime", None)
+    monkeypatch.setattr(pl, "_bridge_reloaded_sha", None)
     return adapter
 
 
@@ -187,6 +188,141 @@ class TestStaleBridgeReload:
         pl._record_bridge_loaded_baseline(BridgeVotingAdapter({}, ""), 100.0)
         assert pl._bridge_reloaded_date is None
         assert pl._bridge_reloaded_mtime is None
+
+
+class TestBridgeContentBoundVersion:
+    """S11-S17 (A2 内容绑定版本契约, 2026-11-27): 版本须绑定实际读入内容,
+    而非探测期 mtime。覆盖同 mtime 重写/探测-读取竞态/旧 adapter 迁移/
+    一致读取稳定性校验/坏文件不消耗基线。现有 S1-S10 mtime 钉零改动。"""
+
+    def test_s11_same_mtime_content_rewrite_refreshes(self, fresh_bridge, monkeypatch):
+        """S11 根因钉: mtime 不变但内容重写 → sha 变化仍须刷新 (mtime 代理漏检)。"""
+        sched = MagicMock()
+        old = BridgeVotingAdapter({"US.SAIC": _cand("US.SAIC", "DA-old")}, TODAY)
+        old._source_sha256 = "sha-old"
+        old._source_mtime = 100.0
+        sched.voting_coordinator = old
+        pl._record_bridge_loaded_baseline(old, 100.0)
+        fresh_bridge._source_sha256 = "sha-new"
+        fresh_bridge._source_mtime = 100.0  # mtime 不变, 仅内容变
+        monkeypatch.setattr(pl, "_bridge_mtime", lambda _d: 100.0)
+        monkeypatch.setattr(pl, "_bridge_content_sha", lambda _d: "sha-new")
+        _reload_bridge_if_landed(sched)
+        assert sched.voting_coordinator is fresh_bridge, "同 mtime 内容重写必须刷新"
+        assert pl._bridge_reloaded_sha == "sha-new"
+
+    def test_s12_probe_read_race_records_read_content(self, fresh_bridge, monkeypatch):
+        """S12 (A2 要求4): 探测 sha ≠ 实际读入内容 → 基线记实际读入版本, 不错误归属。"""
+        sched = MagicMock()
+        old = BridgeVotingAdapter({"US.SAIC": _cand("US.SAIC", "DA-old")}, TODAY)
+        old._source_sha256 = "sha-old"
+        old._source_mtime = 100.0
+        sched.voting_coordinator = old
+        pl._record_bridge_loaded_baseline(old, 100.0)
+        fresh_bridge._source_sha256 = "sha-new"
+        fresh_bridge._source_mtime = 300.0
+        monkeypatch.setattr(pl, "_bridge_content_sha", lambda _d: "sha-mid")  # 探测期版本
+        monkeypatch.setattr(pl, "_bridge_mtime", lambda _d: 200.0)  # 探测期 mtime
+        _reload_bridge_if_landed(sched)
+        assert sched.voting_coordinator is fresh_bridge
+        assert pl._bridge_reloaded_sha == "sha-new", "基线须绑定实际读入内容, 非探测 sha-mid"
+        assert pl._bridge_reloaded_mtime == 300.0, "mtime 须取实际读入版本, 非探测 200"
+
+    def test_s13_legacy_adapter_without_sha_migrates(self, fresh_bridge, monkeypatch):
+        """S13 (A2 迁移): 同日旧 adapter 缺 sha → mtime 变化即刷新并建立 sha 绑定, 不永远返回。"""
+        sched = MagicMock()
+        legacy = BridgeVotingAdapter({"US.SAIC": _cand("US.SAIC", "DA-old")}, TODAY)
+        sched.voting_coordinator = legacy  # 无 _source_sha256
+        monkeypatch.setattr(pl, "_bridge_reloaded_date", TODAY)
+        monkeypatch.setattr(pl, "_bridge_reloaded_mtime", 100.0)
+        monkeypatch.setattr(pl, "_bridge_reloaded_sha", None)
+        fresh_bridge._source_sha256 = "sha-new"
+        fresh_bridge._source_mtime = 200.0
+        monkeypatch.setattr(pl, "_bridge_mtime", lambda _d: 200.0)  # mtime 变化触发迁移
+        monkeypatch.setattr(pl, "_bridge_content_sha", lambda _d: "sha-new")
+        _reload_bridge_if_landed(sched)
+        assert sched.voting_coordinator is fresh_bridge, "缺版本记录的旧 adapter 不得永远返回"
+        assert pl._bridge_reloaded_sha == "sha-new"
+
+    def test_s14_content_unchanged_no_reload(self, fresh_bridge, monkeypatch):
+        """S14 幂等: 内容 sha 未变 (即便 mtime 被 touch) → 不重复读盘/注入。"""
+        sched = MagicMock()
+        old = BridgeVotingAdapter({"US.SAIC": _cand("US.SAIC", "DA-old")}, TODAY)
+        old._source_sha256 = "sha-same"
+        old._source_mtime = 100.0
+        sched.voting_coordinator = old
+        pl._record_bridge_loaded_baseline(old, 100.0)
+        called = []
+        monkeypatch.setattr(pl, "_try_load_bridge", lambda: called.append(1) or fresh_bridge)
+        monkeypatch.setattr(pl, "_bridge_mtime", lambda _d: 999.0)  # mtime 被 touch
+        monkeypatch.setattr(pl, "_bridge_content_sha", lambda _d: "sha-same")  # 内容未变
+        _reload_bridge_if_landed(sched)
+        assert sched.voting_coordinator is old
+        assert not called, "内容未变不得触发重读 (sha 权威, 不被 mtime touch 误触发)"
+
+    def test_s15_failed_load_keeps_adapter_and_baseline(self, fresh_bridge, monkeypatch):
+        """S15 (A2 要求7): 坏文件/不稳定读取 → loader None → 保留旧 adapter, 不消耗成功基线。"""
+        sched = MagicMock()
+        old = BridgeVotingAdapter({"US.SAIC": _cand("US.SAIC", "DA-old")}, TODAY)
+        old._source_sha256 = "sha-old"
+        old._source_mtime = 100.0
+        sched.voting_coordinator = old
+        pl._record_bridge_loaded_baseline(old, 100.0)
+        monkeypatch.setattr(pl, "_bridge_content_sha", lambda _d: "sha-bad")
+        monkeypatch.setattr(pl, "_bridge_mtime", lambda _d: 200.0)
+        monkeypatch.setattr(pl, "_try_load_bridge", lambda: None)  # 坏 JSON/不稳定 → None
+        _reload_bridge_if_landed(sched)
+        assert sched.voting_coordinator is old
+        assert pl._bridge_reloaded_sha == "sha-old", "失败不得消耗成功基线"
+        assert pl._bridge_reloaded_mtime == 100.0
+
+
+class TestBridgeConsistentRead:
+    """S16-S18 (A2 要求5/6): _read_bridge_raw 一致读取 + 注入前稳定性校验。
+    直接测临时文件, 不调真实 loader (避免写生产动态池)。"""
+
+    def test_s16_stable_read_returns_bytes_and_mtime(self, tmp_path):
+        p = tmp_path / "bridge.json"
+        p.write_text('{"candidates": []}', encoding="utf-8")
+        res = pl._read_bridge_raw(str(p))
+        assert res is not None
+        raw, mtime = res
+        assert raw == b'{"candidates": []}'
+        assert mtime == p.stat().st_mtime
+
+    def test_s17_missing_file_returns_none(self, tmp_path):
+        assert pl._read_bridge_raw(str(tmp_path / "absent.json")) is None
+
+    def test_s18_mid_read_rewrite_aborts(self, tmp_path, monkeypatch):
+        """读取期间文件被改写 → 稳定性校验失败 → None (不解析/不注入/不消耗基线)。"""
+        import builtins
+        p = tmp_path / "bridge.json"
+        p.write_text('{"candidates": []}', encoding="utf-8")
+        real_open = builtins.open
+
+        class RacingFile:
+            def __init__(self, *a, **k):
+                self._f = real_open(*a, **k)
+
+            def read(self, *a):
+                data = self._f.read(*a)
+                p.write_text('{"candidates": [], "extra": 1}', encoding="utf-8")
+                return data
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                self._f.close()
+                return False
+
+        def fake_open(file, *a, **k):
+            if str(file) == str(p):
+                return RacingFile(file, *a, **k)
+            return real_open(file, *a, **k)
+
+        monkeypatch.setattr(builtins, "open", fake_open)
+        assert pl._read_bridge_raw(str(p)) is None
 
 
 def _mkdb():
