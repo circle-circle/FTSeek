@@ -1543,3 +1543,79 @@ RFC-217 归档：10 条带标记指令、3 笔成交、仅 1 笔已平 CAT `+$9.
 - §24.7/§25.7 队列不变；来源状态可见性/挑战者事实一致性/news UTC→ET 各自独立批单变量。
 - 健康空 ON 态的「财报风险误判率」前后对比属 A/B 预注册指标，本批不测不声称。
 - 健康空声明窗口 7d 与备源 horizon 3mo 口径差＝采集器既有保守声明（本批只渲染声明值，未改采集）；是否扩声明窗口另案。
+
+## 27. 实施记录 XII（2026-11-27 · 来源状态可见性 · `DA_SOURCE_STATUS_FULL` 独立开关默认 OFF · 正式输入变量未激活）
+
+> 本节追加，不改 §§0–26 历史。承接 §26.7 输入修复队列（来源状态可见性＝健康空财报之后的下一批单变量）。
+> 授权：用户裁「按照建议 继续执行合理优化落地」＋§15.7 队列；本批**影子就绪、不激活**——
+> 正式输入呈现变量（模型可见内容变化），激活 BLOCKED §10.4 单变量 A/B，不得当纯遥测直接上线。
+> 详细病灶/合同/边界见 DEB-20261127-da-source-status-visibility。
+
+### 27.1 病灶（§15.7 锚点核实＋读码精确化）
+
+- skill 仓 `llm_synth._format_data_for_prompt`「## 数据源状态」段（旧锚 `564-581` → 当前 `594-611`）：
+  `_source_status` 循环**仅 `news/news_v2/research/sentiment` 四 list 源**，只渲染 failed/empty/disabled 三态。
+- **dict 型源无 FAILED/EMPTY 区分**：资金分布/基本面/分析师/内部人/公司概况/大盘/行业等 dict 源采集失败（`_error`）
+  与健康空（空 dict）在「数据源状态」段完全不可见；19 维审计虽列「缺失明细」但**混淆采集失败与健康空**。
+- **渲染层丢弃事件完全不可见（核心病灶）**：`_render_capital_section`（`465-512`）OFF 门 `code==0`、ON 门 `_capital_dist_valid`；
+  provider 实写 `code=<ticker>` → OFF 门失败 → 正式「## 资金面」段丢弃（无分时 fallback 时整段丢弃）。
+  而 `_classify_data_sources`（`1310`）分类的是**原始 payload**（cap_dist 有信息量→判「完整」），不是渲染决策
+  ⇒ 模型见「19/19 有效」却无资金段，**矛盾不可见**（§15.7「不在数据源状态、不在质量审计」即此丢弃事件未反映）。
+- 事实边界（不夸大）：这是**呈现层可见性缺口**，非已证明的生产误判事故；资金修复 `DA_CAPITAL_CODE_FIX` 仍 OFF，
+  本批不激活资金修复、不改采集/计算/覆盖分类。
+
+### 27.2 修复合同（只动呈现层，计算/采集/审计分类一行不动）
+
+- `config.py` 新增独立开关 `DA_SOURCE_STATUS_FULL`（默认 0；刻意不复用 `DA_CAPITAL_CODE_FIX`/`DA_SHORTK_NA`/`DA_EARNINGS_TRISTATE`/`DA_INPUT_FULL`）。
+- **OFF＝逐字节旧 4 源渲染**（ON 块整体由 `if getattr(config,...)` 门控，OFF 不执行）。
+- ON：helper `_source_status_full_notes` 向「## 数据源状态」**只增**呈现层状态行——
+  ① **资金分布 RENDER_DROPPED**（核心）：复用 `_render_capital_section` **同源门**判定正式块是否渲染；
+     采集有信息量（`_has_meaningful_data`）但正式块未渲染 → 具名披露（整段未呈现／仅分时 fallback 两态），
+     明示「审计'完整'指原始 payload，模型实际无资金数据，禁止据此论断资金流向」；
+  ② 资金分布/资金分时 FAILED（`_error`）／EMPTY（空 dict）；
+  ③ 其余 dict 源（基本面指标/分析师评级/内部人交易/内部人情绪/公司概况/大盘环境/行业对比）FAILED（`_error`/非 dict）／EMPTY（空 dict）。
+- **单一真源/互补不重复**：资金丢弃判定读渲染同源门（不另算）；其余 dict 源渲染门＝`isinstance(dict) and "_error" not in`（与各渲染段同条件）；
+  **不引入第二套覆盖计数**（无「X/N 有效」 tally），与 19 维审计互补（审计＝原始 payload 三级分类，本段＝呈现层可见性）；ok 态不发行（防噪）。
+- **排除**（避免耦合/重复）：snapshot/kline（恒渲染）；news/news_v2/research/sentiment（旧 4 源逐字节保留）；
+  tech/cap/deriv_anomaly（`render_anomaly_section` 已显式区分无异动/采集失败）；earnings_calendar（§26 独立开关域）。
+- **消费链现状（如实钉死，本批不改）**：挑战者 `_challenger_data_view` `_FULL` 白名单**不含「数据源状态」**（含「数据质量审计」）
+  → ON 新段挑战者仍不可见＝**既有缺口**，属 §15.7「挑战者事实一致性」独立批，本批**不动白名单**；
+  溯源校验 full 模式从 prompt 全文提数字 → 新行无数字（纯状态文案）不触校验；覆盖分类/`_has_meaningful_data`/采集器两态逐字一致。
+
+### 27.3 验证矩阵（全部可复跑，`PYTHONDONTWRITEBYTECODE=1`）
+
+| 项 | 结果 | 凭据 |
+|---|---|---|
+| 新契约 `tests/test_da_srcstatus_full.py` | **68 passed** | `/tmp/rfc218_s27_newtests.log` |
+| OFF 逐字节扫描：10 资金态×5 dict 态×四开关正交（800）＋67 真实 checkpoint OFF＋67 ON 只增段隔离＋134 覆盖/审计段不变＋ON 合成抽查 | **checks=1071 fails=0 SWEEP_ALL_OK** | `/tmp/rfc218_s27_off_sweep.log`（探针 `_off_sweep.py`） |
+| 变异(a) 资金同源门伪造 `_formal=True` / (b) OFF 门伪造 `if True` | **3 红 / 22 红**→恢复 sha `223216d70dae…` 核验→**68 绿** | `/tmp/rfc218_s27_mutation_{a,b}_red.log`＋`_pre_mutation.sha256`＋`_restore_green.log` |
+| py_compile venv＋cron `venv/bin/python3.11` 双解释器 | exit0×2 | `/tmp/rfc218_s27_transform.log` |
+| DA 相邻（capital/output/fundamental/prompt_injection/shortk）＋§26 回归 | **1F/244P**；唯一失败＝既有 PROMPT_HASH 漂移（同断言同值 `80176956bfbb≠c7444d67ce58`，非本批引入；含 §26 71 绿） | `/tmp/rfc218_s27_adjacent.log` |
+| fresh-import 真实 env＋`check_undefined_names.py` | `DA_SOURCE_STATUS_FULL=False`（资金/短K/财报三态亦 False）；rc0 | `/tmp/rfc218_s27_env_import_smoke.log` |
+
+- 本测试只验呈现层正确，不证收益；未跑全量 pytest/CI。DB 未触；零订单/付费 LLM/激活。
+- 既有 1 相邻失败（output_contract PROMPT_HASH 漂移）为基线存量 record-only 不修（另案）；不声称全绿。
+
+### 27.4 部署
+
+- 仓外 DA 两文件（`config.py`/`llm_synth.py`），carrier/cron fresh-import 即生效；**无 app/ 改动、无需重启**。
+- 备份 `*.bak-20261127-rfc218-srcstatus`＋SHA256：config pre=`a8db306f79f6` post=`9436e985c2af`；llm_synth pre=`e955386c03f0` post=`223216d70dae`（pre＝§26 post，基线无漂移；备份=pre 逐字核验）。`.env.us` **未加** `DA_SOURCE_STATUS_FULL` 行（未设＝默认 OFF，生产逐字节不变）。
+- 仓内产物：`tests/test_da_srcstatus_full.py`＋DEB-20261127-da-source-status-visibility＋本节＋handoff 条目，提交推送（sha 见 handoff 同日条目）。
+- 变换在 DA 主批（21:00 CST 起跑）结束后执行，脚本自检 pgrep 拒跑（防中断在跑 DA）。
+
+### 27.5 收益边界（与 §9/§15/§22.8/§23.7/§24.5/§25.5/§26.5 一致）
+
+- **无任何收益证据**。呈现层正确化≠盈利；ON 态模型方向/分值行为变化未验证。
+- 激活须 §10.4 单变量 A/B（n≥120/≥20 独立 ET 日/预注册 MDE），且不与资金分布/短K/财报三态/其他输入变量捆绑；
+  「源失败/渲染丢弃可见」不得直接当「模型更少误判/更赚」的证据。
+
+### 27.6 回滚
+
+- `.env.us` 加 `DA_SOURCE_STATUS_FULL=0`（或删行）→ 逐字节旧渲染；或恢复备份（sha 核验）。
+- 与 `DA_CAPITAL_CODE_FIX`/`DA_SHORTK_NA`/`DA_EARNINGS_TRISTATE`/`DA_INPUT_FULL`/EXT 各开关互不牵连。
+
+### 27.7 未闭合排队
+
+- §25.7/§26.7 队列不变；**挑战者事实一致性**（「数据源状态」补 `_FULL` 白名单＋两角色同事件版本/同时点价格/弃权核）＝下一批独立单变量；news UTC→ET 另案。
+- 本批 ON 新段挑战者仍不可见（白名单缺口既有，未改）；审计「缺失」混淆采集失败/健康空的**采集端**区分属采集器域，本批只在呈现层补 FAILED/EMPTY，未改采集。
+- 来源状态 ON 态的「模型误判率」前后对比属 A/B 预注册指标，本批不测不声称。
