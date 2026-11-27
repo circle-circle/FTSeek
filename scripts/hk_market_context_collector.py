@@ -198,6 +198,18 @@ def build_tick_row(ts, session, snapshot_rows, stale=False):
             indices[code] = rec
         else:
             rec["turnover"] = _num(r.get("turnover"))
+            # B2: 成分级时点/状态有效性 (镜像指数 stale 判据: update_time 日期==今日 ∧ NORMAL)。
+            # 指数新鲜≠成分新鲜: 停牌/前日报价不得计入当日篮子。未知不归零; 原始 last/prev/
+            # update_time/sec_status 保留 (真值源可复算), 仅当日 chg 标缺失 + 条件 stale_reason
+            # (全新鲜数据无此键 → 旧文档逐字节不变)。
+            reasons = []
+            if rec["update_time"][:10] != ts[:10]:
+                reasons.append("quote_not_today")
+            if rec["sec_status"] != "NORMAL":
+                reasons.append("non_normal_status")
+            if reasons:
+                rec["chg_pct"] = None
+                rec["stale_reason"] = "+".join(reasons)
             stocks[code] = rec
     sectors = {}
     for name, members in SECTOR_BASKETS.items():
