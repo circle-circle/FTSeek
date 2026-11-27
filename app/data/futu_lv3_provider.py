@@ -83,7 +83,7 @@ def daily_cache_acceptable(last_bar_date: str, fetched_ts: float,
     """日K缓存是否可直接复用 (相位感知, [RFC-171])。
 
     - 盘前/盘中 (ET < 16:15): 只要求含**上一交易日**的已收盘 bar
-      (假日导致缓存末端落后时, 20h 内拉过仍信任, 避免假日晨反复重拉);
+      (上一交易日按交易日历 SSOT 跳周末+假日; 末端落后于上一交易日且 20h 内拉过仍信任);
     - 收盘后 (ET >= 16:15): 要求含**当日** bar (IC/影子回填需要当日行情);
       刚拉过但当日 bar 尚未发布时 15min 内不重复请求。
     - 硬底: 末端 bar 超过 10 天 → 一律不接受 (既有反幻觉守卫)。
@@ -105,8 +105,15 @@ def daily_cache_acceptable(last_bar_date: str, fetched_ts: float,
         if last >= today and fetched_ts >= close_ts:
             return True
         return age < _DAILY_ACCEPT_POSTCLOSE_SEC
+    # [RFC-171 §6 hotfix 2026-11-27] 上一交易日须跳假日, 不能只跳周末:
+    #   感恩节次日(11-27) 只跳周末 → prev=11-26(休市)恒无 bar → 含 11-25 定稿 bar 的
+    #   缓存被误判过期 → 每轮重拉日K撞 60/30s 配额等满 30s → 超 3s 入场取数预算 →
+    #   单飞槽被占、其余 busy、迟到结果又不回写 ⇒ 入场死循环 0 成交。改用交易日历
+    #   SSOT 离线判定 is_us_holiday (周末→热缓存→硬编码表, 不发网络, 热路径安全)。
+    from app.utils.holiday_calendar import get_holiday_calendar
+    _cal = get_holiday_calendar()
     prev = today - timedelta(days=1)
-    while prev.weekday() >= 5:          # 跳过周末 (假日由 20h 信任窗兜住)
+    while prev.weekday() >= 5 or _cal.is_us_holiday(prev):   # 跳周末+假日
         prev -= timedelta(days=1)
     if last >= prev:
         return True

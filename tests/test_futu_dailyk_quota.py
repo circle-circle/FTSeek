@@ -540,3 +540,56 @@ class TestSessionFinalBar:
         ET = ZoneInfo("America/New_York")
         now = _dt(2026, 10, 26, 12, 0, tzinfo=ET)
         assert _session_final_bar("2026-10-27", now.timestamp(), now) is False
+
+
+class TestDailyCacheHolidayAware:
+    """[RFC-171 §6 hotfix 2026-11-27] 上一交易日跳假日 (感恩节次日零成交根因).
+
+    病灶: daily_cache_acceptable 算 prev 只跳周末 → 11-27(感恩节次日) prev=11-26(休市)
+    恒无 bar → 含 11-25 定稿 bar 的缓存被误判过期 → 每轮重拉日K撞配额等满 30s → 超 3s
+    入场取数预算 → 单飞槽被占、其余 busy、迟到结果不回写 ⇒ 入场死循环 0 成交。
+    修复: prev 复用交易日历 SSOT 离线判定 is_us_holiday (跳周末+假日, 不发网络)。
+    """
+
+    @pytest.fixture(autouse=True)
+    def _offline_calendar(self, monkeypatch):
+        # 强制日历走硬编码降级层 (不读 API 热缓存、不发网络) ⇒ 测试确定性。
+        from app.utils import holiday_calendar as _hc
+        monkeypatch.setattr(_hc.TradingHolidayCalendar, "_cached_trading_day",
+                            lambda self, market, d: None)
+
+    def _acceptable(self, last_bar, age_h, now_et):
+        from app.data.futu_lv3_provider import daily_cache_acceptable
+        fetched = 1_000_000.0
+        return daily_cache_acceptable(last_bar, fetched, now_et, fetched + age_h * 3600.0)
+
+    def test_thanksgiving_next_day_accepts_last_trading_day_bar(self):
+        # 回归钉子: 11-27 盘中, 末端=11-25(真实上一交易日), age 41.7h>20h。
+        # 旧逻辑 prev=11-26(休市) → 拒; 新逻辑 prev=11-25 → 命中。
+        from datetime import datetime
+        assert self._acceptable("2026-11-25", 41.7, datetime(2026, 11, 27, 9, 0)) is True
+
+    def test_thanksgiving_next_day_genuinely_stale_still_rejected(self):
+        from datetime import datetime
+        # 末端 11-20 落后上一交易日 11-25 且 age>20h → 仍拒 (10 天硬底未触)。
+        assert self._acceptable("2026-11-20", 41.7, datetime(2026, 11, 27, 9, 0)) is False
+
+    def test_holiday_trust_window_still_works(self):
+        from datetime import datetime
+        # 末端 11-24 落后 prev=11-25, 但 2h<20h 信任窗 → 命中 (信任窗语义不变)。
+        assert self._acceptable("2026-11-24", 2.0, datetime(2026, 11, 27, 9, 0)) is True
+
+    def test_normal_monday_weekend_skip_preserved(self):
+        from datetime import datetime
+        # 周一 11-23: 上一交易日=11-20(周五)跳周末; age 旧但末端=prev → 命中。
+        assert self._acceptable("2026-11-20", 70.0, datetime(2026, 11, 23, 9, 0)) is True
+
+    def test_hard_floor_unchanged(self):
+        from datetime import datetime
+        # 末端 11-10 (>10 天) → 一律拒 (反幻觉硬底不变, 即便 age 新鲜)。
+        assert self._acceptable("2026-11-10", 1.0, datetime(2026, 11, 27, 9, 0)) is False
+
+    def test_postclose_branch_unchanged(self):
+        from datetime import datetime
+        # 收盘后要求当日 bar 且收盘后拉取; 末端 11-25 + age 旧 → 拒 (分支不动)。
+        assert self._acceptable("2026-11-25", 41.7, datetime(2026, 11, 27, 17, 0)) is False

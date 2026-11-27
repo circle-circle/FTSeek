@@ -71,3 +71,40 @@
   news/beat_rate 移出 09:00 热路径），或升级付费档，或把生成轮前移——三项均属交易行为/
   成本决策，未在本 RFC 内擅动。
 - SEC insider 每标的 2 查（30d/40d）未动（不同窗口语义，需单独评估）。
+
+## 6. Hotfix 2026-11-27：上一交易日跳假日（感恩节次日入场零成交根因）
+
+- 状态: 已落地（2026-11-27）
+- 类型: **L1 缺陷修复**（数据获取路径；不改任何入场/出场判据、不改阈值、不改配额/预算/缓存回写策略）——与本 RFC 主体同类。
+- 触发人: 用户「请修复确保可以正常交易」（承接诊断「美股已开盘，请检查日志记录，为什么一直没有成交」）。
+- 单变量: 仅 `daily_cache_acceptable()` 的「上一交易日」计算一处。
+
+### 6.1 病灶（先量后修）
+
+| 观测 | 读数 | 出处 |
+|---|---|---|
+| 今日新入场 | **0 笔**；8 条指令全 `triggered=0/executed=0`（RIVN 写入即 SKIP 除外） | 只读 DB `playbook_instructions` date=2026-11-27 |
+| 09:45 ET 起 auto_execute | **9/9 轮**「0 成功, 0 跳过」，MSFT 恒 `trigger_context: timeout` + 其余 6 只 `busy` | `logs/ftseek_us.log` 22:45:49→23:10 |
+| 日K配额等待 | 每轮 `D::US.MSFT 等待 30.0s 才拿到窗口槽位 (60次/30s)` | 同上 |
+| 卡死栈 | `playbook-entry-data` 线程 3023 样本卡在 `_acquire_daily_kline_quota(:1700)←get_daily_kline←get_daily_bars(router:217)←get_full_market_context(router:501)` | py-spy record 309k 采样 /tmp/pyspy_kline_raw.txt |
+| 缓存被拒 | MSFT/BABA/ORCL/BA/GS `fetched_at=11-26 05:30 CST`，age≈41.8h **> 20h 信任窗**；末端 bar=11-25 | `data/cache/daily_kline_v1.json` |
+
+根因链：`daily_cache_acceptable` 算上一交易日 **只跳周末、不跳假日**（`while prev.weekday()>=5`）→ 感恩节次日 11-27 的 `prev=11-26`（休市）恒无 bar → 含 11-25 定稿 bar 的缓存被误判过期 → 每轮重拉日K撞满 60/30s 配额等满 30s → 超 `entry_data_fetch` 3s 取数预算 → MSFT `timeout`、单飞槽被占 → 其余 6 只 `busy` → 迟到结果在 `DATA_CACHE_PUBLICATION_ALLOWED=False` 下不回写缓存（`futu_lv3_provider.py:2056`）→ 下一轮重复 ⇒ **入场死循环**。
+
+### 6.2 改动（单变量）
+
+`app/data/futu_lv3_provider.py::daily_cache_acceptable`：上一交易日从「只跳周末」改为「跳周末+假日」，复用交易日历 SSOT 的**离线**判定 `get_holiday_calendar().is_us_holiday(prev)`（`_non_trading_day`：周末→只读热缓存→硬编码 `US_HOLIDAYS`→fail-open，**不发网络**，docstring 明确 `futu_lv3_provider` 为其热路径消费方）。`US_HOLIDAYS` 含 `2026-11-26`。修复后 `prev=11-25`，现有磁盘缓存末端 11-25≥prev → 立即命中，**无需刷数据、无需动配额/预算/回写**。10 天硬底、20h 信任窗、收盘后相位判据均不变。
+
+### 6.3 验收（可复核）
+
+- 契约：`PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. ./venv/bin/python -m pytest tests/test_futu_dailyk_quota.py -q` → **25 passed**（既有 19 + 新增 `TestDailyCacheHolidayAware` 6：感恩节次日命中/真陈旧仍拒/信任窗不变/周一跳周末不变/10天硬底不变/收盘后分支不变）。
+- 离线功能验证（真实缓存）：修复后 MSFT/BABA/ORCL/SPY（age≈41.8h）`daily_cache_acceptable=True`；`is_us_holiday(2026-11-26)=True`、`prev_trading_day("US",11-27)=11-25`。
+- 活体（重启后）：auto_execute 不再 `timeout/busy`，`triggered/executed` 推进（见 handoff 当日条）。
+
+### 6.4 回滚
+
+还原 `daily_cache_acceptable` 的 prev 循环为 `while prev.weekday()>=5`（删去 `is_us_holiday` 项与懒导入）即回到假日错位态；无配置项、无冻结参数、无门禁语义变更。
+
+### 6.5 影子先行豁免说明
+
+本批属 L1 数据面缺陷修复（与本 RFC 主体同类，不改入场/出场判据与阈值），由用户显式裁决「请修复确保可以正常交易」触发，且当下实盘入场被完全阻塞（0 成交死循环）。按 RFC-171 先例以契约测试 + 离线功能验证 + 重启冒烟 + 活体验证落地，不走多日影子 A/B。分钟K路径 `get_kline` 的同源假日缺陷（盘初 K_1M `ret=0` 空返 warning）非入场拦截主因，属独立变量，本批不动。
