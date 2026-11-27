@@ -120,6 +120,21 @@ def daily_cache_acceptable(last_bar_date: str, fetched_ts: float,
     return age < _DAILY_ACCEPT_HOLIDAY_SEC
 
 
+def _kline_prev_trading_day(now_et: datetime) -> str:
+    """日内K线 start 用的上一交易日 (严格早于今日; 跳周末+假日, 离线不触网)。
+
+    [RFC-171 §7 hotfix 2026-11-27] 与 daily_cache_acceptable(§6) 同源缺陷: 原 get_kline
+    内联 `Mon→-3 / Sun→-2 / 其余→-1` 只跳周末 → 感恩节次日(11-27) prev=11-26(休市)恒无
+    bar → 日内K start 落在无 bar 日, 盘前/盘初 K_1M 空返 ret=0, 且 2026-06-17 P0 修复
+    本意的"前一交易日尾盘缓冲"在假日次日完全失效 (技术指标 <30 条 → quote_only 降级)。
+    复用 timezone.get_last_trade_date (DEB-20260904 #135 已假日感知: 离线 is_us_holiday,
+    周末→热缓存→硬编码表, 10 次防死循环, 不触网)。该函数语义=≤给定日的最近交易日,
+    故传 today-1 即得严格上一交易日。K_DAY 路径 (start=now-400d) 不经此函数, 零变化。
+    """
+    from app.utils.timezone import get_last_trade_date
+    return get_last_trade_date(now_et - timedelta(days=1))
+
+
 def silence_futu_sdk_logs() -> None:
     """SSOT 唯一入口: 静默 Futu SDK 的 DEBUG/INFO 日志 (2026-08-12 提取).
 
@@ -1814,10 +1829,11 @@ class FutuLV3Provider:
             import pytz as _pz
             _now_et = _dk.now(_pz.timezone('US/Eastern'))
             today_et = _now_et.strftime("%Y-%m-%d")
-            # 计算前一交易日: Mon→Fri(-3), Tue-Fri→前一日(-1)
-            _weekday = _now_et.weekday()  # 0=Mon, 6=Sun
-            _back_days = 3 if _weekday == 0 else (2 if _weekday == 6 else 1)
-            prev_trading_day = (_now_et - _td(days=_back_days)).strftime("%Y-%m-%d")
+            # [RFC-171 §7 hotfix 2026-11-27] 前一交易日跳周末+假日 (原只跳周末: 感恩节
+            #   次日 prev=11-26 休市无 bar → 盘前/盘初 K_1M 空返 ret=0 + 前交易日尾盘
+            #   缓冲失效)。复用已假日感知的离线 helper, 与 daily_cache_acceptable(§6)
+            #   同源同尺; _valid_prefixes 过滤亦随之自动校正。
+            prev_trading_day = _kline_prev_trading_day(_now_et)
 
             # 2026-06-30 根因修复: max_count太小 → OpenD返回范围内最旧的N根(2025年)
             # max_count要 >= 范围内交易日总数, 否则只拿最旧的。320覆盖~1.5年交易日。

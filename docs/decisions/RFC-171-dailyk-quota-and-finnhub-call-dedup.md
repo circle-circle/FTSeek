@@ -108,3 +108,77 @@
 ### 6.5 影子先行豁免说明
 
 本批属 L1 数据面缺陷修复（与本 RFC 主体同类，不改入场/出场判据与阈值），由用户显式裁决「请修复确保可以正常交易」触发，且当下实盘入场被完全阻塞（0 成交死循环）。按 RFC-171 先例以契约测试 + 离线功能验证 + 重启冒烟 + 活体验证落地，不走多日影子 A/B。分钟K路径 `get_kline` 的同源假日缺陷（盘初 K_1M `ret=0` 空返 warning）非入场拦截主因，属独立变量，本批不动。
+
+## §7 同源假日缺陷批（2026-11-27）：分钟K get_kline 上一交易日 + gate_liveness_probe 资金流门
+
+> 承接 §6（用户裁「请修复确保可以正常交易」）后用户裁「请继续做根因和关联问题做修复」。
+> 根因类＝「上一交易日/最近交易日只跳周末不跳假日」。本批修 2 处已实锤 L1 数据面站点，
+> 其余同源疑似站点审计排队（§7.6），交易行为域一律不动、须另行裁决。
+
+### 7.1 病灶（与 §6 同根因类）
+
+1. **`app/data/futu_lv3_provider.py::get_kline` 日内路径**：内联 `Mon→-3 / Sun→-2 / 其余→-1`
+   只跳周末 → 感恩节次日 11-27 的 `prev=11-26`（休市）恒无 bar → 日内 `start` 落在无 bar 日：
+   盘前/盘初今日 bar 尚不存在 → K_1M 空返 `ret=0 msg=None` warning（今日 11 条：21:41 CST
+   LLMStrategyLoop 7 只 CAT/ARM/MSFT/META/AMD/BABA/ORCL ＋ 22:30 FutuKlineRefresh/playbook-entry-data
+   GS/CAT/ARM/MSFT）；且 2026-06-17 P0 修复本意的「前一交易日尾盘缓冲」在假日次日完全失效
+   （技术指标需 ≥30 条连续 K 线，缓冲缺失 → quote_only 降级风险）。`_valid_prefixes` 过滤同源错位。
+2. **`scripts/gate_liveness_probe.py::_most_recent_et_trading_day`**：`while d.weekday()>=5`
+   只跳周末，原注释自认「节假日不识别, 假日次日会误报一天 stale」→ 工作日假日（感恩节 11-26 /
+   圣诞 12-25）返回当日（无 bar）→ 资金流门把正常休市误报 stale/dead。
+
+### 7.2 改动（单变量×2 站点，复用已验证 helper，零新日历实现）
+
+- 新增模块级纯函数 `_kline_prev_trading_day(now_et)` ＝ `get_last_trade_date(now_et - timedelta(days=1))`
+  （helper 语义＝≤给定日的最近交易日，传 today-1 即得**严格**上一交易日）；`get_kline` 日内
+  `prev_trading_day` 三行内联替换为该函数，`_valid_prefixes` 随之自动校正。**K_DAY 路径
+  （start=now-400d）不经此函数，零变化。**
+- gate probe 改 `get_last_trade_date(now_et())`（语义＝≤今日的最近交易日，正是本函数本意）；
+  删除随之不再使用的 `from datetime import timedelta`（grep 确认无其他使用点）。
+- 复用 `app/utils/timezone.py::get_last_trade_date`（DEB-20260904 #135 已假日感知：离线
+  `is_us_holiday`，周末→只读热缓存→硬编码 `US_HOLIDAYS`，10 次迭代防死循环，**不触网**）。
+- 配额/预算/缓存回写策略/方向/阈值/仓位/live 权限全部未动；无新配置项、无冻结参数。
+
+### 7.3 验收（可复核）
+
+- 契约：`PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. ./venv/bin/python -m pytest tests/test_futu_dailyk_quota.py -q`
+  → **35 passed**（既有 25 ＋ 新增 `TestMinuteKlineHolidayAware` 10：7 纯函数日期例〔感恩节次日
+  11-27→11-25 / 正常周二 / 周一 / 周日 / 周六 / 总统日 02-17→02-13 / 独立日 observed 07-06→07-02〕
+  ＋1 `get_kline` 接线 spy 例〔断言 hist_kwargs.start==helper 输出〕＋2 gate probe 例〔假日不误报
+  stale / 交易日返回当日〕；autouse fixture 压 `_cached_trading_day=None` 保证离线确定性，同 §6）。
+- 离线功能验证：`_kline_prev_trading_day(datetime(2026,11,27,8,41))=="2026-11-25"`；
+  gate probe monkeypatch now_et=11-26 19:15 ET → `"2026-11-25"`。
+- `py_compile` 两文件 exit0；`check_undefined_names.py` exit0。
+- 重启 `systemctl restart ftseek-us` → PID **221732**（23:42:04 CST），启动冒烟 **7/7 exit0**；
+  重启后日志段 0 Traceback/CRITICAL、0「K 线获取失败」；auto_execute 轮次正常完成（盘中量能门
+  BLOCK＝半日市量稀的正常行情条件门）；出场侧 BA/GS/BABA 三仓 durable 续上（BABA 早期紧 SL /
+  GS 死信号豁免规则正常评估）。
+- **诚实边界**：活体验证时点已是盘中（10:42 ET），今日 bar 存在，`ret=0` 空返在盘中本就不复现
+  ——盘前/盘初 warning 消失待下一盘前/假日次日自然观察；接线正确性由 spy 契约例钉死。
+
+### 7.4 回滚
+
+还原 `get_kline` 三行内联（Mon→-3/Sun→-2/else→-1）＋还原 gate probe `while weekday>=5` 循环
+（补回 timedelta import）＋重启即回到旧态；gate probe 为 cron fresh-import，单独回滚无需重启。
+无配置项、无冻结参数、无门禁语义变更。
+
+### 7.5 影子先行豁免说明
+
+同 §6.5 先例：L1 数据面缺陷修复（不改入场/出场判据与阈值），用户显式裁决「请继续做根因和
+关联问题做修复」触发，以契约测试＋离线功能验证＋重启冒烟＋活体验证落地，不走多日影子 A/B。
+§6.5 预留的「分钟K get_kline 同源缺陷独立变量另案」即本批，未与 §6 捆绑（§6 已先行提交）。
+
+### 7.6 同源审计排队（本批发现、**未修**，须各自核口径/另行裁决）
+
+| 站点 | 症状 | 域/处置 |
+| --- | --- | --- |
+| `scripts/daily_alert_summary.py:431 _prev_us_trade_date` | weekend-only 同类疑似；但带设计理由 docstring（「跳假日内权益不变」），且 snapshot_time tz 口径未核（capital_state_history 11-26 有样本、收盘边界后 15min 窗 0 样本 → 今日 prev_close=None，gap 11-26 22:53→11-27 10:08） | 报表域；先核口径再裁，不盲改设计注释 |
+| `app/risk/position_exit_monitor.py:143 get_market_hours_us` | 持仓小时数只跳周末、固定 16:00 收盘（无半日市概念），喂 holding_hours 出场规则 | **交易行为域**：修复会改出场时点，须影子先行＋另行裁决，本批不动 |
+| `app/utils/timezone.py:184 is_pre_market / :199 is_after_hours / :420 market_phase_now` | weekend-only 无假日判定；消费方 order_executor/order_tracker 交易邻近，上游可能自带守卫 | 逐消费方审计后另案 |
+| `shadow_tracker` / `ue_quote_freshness_shadow` 硬编码 2026 假日表 | 2027+ 时间炸弹（已知独立问题） | 仅留痕，另案 |
+| `shared_kernel` 会话标签 / `signal_pipeline` 扫描间隔 | weekend-only，良性方向 | 低优先留痕 |
+
+已核**假日感知无缺陷**（不动）：trade_guard（get_trading_window_dates 用 is_trading_day）、
+pdt_guard、position_exit_monitor.is_us_market_open、market_hours、timezone.is_market_open、
+pilot_policy.previous_local_trading_day（纯本地日历）、shadow_tracker/ue_quote（自带 2026 表，
+fail-closed，仅受上条时间炸弹约束）。

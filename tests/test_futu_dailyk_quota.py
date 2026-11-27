@@ -593,3 +593,89 @@ class TestDailyCacheHolidayAware:
         from datetime import datetime
         # 收盘后要求当日 bar 且收盘后拉取; 末端 11-25 + age 旧 → 拒 (分支不动)。
         assert self._acceptable("2026-11-25", 41.7, datetime(2026, 11, 27, 17, 0)) is False
+
+
+class TestMinuteKlineHolidayAware:
+    """[RFC-171 §7 hotfix 2026-11-27] 日内K线上一交易日假日感知 (与 §6 同源).
+
+    病灶: get_kline 内联 `Mon→-3 / Sun→-2 / 其余→-1` 只跳周末 → 感恩节次日(11-27)
+    prev=11-26(休市)恒无 bar → 日内K start 落在无 bar 日, 盘前/盘初 K_1M 空返 ret=0
+    (今日 11 条警告实锤), 且 2026-06-17 P0 修复本意的"前交易日尾盘缓冲"在假日次日失效。
+    修复: 抽模块级纯函数 _kline_prev_trading_day, 复用 timezone.get_last_trade_date
+    (DEB-20260904 #135 已假日感知, 离线 is_us_holiday, 不触网); 传 today-1 得严格上一交易日。
+    关联: gate_liveness_probe._most_recent_et_trading_day 同源 (工作日假日误报 stale) 同批修复。
+    """
+
+    @pytest.fixture(autouse=True)
+    def _offline_calendar(self, monkeypatch):
+        # 强制日历走硬编码降级层 (不读 API 热缓存、不发网络) ⇒ 测试确定性 (同 §6)。
+        from app.utils import holiday_calendar as _hc
+        monkeypatch.setattr(_hc.TradingHolidayCalendar, "_cached_trading_day",
+                            lambda self, market, d: None)
+
+    def _prev(self, y, m, d, hh=8, mm=41):
+        from datetime import datetime
+        from app.data.futu_lv3_provider import _kline_prev_trading_day
+        return _kline_prev_trading_day(datetime(y, m, d, hh, mm))
+
+    def test_thanksgiving_next_day_prev_wednesday(self):
+        # 回归钉子: 11-27(感恩节次日, 半日市) 上一交易日=11-25, 跳 11-26 休市。
+        # 旧逻辑 prev=11-26(无 bar) → 盘前空返; 新逻辑 prev=11-25。
+        assert self._prev(2026, 11, 27) == "2026-11-25"
+
+    def test_normal_tuesday_prev_monday(self):
+        assert self._prev(2026, 11, 24, 10, 0) == "2026-11-23"
+
+    def test_monday_prev_friday(self):
+        # 周一 11-30 → 上周五 11-27 (半日市仍是交易日, 有 bar)。
+        assert self._prev(2026, 11, 30, 10, 0) == "2026-11-27"
+
+    def test_sunday_prev_friday(self):
+        assert self._prev(2026, 11, 29, 10, 0) == "2026-11-27"
+
+    def test_saturday_prev_friday(self):
+        assert self._prev(2026, 11, 28, 10, 0) == "2026-11-27"
+
+    def test_presidents_day_tuesday_prev_friday(self):
+        # 02-16(周一) 总统日休市 → 02-17(周二) 上一交易日=02-13(周五), 跳假日+周末。
+        assert self._prev(2026, 2, 17, 10, 0) == "2026-02-13"
+
+    def test_independence_observed_monday_prev_thursday(self):
+        # 07-03(周五) 独立日观察休市 (07-04 周六) → 07-06(周一) prev=07-02(周四)。
+        assert self._prev(2026, 7, 6, 10, 0) == "2026-07-02"
+
+    def test_get_kline_start_wires_holiday_aware_prev(self, provider, monkeypatch):
+        # 钉死调用点: get_kline 把 helper 输出用作日内K start (不依赖真实运行日期)。
+        import app.data.futu_lv3_provider as fp
+        captured = {}
+        monkeypatch.setattr(fp, "_kline_prev_trading_day",
+                            lambda now_et: captured.setdefault("helper_out", "2026-11-25"))
+        monkeypatch.setattr(provider, "_ensure_connected", lambda: True)
+        monkeypatch.setattr(provider, "_get_cached_kline", lambda *a, **k: None)
+        monkeypatch.setattr(provider, "_wait_kline_quota", lambda *a, **k: True)
+        monkeypatch.setattr(provider, "_set_cached_kline", lambda *a, **k: None)
+
+        class Ctx:
+            def request_history_kline(self, **kw):
+                captured["start"] = kw.get("start")
+                return 0, pd.DataFrame(), None  # 空返 → 只验 start, 不走成交分支
+
+        provider._quote_ctx = Ctx()
+        provider.get_kline("US.MSFT", ktype="K_1M", count=100)
+        assert captured["helper_out"] == "2026-11-25"
+        assert captured["start"] == "2026-11-25"  # = helper 输出 (假日感知 prev)
+
+    def test_gate_liveness_probe_holiday_not_false_stale(self, monkeypatch):
+        # 同源关联: 工作日假日 (感恩节 11-26) 应回退 11-25, 而非返回当日无 bar 误报 stale。
+        from datetime import datetime
+        import app.utils.timezone as tz
+        import scripts.gate_liveness_probe as glp
+        monkeypatch.setattr(tz, "now_et", lambda: datetime(2026, 11, 26, 10, 0))
+        assert glp._most_recent_et_trading_day() == "2026-11-25"
+
+    def test_gate_liveness_probe_trading_day_returns_today(self, monkeypatch):
+        from datetime import datetime
+        import app.utils.timezone as tz
+        import scripts.gate_liveness_probe as glp
+        monkeypatch.setattr(tz, "now_et", lambda: datetime(2026, 11, 27, 10, 0))
+        assert glp._most_recent_et_trading_day() == "2026-11-27"

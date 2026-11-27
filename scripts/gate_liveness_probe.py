@@ -35,7 +35,6 @@ cron: 15 7 * * 2-6 (07:15 CST = 19:15 ET, 当日 ET 会话已收完整资金流)
 import json
 import sys
 import traceback
-from datetime import timedelta
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent.parent
@@ -133,11 +132,12 @@ def _apply_c2_hit_rate(gates: dict, hit_stats: dict) -> int:
 
 
 def _most_recent_et_trading_day():
-    from app.utils.timezone import now_et
-    d = now_et().date()
-    while d.weekday() >= 5:  # 5=Sat 6=Sun (节假日不识别, 假日次日会误报一天 stale)
-        d -= timedelta(days=1)
-    return d.isoformat()
+    # [RFC-171 §7 hotfix 2026-11-27] 复用已假日感知的 get_last_trade_date (离线
+    #   is_us_holiday, 不触网): 原 while weekday>=5 只跳周末 → 工作日假日 (感恩节
+    #   11-26 / 圣诞 12-25) 返回当日 (无 bar) → 资金流门误报一天 stale/dead。
+    #   get_last_trade_date 语义=≤今日的最近交易日, 正是本函数本意。
+    from app.utils.timezone import now_et, get_last_trade_date
+    return get_last_trade_date(now_et())
 
 
 def probe_capital_flow(trade_day: str) -> dict:
