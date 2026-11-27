@@ -74,6 +74,7 @@ bridge 缺口已隔离复现，但生产发生次数和收益影响未测量。�
 - 启动冒烟：`PYTHONPATH=. ./venv/bin/python scripts/startup_smoke_check.py --wait 90` → **7/7 exit0**，日志 `/tmp/ftseek-audit-da-20261127-startup-smoke.log`。
 - 重启后复核：`/tmp/ftseek-audit-da-20261127-post-restart.json`。三笔 SIM 持仓 id/方向/数量/入价/入时不变，LIVE 仍无仓，出场账本仍 0；三处生产源码工作树 SHA256 与 HEAD blob 一致。
 - 保留其他会话 WIP：`docs/debates/DEB-20261125-flat-all-empty-spin-and-deploy-ledger-reconciliation.md` 未提交。
+- 推送：`git push origin main`  fast-forward `b914d65c9..e4e802a9c`，远端 main 与本地 HEAD 一致。
 
 ## 8. 未验证与下一步
 

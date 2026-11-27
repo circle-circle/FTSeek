@@ -2,13 +2,13 @@
 
 > **写入约定（2026-11-11 起）**：每条交接必须带三件可核凭据 —— `**凭据**`（commit sha / 改动文件数，`git show --stat` 可核）、`**验证**`（可复跑命令 + 日志路径，不写“已通过”）、`**未验证**`（显式列出没验的部分，无则写“无”）。自述≠事实，这三行是给下一个人核的。
 
-## 2026-11-27 10:09 CST · 【DA 审查建议复核 + P0 正确性修复部署】bridge 启动刷新基线 + OKR fail-close/CI 文案已重启生效；冒烟 7/7，代码已提交待推送
+## 2026-11-27 10:09 CST · 【DA 审查建议复核 + P0 正确性修复部署】bridge 启动刷新基线 + OKR fail-close/CI 文案已重启生效；冒烟 7/7，代码与文档已推送主线
 
 - **结论**：按用户「按建议执行优化逻辑请重启、部署、提交、推送」落地三处已复现 P0 正确性修复：① bridge 启动加载当日候选后记录版本基线，同日 mtime 变化可刷新，未变化不重读；② OKR 评分缺费/缺净不可测，不以 0/毛冒充；③ 日等权 CI 文案读取真实上下界，负区间不再误写“下界>0”。额外修 exit breakdown 遇 None 排序 TypeError。官方 DA 读数不变：整窗 n146 净 −24.8369bps NOT_MET，post n39 −17.4678bps UNDERPOWERED，KR2 21.2329% MET。P1/P2 建议作为研究/审计方向合理但未实施；不改方向配比/追价/隔夜强平/扩池/prompt/cohort/live 权限。另一 Agent 声称的 review DEB 本地缺失，已另建 verification DEB；其“本机无 pytest”不准确（venv pytest 8.3.5）。
 - **凭据**：代码提交 `7c5556ef2f48a3511e60434c94e5ff59a08bca85`（5 文件，216+/36-；`git show --stat` 可核）。本条与 verification DEB/索引为文档批；保留 DEB-20261125 其他会话 WIP 未提交。重启前/后只读快照 `/tmp/ftseek-audit-da-20261127-pre-restart.json`、`/tmp/ftseek-audit-da-20261127-post-restart.json`：SIM BA/BABA/GS 三笔 SHORT 不变，LIVE 无仓，两套出场账本非 BOOKED/非 TERMINAL 均 0；三处生产源码工作树 SHA256 与 HEAD 一致。
 - **验证**：针对性 **109 passed** `/tmp/ftseek-audit-da-20261127-targeted-after.log`；正确性相邻 **229 passed/7 deselected** `/tmp/ftseek-audit-da-20261127-correctness.log`；行为/LIVE **455 passed** `/tmp/ftseek-audit-da-20261127-behavior.log`；修复后探针 `/tmp/ftseek-audit-da-20261127-probes-after.log`；官方评分复跑 `/tmp/ftseek-audit-da-20261127-okr-after.json` 核心读数与归档一致；静态 `/tmp/ftseek-audit-da-20261127-static.log`。`systemctl restart ftseek-us` 后 PID144451、10:08:45 CST 启动、active/running；`PYTHONPATH=. ./venv/bin/python scripts/startup_smoke_check.py --wait 90` **7/7 exit0** `/tmp/ftseek-audit-da-20261127-startup-smoke.log`。
 - **未验证**：未跑全量 pytest/GitHub Actions；未做生产自然 bridge 同日重写命中统计、完整 tick/订单簿回放、收益显著性检验；bridge 基线仍基于 mtime 非内容哈希；正式 DA 推理在仓外，未评价 prompt/challenger 本体。收益未证，正确性修复不等于盈利改善。
-- **下一步**：文档批提交后推送 `origin/main`；下一交易时段仅观察自然链路与官方评分，不人工造单、不清 UNKNOWN 锁、不重置峰值/累计止损。RFC-217 维持原 cohort/停止判据；未来 SHORT live-arm 前补跨 regime 实验标记隔离。11-30 正式结算不延期。**最后更新：2026-11-27。**
+- **下一步**：已推送 `origin/main`（文档批 `e4e802a9c`，含代码 `7c5556ef2`）；下一交易时段仅观察自然链路与官方评分，不人工造单、不清 UNKNOWN 锁、不重置峰值/累计止损。RFC-217 维持原 cohort/停止判据；未来 SHORT live-arm 前补跨 regime 实验标记隔离。11-30 正式结算不延期。**最后更新：2026-11-27。**
 
 ## 2026-11-26 23:16 CST · 【两项补丁独立复核】可保留且当前无需回滚；测试全复现，补记跨 regime 实验镜像残余边界
 
