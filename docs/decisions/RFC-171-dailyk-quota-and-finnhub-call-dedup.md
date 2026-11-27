@@ -273,3 +273,109 @@ fresh-import 无需重启。无配置项、无冻结参数、无采样纪律变�
   须另核另裁，本批不动。
 - §7.6 其余排队项不变：`exit_monitor.get_market_hours_us`（交易行为域须影子＋另裁）、
   shadow_tracker/ue_quote 2026 表（2027+ 时间炸弹）、shared_kernel/signal_pipeline 良性 weekend-only。
+
+### 8.9 半日 `_cst_close_boundary` 排队项＝证伪闭合（代码层无缺陷，**不改 `_cst_close_boundary`**）
+
+§8.8 曾把「半日市今收边界固定 16:00 ET → 若采样随半日收盘停摆则今收窗空 → `today_close=None`」
+列为半日变量排队项。本批逐消费方取证后**证伪**：采样并不随半日收盘停摆，16:00 ET 边界窗必有样本。
+
+- **相位真源已半日感知**：`scheduler_triggers.get_market_phase()`（R-8b 2026-08-23）半日
+  13:00–20:00 ET 判 **AFTER_HOURS**（非 OVERNIGHT/WEEKEND）。
+- **采样循环非交易时段仍跑**（`position_monitor.py:1760 monitor_loop`，本批逐行复核）：
+  :1769 仅 `phase in (WEEKEND, OVERNIGHT)` 才 sleep+continue 跳过 → 半日盘后 AFTER_HOURS **不跳**；
+  :1857 `_is_market_open()`（TRADING）每 300s 更新资金，**:1866 else 非交易时段仍每 600s
+  `_update_capital_safety`**（P2 2026-04-29「盘前/盘后持仓仍存在」）。`MONITOR_INTERVAL_MINUTES=0.5`
+  （30s loop）→ else 分支单独保证资金样本间距 ≤630s < 900s（15min 今收窗）。`position_sync`（30s）亦更新。
+- **实证类比**（11-24 常规日盘后，CST 11-25 05:00–09:00）：72 样本间距 max=331s，无一 >15min；
+  收盘窗 [05:00,05:15] 稳定 4 样本（首+14s）。半日盘后同走 else 分支 → 同结构保证。
+- **共时性**：16:00 ET 边界与券商 U 同刻（报表 CST 05:00 = ET 16:00）读取共时 → 无系统残差；
+  若改 13:00 反而破坏 `test_daily_alert_equity_recon.py:273` 断言 + 共时性。`trade_date` 选择走
+  `get_last_trade_date`（半日安全，§8 已核）。
+
+结论：半日今收窗空＝**伪命题**，`_cst_close_boundary` 固定 16:00 ET 正确，**不修**。
+今日 11-27 半日收盘（CST 11-28 02:00）尚未到，活体终证待 CST 11-28 05:00 Hermes 日报自然跑观察
+（仍列观察项，但代码层已证无缺陷，不再作为待修排队项）。
+
+## 9. 同源假日缺陷批 §9：`get_market_hours_us` 假日/半日感知（holding_hours 报表正确性，L1）
+
+- 状态: 已落地（2026-11-28）
+- 类型: **L1 数据/报表正确性修复**（持仓交易小时数计算；不改任何 live 下单/平仓判据、阈值、仓位、配额）
+- 触发人: 用户「请继续做根因和关联问题做修复」→「继续」链（承接 §6/§7/§8 同源缺陷批）
+- 根因类: 「上一交易日/最近交易日/收盘时刻/持仓小时数 只跳周末或固定 16:00，不识别假日/半日」
+
+### 9.1 病灶
+
+`app/risk/position_exit_monitor.py:143 get_market_hours_us(start_dt, end_dt)` 原实现**只跳周末 +
+固定 16:00 收盘**（`day_close = current.replace(hour=16, ...)`），与 §6/§7/§8 同源：
+- 假日（如感恩节 11-26）被当 6.5h 交易日计入；
+- 半日市（11-27 13:00 ET 收）13:00–16:00 被多计 3h。
+
+`models.py:417 holding_hours` property 复用本函数（P0 2026-05-11 改墙钟→交易时段），故跨假日/半日
+持仓的 `holding_hours` 被系统性多计。离线算（now ET 11-27 11:20）：BA SHORT（entry 11-23 09:54 ET）
+修复后 **20.93h**（旧≈27.4h，多计 6.5h 感恩节）；GS SHORT 5.42h；BABA LONG 0.88h。
+
+### 9.2 L1 重分类证据（推翻 §7.6 旧「交易行为域」分类，关键）
+
+§7.6 曾把本函数标「交易行为域须影子＋另裁」。本批逐消费方取证后**重分类为 L1 报表域**——
+`holding_hours` **不驱动任何 live 平仓订单**：
+
+- **Playbook（唯一下单管线）出场引擎 `exit_engine.py` 零 `holding_hours`**：TIME_EXIT/MFE_STALL/
+  DEAD_SIGNAL 用墙钟 `held_minutes`（`exit_monitor_flow.py:402 = (now-entry)/60`）或「今日开盘以来
+  分钟」`minutes_from_open`（RFC-064/073）；MAX_HOLD 按交易日数。
+- **legacy `_check_time_exit`**（position_exit_monitor:1884）用墙钟 `held_minutes` 形参（非 holding_hours），
+  且 `exit_policy.yaml time_exit.enabled=false`（默认 False 兜底）。
+- **唯一 holding_hours→CLOSE 消费方＝`MainPipelineExitPolicy` EVENT_HORIZON_48H**（exit_policies.py:98，
+  `thesis=="event" and holding_hours>48`）——本批取证**当前惰性，三条独立理由**：
+  ① DEM `scan_positions`（position_monitor:960 live）内 ExitDispatcher 用 `get_exit_dispatcher()`
+  **单例从未注册任何 policy**（唯一 `.register` 在 scheduler_core 局部实例上，传 coordinator）→
+  `policy_for(owner)` 恒返 None → CLOSE 分支死路；② coordinator `self.exit` 仅赋值从不 evaluate/dispatch，
+  且 `observe_only=true`；③ 当前 3 仓全 `playbook_sim`，被 :994 owner 闸 + :1119 `_pb_check_em` 护栏
+  双重跳过，DEM 主线退出根本不触及；主管线已冻结新仓（AGENT.md）。
+- **其余消费方全为报表/记录/告警/分析**：trade_records/trade_outcomes/trade_attribution 记录、
+  `observers.py:177`「止损参数过宽」告警（>5h）、`engine.py:315` time_stop **WARN Alert**（仅告警非订单）、
+  `exit_monitor_flow.py:818 time_to_mfe_trading_min` record-only meta、`close_flow.py:579` 平仓后
+  exit_shadow record-only、`position_exit_monitor:2192` 仅 `[ATR_EXIT]` 日志、review/analytics/dashboard/
+  notifier 展示、`pre_entry_gate` LLM prompt 历史样本上下文（gate 默认 disabled）。
+
+故本修复属 L1 数据/报表正确性（§6.5 先例），不改任何 live 下单/平仓行为。
+
+### 9.3 改动（单变量，+31/-2）
+
+`get_market_hours_us` 周末跳过后：
+1. 加 `get_holiday_calendar().is_us_holiday(current.date())` 假日整休逐日跳过（与周末同处理保证收敛；
+   只读缓存不触网，与 §6/§7/§8 同源 SSOT）；日历异常 fail-open 保留原行为（按工作日计，不阻断报表）。
+2. `day_close` 改动态收盘：`_close_mins = get_us_close_minutes_et(current.date())`（半日返 780=13:00，
+   常规 960=16:00），取值失败兜底 960；`day_close = current.replace(hour=0,...) + timedelta(minutes=_close_mins)`。
+3. 懒导入 `holiday_calendar`（与 scheduler_triggers.get_market_phase R-8b 同源）。
+
+正常日 6.5h、周末跳过、10 天硬底等其余路径逐字未动。配额/预算/缓存回写/方向/阈值/仓位/live 权限全未动。
+
+### 9.4 验收
+
+- 新契约 `tests/test_rfc171_s9_market_hours_holiday.py` **12 例**（autouse 离线夹具压 `_cached_trading_day=None`）：
+  SSOT 锚点/正常日 6.5h 不变/周末跳/感恩节 0h/半日 3.5h/半日盘后 0h/跨假日 span 1.5h/跨半日+周末 span 2.5h/
+  日历异常 fail-open 6.5h/收盘异常兜底 6.5h。
+- 相邻回归（rfc078_batch_d_round_trips / playbook exit_recovery / pipeline_batch_e / playbook_pipeline /
+  ledger_ts_scale_precision / review dead_review_patterns / fix_instruction_exit_writeback_gaps）
+  合跑 **245 passed**（含本 12）。注：rfc078 holding_hours DST 走 `live_ledger.build_round_trips` 另一路径不受影响。
+- **变异红绿**（假日跳过失效 `if False` + 固定 16:00）→ 5 条假日/半日契约红（5.5≠2.5 等）→ 还原（MUTATION=0，
+  diff 仅 +31/-2）→ 复跑 12 绿。
+- 重启冒烟 7/7（见 handoff 凭据）。
+
+### 9.5 影子先行豁免说明
+
+同 §6.5/§7.5 先例：L1 数据/报表面缺陷修复（不改入场/出场判据与阈值），用户显式裁决「请继续做根因和
+关联问题做修复」→「继续」链触发。以契约测试 + 离线功能验证 + 变异红绿 + 相邻回归 + 重启冒烟落地，
+不走多日影子 A/B。**收益增量未证（正确性≠盈利）**。
+
+### 9.6 回滚
+
+还原 `get_market_hours_us` 为「只跳周末 + 固定 `day_close=current.replace(hour=16,...)`」（删假日跳过块、
+动态收盘块与懒导入）＋重启。无配置项、无冻结参数。
+
+### 9.7 剩余排队（本批不动，一次一变量）
+
+- shadow_tracker/ue_quote 硬编码 2026 假日表＝2027+ 时间炸弹（shadow infra 另案）。
+- 死代码 `timezone.is_pre_market/is_after_hours` 清理＝须 six-surface-zero-ref skill（六面零引用审计）。
+- shared_kernel/signal_pipeline weekend-only＝良性低优先。
+- §8.9 半日边界已证伪闭合（无缺陷不修）；`_cst_close_boundary` 不改。

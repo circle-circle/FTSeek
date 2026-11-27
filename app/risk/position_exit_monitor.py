@@ -141,7 +141,20 @@ def _probe_earnings_exit_api() -> bool:
 # ============================================================
 
 def get_market_hours_us(start_dt, end_dt) -> float:
-    """计算美东交易时段内的小时数 (09:30-16:00)"""
+    """计算美东交易时段内的小时数 (09:30-当日收盘; 跳周末+假日, 半日市 13:00 收).
+
+    [RFC-171 §9 2026-11-28] 与 §6/§7/§8 同源缺陷: 原实现只跳周末 + 固定 16:00 收盘,
+    不识别假日/半日 → 假日被当 6.5h 交易日、半日 13:00-16:00 被多计 3h。holding_hours
+    (models.py:417 复用本函数) 喂 trade_records/trade_outcomes/trade_attribution 记录、
+    observers「止损参数过宽」告警、engine time_stop 预警、pre_entry_gate 历史样本 ——
+    全为报表/记录/告警域。**live 出场订单不消费 holding_hours**: playbook exit_engine
+    TIME_EXIT/DEAD_SIGNAL/MFE_STALL 用墙钟 held_minutes 或「今日开盘以来分钟」(RFC-064/073),
+    MAX_HOLD 按交易日数; position_exit_monitor legacy _check_time_exit 已 enabled=false
+    且 held_minutes=(now-entry)/60 墙钟 (:1240)。故本修复属 L1 数据/报表正确性 (§6.5 先例),
+    不改任何 live 下单/平仓行为。假日/收盘时刻复用 holiday_calendar (与
+    scheduler_triggers.get_market_phase R-8b 同源): is_us_holiday 跳整休 (只读缓存不触网),
+    get_us_close_minutes_et 半日返 780(13:00) 否则 960(16:00), 取值失败兜底 960。
+    """
     try:
         if ET:
             start = start_dt.astimezone(ET)
@@ -150,6 +163,9 @@ def get_market_hours_us(start_dt, end_dt) -> float:
             start = start_dt
             end = end_dt
 
+        from app.utils.holiday_calendar import get_holiday_calendar, get_us_close_minutes_et
+        _cal = get_holiday_calendar()
+
         hours = 0.0
         current = start
         while current < end:
@@ -157,8 +173,21 @@ def get_market_hours_us(start_dt, end_dt) -> float:
                 days_ahead = 7 - current.weekday()
                 current = (current + timedelta(days=days_ahead)).replace(hour=9, minute=30, second=0, microsecond=0)
                 continue
+            # [RFC-171 §9] 假日整休 → 不计交易小时 (逐日推进, 与周末同处理, 保证收敛)
+            try:
+                if _cal.is_us_holiday(current.date()):
+                    current = (current + timedelta(days=1)).replace(hour=9, minute=30, second=0, microsecond=0)
+                    continue
+            except Exception:
+                pass  # 日历异常降级: 保留原行为(按工作日计), 不阻断报表
+            # [RFC-171 §9] 半日市动态收盘 (13:00), 常规 16:00; 取值失败兜底 960
+            _close_mins = 16 * 60
+            try:
+                _close_mins = int(get_us_close_minutes_et(current.date()))
+            except Exception:
+                _close_mins = 16 * 60
             day_open = current.replace(hour=9, minute=30, second=0, microsecond=0)
-            day_close = current.replace(hour=16, minute=0, second=0, microsecond=0)
+            day_close = current.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(minutes=_close_mins)
             session_start = max(current, day_open)
             session_end = min(end, day_close)
             if session_end > session_start:
