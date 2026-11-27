@@ -366,6 +366,11 @@ def run_playbook_topup_supplement(
         try:
             from app.utils.watchlist_manager import get_symbols_by_role as _tu_pool
             _pool = [str(s) for s in _tu_pool("topup_eligible")]
+            # RFC-218 §16: 全局黑名单守卫 (默认 OFF, 关闭时逐字节旧行为) —
+            # roles.topup_eligible 派生不看 enabled/黑名单 (QCOM 被禁仍 topup_eligible),
+            # 补量候选边界统一复核, 与合并边界同一开关同一谓词。
+            from app.utils.watchlist_manager import filter_global_blacklist as _bl_guard
+            _pool = _bl_guard(_pool)
         except Exception as _pe:
             logger.error(f"[playbook·topup] 名单真源解析失败 (roles.topup_eligible): {_pe}")
             _pool = []

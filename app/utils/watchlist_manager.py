@@ -5,6 +5,7 @@
 """
 import json
 import logging
+import os
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
@@ -303,6 +304,49 @@ def get_stock_symbols() -> List[str]:
 def get_symbols_by_role(role: str) -> List[str]:
     """快捷函数: 按角色标签取标的 (P-1 名单合一, 真源派生用)"""
     return get_watchlist_manager().get_symbols_by_role(role)
+
+
+def _blacklist_guard_enabled() -> bool:
+    """RFC-218 §16 独立开关: PLAYBOOK_BLACKLIST_GUARD (进程 env, systemd 注入 .env.us)。
+
+    默认 OFF; 仅显式 truthy 值开启, 未知值 fail-closed 回到旧行为 (与 s1_arm.enabled
+    同一 truthy 口径)。每次实读, 不缓存。
+    """
+    v = os.environ.get("PLAYBOOK_BLACKLIST_GUARD", "0")
+    return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+
+def filter_global_blacklist(symbols: List[str]) -> List[str]:
+    """RFC-218 §16: Playbook 新候选边界全局黑名单守卫 (默认 OFF)。
+
+    病灶 (§13.2-B/§14.4 确认): 静态侧 get_stock_codes 已滤 risk.global_blacklist,
+    但 scheduler.watchlist 经 daily_active_pool 合并、runtime_context 纯加法合并、
+    topup roles.topup_eligible 派生三条路径均无复核 → 被禁标的可回入新候选。
+
+    语义:
+      - 开关 OFF/未知值 → 原样返回输入 (同一对象, 逐字节旧行为);
+      - 开关 ON → 复用 _get_global_blacklist() 谓词 (剥 US. 前缀, 与 _apply_exclusions
+        同口径) 过滤被禁标的;
+      - 只消费 risk.global_blacklist (明确禁止语义); 不动 enabled=false 普通暂停,
+        不动 self_managed (后者仍由静态侧 _apply_exclusions 负责);
+      - 黑名单读取失败/为空 → fail-open 原样返回 (与 _get_global_blacklist 同口径,
+        守卫故障不瘫痪候选面)。
+
+    不触碰持仓/退出链: 本函数只用于新候选名单, 持仓管理仍读原名单/DB。
+    """
+    if not _blacklist_guard_enabled():
+        return symbols
+    blacklist = get_watchlist_manager()._get_global_blacklist()
+    if not blacklist:
+        return symbols
+    bl = set(blacklist)
+    out = [s for s in symbols if str(s).replace("US.", "") not in bl]
+    if len(out) != len(symbols):
+        blocked = [s for s in symbols if str(s).replace("US.", "") in bl]
+        logger.info(
+            f"[BLACKLIST] playbook 候选守卫拦截 {len(blocked)} 个被禁标的: {blocked}"
+        )
+    return out
 
 
 def get_order_qty(symbol: str, default_qty: int = 50) -> int:

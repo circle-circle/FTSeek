@@ -82,6 +82,12 @@ def _get_watchlist(scheduler) -> List[str]:
 
     纯加法: 静态 watchlist 保留不变, 动态池只增不减.
     若 factor_engine 不可用, fallback 到纯静态 watchlist.
+
+    RFC-218 §16 (2026-11-27): 全局黑名单守卫 PLAYBOOK_BLACKLIST_GUARD (默认 OFF,
+    关闭时逐字节旧行为)。静态侧 get_stock_codes 已滤黑名单, 但 scheduler.watchlist
+    经 daily_active_pool 合并可携带被禁标的 (scheduler_core._load_watchlist 无复核),
+    动态池 factor_engine 亦零黑名单引用 → 在 Playbook 新候选边界统一复核,
+    合并路径与 fallback 路径同口径。只滤新候选, 不触碰持仓/退出链。
     """
     wl = list(getattr(scheduler, "watchlist", []) or [])
 
@@ -91,6 +97,14 @@ def _get_watchlist(scheduler) -> List[str]:
     # 2026-06-30: 过滤 #SIM 后缀 (SIM账户持仓不进入pipeline)
     wl = [s for s in wl if '#' not in s]
 
+    # RFC-218 §16: 黑名单守卫 (fail-open: 守卫不可用时保持旧口径, 不瘫痪候选面)
+    try:
+        from app.utils.watchlist_manager import filter_global_blacklist as _bl_guard
+    except Exception as e:
+        logger.debug(f"[playbook] 黑名单守卫不可用, 保持旧口径: {e}")
+        _bl_guard = lambda syms: syms  # noqa: E731
+    wl = _bl_guard(wl)
+
     try:
         from app.plan.factor_engine import _get_stock_pool
         dynamic_pool, meta = _get_stock_pool()
@@ -99,6 +113,8 @@ def _get_watchlist(scheduler) -> List[str]:
             # 双保险: 合并后也过滤#SIM + 修复US.US.双前缀
             merged = [s[3:] if s.startswith("US.US.") else s for s in merged]
             merged = [s for s in merged if '#' not in s]
+            # RFC-218 §16: 动态池贡献同样复核 (覆盖 dragonhead/异动扫描/daily_active_pool)
+            merged = _bl_guard(merged)
             logger.info(
                 f"[playbook] watchlist 合并动态池: "
                 f"static={len(wl)} + dynamic={len(dynamic_pool)} "

@@ -749,3 +749,68 @@ RFC-217 归档：10 条带标记指令、3 笔成交、仅 1 笔已平 CAT `+$9.
 2. 仓内产物已提交推送 `origin/main`（`078966c98..1c6d625ce`）；仓外 DA 三文件不在 git 跟踪（已改、默认关）。本批无需重启。
 3. 激活正式输入须用户批准 §10.4 单变量 A/B（n≥120／≥20 独立 ET 日／预注册 MDE）后方可推进。
 4. 其余输入修复（§15.7）逐批单独裁决，各自独立开关。
+
+## 16. 实施记录 II（2026-11-27 · 用户裁「基于合理性和有效性执行…该重启、推送、提交做的」· 动态黑名单统一守卫 · 已激活＋重启冒烟通过）
+
+> 本节追加，不改 §§0–15 历史。本批唯一变量＝**Playbook 新候选边界全局黑名单守卫**（§8 顺序 #1、§13.2-B／§14.4 确认病灶）。这是**正确性／风控修复，非收益假设相邻的正式 DA 输入变量**——被禁标的本就不该进入候选，恢复配置既有语义无需 §10.4 A/B 即可激活（与 §15 资金修复「默认关等 A/B」区分）。资金修复开关 `DA_CAPITAL_CODE_FIX` 本批**未激活、未捆绑**（重启后进程 env 无该变量，默认 OFF）。
+
+### 16.1 病灶复述与归因修正（先证伪，后动手）
+
+- 配置 `config/unified_config.yaml:2277` `risk.global_blacklist` 共 5 条：`US.QCOM / US.LCID / US.TME / HK.00700 / US.HK.00700`（归一化后 4 个标的）。静态侧 `get_stock_codes` 已滤；但三条侧门无复核：
+  1. `scheduler_core._load_watchlist` 经 `daily_active_pool` 合并入 `scheduler.watchlist`（无黑名单复核）；
+  2. `runtime_context._get_watchlist` 纯加法合并 `factor_engine._get_stock_pool()` 动态池（dragonhead/异动扫描/daily_active_pool，零黑名单引用）；
+  3. `generation_flow.run_playbook_topup_supplement` 的 `roles.topup_eligible` 派生不看 `enabled`/黑名单——**QCOM `enabled: false`（yaml:3282-3286）却仍在 `topup_eligible`**。
+- DB 实证（只读 `mode=ro`+`query_only`）：QCOM 11 月 playbook_instructions 5144/5374/5454/5519（11-02/05/06/09）全部 deterministic SKIP「非当前通道候选(bridge未提名)」→ **证明被禁标的确实反复回入 Playbook 候选 watchlist**（合并路径；若未回入不会生成指令行）。
+- **归因修正（本轮新证据，不得沿用旧口径）**：QCOM 11 月 4 笔 PLAYBOOK_SIM LONG 成交（trade 1829/1847/1853/1882，11-09→11-12）的 `decision_id` 均为 `EXT-<date>-US.QCOM-afterhours/premarket`，**在 playbook_instructions 中零匹配** → 成交来自 **EXT 延长时段 cron 执行器**（`scripts/extended_hours_entry_executor.py`，crontab 313/314 行在运行），**不是合并路径泄漏下单**。旧表述「QCOM 经黑名单漏洞实际成交」需拆成两件事：合并路径泄漏=候选面污染（已证）；实际成交=EXT 独立泄漏面（见 16.5）。
+- 凭据：`/tmp/rfc218_blacklist_evidence.py|.log`、`/tmp/rfc218_blacklist_evidence2.py|.log`。
+
+### 16.2 改动清单（本批提交范围）
+
+| 文件 | 改动 |
+|---|---|
+| `app/utils/watchlist_manager.py` | 新增 `_blacklist_guard_enabled()`（env `PLAYBOOK_BLACKLIST_GUARD`，默认 `"0"`，truthy=`1/true/yes/on`，未知值 fail-closed 回旧行为）＋ `filter_global_blacklist(symbols)`（复用 `_get_global_blacklist()` 谓词，剥 `US.` 前缀与 `_apply_exclusions` 同口径；OFF 返回**同一对象**；黑名单空/读取失败 fail-open；仅拦截时打 INFO `[BLACKLIST] playbook 候选守卫拦截…`） |
+| `app/playbook/pipeline_parts/runtime_context.py` | `_get_watchlist`：`wl` 在 #SIM/双前缀清理后过守卫；`merged` 在既有 try 内再过守卫（合并＋fallback 同口径）；守卫 import 失败 fail-open 直通 |
+| `app/playbook/pipeline_parts/generation_flow.py` | topup `_pool`（roles.topup_eligible）在既有 try 内过同一守卫（topup 当前 `enabled: false`，守卫＝将来重开时的闭合保证） |
+| `tests/playbook/test_blacklist_merge_guard.py`（新增） | 24 例契约：开关语义/OFF 同一对象/ON 拦截/空黑名单与配置故障 fail-open/合并与 fallback 与 topup 三边界/`#SIM` 与双前缀交互/不动 disabled/self_managed/持仓退出链 |
+| `.env.us`（不入库） | 追加注释＋`PLAYBOOK_BLACKLIST_GUARD=1`（激活） |
+
+- **只消费 `risk.global_blacklist`（明确禁止语义）**；不动 `enabled=false` 普通暂停、不动 `self_managed`（仍由静态侧负责）、不触碰持仓/退出链、`scheduler_core._load_watchlist` 未改（监控/持仓面保留）、`intraday_reentry` 已关闭轴未触。
+
+### 16.3 验证（可复跑命令＋日志）
+
+全部 `PYTHONDONTWRITEBYTECODE=1`、`./venv/bin/python`；DB 全程只读。
+
+- `py_compile` 三文件 exit0；`scripts/check_undefined_names.py` exit0。
+- 新契约 **24/24**：`PYTHONPATH=. ./venv/bin/python -m pytest tests/playbook/test_blacklist_merge_guard.py -q` → `/tmp/rfc218_blacklist_guard_newtests.log`。
+- 相邻批 **1540 passed / 18 failed**：`… -m pytest tests/playbook/ tests/test_symbol_registry_p1p2.py -q` → `/tmp/rfc218_blacklist_guard_adjacent.log`。**18 失败均为既有**：`git stash push` 本批 3 个 app 文件后重跑同失败子集 → **同样 18 failed/86 passed、FAILED 清单逐条一致** → `/tmp/rfc218_blacklist_guard_baseline.log`（随后 `stash pop` 复原）。失败分布 5 文件：falsification_capital_flow_shadow 2 / low_atr_gate_screening_basis 10 / m2_c2_live_quote_gate 4 / offline_full_chain 1 / risk_scale_wiring 1，另案不在本批一变量范围。
+- 变异测试（证明测试真的咬合）：把开关解析强制 `return False` → **10 failed** `/tmp/rfc218_blacklist_guard_mutation_red.log`；还原 → **24 passed** `/tmp/rfc218_blacklist_guard_restore_green.log`。
+- 影子探针 `/tmp/rfc218_blacklist_shadow.py` → `/tmp/rfc218_blacklist_guard_shadow.log`：真实黑名单归一化 {HK.00700,LCID,QCOM,TME}；今日重建池 55 标的 **off→on 差分 ∅**（今日池本就干净，无自然拦截样本）；合成注入全部 5 条黑名单：flag-off 泄漏 5、flag-on 拦截 5、**误伤 ∅**。**边界**：探针以 `daily_active_pool` 存档替身 `_get_stock_pool`（离线、不触发 Finnhub 扫描），非当日实时动态池全量。
+
+### 16.4 激活／重启／冒烟（实际发生）
+
+- 重启前快照 `/tmp/rfc218_blacklist_pre_restart.json`：SIM SHORT BA 23 / BABA 47 / GS 5，LIVE 0，`entry_booking_outbox` 22 全 BOOKED，`git status app/ scripts/` 仅本批 3 文件（无他人在途 WIP 混入）。
+- `systemctl restart ftseek-us` → `PYTHONPATH=. ./venv/bin/python scripts/startup_smoke_check.py --wait 90` → **7/7 全过 exit0** `/tmp/rfc218_blacklist_startup_smoke.log`。新 MainPID **161734**（2026-11-27 14:28:30 CST）。
+- `/proc/161734/environ` 含 `PLAYBOOK_BLACKLIST_GUARD=1`；**无 `DA_CAPITAL_CODE_FIX`**（资金修复保持默认 OFF，未捆绑）。
+- 重启后快照 `/tmp/rfc218_blacklist_post_restart.json`：BA/BABA/GS 23/47/5 逐一不变、LIVE 0、outbox 22 全 BOOKED → 持仓/退出链零扰动。
+- 回滚：`.env.us` 改 `PLAYBOOK_BLACKLIST_GUARD=0`（或删行）＋ `systemctl restart ftseek-us` → 逐字节旧口径（OFF 同一对象已契约证明）；或 revert 本批 commit。
+
+### 16.5 新确认的独立泄漏面：EXT 执行器零黑名单（本批不修，排队）
+
+- `scripts/extended_hours_entry_executor.py` 全文 **0 处 blacklist 引用**；候选宇宙＝Futu 排行榜＋用户 Futu App 自选分组＋财报日历（`_scan_candidates:2353`、`_watchlist_symbols:2196`），完全绕过 `risk.global_blacklist`。QCOM 4 笔 EXT SIM LONG（16.1）即此面实证。
+- 研究臂已按预注册到期（`.env.us:179` `EXT_RESEARCH_SOURCE_UNTIL=2026-11-13`，11-13 后 EXT 零成交）；**财报门控严格臂仍在运行**（crontab 313/314）。
+- **本批不改 EXT**：它是独立预注册实验臂，改其供给面＝改实验变量，须单独裁决/预注册修订，不得混入本批一变量。列为下一批候选：EXT 候选边界接入同一 `filter_global_blacklist` 谓词（或 EXT 侧独立开关），先影子差分再激活。
+
+### 16.6 未验证 / BLOCKED（不得以归档冒充当前生产实测）
+
+- **收益增量未证，也非本批目标**：本批收益边界＝正确性/风控（被禁标的不再进入新候选），不声称任何盈利改善；守卫不改变任何未被禁标的的判断/执行。
+- 生产自然拦截**未观测**：今日真实池 off→on 差分 ∅（池干净），拦截效力目前由合成注入＋契约测试证明；待未来被禁标的自然进入 `daily_active_pool`/topup 时看 `[BLACKLIST]` INFO 日志实证。
+- EXT 面仍未守卫（16.5，已排队）；`scheduler_core._load_watchlist` 监控面仍可见被禁标的（刻意保留，非新候选路径）。
+- 全量 pytest/CI 未跑（只跑相邻批）；无一致 DB 快照／runtime DA manifest／同刻现货 VIX（沿用 §13.7 BLOCKED）。
+- 18 个既有相邻测试失败未修（基线证明在案，另案）。
+- 资金分布修复激活仍 BLOCKED 于 §10.4 A/B（§15.8 不变）。
+
+### 16.7 下一步
+
+1. EXT 黑名单守卫批（16.5）：独立裁决＋影子差分先行。
+2. §15.7 输入修复队列不变（健康空财报三态／短 K UNKNOWN／源状态可见性／挑战者事实一致性），逐批单变量。
+3. 观察 `[BLACKLIST]` 生产拦截日志，积累自然样本后在 handoff 补记。
