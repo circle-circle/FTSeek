@@ -1257,3 +1257,92 @@ RFC-217 归档：10 条带标记指令、3 笔成交、仅 1 笔已平 CAT `+$9.
 - revert 本批 commit＋`systemctl restart ftseek-us`（日报/教训/评分/sizing 回退）；EXT helper 经 cron fresh-import 随 revert 即回退。
 - 无开关可回滚（本批零新开关）；state 文件新格式条目（dict）旧代码读为"非字符串→未通知"会重发一次提醒，无交易影响；删除 state 文件仅导致重新提醒一次。
 - 与 §16/§17/§19/§20/§21 各开关互不牵连；测试隔离修补（§22.5）随 revert 一并回退。
+
+## 23. 实施记录 VIII（2026-11-27 · 用户裁「请按照建议执行落地优化」· 审计边界闭合批：SHORT 实盘镜像实验隔离＋bridge 身份硬化＋EXT 观测原子性＋半日市守卫激活）
+
+> 本节追加，不改 §§0–22 历史。本批承接用户转发独立审计「四、不能当作已完全闭合的边界」中可代码闭合的三项（§22.9 #2/#4/#5）＋#3 激活裁决。**授权表述（显式）**：审计原文「建议优先完成该项激活裁决，但本轮没有授权启用」；用户随后裁「请按照建议执行落地优化」——本批将该指令解读为对半日市守卫激活的裁决（审计建议本身即「优先完成激活裁决」），依据=**时段语义正确性**（今日 NYSE 半日 13:00 ET 收盘，静态窗 17:00–19:59 ET 对已收市市场放行），非收益。若用户本意不含激活，回滚=`.env.us` 改 `EXT_AFTERHOURS_HALF_DAY_GUARD=0`，下一 tick 即生效，首个暴露 tick（CST 周六 06:02）前有约 9 小时零差异窗口。**EXT_BLACKLIST_GUARD 与 DA_CAPITAL_CODE_FIX 保持 OFF，未捆绑**。
+
+### 23.1 P1 潜伏 · SHORT 实盘镜像实验隔离（§22.9 #5 闭合）
+
+- 病灶：`risk_gates.py` 镜像入口未按 `no_trade_short_exp` 排除历史实验指令。当前 live 闸只收 LONG/BUY（`live_arm_gate.py:235–240` `LIVE_PROBE_DIRECTION_REJECTED`）⇒ **本路径今日零流量、零行为变化**；未来 SHORT 真实目标门获允许时，跨 regime 遗留 SIM-only 实验指令仍可能被镜像。
+- 合同（纵深防御，新增 `_parse_metadata_blob`/`_no_trade_short_exp_marker`/`_no_trade_sizing_regime`/`_is_no_trade_short_experiment_instruction`）：
+  1. **标记存在性判定（非 truthy）**：`no_trade_short_exp` 键 `is not None` 即标记——空 dict `{}` 标记也是标记（truthy 判定会漏，变异测试钉死）；内存 ∨ 持久化任一源命中 → 排除，任意方向。
+  2. **次级证据**：SHORT ∧ `reprice_audit.regime_reads.sizing.regime=="no_trade"`（大小写不敏感）→ 排除（覆盖标记写失败但 reprice 审计在库）。
+  3. **SHORT fail-closed**：两源 metadata 均不可读（缺失/坏 blob/行缺失/读失败/无 id）→ 排除（`short_metadata_unverifiable_fail_closed`）；行存在且 `metadata_json` NULL = 一次成功读（库内无标记）→ 放行。
+  4. **LONG/BUY 无标记永不被本谓词排除**（实验仅 SHORT）；谓词自身异常 → SHORT fail-closed / LONG fail-open。
+  5. 持久化源=`route_playbook_db("sim").get_instruction_by_id`（镜像恒 SIM→LIVE）；内存 metadata 可能滞后于 sizing 期 merge ⇒ 持久化读为权威，内存只能追加排除不能撤销。
+- 隔离**先于臂闸**；拒绝走同一 `(None, gate)` 合同，`reasons=[{code:"NO_TRADE_SHORT_EXP_ISOLATION",...}]`，调用方日志/推送路径不变；`experiment_check` 可注入（测试缝）。`pipeline.py` 转发器签名不变。
+- **SHORT 实盘授权裁决时必须复核本谓词**（隔离是授权前置条件，不是授权本身）。
+
+### 23.2 bridge 稳定性身份硬化（§22.9 #2 闭合）
+
+- `_read_bridge_raw` 旧校验只比 `(mtime_ns, size)`；保持 mtime/size 的身份替换（rename 覆盖＋utime 还原）可穿透。现四元组 `(st_dev, st_ino, st_mtime_ns, st_size)` 四 stat 三比对：路径 stat(读前) ↔ fstat(打开 inode) ↔ fstat(读后) ↔ 路径 stat(读后)；任一不等 → None＋warning（不解析、不注入、不消耗基线）。
+- 稳定文件四点全等 ⇒ 逐字节旧行为；返回合同 `(raw, st_after.st_mtime)` 不变。
+- **残余（不夸大）**：原地写＋同 size＋utime 还原仍理论可穿透；SHA 基线绑定实际读入内容，下一轮重载原则上发现新 SHA。未发生混合字节/错误成交的声称不变。
+
+### 23.3 EXT 观测原子性（§22.9 #4 部分闭合：并发面；dry 语义仍待裁）
+
+- 新增 `_observation_lock`（flock LOCK_EX 阻塞式短临界区，锁文件与台账同目录族）＋`_atomic_write_json`（mkstemp 唯一 tmp＋os.replace，替代共享 `.json.tmp`）。
+- 包裹四处读-改-写：`_record_ext_blacklist`（`ext_blacklist.lock`）、`_record_afterhours_halfday_divergence`（`ext_afterhours_halfday.lock`）、两个 `_notify_*_first_hit` 的 state RMW（`*_first_hit_notified.lock`，**含 sync push 在锁内串行**防重叠调用双推/丢 attempts）。notify 调用在台账锁**外**（无嵌套锁序）。
+- 半日市 writer 仍在 executor 主互斥锁之前（§22.9 #4 原观察）——本批以观测面独立 flock 闭合漏计/丢 mode，不移动 writer 位置（移动=改执行时序，另批）。
+- **dry=True 语义不变**（规范路径 dry 仍写观测并触发提醒）——「dry 是否必须静默」仍为用户待裁项，本批不擅改。
+- 首命中提醒文案按 mode 分流（§23 激活配套）：blocked(守卫ON) → 「已按日历 cap 至 16:59 ET＋审计留痕＋回滚锚点」，**不再发「激活须裁决/提醒≠启用」**（激活后该措辞失真）；shadow(守卫OFF) 文案逐字保留。推送仍走 `app/push` hub，零直连。
+
+### 23.4 半日市守卫激活（§22.9 #3 · 预注册臂供给面变量修订留痕）
+
+- **激活**：`.env.us` `EXT_AFTERHOURS_HALF_DAY_GUARD=0→1`（21:15 CST）；cron 313/314 每 tick fresh-import 即生效，**无需重启**（服务进程不运行 EXT 执行器）。影子保持 ON：分歧 tick 落 `mode=blocked` 审计。
+- 裁决输入复核：① 今日真实日历 `get_us_close_minutes_et(2026-11-27)=780`（常规周一=960）；② off_sweep 全分钟复跑 **SWEEP_ALL_OK**（OFF 半日/常规 mismatches=0；ON 常规=0；ON 半日 **expansion=0**，分歧 session 180min[1700..1959]/A 91min[1700..1830]/B 31min[1700..1730]）；③ 时段语义＝§20.1（半日盘后实际 13:00–17:00 ET，静态窗尾对已收市市场放行）。
+- **自然影子台账尚不存在**（首个分歧 tick=CST 周六 06:02=ET 17:02，cron 314 `2-59/5 4-8 * * 2-6`）。§20.5 原裁决输入含「今日自然影子台账」；本批在窗口前激活的理由：**守卫 OFF 等待自然样本=接受今日真实 closed-market 暴露**（观测窗即暴露窗），而分歧机制是日历确定性的（扫描已全分钟证明）。激活后影子继续以 blocked 模式留痕，审计链不断。
+- **预注册修订留痕**：EXT 臂供给面仅在「半日市∧盘后∧ET 17:00–19:59」收窄（只 cap 不扩；13:00–16:00 起点扩窗仍不做）；常规日/盘前逐字节不变。今日之前零行为差异（激活时点 21:15 CST，今日剩余 tick 全为盘前，不受影响）。
+- 激活冒烟（fresh-import 干净 env，dotenv 自加载）：guard=True/shadow=True/静态 SESSION_WINDOWS 原样/今日 end=1659/常规 end=1959；afterhours@1702=False、@1659=True、@1959=False、premarket@800=True；A/B 入场窗同口径 cap。
+
+### 23.5 验证矩阵（全部可复跑，`PYTHONDONTWRITEBYTECODE=1`）
+
+| 项 | 结果 | 凭据 |
+|---|---|---|
+| 新契约（镜像 22＋原子性 7＋半日市 89 含文案分流 1 新增） | **118 passed** | `/tmp/rfc218_s23_newtests_final.log` |
+| EXT 相邻全 glob＋bridge | **7F/405P**，FAILED 与 §22 基线 **IDENTICAL**（diff ∅） | `/tmp/rfc218_s23_ext_bridge_adj.log`＋`_ext_failed_norm.txt` |
+| Playbook 相邻 | **21F/1591P**＝18F 基线 IDENTICAL＋3 负载 flake（DA 同机运行，200ms 实时超时）＋22 新镜像测试；3 flake 隔离复跑 **3P** | `/tmp/rfc218_s23_pb_adj.log`＋`_pb_failed_norm.txt` diff；`/tmp/rfc218_s23_flake_rerun.log` |
+| 变异测试（3 红→恢复绿，sha256 逐字核验） | 标记存在性→truthy **2 红**；bridge sig 删 inode **1 红**（S20）；观测 flock 删除 **1 红**（并发丢更新） | `/tmp/rfc218_s23_pre_mutation_sha.txt`；恢复后 SHA d5f2340c…/9b6862f9…/9eaf3cd8… 一致 |
+| off_sweep 复跑（.env.us=1 后探针修正：import 后显式压 0） | **SWEEP_ALL_OK** expansion=0 | `/tmp/rfc218_s23_off_sweep_rerun.log`（探针 `/tmp/rfc218_s23_off_sweep.py`） |
+| 激活冒烟 | guard=True/end 今日 1659/常规 1959/只 cap 不扩 | 本节 §23.4 命令留痕 |
+| 静态 | py_compile venv＋cron `venv/bin/python3.11` 双解释器 exit0；`check_undefined_names.py` exit0 | 本批命令留痕 |
+| W4/W5/W6 日志卫生 | W4/W5 **grew=[] new_files=[]**；W6 risk_gates 本批编辑后 **HEAD 11=WT 11 中性**（新增 warning 补 exc_info=True） | `_check_log_hygiene` 只读复跑 |
+
+- **W6 全仓既有 HEAD 存量 drift（非本批引入，另案）**：risk_gates L84（P2 wave hotfix）/position_sync 14→16（1c7cc31bc）/auto_execute_flow 13→17（ad44b0d34 Nov25 实验＋567f09cbc）/trail_state_store 9→10（567f09cbc）/late_fill_evidence 新文件（ebc36d4e1）。基线 last tightened 80d8817ba（10-08）。本批不修不掩盖不升基线。
+- 既有 7＋18 相邻失败为基线存量未修；未跑全量 pytest/CI，不声称全绿。DB 全程 `mode=ro`+`query_only`；零订单/付费 LLM/方向/阈值/仓位政策/live 权限变更。
+
+### 23.6 部署（重启批：app/ 运行时改动）
+
+- DA 主批（21:02 CST 起跑，timeout 3270s）**~21:41 自然完成**（bridge 8 候选写库＋Obsidian 盘前归档 ✅，进程退出，非超时 kill）；重启在其后执行，未中断 DA。
+- 重启前核：① 在途出场＝trade_records 未平 3 仓一致全 SIM SHORT（BA 23/BABA 47/GS 5），LIVE 0，exit_ledger intents/legs 0/0；② `git status --porcelain -- app/ scripts/` 干净（代码先提交，无其他 agent WIP）。
+- 代码提交 `8acc5bdab`（7 文件 +835/-155：pipeline/risk_gates/executor＋4 测试〔镜像 22 例/原子性 7 例新文件〕，`git show --stat` 可核）；落档提交（本节＋DEB＋ANALYSIS＋handoff）sha 见 handoff 同日条目补记。
+- 重启前快照 `/tmp/rfc218_s23_pre_restart.json`（PENDING 4403＝§22 的 4395＋今日 DA 8；today_instructions=8；outbox 22 全 BOOKED；被禁 PENDING 28 存量）。
+- `systemctl restart ftseek-us` → 新 PID **208810**（21:46:09 CST）；启动冒烟 **7/7 exit0** `/tmp/rfc218_s23_startup_smoke.log`。
+- `/proc/208810/environ`：HALF_DAY_GUARD=**1**/SHADOW=1、EXT_BLACKLIST_GUARD=0/SHADOW=1、PLAYBOOK_BLACKLIST_GUARD=1/FINAL_GUARD=1、无 DA_CAPITAL_CODE_FIX/DA_SHORTK_NA。
+- 重启后快照 `/tmp/rfc218_s23_post_restart.json` 除 PID 外逐项 **IDENTICAL**。
+- HK 只读探针（DEB §5）：ret_code=0，HK.00700 快照可读（腾讯 352.0，+3.23%，update_time 16:07:57 HKT）——行情权限可用；**未建采集器/未加 cron**。
+
+### 23.7 收益边界（与 §9/§18.5/§19.5/§20.4/§21.5/§22.8 一致）
+
+- **本批没有任何收益改善证据**。镜像隔离今日零流量（LONG/BUY-only 闸）；bridge 硬化只拒不稳定读；观测原子性只防漏计/双推；半日市激活只缩已收市窗口。全部为正确性/风控/观测修复，不改方向/阈值/仓位/退出/live 权限。
+- 半日市激活依据=时段语义，**不是追收益**；被 cap 的 17:00–19:59 ET 窗对已收市市场，历史该窗成交质量未单独验证（不声称「避免了亏损」）。
+
+### 23.8 未闭合排队（本批不修不掩盖）
+
+1. **adapter 同日重跑语义**（§22.9 #1）：研究候选更新 vs 新指令生成事件未裁决；不删完成标记、不强制全量重生成。
+2. **EXT dry=True 静默语义**（§22.9 #4 残余）：规范路径 dry 仍写观测/触发提醒，待用户裁决。
+3. **watchlist fail-close**（P2 后续）：异常即停新仓另行裁决；本批仅 §22 已落 warning+栈。
+4. **资金分布激活**：BLOCKED §10.4 单变量 A/B（n≥120/≥20 独立 ET 日/预注册 MDE）；`DA_CAPITAL_CODE_FIX` 保持未设。
+5. **EXT_BLACKLIST_GUARD 激活**：BLOCKED 用户裁 QCOM 禁令适用性（§17.4 差分 4 笔全盈利净+$75.66，依据只能是禁止语义）。
+6. **半日 13:00–16:00 ET 起点扩窗**＋`_pretrade_gate` 报价 freshness：各自独立裁决/独立批。
+7. **§15.7 输入修复队列**：短 K UNKNOWN（下一批单变量，默认 OFF 影子就绪，不激活）/健康空财报三态/来源状态/挑战者事实一致性/news UTC→ET。
+8. **P3 score_band×gate 耦合**：record-only 留痕 `docs/analysis/ANALYSIS-20261127-score-band-gate-coupling.md`（MEDIUM 结构性封顶良；11 月 n=619 分布）；任何映射/阈值调整属正式判定变量须 A/B。
+9. **HK-US 联动**：现有链接面=HKEX 新闻适配器 7 ADR 映射（`app/catalyst/sources/hkex_source.py`）；行情联动探针与预注册见 DEB-20261127-rfc218-s23（本批只读探针，不接 sizing/gates）。
+10. W6 既有 HEAD 存量 drift（§23.5 清单）另案治理。
+
+### 23.9 回滚
+
+- 半日市守卫：`.env.us` 改 `EXT_AFTERHOURS_HALF_DAY_GUARD=0`（或删行），cron 下一 tick 即回旧静态窗，无需重启；影子 `EXT_AFTERHOURS_HALF_DAY_SHADOW=0` 停写盘。
+- 镜像隔离/bridge 硬化/观测原子性：revert 本批 commit＋`systemctl restart ftseek-us`（app/ 部分）；EXT 观测部分经 cron fresh-import 随 revert 即回退。无新开关（三者今日零流量/只拒不稳定/只防并发，回滚无运行时差异风险）。
+- 与 §16/§17/§19/§20/§21/§22 各开关互不牵连。
