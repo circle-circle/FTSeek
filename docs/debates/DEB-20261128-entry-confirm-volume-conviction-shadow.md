@@ -19,6 +19,11 @@ updated: 2026-11-28
 > RFC-170（确认侧追价影子 record-only 先例）、DEB-20261127-hk-us-sector-trend-context（record-only 影子范式）、
 > 影子注册表 `entry_confirm_forward`（OBSERVING）。
 
+> **⚠️ 复核修正横幅（2026-11-28）**：§13（Kimi 独立复核）+ §14（本 agent 核验整合）已追加。
+> §6.1 的 `vwap_slope` 单位（实为无量纲 5min ratio，非 pct/min）、capital_flow「复用即有当日守卫」
+> 隐含假设、以及「两臂都快照保证可比」表述，**以 §13/§14 更正为准**；原文 §1–§12 保留留痕不改写。
+> Step 1 实施仍须用户另裁；本会话仅落地 DEB 整合 + P0-3 宿主结算器计量修复（§14.6）。
+
 ## 1. 本批裁决与依据
 
 | 项 | 裁决 | 依据 | 变量类型 |
@@ -281,5 +286,185 @@ updated: 2026-11-28
   `systemctl restart ftseek-us` + 启动冒烟。
 - **LLM 影子**：开关 false 下一确认即停（热重载 60s 内），零 live 影响。
 - 任何阶段**无 live 行为可回滚**（record-only 设计保证）；不人工造单、不动方向/阈值/仓位/live 权限。
+
+**最后更新：2026-11-28。**
+
+---
+
+## 13. 第 2 轮独立复核（2026-11-28，Kimi；仅追加，不改写原预注册）
+
+> 性质：只读代码/产物复核 + 本节留痕；原 §1–§12 未改，状态仍为 draft / 未实施。
+> 本节不授予 Step 1 实施或开关激活权；Step 1 仍须用户另行裁决。
+> **总评：第一性原理、影子先行、双开关、冻结价格判据和 Step 3 BLOCKED 均合理；但两臂时点、veto 反事实、去重、资金流时点及统计功效尚有阻断性缺口。建议补齐合同后再实施，而非按现文本直接写代码。**
+
+### 13.1 P0：实施前必须闭合的合同
+
+1. **treatment 与 holdout 的快照时点目前不可比。** §6.1 写「两臂都快照，保证可比」，但现有 holdout 只在 arm 当时落行（`entry_confirm_gate.py:524-554`），treatment 终态行在 120s 及可能的 grace 之后落盘（`:940-970/:1065-1097`）。这会形成 holdout=T0、treatment=T0+120~150s 的时点混杂。
+   - 推荐主分析采用**固定 landmark=T0+120s**：两臂都在该时点留同一特征快照；holdout 虽已成交，也只追加影子观察，不改变交易。
+   - T0 的 arm 快照可作第二读数；grace 后的最终 treatment 快照只作诊断，不与固定时点 holdout 混作主对照。
+   - 若不增设 holdout 的 T0+120s 观察，则只能把研究改名/降格为「arm 时刻量能」，不能声称测到了确认时刻条件化价值。
+
+2. **「veto 子集左尾更差」只能证明风险排序，不能证明 veto 有经济价值。** RFC-158 §10.2 的 `ABANDONED净=0` 是评价现行确认门实际政策的口径，不是被 veto 信号若成交时的反事实结局。§7.2 的同 vol_class 分组也仍是观察性比较，不能消除 LLM 依据其他上下文选择 veto 的混杂。
+   - 所有 assignment（包括 ABANDONED、未成交及 None 特征行）须从同一 landmark 留固定 horizons 的可成交 bid/ask 前向路径，至少报方向归一收益、MFE/MAE、费用/滑点假设与数据覆盖率。
+   - veto 主读数必须同时包含**避免亏损、放弃盈利/误杀、反事实净差和总净额护栏**；不能只以大亏率更高判 PASS。
+   - 影子阶段最多支持风险分层与短窗经济估计；完整出场路径的因果经济价值仍须 Step 3 单变量随机 A/B，不得在 Step 2 提前声称。
+
+3. **重复 assignment / 冲突终态不能留给实现批再决定「取首或取末」。** 既有 `tail_objective` 当前逐行计入，未按 assignment 去重（`scripts/settle_entry_confirm_forward.py:438-461`）。本轮只读实测当前 cohort `type=entry_confirm` 200 行，按 `(inst_id, arm)` 仅 193 个键，存在 7 个重复键。`inst_id=5638` 先 CONFIRMED、后 ABANDONED，但 `decision_id=DA-20261116212614-US.GOOG-6f71` 实际有已平 PLAYBOOK_SIM 交易（trade id=1902，净 +$41.34）；机械取末会错记为弃单净 0，取首也不是通用正确规则。
+   - 新研究须预注册唯一 `assignment_id`、固定 landmark 的 `event_id`、重复哨兵及冲突隔离规则；同终态重复不得重复计数，终态冲突须与实际成交对账，未核清不得进入 resolved 分母。
+   - 这是**既有宿主计量缺陷，非本 DEB 引入**。宿主结算器是否修复、历史读数如何重列，应另开计量缺陷批并披露；不得借本 DEB 暗改 RFC-158 判据。
+
+4. **`capital_flow_daily.jsonl` 不能直接承担盘中确认时刻特征。** 现有 `_capital_flow_divergence` 只取每 symbol 最新日期，并未执行 §6.1 所写的「非当日→None」（`intraday_indicators.py:307-322`）；日级聚合仅由盘后 cron 运行，盘中若严格加当日守卫，该特征会结构性全 None。
+   - v1 最简方案：把资金流移出主假设，保留为后续扩展。
+   - 若坚持 v1 纳入，应改用分钟级 `data/futu_capital_flow.jsonl`，以 `item_time<=snapshot_ts` 做 as-of 联接，累计窗口、最大允许龄、净流原始值/单位和缺失原因全部落 schema；禁止用当日盘后聚合值回填盘中决策。
+   - 现有 bool helper 也不提供 `capital_flow_net_sign`，不能仅靠原函数复用得到草案全部字段。
+
+5. **`vwap_slope` 单位写错。** 实现返回相邻两个 5 分钟 VWAP 的 `(recent-prior)/prior`（`intraday_indicators.py:219-235/:269-274`），是无量纲的 5 分钟窗相对变化，未除以分钟、也未乘 100；§6.1 的 `pct/min` 不正确。
+   - 建议改名 `vwap_rel_change_5m` 并声明 `ratio`；若保留旧字段名，也须明确 `ratio per adjacent 5-minute windows`。
+   - 契约例应钉死 100→101 返回 0.01，防止 LLM 输入和下游统计把 0.01 误读为 1%/min。
+
+6. **累计日量比不足以刻画「确认窗放量」。** `_calc_intraday_vol_ratio` 是当日累计量/历史同时段累计量（`:460-596`）；同样的高读数可能来自开盘早已放量，也可能来自 arm→confirm 的 120s 真放量。它不能完全区分 §5 想测的「放量站稳」与「缩量 drift」。
+   - 最小补充：同一数据源留 `cum_vol_arm`、`cum_vol_landmark`、`confirm_window_volume`（股数）及其 as-of 时戳；再增加按相同时段历史 120s 成交量计算的 `confirm_window_vol_ratio` 与分母版本。
+   - 累计日量比保留为环境特征，局部确认窗量比才对应 doctrine；两者不得互相冒充。
+
+### 13.2 P1：统计、LLM 与运行时补强
+
+1. **拆成两个独立研究，而非一个联合 PASS。** Step 2A 只检验固定规则的量能条件化；Step 2B 检验 LLM 相对「同特征确定性基线」的增量。§7.4 当前要求量能与 LLM 同时显著才 PASS，会把两个变量重新捆绑，和一次一变量原则相冲突。
+2. **收缩主假设并控制多重比较。** `vol_class × divergence × grace × half_day` 全交叉在 n=150 下会产生大量空格。须预先指定一个主 contrast、一个主终点、方向/分母路径等有限分层；其余明确为探索性并做 BH/FDR 或独立时间窗验证。「跨月同号」需写成可执行窗口与最低 n，而非口号。
+3. **样本门按新 cohort 重起。** 旧行无快照，不得沿用宿主现有 resolved n 来满足新研究门。Step 2A 从首个有效固定时点快照起算；Step 2B 从 LLM 影子实际开启起另算，并分别要求每臂×主分层、veto/非 veto、SL_INITIAL 事件数与独立 ET 日下限。
+4. **现数据已经提示 30% 大亏负担目标短期功效不足。** `entry_confirm_forward_latest.json`（2026-11-27 生成）虽已有 treatment resolved 133 / holdout 41 / paired 12 日，但结局覆盖率仅 87.5% / 89.13%，仍 INSUFFICIENT；holdout SL 负担 4.262$/assignment 的 30%=1.279，而当前该差值的日聚类 MDE80=4.4495，目标明显低于当前可分辨尺度，分层后只会更困难。实现前须用真实方差做功效/预计攒样期估算，并按 OKR-2026-11 KR4 补上**决策日期、最长观察期、到期 KILLED 与实验槽位**，不得无限 OBSERVE。
+5. **缺失值须同时给完整案例与政策口径。** None 行可在特征诊断中排除，但模拟将来 fail-open 政策时必须按实际放行/不 veto 纳入 ITT，不得只分析数据齐全者；另报每臂、symbol、分母路径的 None 率。表现读数接 A9 双口径、A10 SSOT 谓词及净盈亏口径。
+6. **LLM 缓存键过粗。** 同 symbol+direction+session 内不同 anchor/px/量能状态不得共享结论。只缓存完全相同输入，键至少含 assignment/event、特征快照摘要、prompt_hash、模型版本；落实际模型/别名、参数、prompt/schema hash、原始响应、解析状态、latency、token/cost、cache/fallback/error。模型或 prompt 改动须分 cohort，不能依赖 temp=0 假设确定性。
+7. **LLM 不得阻塞 10s sweep 或 auto_execute。** `future.result(timeout)` 只停止等待，不会取消已运行 worker（既有 `pre_entry_gate.py:234-249` 同有限制）。建议有界异步队列 + 并发/在途/每日上限，结果以独立影子行追加并用 event_id 联接；不得在交易线程等 5s。同步写同一 forward 行与异步不阻塞二者应二选一，推荐后者。
+8. **补全可复现元数据与输出不变量。** `vol_ratio` 应带原始分子/期望分母、source、quote/bar 时戳与龄、p50 历史窗日期/版本，而不是只留 ratio 和路径名；p50/linear 分别报告。`would_veto=true ⇒ conviction=low` 等一致性须进 schema 契约，或删掉冗余字段，避免自相矛盾样本。
+
+### 13.3 建议的最小推进顺序（仍须用户另裁）
+
+1. **先做计量前置**：明确固定 landmark、assignment/event 身份、冲突隔离、A9/A10/净值口径与功效/截止日期；宿主重复行问题另案处理。
+2. **Step 1A 仅量能快照**：T0 与 T0+120s 两臂同尺；日累计量比 + 局部确认窗量比 + 完整来源/龄/None 原因；LLM 保持 OFF。
+3. **Step 2A 单主假设**：先证明确定性量能条件化有增量；探索性切片不作激活证据。
+4. **仅当 2A 有可分辨信号，才裁 Step 1B/2B**：LLM 异步影子与确定性基线比增量，不重复证明 vol_class 本身。
+5. **Step 3 仍 BLOCKED**：影子风险分层不等于完整政策收益，任何 live/SIM 行为接入仍走独立 DEB、单变量 A/B 与用户签字。
+
+### 13.4 本轮验证边界
+
+- 已只读核对：DEB 原文、RFC-158、现行 config、注册表、entry_confirm 生产代码、现有结算器、量能/VWAP/资金流实现、相关 cron 与最新只读产物。
+- 已用只读脚本复核重复 assignment、冲突实例和最新成交；未改 DB、config、注册表、代码、cron，未调用 LLM、未重启、未下单。
+- 本轮是设计/计量复核，**未跑 pytest（无代码变更），未做任何收益回测，未证明量能有增量，也未证明现有宿主结论在修复重复行后会转向**。
+
+---
+
+## 14. 第 3 轮核验与整合（2026-11-28，本 agent；§13 逐条 grounded 复核 + 宿主计量缺陷根因实锤 + 修正合同）
+
+> 性质：对 §13（Kimi 独立复核）逐条只读核验 + 本 DEB 原文实错更正 + P0-3 宿主缺陷根因取证。
+> 本节不授予 Step 1 实施权；Step 1A/1B/2A/2B 仍须用户另裁。
+> **落地边界（用户裁「按照下一步执行，如有把握且逻辑合理，可以直接落地，实现高质量交易」）**：本会话只落地
+> ①本 DEB 整合（纯 `.md`）+ ②P0-3 宿主结算器计量缺陷修复（`scripts/settle_entry_confirm_forward.py`
+> 的 `tail_objective` 裁决轴，cron 脚本，无服务重启、无 live 行为变更）。Step 1A 量能影子按 §13.3
+> 共识「补合同后另批」，本会话不写影子代码；gate 重复终态行根因属 live 域，留痕另批（§14.5）。
+
+### 14.1 §13 逐条核验结论（全部 grounded）
+
+| §13 项 | 核验 | 证据锚 |
+|---|---|---|
+| P0-1 两臂时点不可比 | ✅ 成立 | holdout 行 arm 时落（gate:534-554，T0）；treatment 终态行 delay 120s+grace 后落（gate:940-970/1065-1097）。实测重复行 delay_actual_sec 138/200、146/198、130/186 均 >120 |
+| P0-2 veto 左尾≠经济价值 | ✅ 成立 | RFC-158 §10.2 ABANDONED 净=0 是现行政策口径，非被 veto 信号若成交的反事实；§7.2 同 vol_class 分组仍观察性，不能消除 LLM 依其他上下文 veto 的混杂 |
+| P0-3 重复 assignment | ✅ 成立且根因已实锤 | 见 §14.5（7 重复键 + gate 跨线程 stale-snapshot 重建竞态日志） |
+| P0-4 capital_flow 无当日守卫 | ✅ 成立 | intraday_indicators.py:307-322 取每 symbol 最新日期（`record_date >= previous[0]`），无「非当日→None」；日级聚合仅盘后 cron（`0 7 * * 2-6`） |
+| P0-5 vwap_slope 单位错 | ✅ 成立（本 DEB 实错①） | :269-274 `return (recent - prior) / prior`，无量纲相邻 5min VWAP 比值，未除分钟未乘 100，非 pct/min |
+| P0-6 累计日量比≠确认窗放量 | ✅ 成立 | `_calc_intraday_vol_ratio` 当日累计量/历史同时段累计量（:460-596），高读数可来自开盘早已放量，不区分 arm→confirm 120s 局部放量 |
+| P1-1…P1-8 | ✅ 全部成立 | 拆轴/单主 contrast+多重比较/新 cohort 重起/功效不足/None 的 ITT/LLM 缓存键过粗/future.result 不取消 worker（pre_entry_gate:234-249）/可复现元数据，逐条与代码及 latest.json 读数一致 |
+
+### 14.2 共识点（10 项，双方一致）
+
+1. 第一性原理定位不变：量能=确信度条件变量，非方向预测器；LLM=确信度合成器/veto，非方向 oracle。
+2. 影子先行 + 双开关分离 + 默认 OFF + Step 3 BLOCKED + 价格判据/门阈值/holdout 分配/仓位冻结。
+3. 主分析两臂固定 landmark=T0+120s 同尺快照；T0 快照第二读数；grace 后终态快照仅诊断，不与固定时点 holdout 混作主对照。
+4. veto 经济价值须全 assignment 固定 horizons 可成交 bid/ask 前向路径 + 避免亏损/误杀/反事实净差/总净额护栏；Step 2 不冒充完整因果收益（须 Step 3 单变量随机 A/B）。
+5. 计数轴=唯一 resolved assignment（RFC-158 §10.2 与本 DEB §6.1 早已预注册），非 jsonl 行数；同终态重复不得重复计数，终态冲突须与实际成交对账，未核清不得入 resolved 分母。
+6. v1 资金流移出主假设（或改分钟级 as-of）；vwap 字段改名 `vwap_rel_change_5m`/`ratio`；补局部确认窗量比 `confirm_window_vol_ratio`，累计比与局部窗比不得互相冒充。
+7. Step 2A（确定性量能条件化）/2B（LLM 相对同特征确定性基线的增量）拆轴，单主 contrast + BH/FDR，全新 cohort 重起计数（旧行无快照不得沿用宿主 resolved n）。
+8. 功效前置：30%×holdout SL 负担 4.262=1.279 ≪ 当前日聚类 MDE80=4.4495，短期功效不足；须真实方差估算攒样期 + 决策日期/最长观察期/到期 KILLED/实验槽位（OKR-2026-11 KR4），不得无限 OBSERVE。
+9. None 行双口径（完整案例 + ITT 政策口径）；LLM 精确输入缓存键（assignment/event+快照摘要+prompt_hash+模型版本）+ 版本留痕 + 有界异步不阻塞 10s sweep/auto_execute。
+10. 推进顺序：计量前置 → Step 1A 仅量能快照（两臂同尺+局部确认窗量比，LLM OFF）→ Step 2A 单主假设 → 有可分辨信号才裁 Step 1B/2B LLM 异步影子 → Step 3 BLOCKED。
+
+### 14.3 本 DEB 原文实错更正（不改写 §1–§12 原文，以本节为准）
+
+- **实错①（§6.1 字段表 `vwap_slope`）**：原写「按实现声明（pct/min）」错。实现 `return (recent-prior)/prior`
+  是相邻两个 5min VWAP 的无量纲比值。更正：字段改名 `vwap_rel_change_5m`，量纲 `ratio`（per adjacent
+  5-minute windows）；契约例钉死 100→101 返回 0.01，防 LLM 输入与下游统计把 0.01 误读为 1%/min。
+- **实错②（§6.1 `capital_flow_divergence`「复用 :278」+「非当日→None」）**：原表述隐含「复用现有函数即得
+  当日守卫」，错。现有 `_capital_flow_divergence` 取每 symbol 最新日期、无当日守卫，且日级聚合仅盘后 cron
+  运行 ⇒ 盘中严格加当日守卫会结构性全 None。更正：v1 资金流移出主假设；若纳入须改分钟级
+  `data/futu_capital_flow.jsonl` as-of（`item_time<=snapshot_ts`）+ 原始净流/单位/最大允许龄/缺失原因落 schema；
+  现有 bool helper 不提供 `capital_flow_net_sign`，不能仅靠复用得到草案全部字段。
+- **表述降格（§6.1「两臂都快照保证可比」）**：现 holdout 行 T0 落、treatment 终态行 T0+120s+ 落，时点混杂。
+  更正：可比性须靠两臂固定 landmark=T0+120s 同尺快照实现（P0-1），不是「两臂都落行」自动保证；若不增设
+  holdout 的 T0+120s 观察，研究只能降格为「arm 时刻量能」，不得声称测到确认时刻条件化价值。
+
+### 14.4 修正后的最小采集合同（Step 1A 另批实施前须钉死）
+
+- assignment 身份：唯一 `assignment_id=(inst_id, arm)`（已实测 decision_id 跨多 inst=0、inst 跨 arm/decision_id=0）；
+  固定 landmark `event_id`；重复哨兵 + 冲突隔离规则预注册。
+- 两臂同尺：T0 与 T0+120s 各留同一特征快照；主分析用 T0+120s。
+- 量能字段：`vol_ratio`（累计日量比，环境特征，带原始分子/期望分母/source/quote-bar 时戳与龄/p50 窗日期版本，
+  p50/linear 分别报告）+ `cum_vol_arm`/`cum_vol_landmark`/`confirm_window_volume`（股数，带 as-of 时戳）+
+  `confirm_window_vol_ratio`（按相同时段历史 120s 成交量，带分母版本）；累计比与局部窗比不得互相冒充。
+- `vwap_rel_change_5m`（ratio）；资金流 v1 不入主假设。
+- None 不归零 + ITT 双口径；`would_veto=true ⇒ conviction=low` 等一致性进 schema 契约或删冗余字段；LLM OFF（Step 1A）。
+
+### 14.5 P0-3 宿主计量缺陷：根因实锤（gate 跨线程 stale-snapshot 重建竞态）
+
+**数据面（只读 `mode=ro`+`query_only` 实测，cohort date≥2026-11-05，200 行/193 唯一 `(inst_id,arm)` 键/7 重复键全 treatment）：**
+
+| inst | symbol | decision_id | 终态序列 | 实际已平成交 |
+|---|---|---|---|---|
+| 5539 | META | DA-20261110212134-US.META-8551 | ABANDONED+ABANDONED | 无 |
+| 5547 | HON | DA-20261110212619-US.HON-866e | CONFIRMED+CONFIRMED | trade1843 −168.27（OVERNIGHT_GAP_STOP）|
+| 5630 | CAT | DA-20261116212113-US.CAT-6e44 | ABANDONED+ABANDONED | 无 |
+| 5633 | UBER | DA-20261116212343-US.UBER-6eda | CONFIRMED+CONFIRMED | trade1901 +12.1（SL_BREAKEVEN）|
+| 5638 | GOOG | DA-20261116212614-US.GOOG-6f71 | **CONFIRMED(09:47:49)+ABANDONED(09:48:45) 冲突** | trade1902 +41.34（SL_TRAIL_LOCK）|
+| 5650 | CAT | DA-20261117212657-US.CAT-c11d | CONFIRMED+CONFIRMED | trade1913 +31.58（SL_TRAIL_LOCK）|
+| 5658 | BA | DA-20261117214211-US.BA-c4af | CONFIRMED+CONFIRMED | trade1910 +28.14（SL_TRAIL_LOCK）|
+
+**根因（日志实锤，三日同型）：** 不是 RFC-178 fresh re-arm（7 笔 `orphan_rearms` 全 None），而是
+**孤儿重建路径（gate:478 `_restore_arm`）被跨线程 stale snapshot 误触发**：
+
+1. `[PlaybookExitFastLoop]`（10s sweep）先判终态 → `_PENDING.pop`（:967）+ 写终态 state + forward 行①；
+2. `[LLMStrategyLoop]`（auto_execute 轮）持有**判定前取数的旧指令快照**，`read_state(inst)` 仍见 PENDING
+   且 inst 不在 `_PENDING` ⇒ 误诊「重启孤儿」→ `_restore_arm` 按**原 armed_at/anchor/mid_arm** 重建窗口
+   重入 `_PENDING` → defer（日志：11-10 22:41:11 META / 22:41:35 HON；11-16 22:48:02 CAT / 22:48:05 UBER /
+   22:48:18 GOOG；11-17 22:50:24 BA / 22:50:35 CAT，均「旗标 PENDING 但内存无记录 (重启) → 按旗标重建门控窗口」）；
+3. 下一 FastLoop sweep 对重建臂再判（delay 已耗尽立即到点）→ forward 行②，grace 全新生命周期、
+   delay_actual_sec 续原 armed_at（实测 138→200 / 146→198 / 130→186）。
+
+**后果**：①同终态重复行（6 键）⇒ 裁决轴重复计 assignment；②冲突终态（5638）⇒ 首次 CONFIRMED 已成交
+（BOOKED/executed=1），二次 ABANDONED 覆盖 DB 终态、`mark_instruction_guardrail_skip` 因行已离开 PENDING
+失败（skip_marked=False，:1019「执行竞态」保护）⇒ forward 行冲突但 trade 真实存在。**live 副作用**：重建
+返回 defer 会延迟已确认指令执行；若二次判弃发生在执行前且 SKIP 落库成功，理论上可误 veto 已确认单
+（本 cohort 未现该例，5638 因已成交而 SKIP 失败）。
+
+**处置分工**：gate 重建竞态属 **live 交易行为域** ⇒ 本批不改 gate，须影子先行 + 另批裁决（候选修法：
+孤儿重建前 fresh DB read 区分真重启孤儿 vs 跨线程 stale snapshot / 终态写后防重建守卫）。本批只修
+**结算器裁决轴对账**（§14.6），使计量对重复/冲突终态行鲁棒，并披露读数 delta。
+
+### 14.6 本批落地：P0-3 结算器计量修复（tail_objective 裁决轴，record-only）
+
+- 范围：`scripts/settle_entry_confirm_forward.py::tail_objective` + main 的 `tail_joined` 取数。
+  `_agg`（机制留痕行轴，按设计计 gate 事件行）/`current_cohort.sim`（实际 SIM 成交独立轴）/
+  RFC-158 判据阈值文本**不动**（修计量实现 ≠ 改判据）。
+- 规则（按 `(inst_id,arm)` 折叠唯一 assignment，每 assignment resolve 一次；缺 inst_id 回落 decision_id，
+  两者皆缺按行——保持旧 fixture/无身份行逐行语义）：
+  1. decision_id 在 joined 有已平 PLAYBOOK_SIM ⇒ resolved `closed_trade`（**实际成交 ground truth 优先**）；
+  2. 无成交 + 全 ABANDONED（treatment）⇒ `abandoned` 净 0；
+  3. 无成交 + 全 CONFIRMED/holdout ⇒ `unresolved`（不补 0）；
+  4. 无成交 + 终态冲突 ⇒ `unresolved` + 冲突哨兵（未核清不得入 resolved 分母）；
+  5. 同键多 decision_id ⇒ identity 冲突哨兵 + unresolved（防御，实测 0）。
+- 哨兵披露：tail 输出新增 `assignment_integrity`（`duplicate_assignment_n` / `duplicate_extra_rows_n` /
+  `terminal_conflict_n` / `terminal_conflict_resolved_by_trade_n` / `terminal_conflict_unresolved_n` /
+  `identity_conflict_n`，分臂 + 合计）。
+- main `tail_joined` 改取**全部** tail_rows 的 decision_id（原仅 `still_triggers` 行）⇒ 全 ABANDONED 但
+  竞态有成交的 assignment 也能对账（当前数据无此例，取数超集不改既有 joined 条目）。
+- before/after 重算披露见 handoff 顶条（同 200 行隔离修复效应）；verdict 仍 INSUFFICIENT（覆盖率<95%），
+  无判据转向。契约 + 变异测试见 `tests/test_settle_entry_confirm_assignment_integrity.py`。
 
 **最后更新：2026-11-28。**
