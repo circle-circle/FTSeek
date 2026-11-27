@@ -204,6 +204,87 @@ def _record_short_nearmiss(symbol, session, change_pct, price, volume, now_et):
     os.replace(str(tmp), str(path))
 
 
+# ── 全局黑名单守卫 (RFC-218 §17, 2026-11-27; 独立开关默认 OFF + record-only 影子) ──────
+#   病灶 (RFC-218 §16.1/§16.5 确认): EXT 候选宇宙 (排行榜+App 自选+财报日历) 零黑名单
+#   引用, risk.global_blacklist 被禁标的可直入四闸下单 —— QCOM (enabled:false+黑名单)
+#   11 月 4 笔 SIM LONG (trade 1829/1847/1853/1882, decision_id=EXT-*) 为实证。
+#   EXT 是独立预注册实验臂, 改供给面=改实验变量 ⇒ 本批只落「默认关守卫 + record-only
+#   影子差分」, 激活须单独裁决 (预注册修订)。判定路径 OFF 时逐字节旧行为。
+#   谓词单一真源 = watchlist_manager._get_global_blacklist (config 读取+剥 US.,
+#   失败 fail-open 空集), 与 Playbook §16 守卫同源同口径; 候选侧剥 US. 同一行谓词。
+#   回滚: EXT_BLACKLIST_GUARD=0 (或删 env) → 旧供给面; EXT_BLACKLIST_SHADOW=0 关影子。
+EXT_BLACKLIST_DIR = ROOT / "data" / "shadow" / "ext_blacklist"
+
+
+def _ext_blacklist_guard_enabled() -> bool:
+    """独立开关 (进程 env, cron 每 tick fresh-import): 默认 OFF, 未知值 fail-closed 旧行为。
+
+    truthy 口径与 Playbook PLAYBOOK_BLACKLIST_GUARD 一致 (1/true/yes/on)。每次实读不缓存。
+    """
+    v = os.environ.get("EXT_BLACKLIST_GUARD", "0")
+    return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _ext_blacklist_shadow_enabled() -> bool:
+    """record-only 影子默认 ON (仅黑名单命中才写盘, 无命中零足迹); 显式 falsy 关闭。"""
+    v = os.environ.get("EXT_BLACKLIST_SHADOW", "1")
+    return str(v).strip().lower() not in ("0", "false", "no", "off")
+
+
+def _ext_blacklist_set():
+    """黑名单归一化集合 (剥 US. 由 _get_global_blacklist 完成); 读取失败/空 → 空集 fail-open。"""
+    try:
+        from app.utils.watchlist_manager import get_watchlist_manager
+        return set(get_watchlist_manager()._get_global_blacklist() or [])
+    except Exception:
+        return set()
+
+
+def _record_ext_blacklist(symbol, session, item, blocked, source=None):
+    """黑名单命中按 (ET日, 时段, 标的) 去重落一行 (record-only, 与 nearmiss 同风格)。
+
+    为什么按日一文件: 本链每 5min 一 tick, 同一票一天可见 60+ 次, 追加会把"几只票"
+    污染成"几票次"。首 tick 价/涨幅=事件当时读数, 后续 tick 只累加 ticks/last_ts。
+    守卫 ON 时也落 (mode=blocked 审计); OFF 时 mode=shadow (供给面不变的差分证据)。
+    写盘失败绝不影响下单路径 (观测面与决策面解耦)。
+    """
+    if not blocked and not _ext_blacklist_shadow_enabled():
+        return
+    try:
+        now_et = _now_et()
+        day = now_et.strftime("%Y-%m-%d")
+        path = EXT_BLACKLIST_DIR / (day + ".json")
+        EXT_BLACKLIST_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            doc = json.loads(path.read_text())
+        except (OSError, ValueError):
+            doc = {}
+        rows = doc.get("rows") or {}
+        key = "%s:%s" % (session, symbol)
+        prev = rows.get(key)
+        if prev:
+            prev["ticks"] = int(prev.get("ticks") or 1) + 1
+            prev["last_ts"] = now_et.isoformat()
+            prev["mode"] = "blocked" if blocked else "shadow"
+        else:
+            it = item or {}
+            rows[key] = {"symbol": symbol, "session": session,
+                         "mode": "blocked" if blocked else "shadow",
+                         "source": it.get("_source") or source,
+                         "chg_pct": round(float(it.get("chg") or 0), 2),
+                         "px": round(float(it.get("px") or 0), 4),
+                         "volume": int(it.get("vol") or 0),
+                         "first_ts": now_et.isoformat(),
+                         "last_ts": now_et.isoformat(), "ticks": 1}
+        doc["et_date"] = day
+        doc["rows"] = rows
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=1))
+        os.replace(str(tmp), str(path))
+    except Exception as exc:      # 埋点禁静默: 宁可打一行日志, 也不要"影子悄悄不落盘"
+        print(f"[ext_entry] blacklist shadow 落盘失败: {type(exc).__name__}: {exc}")
+
+
 def _classify_ext_direction(symbol, session, change_pct, price, volume):
     """方向判定 SSOT (RFC-099 语义, 逐字不变) + 空头近失带记录 (RFC-167)。
 
@@ -589,6 +670,17 @@ def _research_source_candidates(session, qctx, existing):
         source_of.setdefault(sym, "research_watchlist")
     symbols = [sym for sym in dict.fromkeys(list(beat) + list(watch))
                if sym and sym not in existing][:RESEARCH_MAX_SYMBOLS]
+    # RFC-218 §17: 研究臂边界同谓词同开关 (当前臂已按 EXT_RESEARCH_SOURCE_UNTIL 到期
+    #   = 零流量; 守卫 = 将来重注册时的闭合保证)。OFF = 影子不拦截, 供给面不变。
+    _bl_set = _ext_blacklist_set()
+    if _bl_set:
+        _bl_guard = _ext_blacklist_guard_enabled()
+        _bl_hits = [s for s in symbols if str(s).replace("US.", "") in _bl_set]
+        for _bs in _bl_hits:
+            _record_ext_blacklist(_bs, session, None, blocked=_bl_guard, source="research")
+        if _bl_guard and _bl_hits:
+            _bl_hit_set = set(_bl_hits)
+            symbols = [s for s in symbols if s not in _bl_hit_set]
     if not symbols:
         return []
     try:
@@ -2354,10 +2446,17 @@ def _scan_candidates(session, qctx):
     """多源候选合并 + 去重 (2026-09-17). 源顺序 = 优先级 (先到先得, 保留先出现的结构).
 
     这是"换源"的唯一改动点: 下游四闸 / 价格下限 / 配额 / 下单 / 平仓 / 台账全部复用, 一行不改。
+
+    RFC-218 §17 (2026-11-27): 汇合口新增全局黑名单复核 (与 test/ETF 同级)。
+    EXT_BLACKLIST_GUARD 默认 OFF = 只记 record-only 影子, 供给面逐字节不变;
+    ON = 拦截被禁标的 + blocked 审计台账。激活须独立裁决 (预注册臂供给面变量)。
     """
     merged, tag_of = [], {}
     skipped_test = []
     skipped_etf = []
+    skipped_blacklist = []
+    _bl_set = _ext_blacklist_set()
+    _bl_guard = _ext_blacklist_guard_enabled()
 
     def _add(items, tag):
         for it in items:
@@ -2380,6 +2479,13 @@ def _scan_candidates(session, qctx):
             if "ETF" in str(it.get("name") or "").upper():
                 skipped_etf.append(sym)
                 continue
+            # RFC-218 §17: 全局黑名单复核 (候选源汇合口, 与 test/ETF 同级)。
+            #   OFF = record-only 影子不拦截; ON = 拦截。谓词与 Playbook §16 同源。
+            if _bl_set and str(sym).replace("US.", "") in _bl_set:
+                _record_ext_blacklist(sym, session, it, blocked=_bl_guard, source=tag)
+                if _bl_guard:
+                    skipped_blacklist.append(sym)
+                    continue
             tag_of[sym] = tag
             it["_source"] = tag
             merged.append(it)
@@ -2411,6 +2517,8 @@ def _scan_candidates(session, qctx):
     if skipped_etf:
         print(f"[ext_entry] 候选源忽略 ETF: {len(set(skipped_etf))} 只 "
               f"(无财报事件 ⇒ 结构性死票, 不进四闸/台账)")
+    if skipped_blacklist:
+        print(f"[ext_entry] 候选源黑名单守卫拦截: {', '.join(sorted(set(skipped_blacklist)))}")
     if merged:
         n_extra = sum(1 for v in tag_of.values() if v != "rank")
         print(f"[ext_entry] 候选源合并: {len(merged)} 只 (异动榜 {len(merged) - n_extra} / "

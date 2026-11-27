@@ -5121,6 +5121,40 @@ REGISTRY: list[ShadowItem] = [
               "(同 sizing_delta 范式, hermetic 沙箱自动落 tmp)。回滚=删 auto_execute_flow.py "
               "的调用点 (3 行), 产物留档。停采路径=该调用点删除 (无 config 键, 勿照 config_key 判停)。",
     ),
+    # ── RFC-218 §17 (2026-11-27, 黑名单泄漏面 EXT 侧; 影子先行, 激活须独立裁决) ──
+    ShadowItem(
+        id="ext_blacklist_guard_shadow",
+        name="EXT 候选边界全局黑名单命中差分 (守卫默认 OFF, record-only)",
+        status=ShadowStatus.OBSERVING,
+        description="RFC-218 §16.5 确认: EXT 候选宇宙 (排行榜+App 自选+财报日历) 零黑名单引用, "
+                    "QCOM (enabled:false + risk.global_blacklist) 11 月 4 笔 SIM LONG "
+                    "(decision_id=EXT-*) 为实证。本影子在候选源汇合口 (_scan_candidates._add) "
+                    "与研究臂边界按 (ET日, 时段, 标的) 去重落黑名单命中行 (mode=shadow), "
+                    "**不拦截、不改供给面**; EXT_BLACKLIST_GUARD=1 (须独立裁决) 后同台账转 "
+                    "mode=blocked 审计。谓词与 Playbook §16 守卫同源 "
+                    "(watchlist_manager._get_global_blacklist, 剥 US., fail-open 空集)。",
+        data_path="data/shadow/ext_blacklist",
+        config_key=None,
+        min_n=1,
+        graduation_criteria="供给面变量激活须用户单独裁决 (EXT 预注册臂, RFC-218 §17): "
+                            "任一自然命中即可提交裁决, 无自动转正门。历史差分 (2026-11-27, "
+                            "/tmp/rfc218_ext_blacklist_history.log): 76 笔 EXT 成交 4 命中全 QCOM "
+                            "且全部盈利 (+$92.57) ⇒ 激活依据=禁止语义/风控, 不是收益。",
+        eval_on_demand=True,
+        no_adjudication_reason="USER_ADJUDICATION: EXT 预注册臂供给面变量, 激活须用户单独裁决; "
+                               "影子只攒差分证据, 不机械迁 READY_TO_EVALUATE。",
+        dormant_reason="写方仅在黑名单命中时落盘 (EXT_BLACKLIST_GUARD 默认 0 + EXT_BLACKLIST_SHADOW "
+                       "默认 1); 无命中=无目录=通过态 (同 exit_intent_reaper_shadow 形态)。"
+                       "历史 76 笔 EXT 成交仅 4 命中 (全 QCOM, 11-09~11-12), 命中稀疏属设计内。",
+        stale_expected=True,
+        created="2026-11-27",
+        intent="ext_blacklist_guard",
+        notes="写方 scripts/extended_hours_entry_executor.py::_record_ext_blacklist (按日 JSON, "
+              "去重键 session:symbol, ticks 累加; 写盘失败绝不影响下单路径)。真停写机制: "
+              "EXT_BLACKLIST_SHADOW=0 且 EXT_BLACKLIST_GUARD=0 (守卫 ON 时 blocked 审计不受影子 "
+              "开关控制) ⇒ 勿照 config_key 判停。cron 313/314 每 tick fresh-import, 无需重启服务。"
+              "回滚=EXT_BLACKLIST_GUARD=0 (或删行) 回旧供给面; 产物留档。",
+    ),
 ]
 
 

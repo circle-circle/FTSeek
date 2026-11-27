@@ -814,3 +814,65 @@ RFC-217 归档：10 条带标记指令、3 笔成交、仅 1 笔已平 CAT `+$9.
 1. EXT 黑名单守卫批（16.5）：独立裁决＋影子差分先行。
 2. §15.7 输入修复队列不变（健康空财报三态／短 K UNKNOWN／源状态可见性／挑战者事实一致性），逐批单变量。
 3. 观察 `[BLACKLIST]` 生产拦截日志，积累自然样本后在 handoff 补记。
+
+## 17. 实施记录 III（2026-11-27 · 用户裁「继续」· EXT 黑名单守卫影子先行 · 默认 OFF 未激活 · 激活须独立裁决）
+
+> 本节追加，不改 §§0–16 历史。本批唯一变量＝**EXT 候选边界全局黑名单守卫（默认关）＋record-only 影子**。§16.5「本批不改 EXT」由本节 supersede 为：守卫代码＋影子已落地，但 **EXT 当前供给面逐字节不变**（`EXT_BLACKLIST_GUARD=0`）。EXT 是独立预注册实验臂，改供给面＝改实验变量 ⇒ **激活须用户单独裁决（预注册修订），本批不激活**。与 §16 Playbook 守卫（正确性恢复配置既有语义、已激活）刻意区分：EXT 的黑名单缺失是否属「正确性」还是「臂设计」存在裁决空间，且历史差分显示被拦成交全部盈利（17.4），不能以「正确性」名义绕过裁决直接改变实验臂成交集合。
+
+### 17.1 授权与范围
+
+- 用户「继续」＝按 §16.7 队列推进 #1「EXT 黑名单守卫批：独立裁决＋影子差分先行」。本批交付＝守卫（默认关）＋影子（record-only）＋历史差分证据＋注册表登记，**不含激活**。
+- 不捆绑：§15.7 输入修复、预 sizing P1、漏斗 record-only、资金修复激活（`DA_CAPITAL_CODE_FIX` 仍 OFF，重启后进程 env 无该变量）均未触。
+
+### 17.2 改动清单（当前文件锚点）
+
+| 文件 | 改动 |
+|---|---|
+| `scripts/extended_hours_entry_executor.py` | 新增 `EXT_BLACKLIST_DIR`(:216)＋`_ext_blacklist_guard_enabled`(:219, env `EXT_BLACKLIST_GUARD` 默认 `"0"`, truthy=`1/true/yes/on`, 未知值 fail-closed)＋`_ext_blacklist_shadow_enabled`(:228, env `EXT_BLACKLIST_SHADOW` 默认 `"1"`, 显式 falsy 关)＋`_ext_blacklist_set`(:234, 谓词真源=`watchlist_manager._get_global_blacklist`, 失败 fail-open 空集)＋`_record_ext_blacklist`(:243, 按日 JSON 去重 `session:symbol`, ticks 累加, 写盘失败绝不影响下单路径)。严格臂汇合口 `_scan_candidates._add`(:2445 起, 与 test/ETF 同级)＋研究臂边界 `_research_source_candidates`(:657 起) 同谓词同开关复核 |
+| `app/playbook/shadow_registry.py` | 注册 `ext_blacklist_guard_shadow`(:5126, OBSERVING, `dormant_reason`＝命中才写盘/无命中=无目录=通过态, `stale_expected=True`, `no_adjudication_reason=USER_ADJUDICATION`, `config_key=None`——影子开关不门控守卫 ON 时的 blocked 审计, 勿照 config_key 判停) |
+| `tests/test_ext_blacklist_guard.py`（新增） | 36 例契约：开关/影子语义、OFF 供给面不变＋shadow 台账、ON 拦截＋blocked 审计零误伤、空黑名单/读取失败/import 失败 fail-open、test/ETF 优先级、跨 tick 去重、写盘失败不炸候选、研究臂 OFF/ON/到期零流量、**与 Playbook §16 谓词同源同口径 parity** |
+| `.env.us`（不入库） | `EXT_BLACKLIST_GUARD=0`＋`EXT_BLACKLIST_SHADOW=1`＋注释（激活/回滚锚点） |
+
+- 语义：OFF＝候选原样通过（供给面逐字节旧行为），命中只落 `mode=shadow` 台账；ON＝汇合口拦截＋`mode=blocked` 审计（不受影子开关影响）。研究臂当前已按 `EXT_RESEARCH_SOURCE_UNTIL=2026-11-13` 到期＝零流量，守卫＝将来重注册时的闭合保证。
+- 谓词单一真源＝`_get_global_blacklist()`（config 读取＋剥 `US.`），与 §16 Playbook 守卫同源；EXT 侧候选剥 `US.` 同一行谓词，parity 契约钉死。**未复用 `filter_global_blacklist` 包装**（其门是 `PLAYBOOK_BLACKLIST_GUARD`，复用会把两条臂的开关耦合）。
+- 消费面核对：`cancel_orphan_ext_order.py` 只 import `_save_state/_state_lock`（未触）；其余为文本引用；cron 313/314 每 tick fresh-import，无签名级破坏。
+
+### 17.3 验证（可复跑命令＋日志）
+
+全部 `PYTHONDONTWRITEBYTECODE=1`；DB 只读 `mode=ro`+`query_only`。
+
+- `py_compile`（`./venv/bin/python` 与 cron 实际解释器 `venv/bin/python3.11` 双核）exit0；`scripts/check_undefined_names.py`（executor＋registry）exit0。
+- 新契约 **36/36**：`PYTHONPATH=. ./venv/bin/python -m pytest tests/test_ext_blacklist_guard.py -q` → `/tmp/rfc218_ext_blacklist_newtests.log`。
+- 相邻批 `tests/test_ext_*.py tests/playbook/test_blacklist_merge_guard.py` **276 passed / 7 failed** → `/tmp/rfc218_ext_blacklist_adjacent.log`。**7 失败均既有**：`git stash push -- scripts/extended_hours_entry_executor.py` 后复跑同 7 例 → **同样 7 failed、清单逐条一致** → `/tmp/rfc218_ext_blacklist_baseline.log`（stash pop 复原）。分布：ext_admission_attribution 1 / ext_entry_research_arm 2 / ext_entry_short_arm 3 / ext_entry_test_symbol_guard 1，另案不在本批范围。
+- 变异：守卫解析强制 `return False` → **12 failed** `/tmp/rfc218_ext_blacklist_mutation_red.log`；还原（sha256 核对一致）→ **36 passed** `/tmp/rfc218_ext_blacklist_restore_green.log`。
+- 注册表相邻 **41 passed**（intent 唯一性/看板守卫/RFC-207/判据可见性/风险影子注册）→ `/tmp/rfc218_ext_blacklist_registry_tests.log`；`check_mounting()` 对本条目 **0 告警**（dormant 生效），`_count_samples` 目录不存在返回 None（不伪装 0）。
+- 真实 env 加载冒烟：`PYTHONPATH=. ./venv/bin/python -c "import scripts.extended_hours_entry_executor as m; …"` → blacklist_set={HK.00700,LCID,QCOM,TME}、guard=False、shadow=True（IMPORT_SMOKE_OK）。
+- 重启（因 registry 属 `app/`，保持服务＝仓代码一致）：前快照 `/tmp/rfc218_ext_blacklist_pre_restart.json` → `systemctl restart ftseek-us` → 冒烟 **7/7 exit0** `/tmp/rfc218_ext_blacklist_startup_smoke.log` → 新 MainPID **163251**（14:44:58 CST）→ 后快照 `/tmp/rfc218_ext_blacklist_post_restart.json`：BA/BABA/GS 23/47/5 逐一不变、LIVE 0、outbox 22 全 BOOKED。进程 env：`EXT_BLACKLIST_GUARD=0`、`EXT_BLACKLIST_SHADOW=1`、`PLAYBOOK_BLACKLIST_GUARD=1`（§16 保持）、无 `DA_CAPITAL_CODE_FIX`。
+
+### 17.4 历史影子差分（只读，激活裁决的证据底座）
+
+`/tmp/rfc218_ext_blacklist_history.py|.log`（DB 只读）：全历史 `decision_id LIKE 'EXT-%'` 成交 **76 笔**，黑名单命中 **4 笔＝全部 QCOM**（trade 1829/1847/1853/1882，11-09→11-12，与 §16.1 归因一致）；LCID/TME/HK.00700 零 EXT 成交。
+
+**必须如实呈现的反事实**：这 4 笔**全部盈利**（realized_pnl 合计 **+$92.57**，pnl_net 合计 +$75.66）。即守卫 ON 的历史反事实＝移除 4 笔盈利 SIM 成交。结论：
+- 激活依据只能是**禁止语义/风控一致性**（用户/配置明令禁止的标的不该被任何臂交易），**不是收益**；
+- n=4 的反事实既不能证明守卫「损失收益」，也不能证明「改善收益」——描述性读数，非收益检验；
+- 这正是「正确性≠盈利」的实例：若以收益论，黑名单本身可能需要复核（QCOM 为何被禁、禁令是否仍成立），那是另一个裁决，不在本批。
+
+### 17.5 未验证 / BLOCKED
+
+- **守卫未激活**（`EXT_BLACKLIST_GUARD=0`），EXT 供给面/成交集合当前逐字节不变；激活须用户单独裁决（预注册臂供给面变量）。
+- **自然影子命中未观测**：影子自下一个 cron tick（16:02 CST 盘前族）起在采；今日池是否含被禁标的未知，无命中=无目录=通过态（dormant 已登记）。
+- 历史差分为描述性反事实（n=4），非收益证明；全量 pytest/CI 未跑；7 个既有相邻失败未修（基线在案）。
+- 研究臂守卫为「重注册闭合保证」，当前零流量，无自然样本。
+- 无一致 DB 快照/runtime DA manifest/同刻现货 VIX（沿用 §13.7）。
+
+### 17.6 激活与回滚路径（供裁决）
+
+- 激活：用户裁决后 `.env.us` 改 `EXT_BLACKLIST_GUARD=1` → cron 每 tick fresh-import 即生效（**无需重启服务**；服务进程不运行 EXT 执行器）。建议裁决输入：本节日志＋影子自然命中台账 `data/shadow/ext_blacklist/`＋「QCOM 禁令是否仍成立」复核。
+- 回滚：`EXT_BLACKLIST_GUARD=0`（或删行）→ 旧供给面；`EXT_BLACKLIST_SHADOW=0` 且守卫 OFF → 影子停写；或 revert 本批 commit。产物留档不删。
+
+### 17.7 下一步
+
+1. 观察 `data/shadow/ext_blacklist/` 自然命中（周检哨兵已登记，dormant 不误报）；有命中即提交用户裁决激活。
+2. §15.7 输入修复队列不变，逐批单变量；资金修复激活仍 BLOCKED 于 §10.4 A/B。
+3. Playbook §16 守卫生产自然拦截样本继续观察（`[BLACKLIST]` INFO）。
