@@ -21,6 +21,7 @@ import argparse
 import contextlib
 import fcntl
 import json
+import math
 import os
 import statistics
 import sys
@@ -114,7 +115,7 @@ def session_for(dt):
 
 
 def chg_pct(last, prev_close):
-    """涨跌幅 (percent)。未知/非法 (None/bool/非正 prev_close/非正 last) → None, 不归零。"""
+    """涨跌幅 (percent)。未知/非法 (None/bool/非有限/非正 prev_close/非正 last) → None, 不归零。"""
     if isinstance(last, bool) or isinstance(prev_close, bool):
         return None
     try:
@@ -122,9 +123,12 @@ def chg_pct(last, prev_close):
         prev_close = float(prev_close)
     except (TypeError, ValueError):
         return None
+    if not (math.isfinite(last) and math.isfinite(prev_close)):
+        return None  # NaN/±inf → 缺失 (inf prev_close 会伪算 -100%, 不得伪装有限值)
     if prev_close <= 0 or last <= 0:
         return None
-    return round((last / prev_close - 1.0) * 100.0, 4)
+    r = (last / prev_close - 1.0) * 100.0
+    return round(r, 4) if math.isfinite(r) else None  # 极端有限输入比值溢出 → 缺失
 
 
 def _num(x):
@@ -134,20 +138,20 @@ def _num(x):
         v = float(x)
     except (TypeError, ValueError):
         return None
-    return v if v == v else None  # NaN guard
+    return v if math.isfinite(v) else None  # NaN/±inf guard (非有限 → 缺失, 不归零)
 
 
 def aggregate_sector(stock_rows):
     """行业等权聚合。stock_rows: {code: {chg_pct, turnover, ...}}。
 
     breadth: up = chg >= +FLAT_BAND_PP, down = chg <= -FLAT_BAND_PP, 其余 flat。
-    全缺失 → chg_pct_eq=None (不归零), n_available=0。
+    全缺失 → chg_pct_eq=None (不归零), n_available=0。非有限 chg 视同缺失 (防直接调用者)。
     """
     chgs, turns, missing = [], [], []
     up = flat = down = 0
     for code, r in stock_rows.items():
         c = r.get("chg_pct")
-        if c is None:
+        if c is None or not math.isfinite(c):
             missing.append(code)
             continue
         chgs.append(c)
