@@ -96,6 +96,17 @@ def _bps(amount: Optional[float], notional: Optional[float]) -> Optional[float]:
     return round(amount / notional * 1e4, 4)
 
 
+def _row_net(row: Dict[str, Any]) -> Optional[float]:
+    net = _num(row.get("pnl_net"))
+    if net is not None:
+        return net
+    gross = _num(row.get("realized_pnl"))
+    fees = _num(row.get("fees_est"))
+    if gross is None or fees is None:
+        return None
+    return gross - fees
+
+
 def classify_source(decision_id: Any) -> str:
     """按 decision_id 前缀分源 (与 `execution_tca_shadow._source` / C18 复算同一约定)。"""
     text = str(decision_id or "")
@@ -172,6 +183,7 @@ def window_stats(rows: Sequence[Dict[str, Any]], label: str) -> Dict[str, Any]:
         "notional": None, "gross": None, "fees": None, "net": None,
         "gross_bps": None, "fee_bps": None, "net_bps": None,
         "net_per_trade": None,
+        "gross_missing_n": 0, "fee_missing_n": 0, "net_missing_n": 0,
         "n_days": 0, "day_clustered_mean_bps": None, "day_clustered_sd_bps": None,
         "day_clustered_t": None, "mde80_bps": None,
         "ci80_lower_bps": None, "ci80_upper_bps": None, "ci80_contains_zero": None,
@@ -180,33 +192,47 @@ def window_stats(rows: Sequence[Dict[str, Any]], label: str) -> Dict[str, Any]:
     if not n:
         return out
     notional = gross = fees = net = 0.0
+    gross_known = fees_known = net_known = True
     days: Dict[str, List[float]] = defaultdict(lambda: [0.0, 0.0])
     for row in rows:
         entry = _num(row.get("entry_price"))
         qty = _num(row.get("quantity"))
-        g = _num(row.get("realized_pnl")) or 0.0
-        f = _num(row.get("fees_est")) or 0.0
-        net_row = _num(row.get("pnl_net"))
+        gross_value = _num(row.get("realized_pnl"))
+        fee_value = _num(row.get("fees_est"))
+        net_row = _row_net(row)
+        if gross_value is None:
+            gross_known = False
+            out["gross_missing_n"] += 1
+        if fee_value is None:
+            fees_known = False
+            out["fee_missing_n"] += 1
         if net_row is None:
-            net_row = g - f
-        nt = (entry or 0.0) * (qty or 0.0)
-        notional += nt
-        gross += g
-        fees += f
-        net += net_row
+            net_known = False
+            out["net_missing_n"] += 1
+        row_notional = (entry or 0.0) * (qty or 0.0)
+        notional += row_notional
+        if gross_value is not None:
+            gross += gross_value
+        if fee_value is not None:
+            fees += fee_value
+        if net_row is not None:
+            net += net_row
         day = str(row.get("trade_date") or "")[:10]
-        if day:
+        if day and net_row is not None:
             days[day][0] += net_row
-            days[day][1] += nt
+            days[day][1] += row_notional
     out.update({
-        "notional": round(notional, 2), "gross": round(gross, 2),
-        "fees": round(fees, 2), "net": round(net, 2),
-        "gross_bps": _bps(gross, notional), "fee_bps": _bps(fees, notional),
-        "net_bps": _bps(net, notional),
-        "net_per_trade": round(net / n, 4) if n else None,
+        "notional": round(notional, 2),
+        "gross": round(gross, 2) if gross_known else None,
+        "fees": round(fees, 2) if fees_known else None,
+        "net": round(net, 2) if net_known else None,
+        "gross_bps": _bps(gross if gross_known else None, notional),
+        "fee_bps": _bps(fees if fees_known else None, notional),
+        "net_bps": _bps(net if net_known else None, notional),
+        "net_per_trade": round(net / n, 4) if net_known and n else None,
         "n_days": len(days),
     })
-    daily = [v[0] / v[1] * 1e4 for v in days.values() if v[1] > 0]
+    daily = [v[0] / v[1] * 1e4 for v in days.values() if v[1] > 0] if net_known else []
     if len(daily) >= 2:
         mean = statistics.mean(daily)
         sd = statistics.stdev(daily)
@@ -246,12 +272,22 @@ def kr1_verdict(stats: Dict[str, Any], gate_n: int = KR1_GATE_N,
                 f"点估计 {net_bps:+.2f}bps 不作达标/证伪用")
     elif positive:
         verdict = "MET_POINT_ESTIMATE"
-        if ci_contains_zero is None:
-            ci_note = "日数 <2 ⇒ CI 不可算, 只能判「不可分辨」"
+        ci_lower = stats.get("ci80_lower_bps")
+        ci_upper = stats.get("ci80_upper_bps")
+        if ci_contains_zero is None or ci_lower is None or ci_upper is None:
+            ci_note = "日等权 CI 不可算, 只能判「不可分辨」"
         elif ci_contains_zero:
-            ci_note = "CI 含 0 ⇒ 按 §5「不算失败: 证据不足」, 不得宣称稳定 edge"
+            ci_note = (f"日等权 CI 含 0 (CI=[{ci_lower}, {ci_upper}]) ⇒ 按 §5「不算失败: 证据不足」, "
+                       f"不得宣称稳定 edge; 统计对象=日等权净 bps, 非名义加权点估计")
+        elif ci_lower > 0:
+            ci_note = (f"日等权 CI 下界 >0 (CI=[{ci_lower}, {ci_upper}]); "
+                       f"统计对象=日等权净 bps, 非名义加权点估计")
+        elif ci_upper < 0:
+            ci_note = (f"日等权 CI 整体 <0 (CI=[{ci_lower}, {ci_upper}]), 与名义加权点估计方向不一致; "
+                       f"不得宣称稳定 edge")
         else:
-            ci_note = "CI 下界 >0"
+            ci_note = (f"日等权 CI 不含 0 但边界异常 (CI=[{ci_lower}, {ci_upper}]); "
+                       f"不得宣称稳定 edge")
         note = f"点估计 {net_bps:+.2f}bps >0; {ci_note}"
     else:
         verdict = "NOT_MET"
@@ -290,9 +326,9 @@ def kr2_dead_rate(rows: Sequence[Dict[str, Any]],
             return None
         total = 0.0
         for row in group:
-            value = _num(row.get("pnl_net"))
+            value = _row_net(row)
             if value is None:
-                value = (_num(row.get("realized_pnl")) or 0.0) - (_num(row.get("fees_est")) or 0.0)
+                return None
             total += value
         return round(total / len(group), 4)
 
@@ -312,12 +348,12 @@ def kr2_dead_rate(rows: Sequence[Dict[str, Any]],
     }
 
 
-def _sum_net(rows: Sequence[Dict[str, Any]]) -> float:
+def _sum_net(rows: Sequence[Dict[str, Any]]) -> Optional[float]:
     total = 0.0
     for row in rows:
-        value = _num(row.get("pnl_net"))
+        value = _row_net(row)
         if value is None:
-            value = (_num(row.get("realized_pnl")) or 0.0) - (_num(row.get("fees_est")) or 0.0)
+            return None
         total += value
     return total
 
@@ -336,10 +372,12 @@ def exit_reason_breakdown(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]
     for reason, group in groups.items():
         net = _sum_net(group)
         notional = _sum_notional(group)
-        out.append({"exit_reason": reason, "n": len(group), "net": round(net, 2),
-                    "net_per_trade": round(net / len(group), 4) if group else None,
+        out.append({"exit_reason": reason, "n": len(group),
+                    "net": round(net, 2) if net is not None else None,
+                    "net_per_trade": round(net / len(group), 4) if net is not None and group else None,
                     "net_bps": _bps(net, notional)})
-    return sorted(out, key=lambda item: item["net"])
+    return sorted(out, key=lambda item: (item["net"] is None,
+                                         item["net"] if item["net"] is not None else 0.0))
 
 
 # ── §12.3 三窗披露 ──────────────────────────────────────────────────────────
@@ -416,6 +454,10 @@ def collect_and_score(rows_a9: Sequence[Dict[str, Any]],
         warnings.append("KR5: A10 谓词 era_clean_where() 返回空 ⇒ 未确认现役时代口径")
 
     primary = window_stats(da, f"KR1 主口径 · {PRIMARY_SOURCE} · ≥{COHORT_START}")
+    if primary.get("fee_missing_n"):
+        warnings.append(f"KR5: DA fees_est 缺失 {primary['fee_missing_n']} 笔 ⇒ 费用不可测, 不以 0 冒充")
+    if primary.get("net_missing_n"):
+        warnings.append(f"KR5: DA 净额缺失 {primary['net_missing_n']} 笔 ⇒ KR1 不可测, 不以毛收益冒充")
     disclosure = three_window_disclosure(da, as_of)
     post_stats = disclosure["windows"]["post"]
     post_gate = kr1_verdict(post_stats)

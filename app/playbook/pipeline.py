@@ -870,6 +870,20 @@ def _bridge_mtime(trade_date: str):
         return None
 
 
+def _record_bridge_loaded_baseline(bridge, mtime=None) -> None:
+    """Record the version baseline for an already-loaded Bridge adapter."""
+    global _bridge_reloaded_date, _bridge_reloaded_mtime
+    if bridge is None or type(bridge).__name__ != "BridgeVotingAdapter":
+        return
+    trade_date = str(getattr(bridge, "_trade_date", "") or "")
+    if not trade_date:
+        return
+    if mtime is None:
+        mtime = _bridge_mtime(trade_date)
+    _bridge_reloaded_date = trade_date
+    _bridge_reloaded_mtime = mtime
+
+
 # [DEB-20260902-stale-bridge P1-① 2026-09-02] 陈旧 bridge 交易日滚动重载 —
 #   P0-2 守卫①"已是 BridgeVotingAdapter 就不重载"只治 TechnicalFallback→Bridge 半边,
 #   留下另半边: 服务在 ET 日界前启动 → 内存载 T-1 bridge, 当日 bridge 落盘后永不刷新,
@@ -949,8 +963,7 @@ def _reload_bridge_if_landed(scheduler) -> None:
         if bridge is None or type(bridge).__name__ != "BridgeVotingAdapter":
             return
         scheduler.voting_coordinator = bridge
-        _bridge_reloaded_date = _today
-        _bridge_reloaded_mtime = _mtime
+        _record_bridge_loaded_baseline(bridge, _mtime)
         _reason = ("P1 陈旧bridge滚动重载" if _stale
                    else ("同日bridge更新重载" if _same_day_refresh
                          else "P0-2 运行期bridge重载"))

@@ -104,6 +104,31 @@ def test_kr2_all_missing_is_not_measurable():
     assert out["dead_pct"] is None
 
 
+def test_kr2_net_per_trade_fail_closes_on_unknown_net():
+    rows = [_row(mfe=0.1, gross=10.0, fees=4.0),
+            _row(symbol="US.B", mfe=2.0, gross=10.0, fees=4.0)]
+    rows[1]["fees_est"] = None
+    rows[1]["pnl_net"] = None
+    out = scoring.kr2_dead_rate(rows)
+    assert out["dead_net_per_trade"] == pytest.approx(6.0)
+    assert out["alive_net_per_trade"] is None
+    assert out["alive_net_bps"] is None
+
+
+def test_sum_net_and_exit_breakdown_fail_close_on_unknown_net():
+    rows = [_row(exit_reason="KNOWN", gross=10.0, fees=4.0),
+            _row(symbol="US.B", exit_reason="UNKNOWN", gross=10.0, fees=4.0)]
+    rows[1]["fees_est"] = None
+    rows[1]["pnl_net"] = None
+    assert scoring._sum_net(rows) is None
+    breakdown = scoring.exit_reason_breakdown(rows)
+    assert [item["exit_reason"] for item in breakdown] == ["KNOWN", "UNKNOWN"]
+    assert breakdown[0]["net"] == pytest.approx(6.0)
+    assert breakdown[1]["net"] is None
+    assert breakdown[1]["net_per_trade"] is None
+    assert breakdown[1]["net_bps"] is None
+
+
 # --- 3) 量纲与算术 ----------------------------------------------------------
 
 
@@ -123,6 +148,47 @@ def test_pnl_net_falls_back_to_gross_minus_fees():
     stats = scoring.window_stats([row], "回落")
     assert stats["net"] == pytest.approx(6.0)
     assert stats["net_bps"] == pytest.approx(60.0)
+
+
+def test_missing_fee_and_net_are_not_measurable_not_zero():
+    row = _row(gross=10.0, fees=4.0)
+    row["fees_est"] = None
+    row["pnl_net"] = None
+    stats = scoring.window_stats([row], "缺费缺净")
+    assert stats["gross"] == pytest.approx(10.0)
+    assert stats["gross_bps"] == pytest.approx(100.0)
+    assert stats["fees"] is None and stats["fee_bps"] is None
+    assert stats["net"] is None and stats["net_bps"] is None
+    assert stats["net_per_trade"] is None
+    assert stats["gross_missing_n"] == 0
+    assert stats["fee_missing_n"] == 1 and stats["net_missing_n"] == 1
+    assert stats["ci80_lower_bps"] is None and stats["ci80_upper_bps"] is None
+    verdict = scoring.kr1_verdict(stats)
+    assert verdict["verdict"] == "NOT_MEASURABLE"
+    block = scoring.collect_and_score([row], [row], [row], as_of="2026-11-17",
+                                      era_where="AND 1=1")
+    assert any("fees_est 缺失" in warning for warning in block["warnings"])
+    assert any("净额缺失" in warning for warning in block["warnings"])
+
+
+def test_missing_fee_with_known_net_keeps_net_measurable():
+    row = _row(gross=10.0, fees=4.0, net=6.0)
+    row["fees_est"] = None
+    stats = scoring.window_stats([row], "缺费有净")
+    assert stats["fees"] is None and stats["fee_bps"] is None
+    assert stats["net"] == pytest.approx(6.0)
+    assert stats["net_bps"] == pytest.approx(60.0)
+    assert stats["fee_missing_n"] == 1 and stats["net_missing_n"] == 0
+
+
+def test_missing_gross_with_known_net_keeps_net_measurable():
+    row = _row(gross=10.0, fees=4.0, net=6.0)
+    row["realized_pnl"] = None
+    stats = scoring.window_stats([row], "缺毛有净")
+    assert stats["gross"] is None and stats["gross_bps"] is None
+    assert stats["net"] == pytest.approx(6.0)
+    assert stats["net_bps"] == pytest.approx(60.0)
+    assert stats["gross_missing_n"] == 1 and stats["net_missing_n"] == 0
 
 
 def test_mfe_threshold_is_percentage_not_fraction():
@@ -195,6 +261,15 @@ def test_kr1_met_point_estimate_with_ci_containing_zero():
 def test_kr1_met_with_ci_lower_above_zero():
     v = scoring.kr1_verdict(_stats(130, 12.0, mde=8.0, ci_lower=3.0, ci_upper=21.0))
     assert v["verdict"] == "MET_POINT_ESTIMATE" and "CI 下界 >0" in v["note"]
+    assert "CI=[3.0, 21.0]" in v["note"] and "日等权" in v["note"]
+
+
+def test_kr1_negative_day_ci_does_not_claim_lower_above_zero():
+    v = scoring.kr1_verdict(_stats(130, 5.0, mde=20.0, ci_lower=-10.0, ci_upper=-1.0))
+    assert v["verdict"] == "MET_POINT_ESTIMATE"
+    assert "CI 下界 >0" not in v["note"]
+    assert "整体 <0" in v["note"] and "日等权" in v["note"]
+    assert "不得宣称稳定 edge" in v["note"]
 
 
 def test_kr1_ci_unknown_is_not_reported_as_lower_above_zero():

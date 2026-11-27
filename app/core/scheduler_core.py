@@ -376,8 +376,9 @@ class TradingScheduler:
         # bridge覆盖: 尝试加载今日bridge文件
         _bridge_loaded = False
         try:
-            from app.playbook.pipeline import _try_load_bridge
-            _bridge = _try_load_bridge()
+            from app.playbook import pipeline as _pb_pipeline
+            _bridge_mtime_before = _pb_pipeline._bridge_mtime(_pb_pipeline._today_et_str())
+            _bridge = _pb_pipeline._try_load_bridge()
             if _bridge is not None:
                 _bridge_n = len(_bridge._candidates)
                 if _bridge_n < 3:
@@ -386,6 +387,7 @@ class TradingScheduler:
                     logger.info(f"[scheduler] bridge文件加载成功 ({_bridge_n}候选), decision_adapter → BridgeVotingAdapter")
                 self.voting_coordinator = _bridge
                 _bridge_loaded = True
+                _pb_pipeline._record_bridge_loaded_baseline(_bridge, _bridge_mtime_before)
         except Exception as _bridge_err:
             logger.warning(f"[scheduler] bridge加载失败: {_bridge_err}")
 

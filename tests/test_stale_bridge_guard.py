@@ -12,11 +12,11 @@
 任何把"Bridge 无需重载"或"同 prio 无条件同源类替换"加回来的改动必须先打碎这些钉子。
 
 覆盖:
-  S1-S6 pipeline._reload_bridge_if_landed (陈旧重载/当日不重载/开关回滚/P0-2 原路径/
-        文件未就绪不消耗额度/_trade_date 缺失 fail-soft)
+  S1-S10 pipeline._reload_bridge_if_landed (陈旧重载/当日不重载/开关回滚/P0-2 原路径/
+        文件未就绪不消耗额度/_trade_date 缺失 fail-soft/同日重写/启动基线/幂等/非法基线)
   D1-D5 db.save_instruction 覆盖仲裁新鲜度 tiebreaker (拒陈旧/同日照替换/更新照放行/
         开关回滚/既有阶梯语义不破)
-  W1-W3 布线与配置面 (yaml 双键在位 + 开关函数读的是声明键)
+  W1-W4 布线与配置面 (yaml 双键在位 + 开关函数读的是声明键 + 启动基线布线)
   I1-I2 I15 尺子在位 + _did_trade_date 口径 (非 DA/畸形 → '' = 守卫不介入)
 回滚: 删本文件 + 两个 yaml 键置 false (行为逐字节回到 P0-2 / RFC-066 原状)。
 """
@@ -150,6 +150,44 @@ class TestStaleBridgeReload:
         assert pl._bridge_reloaded_date == TODAY
         assert pl._bridge_reloaded_mtime == 200.0
 
+    def test_s8_startup_baseline_enables_same_day_refresh(self, fresh_bridge, monkeypatch):
+        """S8: 启动已载当日 bridge 也必须记版本基线，同日重写后能换进内存。"""
+        sched = MagicMock()
+        loaded = BridgeVotingAdapter(
+            {"US.SAIC": _cand("US.SAIC", "DA-20260901191627-US.SAIC-1ea2")}, TODAY)
+        sched.voting_coordinator = loaded
+        monkeypatch.setattr(pl, "_bridge_mtime", lambda _d: 100.0)
+        pl._record_bridge_loaded_baseline(loaded, pl._bridge_mtime(TODAY))
+        assert pl._bridge_reloaded_date == TODAY
+        assert pl._bridge_reloaded_mtime == 100.0
+        monkeypatch.setattr(pl, "_bridge_mtime", lambda _d: 200.0)
+        _reload_bridge_if_landed(sched)
+        assert sched.voting_coordinator is fresh_bridge
+        assert pl._bridge_reloaded_mtime == 200.0
+
+    def test_s9_startup_baseline_unchanged_mtime_keeps_adapter(self, fresh_bridge, monkeypatch):
+        """S9: 启动基线建立后文件未变，不重复读盘，保持一次加载语义。"""
+        sched = MagicMock()
+        loaded = BridgeVotingAdapter(
+            {"US.SAIC": _cand("US.SAIC", "DA-20260901191627-US.SAIC-1ea2")}, TODAY)
+        sched.voting_coordinator = loaded
+        monkeypatch.setattr(pl, "_bridge_mtime", lambda _d: 100.0)
+        pl._record_bridge_loaded_baseline(loaded, 100.0)
+        called = []
+        monkeypatch.setattr(pl, "_try_load_bridge", lambda: called.append(1) or fresh_bridge)
+        _reload_bridge_if_landed(sched)
+        assert sched.voting_coordinator is loaded
+        assert not called
+        assert pl._bridge_reloaded_mtime == 100.0
+
+    def test_s10_baseline_helper_ignores_non_bridge_or_missing_date(self, fresh_bridge):
+        """S10: 非 Bridge 或缺交易日不得伪造刷新基线。"""
+        pl._record_bridge_loaded_baseline(object(), 100.0)
+        pl._record_bridge_loaded_baseline(None, 100.0)
+        pl._record_bridge_loaded_baseline(BridgeVotingAdapter({}, ""), 100.0)
+        assert pl._bridge_reloaded_date is None
+        assert pl._bridge_reloaded_mtime is None
+
 
 def _mkdb():
     conn = sqlite3.connect(":memory:")
@@ -263,6 +301,16 @@ class TestWiringAndConfigSurface:
         src = inspect.getsource(pdb._stale_did_guard_enabled)
         assert "playbook.stale_did_overwrite_guard_enabled" in src
         assert pdb._stale_did_guard_enabled() is True
+
+    def test_w4_scheduler_records_startup_baseline_after_load(self):
+        """W4: 启动路径先取 mtime、加载并挂载成功后再记基线，避免加载期重写被漏掉。"""
+        src = (PROJECT_ROOT / "app" / "core" / "scheduler_core.py").read_text(encoding="utf-8")
+        start = src.index("# bridge覆盖: 尝试加载今日bridge文件")
+        end = src.index("# bridge不存在 → 按配置 fallback", start)
+        block = src[start:end]
+        assert block.index("_bridge_mtime_before =") < block.index("_try_load_bridge()")
+        assert block.index("self.voting_coordinator = _bridge") < block.index(
+            "_record_bridge_loaded_baseline(_bridge, _bridge_mtime_before)")
 
 
 class TestInvariantRulerAndDidCaliber:
