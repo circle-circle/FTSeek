@@ -5155,6 +5155,43 @@ REGISTRY: list[ShadowItem] = [
               "开关控制) ⇒ 勿照 config_key 判停。cron 313/314 每 tick fresh-import, 无需重启服务。"
               "回滚=EXT_BLACKLIST_GUARD=0 (或删行) 回旧供给面; 产物留档。",
     ),
+    # ── RFC-218 §21 (2026-11-27, EXT 盘后半日市分歧观测闭环; 影子先行, 激活须独立裁决) ──
+    ShadowItem(
+        id="ext_afterhours_halfday_guard_shadow",
+        name="EXT 盘后半日市窗口分歧差分 (守卫默认 OFF, record-only)",
+        status=ShadowStatus.OBSERVING,
+        description="RFC-218 §20.1 确认: EXT 盘后静态窗 17:00-19:59 ET 不感知 NYSE 提前收盘日 "
+                    "(如感恩节次日 13:00 收市/盘后 17:00 结束), 对已收市市场放行名义盘后窗。"
+                    "本影子仅在提前收盘日的分歧区间 (半日结束, 19:59] ET 按日单文档落分歧 "
+                    "ticks (mode=shadow), **不拦截、不改供给面**; "
+                    "EXT_AFTERHOURS_HALF_DAY_GUARD=1 (须独立裁决) 后 cap 结束至 16:59 且同台账"
+                    "转 mode=blocked 审计 (分模式 provenance 从 tick1)。只 cap 结束不扩起点, "
+                    "常规日 1959 逐字不变 (§20 OFF 全分钟扫描 0 漂移)。",
+        data_path="data/shadow/ext_afterhours_halfday",
+        config_key=None,
+        min_n=1,
+        graduation_criteria="供给面变量激活须用户单独裁决 (EXT 预注册臂, RFC-218 §20/§21): "
+                            "任一半日市自然分歧日即可提交裁决, 无自动转正门。激活依据=交易时段"
+                            "正确性 (对已收市市场不应放行名义盘后窗), 不是收益。",
+        eval_on_demand=True,
+        no_adjudication_reason="USER_ADJUDICATION: EXT 预注册臂供给面变量, 激活须用户单独裁决; "
+                               "影子只攒分歧日证据, 不机械迁 READY_TO_EVALUATE。",
+        dormant_reason="写方仅在提前收盘日分歧区间落盘 (EXT_AFTERHOURS_HALF_DAY_GUARD 默认 0 + "
+                       "EXT_AFTERHOURS_HALF_DAY_SHADOW 默认 1); 无目录=通过态 (同 "
+                       "ext_blacklist_guard_shadow 形态)。半日市每年约 2-4 天, 长期无产物属设计内。",
+        stale_expected=True,
+        created="2026-11-27",
+        intent="ext_afterhours_halfday_guard",
+        notes="写方 scripts/extended_hours_entry_executor.py::_record_afterhours_halfday_divergence "
+              "(按日单 JSON, ticks 累加, modes 分模式 provenance 从 tick1; 写盘失败绝不影响下单"
+              "路径)。计数轴=分歧日数 (每日 1 文档=1 样本, 不是 ticks; _count_samples 目录分支 "
+              "ticks 形态)。首命中提醒=executor::_notify_ext_afterhours_halfday_first_hit "
+              "(按 ET 日去重, app/push hub, 提醒≠启用)。真停写机制: "
+              "EXT_AFTERHOURS_HALF_DAY_SHADOW=0 且 EXT_AFTERHOURS_HALF_DAY_GUARD=0 ⇒ 勿照 "
+              "config_key 判停。cron 313/314 每 tick fresh-import 写方无需重启; 本注册表属 "
+              "app/ 随批重启生效。回滚=EXT_AFTERHOURS_HALF_DAY_GUARD=0 (或删行) 回旧供给面; "
+              "产物留档。",
+    ),
 ]
 
 
@@ -5266,7 +5303,8 @@ def _count_samples(s: ShadowItem, base) -> int | None:
         #   此前目录一律落到末尾 return None ⇒ 自然命中永不计数, current_n 恒 None, 首命中
         #   无法驱动待裁。现按日聚合命中行数: 仅计含 "rows" dict 的日文件 (ext_blacklist 形态),
         #   坏 JSON 跳过, 空目录/无 rows 文件 → None (不伪装 0, 与「无命中=无目录=通过态」一致)。
-        #   只影响目录型条目 (当前仅 ext_blacklist_guard_shadow); 文件型分支逐字不变。
+        #   只影响目录型条目 (ext_blacklist_guard_shadow / ext_afterhours_halfday_guard_shadow);
+        #   文件型分支逐字不变。
         try:
             total = 0
             found = False
@@ -5277,6 +5315,13 @@ def _count_samples(s: ShadowItem, base) -> int | None:
                     continue
                 if isinstance(d, dict) and isinstance(d.get("rows"), dict):
                     total += len(d["rows"])
+                    found = True
+                elif (isinstance(d, dict) and isinstance(d.get("ticks"), int)
+                      and not isinstance(d["ticks"], bool) and d["ticks"] >= 1):
+                    # RFC-218 §21: 半日市按日单文档形态 (ext_afterhours_halfday) —
+                    #   计数轴=分歧日数 (1 日 1 文档=1 样本), 不是 ticks 累加;
+                    #   ticks=0/bool/字符串等非法形态不计 (不伪装样本)。rows 形态不变。
+                    total += 1
                     found = True
             return total if found else None
         except Exception:

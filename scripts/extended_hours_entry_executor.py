@@ -883,6 +883,9 @@ from scripts.extended_hours_order_lifecycle import (
 #   EXT_AFTERHOURS_HALF_DAY_SHADOW=0 关影子。VWAP_ANCHOR_WINDOWS 属分析面非入场闸,
 #   本批不动 (半日市尾部无 bar 自然空, 不影响入场判定正确性)。
 EXT_AFTERHOURS_HALF_DAY_DIR = ROOT / "data" / "shadow" / "ext_afterhours_halfday"
+# RFC-218 §21: 生产规范路径 (hermetic 测试会 monkeypatch DIR 到 tmp; 首命中提醒只在
+#   真实生产路径触发, 防测试误发真实推送 — 与 §19 _EXT_BLACKLIST_CANON 同纪律)。
+_EXT_AFTERHOURS_HALF_DAY_CANON = ROOT / "data" / "shadow" / "ext_afterhours_halfday"
 
 
 def _ext_afterhours_halfday_guard_enabled() -> bool:
@@ -975,8 +978,46 @@ def _record_afterhours_halfday_divergence(session):
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=1))
         os.replace(str(tmp), str(path))
+        # RFC-218 §21: 首个自然分歧日 → 待裁提醒 (提醒≠启用)。仅真实生产路径 + 新建日文档
+        #   触发; 按 ET 日去重 (state 文件); 异常绝不影响下单路径。
+        if int(doc.get("ticks") or 0) == 1:
+            _notify_ext_afterhours_halfday_first_hit(day, _mode == "blocked")
     except Exception as exc:      # 埋点禁静默: 宁可打一行日志, 也不要"影子悄悄不落盘"
         print(f"[ext_entry] afterhours half-day shadow 落盘失败: {type(exc).__name__}: {exc}")
+
+
+def _notify_ext_afterhours_halfday_first_hit(day, blocked):
+    """RFC-218 §21: EXT 盘后半日市首个自然分歧日 → 用户待裁提醒 (提醒≠启用)。
+
+    与 §19 黑名单首命中提醒同型: 注册项 data_path 是目录 + USER_ADJUDICATION ⇒ 不进普通
+    待裁队列; 本函数在首个分歧日落盘后经 app/push hub (push_text_safe, 异常永不上抛) 发
+    一次性提醒, 按 ET 日去重 (半日市每日=一个独立事件, 不按 tick 重复推)。
+    只在真实生产路径触发 (hermetic 测试 monkeypatch DIR 到 tmp ⇒ 跳过, 防误发)。
+    """
+    if EXT_AFTERHOURS_HALF_DAY_DIR != _EXT_AFTERHOURS_HALF_DAY_CANON:
+        return
+    try:
+        state_path = EXT_AFTERHOURS_HALF_DAY_DIR.parent / "ext_afterhours_halfday_first_hit_notified.json"
+        try:
+            state = json.loads(state_path.read_text())
+        except (OSError, ValueError):
+            state = {}
+        if not isinstance(state, dict) or day in state:
+            return
+        from app.push.hub import push_text_safe
+        _mode_txt = "blocked(守卫ON)" if blocked else "shadow(守卫OFF)"
+        push_text_safe(
+            f"[EXT盘后半日市·待裁] 首个自然分歧日 {day} ({_mode_txt})。"
+            f"今日 NYSE 提前收盘, 静态盘后窗 17:00-19:59 ET 对已收市市场放行; "
+            f"EXT_AFTERHOURS_HALF_DAY_GUARD 激活须用户单独裁决 (RFC-218 §20/§21, "
+            f"预注册臂供给面变量); 本提醒≠启用。台账 data/shadow/ext_afterhours_halfday/ ; "
+            f"裁决输入=§20.3 全分钟扫描+影子台账+时段语义复核。",
+            sync=True)
+        state[day] = _now_et().isoformat()
+        state_path.write_text(json.dumps(state, ensure_ascii=False))
+    except Exception as exc:
+        print(f"[ext_entry] afterhours half-day first-hit 提醒失败 (不影响交易): "
+              f"{type(exc).__name__}: {exc}")
 
 
 def _now_hhmm_et():

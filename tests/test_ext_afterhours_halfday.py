@@ -335,3 +335,101 @@ def test_collect_invalid_session_no_ledger(ledger_dir):
     out = mod.collect("bogus")
     assert out == [{"ok": False, "skip": "invalid_session"}]
     assert not ledger_dir.exists()
+
+
+# ── §21 首个自然分歧日 → 待裁提醒 (提醒≠启用; canon 守卫 + ET 日去重 + 异常不上抛) ──
+
+@pytest.fixture
+def canon_ledger(ledger_dir, monkeypatch):
+    """把 CANON 指向 tmp 台账 ⇒ 过「真实生产路径」守卫 (hermetic, 推送已被 spy 替换)."""
+    monkeypatch.setattr(mod, "_EXT_AFTERHOURS_HALF_DAY_CANON", ledger_dir)
+    return ledger_dir
+
+
+@pytest.fixture
+def push_spy(monkeypatch):
+    import app.push.hub as hub
+    calls = []
+
+    def _spy(text, *a, **kw):
+        calls.append((text, kw))
+        return True
+
+    monkeypatch.setattr(hub, "push_text_safe", _spy)
+    return calls
+
+
+def _state_path(ledger_dir):
+    return ledger_dir.parent / "ext_afterhours_halfday_first_hit_notified.json"
+
+
+def test_first_hit_non_canon_path_no_push(ledger_dir, push_spy):
+    # autouse ledger_dir 已把 DIR 指 tmp, CANON 仍是生产路径 ⇒ 跳过提醒 (防测试误发)
+    mod._record_afterhours_halfday_divergence("afterhours")
+    assert _read_ledger(ledger_dir)["ticks"] == 1
+    assert push_spy == []
+    assert not _state_path(ledger_dir).exists()
+
+
+def test_first_hit_canon_pushes_once_shadow(canon_ledger, push_spy):
+    mod._record_afterhours_halfday_divergence("afterhours")
+    assert len(push_spy) == 1
+    text, kw = push_spy[0]
+    assert "2026-11-27" in text and "shadow" in text and "待裁" in text
+    assert kw.get("sync") is True
+    state = json.loads(_state_path(canon_ledger).read_text())
+    assert "2026-11-27" in state
+
+
+def test_first_hit_same_day_second_tick_no_repush(canon_ledger, push_spy):
+    mod._record_afterhours_halfday_divergence("afterhours")
+    mod._record_afterhours_halfday_divergence("afterhours")
+    assert _read_ledger(canon_ledger)["ticks"] == 2
+    assert len(push_spy) == 1
+
+
+def test_first_hit_dedup_state_preexisting(canon_ledger, push_spy):
+    canon_ledger.mkdir(parents=True, exist_ok=True)
+    _state_path(canon_ledger).write_text(json.dumps({"2026-11-27": "prior"}))
+    mod._record_afterhours_halfday_divergence("afterhours")
+    assert _read_ledger(canon_ledger)["ticks"] == 1
+    assert push_spy == []
+
+
+def test_first_hit_new_half_day_pushes_again(canon_ledger, push_spy, monkeypatch):
+    mod._record_afterhours_halfday_divergence("afterhours")
+    # 12-24 也是真实日历半日市 (780) ⇒ 新分歧日 = 新事件, 再推一次
+    monkeypatch.setattr(mod, "_now_et", _at(datetime(2026, 12, 24, 17, 0, tzinfo=ET)))
+    mod._record_afterhours_halfday_divergence("afterhours")
+    assert len(push_spy) == 2
+    assert "2026-12-24" in push_spy[1][0]
+    state = json.loads(_state_path(canon_ledger).read_text())
+    assert set(state) == {"2026-11-27", "2026-12-24"}
+
+
+def test_first_hit_guard_on_text_blocked(canon_ledger, push_spy, monkeypatch):
+    monkeypatch.setenv("EXT_AFTERHOURS_HALF_DAY_GUARD", "1")
+    mod._record_afterhours_halfday_divergence("afterhours")
+    assert len(push_spy) == 1
+    assert "blocked" in push_spy[0][0]
+    assert _read_ledger(canon_ledger)["mode"] == "blocked"
+
+
+def test_first_hit_push_failure_never_propagates(canon_ledger, monkeypatch):
+    import app.push.hub as hub
+
+    def _boom(text, *a, **kw):
+        raise RuntimeError("push down")
+
+    monkeypatch.setattr(hub, "push_text_safe", _boom)
+    mod._record_afterhours_halfday_divergence("afterhours")  # 不得上抛
+    doc = _read_ledger(canon_ledger)
+    assert doc["ticks"] == 1                      # 台账已落盘 (提醒在写盘之后)
+    assert not _state_path(canon_ledger).exists()  # 失败不写去重 state
+
+
+def test_first_hit_corrupt_state_treated_empty(canon_ledger, push_spy):
+    canon_ledger.mkdir(parents=True, exist_ok=True)
+    _state_path(canon_ledger).write_text("{not json")
+    mod._record_afterhours_halfday_divergence("afterhours")
+    assert len(push_spy) == 1

@@ -87,3 +87,54 @@ def test_file_type_count_unchanged_regression(tmp_path):
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps({"fact_count": 96}))
     assert registry._count_samples(replace(item), tmp_path) == 96
+
+
+# ── RFC-218 §21: 半日市分歧台账 (按日单文档, ticks 形态) ⇒ 计数轴=分歧日数 ──────
+
+def _halfday_item():
+    return next(i for i in registry.REGISTRY
+                if i.id == "ext_afterhours_halfday_guard_shadow")
+
+
+def test_halfday_item_data_path_is_directory():
+    item = _halfday_item()
+    assert item.data_path == "data/shadow/ext_afterhours_halfday"
+    assert not item.data_path.endswith((".json", ".jsonl"))
+
+
+def test_halfday_counts_days_not_ticks(tmp_path):
+    """每日 1 文档=1 样本 (分歧日轴): ticks 18+3 跨 2 日 → 2, 不是 21."""
+    d = _mkdir(tmp_path, _halfday_item())
+    (d / "2026-11-27.json").write_text(json.dumps({"ticks": 18, "mode": "shadow"}))
+    (d / "2026-12-24.json").write_text(json.dumps({"ticks": 3, "mode": "shadow"}))
+    assert registry._count_samples(replace(_halfday_item()), tmp_path) == 2
+
+
+def test_halfday_invalid_ticks_not_counted(tmp_path):
+    """ticks=0/bool/字符串/缺失 → 不计 (不伪装样本); 全目录非法 → None."""
+    d = _mkdir(tmp_path, _halfday_item())
+    (d / "a.json").write_text(json.dumps({"ticks": 0}))
+    (d / "b.json").write_text(json.dumps({"ticks": True}))
+    (d / "c.json").write_text(json.dumps({"ticks": "5"}))
+    (d / "d.json").write_text(json.dumps({"mode": "shadow"}))
+    assert registry._count_samples(replace(_halfday_item()), tmp_path) is None
+
+
+def test_halfday_mixed_rows_and_ticks_forms(tmp_path):
+    """rows 形态 (黑名单) 与 ticks 形态 (半日市) 并存: 2 行 + 1 分歧日 = 3."""
+    d = _mkdir(tmp_path, _halfday_item())
+    (d / "2026-11-25.json").write_text(json.dumps(
+        {"rows": {"premarket:US.QCOM": {}, "afterhours:US.LCID": {}}}))
+    (d / "2026-11-27.json").write_text(json.dumps({"ticks": 9}))
+    assert registry._count_samples(replace(_halfday_item()), tmp_path) == 3
+
+
+def test_halfday_missing_dir_returns_none(tmp_path):
+    """无目录=通过态 (半日市每年约 2-4 天) → None, 不伪装 0."""
+    assert registry._count_samples(replace(_halfday_item()), tmp_path) is None
+
+
+def test_halfday_check_mounting_no_warning():
+    """dormant_reason + stale_expected + eval_on_demand ⇒ 无产物也不报挂载告警."""
+    warnings = registry.check_mounting()
+    assert not any("ext_afterhours_halfday" in w for w in warnings)
