@@ -1059,3 +1059,54 @@ RFC-217 归档：10 条带标记指令、3 笔成交、仅 1 笔已平 CAT `+$9.
 - 最终守卫：`.env.us` 改 `PLAYBOOK_BLACKLIST_FINAL_GUARD=0`（或删行）＋`systemctl restart ftseek-us`＋启动冒烟；或 revert 本批 commit。与 §16 三边界开关互不牵连。
 - EXT 观测：additive（modes 键/目录计数/提醒），回滚=revert；`EXT_BLACKLIST_GUARD=0` 不变即供给面旧行为。
 - 资金：本就 OFF，无需回滚动作；仓外三文件备份 `*.bak-20261127-rfc218-capital`（§15）＋本批 `/tmp/rfc218_s19_llm_synth.bak/.sha`。
+
+## 20. 实施记录 V（2026-11-27 · 用户裁「请按照建议做优化修复处理」· 盘前复查 Finding 1 · EXT 盘后半日市窗口感知 · 影子先行默认 OFF · 正确性批次非收益补丁）
+
+> 本批只落地盘前复查 **Finding 1**（EXT 盘后静态窗口不识别半日市）。**Finding 2（VIX proxy 19.79 vs estimate 25.4 分歧）维持 §5.4 裁定原样，本批未触**。EXT 是独立预注册实验臂，改窗口=改供给面变量 ⇒ 守卫默认 OFF＋record-only 影子，激活须独立裁决（与 §17/§19 同纪律）。**无 app/ 改动、无重启**（EXT cron 313/314 每 tick fresh-import）。正式输入变量零新增激活。
+
+### 20.1 病灶与口径（盘前复查确认）
+
+- `SESSION_WINDOWS["afterhours"]=(1600,1959)`、`ENTRY_WINDOWS["afterhours"]` A=(1620,1830)/B=(1620,1730) 硬编码常规日。NYSE 半日市（感恩节次日等）13:00 ET 收盘，盘后实际 **13:00–17:00 ET** ⇒ 静态窗在 **17:00–19:59 ET 仍放行**，会对已收市的市场下「盘后」单。今日 2026-11-27 即半日市（`US_EARLY_CLOSE_DATES` 含 `date(2026,11,27)`，`app/utils/holiday_calendar.py:99`）。
+- cron 314 冬令时 `2-59/5 4-8 * * 2-6` CST = **ET 15:02–19:57**（CST=UTC+8、EST=UTC-5，差 13h；16:02 起算为夏令时映射，本批按冬令时纠正表述）⇒ 今日真实暴露 tick 为 **ET 17:02–19:57**，其中 A 级窗暴露至 18:30、B 级窗至 17:30。
+- **口径换算**：本文件窗口为 **HHMM 整数**（hour*100+min），`get_us_close_minutes_et` 返回**分钟数**（常规 960/半日 780）。盘后时长 4h ⇒ `end_min=close_min+239`：常规 1199→HHMM **1959**（=静态，零变化）；半日 1019→HHMM **1659**（16:59 ET，含末分钟）。日期显式取 `_now_et().date()`（单一时钟源，防 cron CST 日与 ET 日错位）。
+- 残余确认（本批不修，排队）：`_pretrade_gate`（:1634 区域）spread/drift/depth/fee fail-closed，但**无报价时间戳 freshness 检查** ⇒ 即便窗口正确，窗内 stale quote 仍可能通过。
+
+### 20.2 修复设计（独立开关，影子先行，只 cap 不扩）
+
+1. **`EXT_AFTERHOURS_HALF_DAY_GUARD` 默认 OFF**：truthy 口径与 `EXT_BLACKLIST_GUARD` 一致（1/true/yes/on），未知值 fail-closed 旧行为，每次实读不缓存。**OFF=逐字节旧静态窗**。
+2. **`_in_session_window` / `_entry_window_reason`**：afterhours ∧ ON → `end=min(静态end, _afterhours_end_hhmm())`。**只 cap 结束，不扩起点**——半日市 13:00–16:00 ET 盘后未覆盖属供给面扩张（=改预注册实验变量），非正确性，且 cron 小时段不覆盖，留独立裁决。盘前窗与常规日零变化。
+3. **`_afterhours_end_hhmm` fail-safe**：日历 import/调用异常、bool、NaN/inf、None、越界（≤0 或 >960）→ 回退常规 960 ⇒ 1959=静态窗（日历故障不改变旧行为，**绝不因兜底扩窗**；与 §19 资金合同「非 bool/有限」同纪律）。
+4. **`EXT_AFTERHOURS_HALF_DAY_SHADOW` 默认 ON**：`_record_afterhours_halfday_divergence` 挂 collect 窗闸前，仅**提前收盘日 ∧ now_hhmm ∈ (半日结束, 静态结束]** 写盘 `data/shadow/ext_afterhours_halfday/YYYY-MM-DD.json`（常规日/区间外零足迹）；OFF 落 `mode=shadow`（供给面不变的差分证据），ON 落 `mode=blocked`（审计）；**分模式 ticks/首末时点从 tick1 留痕**（§18.4 mode 覆写教训，新台账不重蹈）；原子写（tmp+os.replace），写盘失败绝不上抛交易路径。
+5. **`VWAP_ANCHOR_WINDOWS`（:856）属分析面非入场闸，本批不动**（半日市尾部无 bar 自然空，不影响入场判定正确性；`EXT_VWAP_ANCHOR_MATURITY=false` 回落分支 :1707 同理保持静态）。
+6. **刻意不做**：shadow_registry 注册（属 app/，会触发重启，排队另批）；首命中 push 提醒（本台账先人工/注册表后续批消费）；起点扩窗；VIX（§5.4）；`_pretrade_gate` freshness（独立批）。
+
+### 20.3 验证矩阵（全部可复跑，`PYTHONDONTWRITEBYTECODE=1`）
+
+| 项 | 结果 | 凭据 |
+|---|---|---|
+| 新契约 | **77 passed**（开关语义/口径换算/fail-safe/常规零变化/半日 OFF 旧行为/ON cap/影子 provenance/collect 集成） | `PYTHONPATH=. ./venv/bin/python -m pytest tests/test_ext_afterhours_halfday.py -q` → `/tmp/rfc218_s20_newtests.log` |
+| EXT 相邻 | **7 failed/284 passed**，FAILED 清单与 §19 基线 **IDENTICAL** | `/tmp/rfc218_s20_ext_adjacent.log`＋`_ext_failed_norm.txt` vs `/tmp/rfc218_s19_ext_base_norm.txt` diff ∅ |
+| OFF 逐字节全分钟扫描 | 1440 分钟 ×（session＋premarket/afterhours A/B entry）×（半日＋常规）**mismatches=0**；ON 常规日=0；ON 半日 **expansion=0**（只 cap 不扩），分歧=session 180min [1700..1959] / A 91min [1700..1830] / B 31min [1700..1730] | `./venv/bin/python -I /tmp/rfc218_s20_off_sweep.py` → `/tmp/rfc218_s20_off_sweep.log` |
+| 变异测试 | 守卫 reader→恒 False = **12 红**（6 truthy＋2 session 越界＋2 entry 越界＋1 provenance＋1 collect）→ 按备份恢复 **77 绿**，SHA `b634db91…` 逐字一致 | `/tmp/rfc218_s20_mutation_red.log`/`_restore_green.log`/`_executor.bak` |
+| 静态 | py_compile 双解释器（venv python＋cron 实际 python3.11）exit0；`check_undefined_names.py` exit0 | 本批命令留痕 |
+| 真实 env import 冒烟 | guard=False / shadow=True / 今日 end=1659 / SESSION_WINDOWS 静态字典原样 | `/tmp/rfc218_s20_env_import_smoke.log` |
+
+既有 7 个 EXT 相邻失败为基线存量（另案治理，本批不修不掩盖）；未跑全量 pytest/CI，不声称全绿。
+
+### 20.4 收益边界（与 §9/§18.5/§19.5 一致，不得越界表述）
+
+- **本批没有任何收益改善证据**。守卫 OFF ⇒ 当前生产供给面/执行逐字节不变；影子 record-only 不参与判定。
+- 半日市收盘后仍可下「盘后」单属**正确性病灶**（closed-market entry＋stale quote 暴露）；修复=交易时段语义/风控正确性。**激活依据只能是时段语义，不是追收益**；正确性≠盈利，能否提高净收益须独立验证（§10 分层）。
+- 今日自然分歧影子预计自 **ET 17:02（CST 周六 06:02）**起由 cron fresh-import 落台账（shadow 默认 ON）；落档时点（ET 05:47）尚无自然样本。不触发加仓、扩权、新方向政策。
+
+### 20.5 未闭合排队（新增＋不变）
+
+1. **激活 BLOCKED 于用户独立裁决**（EXT 预注册臂供给面变量）。裁决输入=本节扫描矩阵＋今日自然影子台账＋时段语义复核。激活路径=`.env.us` `EXT_AFTERHOURS_HALF_DAY_GUARD=1`（cron fresh-import 即生效，无需重启）；回滚=改 0/删行。
+2. shadow_registry 注册＋目录计数接入＋首命中提醒（app/ 批，需重启，另批）。
+3. 半日市 13:00–16:00 ET 盘后起点扩窗（供给面扩张＋cron 小时段变更，独立裁决）。
+4. `_pretrade_gate` 报价时间戳 freshness（残余暴露，独立批）。
+5. §19.6 队列不变：资金激活 BLOCKED §10.4 A/B；EXT 黑名单 GUARD 激活 BLOCKED 用户裁 QCOM 禁令适用性；topup/self-managed/符号别名等低优先级同域收口；§15.7 输入修复队列逐批单变量。
+
+### 20.6 回滚
+
+- 守卫：`.env.us` 改 `EXT_AFTERHOURS_HALF_DAY_GUARD=0`（或删行），cron 下一 tick 即回旧静态窗，**无需重启**；影子：`EXT_AFTERHOURS_HALF_DAY_SHADOW=0` 停写盘；或 revert 本批 commit。与 §16/§17/§19 各开关互不牵连。

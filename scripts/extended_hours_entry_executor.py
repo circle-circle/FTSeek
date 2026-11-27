@@ -867,6 +867,118 @@ from scripts.extended_hours_order_lifecycle import (
 )
 
 
+# ── RFC-218 §20: 盘后半日市窗口感知 (影子先行, 独立开关默认 OFF) ─────────────────
+# 病灶 (2026-11-27 盘前复查 Finding 1): SESSION_WINDOWS/ENTRY_WINDOWS 盘后段硬编码
+#   常规日 (16:00-19:59 ET)。NYSE 半日市 (感恩节次日等, 13:00 ET 收盘) 盘后实际
+#   13:00-17:00 ET ⇒ 静态窗在 17:00-19:59 ET 仍放行, 会对已收市的市场下"盘后"单
+#   (今日 2026-11-27 即半日市; cron 314 冬令时覆盖 ET 15:02-19:57, 暴露真实存在)。
+# 口径: get_us_close_minutes_et 返回 **分钟数** (常规 960/半日 780), 本文件窗口是
+#   **HHMM 整数** (hour*100+min), 必须换算。盘后时长 4h ⇒ end_min=close_min+239:
+#   常规 1199→1959 (=静态, 零变化); 半日 1019→1659 (16:59 ET, 含末分钟)。
+# 设计: 只 cap 结束, 不扩起点 —— 半日市 13:00-16:00 ET 盘后未覆盖属供给面扩张
+#   (=改预注册实验变量), 非正确性, 且 cron 小时段不覆盖, 留独立裁决。
+#   EXT 是独立预注册实验臂 ⇒ 守卫默认 OFF (OFF=逐字节旧窗口), 影子默认 ON 只记录
+#   分歧 (data/shadow/ext_afterhours_halfday/), 激活须单独裁决。与 §17/§19 同纪律。
+# 回滚: EXT_AFTERHOURS_HALF_DAY_GUARD=0 (或删 env) → 旧静态窗;
+#   EXT_AFTERHOURS_HALF_DAY_SHADOW=0 关影子。VWAP_ANCHOR_WINDOWS 属分析面非入场闸,
+#   本批不动 (半日市尾部无 bar 自然空, 不影响入场判定正确性)。
+EXT_AFTERHOURS_HALF_DAY_DIR = ROOT / "data" / "shadow" / "ext_afterhours_halfday"
+
+
+def _ext_afterhours_halfday_guard_enabled() -> bool:
+    """独立开关 (进程 env, cron 每 tick fresh-import): 默认 OFF, 未知值 fail-closed 旧行为。
+
+    truthy 口径与 EXT_BLACKLIST_GUARD 一致 (1/true/yes/on)。每次实读不缓存。
+    """
+    v = os.environ.get("EXT_AFTERHOURS_HALF_DAY_GUARD", "0")
+    return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _ext_afterhours_halfday_shadow_enabled() -> bool:
+    """record-only 影子默认 ON (仅半日市分歧才写盘, 常规日零足迹); 显式 falsy 关闭。"""
+    v = os.environ.get("EXT_AFTERHOURS_HALF_DAY_SHADOW", "1")
+    return str(v).strip().lower() not in ("0", "false", "no", "off")
+
+
+def _afterhours_end_hhmm() -> int:
+    """盘后窗口结束 (HHMM, ET): 常规 1959 (=静态), 半日市 1659。
+
+    日期显式取 _now_et().date() (单一时钟源, 避免 cron CST 日与 ET 日错位);
+    日历返回分钟数, +239 后换算 HHMM。任何异常/非法值 (含 bool/NaN/inf/越界) →
+    常规 960 ⇒ 1959 = 静态窗 (fail-safe: 日历故障不改变旧行为, 绝不因兜底扩窗)。
+    """
+    try:
+        from app.utils.holiday_calendar import get_us_close_minutes_et
+        raw = get_us_close_minutes_et(_now_et().date())
+        if isinstance(raw, bool):
+            raise ValueError("bool close minutes")
+        close_min = int(raw)
+    except Exception:
+        close_min = 960
+    if not 0 < close_min <= 960:
+        close_min = 960
+    end_min = close_min + 239
+    return (end_min // 60) * 100 + (end_min % 60)
+
+
+def _record_afterhours_halfday_divergence(session):
+    """半日市盘后窗口分歧影子台账 (record-only, 仅分歧写盘, 与 §17 台账同风格)。
+
+    触发: 提前收盘日 ∧ now_hhmm ∈ (半日结束, 静态结束] —— 旧窗放行/新窗应拦的区间。
+    守卫 OFF 落 mode=shadow (供给面不变的差分证据); ON 落 mode=blocked (审计)。
+    分模式 ticks/首末时点从 tick1 留痕 (§18.4 mode 覆写教训, 新台账不重蹈)。
+    写盘失败绝不影响下单路径 (观测面与决策面解耦)。
+    """
+    if session != "afterhours" or not _ext_afterhours_halfday_shadow_enabled():
+        return
+    try:
+        static_end = SESSION_WINDOWS["afterhours"][1]
+        capped_end = _afterhours_end_hhmm()
+        if capped_end >= static_end:
+            return  # 常规日/日历兜底 ⇒ 无分歧, 零足迹
+        now_hhmm = _now_hhmm_et()
+        if not capped_end < now_hhmm <= static_end:
+            return
+        now_et = _now_et()
+        day = now_et.strftime("%Y-%m-%d")
+        path = EXT_AFTERHOURS_HALF_DAY_DIR / (day + ".json")
+        EXT_AFTERHOURS_HALF_DAY_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            doc = json.loads(path.read_text())
+        except (OSError, ValueError):
+            doc = {}
+        if not isinstance(doc, dict):
+            doc = {}
+        _mode = "blocked" if _ext_afterhours_halfday_guard_enabled() else "shadow"
+        _ts = now_et.isoformat()
+        doc["et_date"] = day
+        doc["session"] = "afterhours"
+        doc["static_end_hhmm"] = static_end
+        doc["half_day_end_hhmm"] = capped_end
+        doc["mode"] = _mode
+        doc["ticks"] = int(doc.get("ticks") or 0) + 1
+        doc["last_ts"] = _ts
+        if not doc.get("first_ts"):
+            doc["first_ts"] = _ts
+        modes = doc.get("modes")
+        if not isinstance(modes, dict):
+            modes = {}
+            doc["modes"] = modes
+        mrec = modes.get(_mode)
+        if not isinstance(mrec, dict):
+            mrec = {"ticks": 0, "first_ts": _ts, "last_ts": _ts}
+            modes[_mode] = mrec
+        mrec["ticks"] = int(mrec.get("ticks") or 0) + 1
+        mrec["last_ts"] = _ts
+        if not mrec.get("first_ts"):
+            mrec["first_ts"] = _ts
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=1))
+        os.replace(str(tmp), str(path))
+    except Exception as exc:      # 埋点禁静默: 宁可打一行日志, 也不要"影子悄悄不落盘"
+        print(f"[ext_entry] afterhours half-day shadow 落盘失败: {type(exc).__name__}: {exc}")
+
+
 def _now_hhmm_et():
     now = _now_et()
     return now.hour * 100 + now.minute
@@ -874,12 +986,18 @@ def _now_hhmm_et():
 
 def _in_session_window(session):
     start, end = SESSION_WINDOWS[session]
+    # RFC-218 §20: 半日市盘后结束按日历 cap (守卫默认 OFF ⇒ 逐字节旧窗口; 只 cap 不扩)。
+    if session == "afterhours" and _ext_afterhours_halfday_guard_enabled():
+        end = min(end, _afterhours_end_hhmm())
     return start <= _now_hhmm_et() <= end
 
 
 def _entry_window_reason(session, grade):
     windows = ENTRY_WINDOWS.get(session, {})
     start, end = windows.get(grade, (0, 0))
+    # RFC-218 §20: 与 _in_session_window 同口径 —— 半日市盘后 A/B 窗结束同步 cap (起点不动)。
+    if session == "afterhours" and _ext_afterhours_halfday_guard_enabled():
+        end = min(end, _afterhours_end_hhmm())
     if not start <= _now_hhmm_et() <= end:
         return "entry_window_not_mature"
     return None
@@ -3292,6 +3410,10 @@ def collect(session, dry=False):
     """扫描事件驱动开仓信号；当前 SIM 无券商 STOP 时 fail-closed。"""
     if session not in SESSION_WINDOWS:
         return [{"ok": False, "skip": "invalid_session"}]
+    # RFC-218 §20: 半日市盘后分歧影子 (record-only, 仅提前收盘日分歧区间写盘;
+    #   守卫 OFF 时下方判定逐字节旧行为)。写盘失败绝不上抛交易路径。
+    if session == "afterhours":
+        _record_afterhours_halfday_divergence(session)
     if not _is_trading_day() or not _in_session_window(session):
         return [{"ok": False, "skip": "outside_trading_window"}]
 
