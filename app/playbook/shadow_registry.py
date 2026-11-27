@@ -5192,6 +5192,44 @@ REGISTRY: list[ShadowItem] = [
               "app/ 随批重启生效。回滚=EXT_AFTERHOURS_HALF_DAY_GUARD=0 (或删行) 回旧供给面; "
               "产物留档。",
     ),
+    # ── RFC-218 §25 (2026-11-27, HK→US 时间差行业/趋势参考输入; 影子采集先行, DA 注入未实施) ──
+    ShadowItem(
+        id="hk_us_linkage_context_shadow",
+        name="HK 行业/动态趋势日内序列影子采集 (record-only, DA 参考输入未接)",
+        status=ShadowStatus.OBSERVING,
+        description="用户裁 (2026-11-27): 港股波动不仅看个股, 看行业与动态趋势, 作为信息参考"
+                    "输入打港股/美股时间差。本影子只读 OpenD 快照 (get_market_snapshot, 无订阅"
+                    "无K线), 按 HK 交易日落指数 (HSI/HSTECH/HSCEI) + 8 行业等权篮子 (32 成分股) "
+                    "+ 7 ADR 港股腿的日内 chg 序列 / breadth / 翻红翻绿事件到 "
+                    "data/shadow/hk_us_linkage/<date>.json。**零判定消费**: 不接 DA prompt / "
+                    "sizing / gates / 方向判定, 不下单不落库不推送。DA 参考输入注入 = 后续独立批 "
+                    "(DA_HK_CONTEXT 默认 OFF + §10.4 A/B), 本批不实施。OTC ADR (TCEHY/MPNGY/"
+                    "XIAOMY) 行情不可用已探针实证, 只标 status 不采美股侧。",
+        data_path="data/shadow/hk_us_linkage",
+        config_key=None,
+        min_n=60,
+        graduation_criteria="DA 参考输入激活须用户单独裁决 + §10.4 单变量 A/B (RFC-218 §25 / "
+                            "DEB-20261127-hk-us-sector-trend-context): 前置 = n≥60 独立 HK 交易日"
+                            "观测 + 行业级传导命中率研究 (HK 行业日 chg vs 美股同源行业代理开盘"
+                            "方向, |chg|≥2% 子集, 对比无条件基线, MDE 预注册)。无自动转正门; "
+                            "观测数据本身不是待裁料, 不首命中推送。",
+        eval_on_demand=True,
+        no_adjudication_reason="USER_ADJUDICATION: HK→US 传导是新输入变量假设, 强度/时滞/"
+                               "可交易性未验证; 影子只攒序列证据, 不机械迁 READY_TO_EVALUATE。",
+        dormant_reason="写方 cron 仅 HK 交易日时段 (7,22,37,52 9-11,13-15 * * 1-5 + 2 12,16 "
+                       "* * 1-5) 落盘; 周末/港股假日无产物属设计内 (update_time 日期闸跳过)。"
+                       "计数轴=交易日数 (每日 1 文档 ticks=int≥1 计 1, 不是 ticks 累加; "
+                       "_verify/ 子目录 glob 不递归不计)。",
+        stale_expected=False,
+        created="2026-11-27",
+        intent="hk_us_linkage_context",
+        notes="写方 scripts/hk_market_context_collector.py::record_tick (flock 锁内 RMW + "
+              "mkstemp/os.replace 原子写, 复用 §23 范式; 写盘失败/OpenD 不可达打 warning 恒 "
+              "exit0, 绝不抛进 cron)。真停写机制=删 cron 两行 (无 config 键, 勿照 config_key "
+              "判停)。ADR 映射与 app/catalyst/sources/hkex_source.py::HK_STOCK_MAPPING 同源 "
+              "(刻意不 import 防新闻面重依赖, parity 契约钉死)。cron fresh-import 无需重启; "
+              "本注册表属 app/ 随批重启生效。回滚=删 cron 两行; 产物留档。",
+    ),
 ]
 
 
