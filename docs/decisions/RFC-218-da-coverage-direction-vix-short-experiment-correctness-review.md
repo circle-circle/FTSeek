@@ -1477,3 +1477,69 @@ RFC-217 归档：10 条带标记指令、3 笔成交、仅 1 笔已平 CAT `+$9.
 
 - DA 参考输入注入（`DA_HK_CONTEXT`）BLOCKED §25.5 研究＋§10.4 A/B＋用户裁；美股侧 ADR 盘前/开盘采集、全市场 113 板块 breadth（plate API）、篮子成分动态维护各自后续扩展。
 - §23.8/§24.7 队列不变（adapter 同日语义/EXT dry 静默/watchlist fail-close/健康空财报/来源状态/挑战者一致性逐批单变量）。
+
+## 26. 实施记录 XI（2026-11-27 · 健康空财报三态 · `DA_EARNINGS_TRISTATE` 独立开关默认 OFF · 正式输入变量未激活）
+
+> 本节追加，不改 §§0–25 历史。承接 §24.7 输入修复队列（健康空财报三态＝短K之后的下一批单变量）。
+> 授权：用户裁「按照建议 继续执行合理优化落地」＋§15.7 队列；本批**影子就绪、不激活**——
+> 正式输入呈现变量（模型可见内容变化），激活 BLOCKED §10.4 单变量 A/B，不得当纯遥测直接上线。
+> 详细病灶/合同/边界见 DEB-20261127-da-earnings-tristate。
+
+### 26.1 病灶（§15.7 锚点核实＋生产分布实锤）
+
+- skill 仓 `llm_synth._format_data_for_prompt` 财报日历段（旧锚 `1019-1043` → 当前 `1083-1107`）：
+  `next_earnings` 为空（含 `_error`/键缺失）时「## 财报日历」**整段静默省略**，模型无法区分
+  「窗口内未发现事件(源健康)／源失败或降级／未提供」。
+- 本批探针（冻结归档）：**11-25 34/35、11-27 31/32 为健康空**（备源健康＋窗口内无财报＝有效信息），
+  OFF 全部无栏目——主流状态被当缺失丢弃（与 DEB-20261119 审计 37/37 一致）。
+- 采集端既有标记（只读核实，本批不改采集）：健康空 `_quality="ok"+lookahead_days=7`（备源实际 horizon 3mo，
+  声明值保守）；降级 `_quality="degraded"+_degraded_reason`；Finnhub 空应答＋备源不可用＝无标记空；两源失败 `_error`。
+
+### 26.2 修复合同（只动呈现层，计算/采集一行不动）
+
+- `config.py` 新增独立开关 `DA_EARNINGS_TRISTATE`（默认 0；刻意不复用 `DA_CAPITAL_CODE_FIX`/`DA_SHORTK_NA`/`DA_INPUT_FULL`）。
+- **OFF＝逐字节旧渲染**（旧块整体保留在 `elif` 分支逐字未动）；**ON 且 next_earnings 存在＝亦逐字节旧渲染**。
+- ON 空态：helper `_earnings_tristate_section` 渲染「## 财报日历」状态段——
+  ① 健康空：`查询窗口内未发现财报事件(源健康,有效信息)`＋`查询窗口: 未来{lookahead_days}天`（int∧非bool∧1..366 才渲染，否则`未声明`不编造）＋源＋as-of＋含义行（窗口内无触发日期/不得编造日期/窗口外未知/不得推断长期无财报），**不带**未知警示；
+  ② 降级/③ 无标记空/④ `_error`：各自状态行＋原因或错误（截120字）＋源＋as-of＋统一警示`未知≠无财报: 不得据此认为财报风险已排除, 不得编造财报日期`；
+  ⑤ 键缺失/None/非dict：`未提供财报日历数据`＋警示。
+- as-of＝`collected["_timestamp"]`（collect_all 采集起点，ET「YYYY-MM-DD HH:MM(ET)」），缺失/bool/NaN/inf/≤0/str→N/A 不崩。
+- **消费链零改动**（已核）：标题保持「## 财报日历」→ 挑战者 `_FULL` 白名单原样放行；溯源校验 full 模式从 prompt 全文提数字 → 新行数字自动可溯源；覆盖分类/`_has_meaningful_data`/`_extract_source_numbers`/校验器/采集器两态逐字一致。
+
+### 26.3 验证矩阵（全部可复跑，`PYTHONDONTWRITEBYTECODE=1`）
+
+| 项 | 结果 | 凭据 |
+|---|---|---|
+| 新契约 `tests/test_da_earnings_tristate.py` | **71 passed** | `/tmp/rfc218_s26_newtests.log` |
+| OFF 逐字节扫描：15 态×三开关正交（120）＋67 真实 checkpoint OFF＋67 ON（has_next 逐字节/空态只增段）＋65 段标题 | **checks=319 fails=0 SWEEP_ALL_OK** | `/tmp/rfc218_s26_off_sweep.log`（探针 `_off_sweep.py`） |
+| 变异(a) 窗口伪造`未来30天` / (b) 健康空误判未确认 | **4 红 / 19 红**→恢复 sha `e955386c03f0…` 核验→**71 绿** | `/tmp/rfc218_s26_mutation_{a,b}_red.log`＋`_pre_mutation.sha256`＋`_restore_green.log` |
+| py_compile venv＋cron `venv/bin/python3.11` 双解释器 | exit0×2 | `/tmp/rfc218_s26_transform.log` |
+| DA 相邻（capital/output/fundamental/prompt_injection/shortk） | **1F/173P**；唯一失败＝既有 PROMPT_HASH 漂移（backup 预载同断言同值 `80176956bfbb≠c7444d67ce58`，非本批引入） | `/tmp/rfc218_s26_adjacent.log`＋`_output_baseline.log` |
+| fresh-import 真实 env＋`check_undefined_names.py` | `DA_EARNINGS_TRISTATE=False`（短K/资金亦 False）；rc0 | `/tmp/rfc218_s26_env_import_smoke.log` |
+
+- 本测试只验呈现层正确，不证收益；未跑全量 pytest/CI。DB 未触；零订单/付费 LLM/激活。
+- 既有 1 相邻失败（output_contract PROMPT_HASH 漂移）为基线存量 record-only 不修（另案）；不声称全绿。
+
+### 26.4 部署
+
+- 仓外 DA 两文件（`config.py`/`llm_synth.py`），carrier/cron fresh-import 即生效；**无 app/ 改动、无需重启**。
+- 备份 `*.bak-20261127-rfc218-earnings`＋SHA256：config pre=`2ddbb5947c51` post=`a8db306f79f6`；llm_synth pre=`4b535772ed1b` post=`e955386c03f0`（pre＝§24 post，基线无漂移；备份=pre 逐字核验）。`.env.us` **未加** `DA_EARNINGS_TRISTATE` 行（未设＝默认 OFF，生产逐字节不变）。
+- 仓内产物：`tests/test_da_earnings_tristate.py`＋DEB-20261127-da-earnings-tristate＋本节＋handoff 条目，提交推送（sha 见 handoff 同日条目）。
+- 变换在 DA 主批（21:00 CST 起跑）结束后执行，脚本自检 pgrep 拒跑（防中断在跑 DA）。
+
+### 26.5 收益边界（与 §9/§15/§22.8/§23.7/§24.5/§25.5 一致）
+
+- **无任何收益证据**。呈现层正确化≠盈利；ON 态模型方向/分值行为变化未验证。
+- 激活须 §10.4 单变量 A/B（n≥120/≥20 独立 ET 日/预注册 MDE），且不与资金分布/短K/其他输入变量捆绑；
+  「健康空可见」不得直接当「模型更少误判财报风险/更赚」的证据。
+
+### 26.6 回滚
+
+- `.env.us` 加 `DA_EARNINGS_TRISTATE=0`（或删行）→ 逐字节旧渲染；或恢复备份（sha 核验）。
+- 与 `DA_CAPITAL_CODE_FIX`/`DA_SHORTK_NA`/`DA_INPUT_FULL`/EXT 各开关互不牵连。
+
+### 26.7 未闭合排队
+
+- §24.7/§25.7 队列不变；来源状态可见性/挑战者事实一致性/news UTC→ET 各自独立批单变量。
+- 健康空 ON 态的「财报风险误判率」前后对比属 A/B 预注册指标，本批不测不声称。
+- 健康空声明窗口 7d 与备源 horizon 3mo 口径差＝采集器既有保守声明（本批只渲染声明值，未改采集）；是否扩声明窗口另案。
