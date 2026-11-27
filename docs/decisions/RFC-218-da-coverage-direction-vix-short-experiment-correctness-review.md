@@ -1110,3 +1110,65 @@ RFC-217 归档：10 条带标记指令、3 笔成交、仅 1 笔已平 CAT `+$9.
 ### 20.6 回滚
 
 - 守卫：`.env.us` 改 `EXT_AFTERHOURS_HALF_DAY_GUARD=0`（或删行），cron 下一 tick 即回旧静态窗，**无需重启**；影子：`EXT_AFTERHOURS_HALF_DAY_SHADOW=0` 停写盘；或 revert 本批 commit。与 §16/§17/§19 各开关互不牵连。
+
+## 21. 实施记录 VI（2026-11-27 · 用户裁「请基于合理方案进行优化，按需重启」· §20.5 #2 EXT 半日市分歧观测闭环 · 单观测变量不改交易行为 · 正确性批次非收益补丁）
+
+### 21.1 病灶与范围
+
+§20 落地后影子台账**有写方、无观测闭环**（与 §18.4 EXT 黑名单同型病灶，§19 已修黑名单侧，本批修半日市侧）：
+
+1. `shadow_registry` 未登记 `ext_afterhours_halfday` ⇒ 看板/周检/挂载核对不可见；
+2. `_count_samples` 目录分支只认 `rows` dict 形态（§19 为黑名单建），半日市**按日单文档 ticks 形态**仍落 `return None` ⇒ 自然分歧永不计数；
+3. USER_ADJUDICATION 不进普通待裁队列 ⇒ 首个自然分歧日不会自动形成待裁提醒，只能人工翻目录。
+
+本批只补这三点。**单观测变量**：`EXT_AFTERHOURS_HALF_DAY_GUARD` 保持 OFF，供给面/执行逐字节不变；零交易决策输入新增；VIX（§5.4）未触。
+
+### 21.2 改动
+
+1. `app/playbook/shadow_registry.py`（+47/-1）：
+   - 登记 `ext_afterhours_halfday_guard_shadow`（OBSERVING；`data_path=data/shadow/ext_afterhours_halfday` 目录；`min_n=1`；USER_ADJUDICATION 不机械迁 READY；`dormant_reason`=仅半日市分歧区间写盘/无目录=通过态/每年约 2-4 天；`stale_expected`＋`eval_on_demand`；`config_key=None` 防误判停；notes 写明真停写机制=`SHADOW=0 ∧ GUARD=0`、计数轴、首命中提醒、cron fresh-import 与注册表随批重启的生效差异）。
+   - `_count_samples` 目录分支新增 ticks 形态：`ticks` 为 int ∧ 非 bool ∧ ≥1 ⇒ 该日计 **1 样本（计数轴=分歧日数，不是 ticks 累加**；跨 2 日 ticks 18+3=2 不是 21）。`rows` 形态（黑名单）与文件型分支逐字不变；非法 ticks（0/bool/字符串/缺失）不计、不伪装样本。
+2. `scripts/extended_hours_entry_executor.py`（+41）：
+   - `_EXT_AFTERHOURS_HALF_DAY_CANON` 生产规范路径守卫：hermetic 测试 monkeypatch DIR⇒跳过提醒，防测试误发真实推送（§19 `_EXT_BLACKLIST_CANON` 同纪律）。
+   - 写盘成功后 `ticks==1` ⇒ `_notify_ext_afterhours_halfday_first_hit(day, blocked)`：按 **ET 日**去重（state 文件 `data/shadow/ext_afterhours_halfday_first_hit_notified.json`；半日市每日=一个独立事件，不按 tick 重复推）；经 `app/push/hub.push_text_safe(sync=True)`（cron 脚本硬退出安全，禁直连 notifier）；文案明示「提醒≠启用、激活须用户单独裁决」＋mode（shadow=守卫OFF/blocked=守卫ON）＋裁决输入指引；异常 print-only 永不上抛、失败不写去重 state。
+
+### 21.3 验证矩阵（全部可复跑，`PYTHONDONTWRITEBYTECODE=1`）
+
+| 项 | 结果 | 凭据 |
+|---|---|---|
+| 批内契约 | **99 passed**（77 既有半日市＋8 既有目录计数＋**8 新首命中**＋**6 新半日市计数**） | `PYTHONPATH=. ./venv/bin/python -m pytest tests/test_ext_afterhours_halfday.py tests/test_shadow_registry_dir_count.py -q` |
+| EXT 相邻 | **7F/284P**，FAILED 清单与 §19 基线 **IDENTICAL** | `/tmp/rfc218_s21_ext_adj.log`＋`_ext_adj_norm.txt` vs `/tmp/rfc218_s19_ext_base_norm.txt` diff ∅ |
+| 注册表相邻 | **19 passed**（rfc207＋criteria_provenance＋shadow_board_guard） | `/tmp/rfc218_s21_registry_adj.log` |
+| 变异测试 | **3 红→恢复 99 绿**：①删 ticks 非 bool 守卫→invalid_ticks 红；②删 ET 日去重→dedup 红；③sync=True→False→canon_once 红（只动 canon 守卫之后逻辑，防测试误发真实推送） | 本批命令留痕（try/finally 恢复，`git diff --stat` 核对） |
+| 静态 | py_compile 双解释器（venv python＋cron python3.11）exit0；`check_undefined_names.py` exit0 | 本批命令留痕 |
+| 挂载核对 | `check_mounting()` 本条目 **0 告警**（全局 5 条均为既有存量：budget_p3_sizing/confidence_tier_gate/instruction_conflict/backfill_fidelity/us_overnight）；real-base `_count_samples`=None（无目录=通过态） | 本批命令留痕 |
+
+既有 7 个 EXT 相邻失败为基线存量（另案治理，本批不修不掩盖）；未跑全量 pytest/CI，不声称全绿。
+
+### 21.4 部署（重启批：注册表属 app/）
+
+- 提交 `a7dd63c00`（4 文件 +236/-1：executor＋registry＋两测试文件；DEB-20261125 其他会话 WIP 未触碰未提交）。
+- 重启前快照 `/tmp/rfc218_s21_pre_restart.json` 与 §19 快照**逐项 IDENTICAL**：SIM SHORT BA 23/BABA 47/GS 5、outbox 22 全 BOOKED、PENDING 4395、今日 0 指令、被禁 PENDING 28 条存量（含历史 BUY id 264/457）。在途出场核对：`trade_records exit_time IS NULL`=BA/BABA/GS（与持仓一致）、`exit_ledger.exit_intents/exit_legs` 空；`git status --porcelain -- app/ scripts/` 干净。
+- `systemctl restart ftseek-us` → 新 PID **182608**（19:08:55 CST）；启动冒烟 **7/7 exit0** `/tmp/rfc218_s21_startup_smoke.log`。
+- 重启后快照 `/tmp/rfc218_s21_post_restart.json` **逐项 IDENTICAL**；`/proc/182608/environ`：`EXT_AFTERHOURS_HALF_DAY_GUARD=0`/`SHADOW=1`、`EXT_BLACKLIST_GUARD=0`/`SHADOW=1`、`PLAYBOOK_BLACKLIST_GUARD=1`/`FINAL_GUARD=1`、**无 `DA_CAPITAL_CODE_FIX`**；重启后日志 0 Traceback/CRITICAL。
+- 生效路径：写方＋提醒经 cron 313/314 每 tick fresh-import（无需再重启）；注册表随本次重启已加载。cron 314（`2-59/5 4-8 * * 2-6`）覆盖今日分歧窗。
+
+### 21.5 收益边界（与 §9/§18.5/§19.5/§20.4 一致）
+
+- **本批没有任何收益改善证据**。观测闭环不改供给面/执行；守卫 OFF ⇒ 生产交易行为逐字节不变。
+- 首个自然分歧日预计 **ET 17:02（CST 周六 06:02）**起落台账并**自动推送待裁提醒**（提醒≠启用）；落档时点（CST 19:10）尚无自然样本。
+- 激活仍 **BLOCKED 于用户独立裁决**（EXT 预注册臂供给面变量；裁决输入=§20.3 全分钟扫描＋自然影子台账＋时段语义复核；激活依据=交易时段正确性，不是收益）。
+
+### 21.6 未闭合排队（更新）
+
+1. 半日市守卫激活 BLOCKED 于用户独立裁决（不变；本批补齐其裁决输入的自动送达）。
+2. ~~shadow_registry 注册＋目录计数接入＋首命中提醒~~ → **本批闭合**。
+3. 半日市 13:00–16:00 ET 盘后起点扩窗（供给面扩张＋cron 小时段变更，独立裁决；不变）。
+4. `_pretrade_gate` 报价时间戳 freshness（残余暴露，独立批；不变）。
+5. §19.6 队列不变：资金激活 BLOCKED §10.4 A/B；EXT 黑名单 GUARD 激活 BLOCKED 用户裁 QCOM 禁令适用性；topup/self-managed/符号别名等低优先级同域收口；§15.7 输入修复队列逐批单变量。
+
+### 21.7 回滚
+
+- revert 本批 commit＋重启（注册表回退）；或仅删注册项（看板不可见但写方/提醒仍在）。
+- 停提醒/停写盘：`.env.us` `EXT_AFTERHOURS_HALF_DAY_SHADOW=0`（cron fresh-import 即生效，无分歧落盘⇒无首命中）；守卫回滚=`EXT_AFTERHOURS_HALF_DAY_GUARD=0`（本就 OFF）。
+- 与 §16/§17/§19/§20 各开关互不牵连；state 文件删除仅导致对应日重新提醒一次，无交易影响。
