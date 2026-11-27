@@ -58,3 +58,9 @@
 ## 7. 2026-11-26 SIM-only 边界补修（本地，未重启/未部署）
 
 §1/§2 的 LIVE-capable 闸口径补强：除 `is_live_capable_env()` 外，`no_trade_short_sim_experiment_active()` 复用 `evaluate_live_arm_gate(..., instruction_direction="SELL_SHORT")` 探测 live-arm real-target 镜像的结构能力；共享 LIVE 门可接受 SHORT 镜像或能力读取失败时，实验恒不生效。当前 `ALLOW=false`、probe=LONG，实验 active 与人群不变；cohort/n≥30 或 10 交易日/SHORT 0.3/LONG 拦截/硬停/四锁均不变。详 `docs/debates/DEB-20261126-correctness-evidence-and-reliability-fixes.md` §8。本批未提交/推送/重启/部署。
+
+## 8. 2026-11-26 复核补记：§7 已部署；未来跨 regime 镜像边界仍待前置补口
+
+§7 的“本地、未提交/未部署”保留为当时历史状态。实际代码提交 `29c4a757d` 已推送并于 22:53 CST 重启生效，部署文档提交为 `1e10c57e2`；服务 PID 109261，启动冒烟 7/7，详见 correctness DEB §9。
+
+独立复核确认当前 `ALLOW=false`、共享 LIVE 门 LONG/BUY-only、实验 active=true，本批无需回滚。但 `_mirror_instruction_to_live_if_allowed` 不读取指令的 `no_trade_short_exp` 标记；实验指令若从 NO_TRADE 等待到 RISK_OFF 轮，未来在共享门与 live context 均允许 SHORT 时仍可能进入镜像路径。当前三道 LONG/ALLOW/context 边界使其不可达，不是现役 LIVE 暴露。任何未来 SHORT live-arm 授权/实现前，必须先补按指令身份的镜像排除与跨 regime 回归测试。证据与限制详 correctness DEB §10。

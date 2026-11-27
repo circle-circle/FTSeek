@@ -209,3 +209,33 @@ PYTHONPATH=. ./venv/bin/python -m pytest tests/test_rfc080_research_pin.py \
 - 重启：22:53:04 CST 执行 `systemctl restart ftseek-us`；22:53:22 CST 新 MainPID `109261`，active/running，NRestarts=0。重启后只读复查持仓与出场账本同前。
 - 启动冒烟：`PYTHONPATH=. ./venv/bin/python scripts/startup_smoke_check.py --wait 90` 于 22:53:42 CST **7/7 exit0**：ConfigValidator、漂移检测、热重载、SSOT 审计 0 BLOCKING、双臂安全确认、退出快循环、零 Traceback/CRITICAL。日志 `/tmp/ftseek-opt-two-fixes-20261126-startup-smoke.log`。
 - 未验证：全量 pytest/GitHub Actions、生产自然日 K 并发落盘、未来 SHORT live-arm 自然镜像、完整 tick/订单簿回放、收益显著性检验仍未做；RFC-217 标记完整性仍 record-only 另案。下一步仅观察自然链路，不人工造单、不清 UNKNOWN 锁、不重置峰值/累计止损。
+
+## 10. 独立复核两项补丁（2026-11-26 23:16 CST，只读 + 文档；零代码/配置/订单/重启）
+
+### 10.1 结论：本批可保留，当前无需回滚；未来 SHORT live-arm 前仍有一项前置补口
+
+- 代码/部署：当前 HEAD/本地 `origin/main` 均为 `1e10c57e2`，代码提交 `29c4a757d` 已包含两处补丁。服务 MainPID 109261、22:53:22 CST 启动、NRestarts=0；两处工作树源码 SHA256 与 HEAD blob 逐项一致。§8/§9 的提交范围、测试日志与启动冒烟记录可核。
+- 日 K：`_daily_disk_lock` 已为 RLock；仓内 `_daily_kline_cache`/`_daily_kline_cache_time` 的生产者写入、dirty 置位、load/save 与 dirty 清除均受同锁保护（`futu_lv3_provider.py:1551,1609,1652,2057-2062`）。RLock 支持生产者持锁后重入 save；未发现另一条锁外写入路径。修复针对的是同实例 lost-dirty，不宣称已做生产自然并发验证。
+- SIM-only 当前态：服务进程环境实读 `AUTO_TRADE_ACCOUNT=sim`、`ALLOW_REAL_TRADING=false`；独立调用 `no_trade_short_sim_experiment_active()` 与配置旗标均为 true。当前共享 `evaluate_live_arm_gate` 在 `live_arm_gate.py:235-241` 仍硬性只接受 LONG/BUY，且 `_live_engineering_probe_context` 固定以 BUY 建上下文（`risk_gates.py:543-553`），所以当前没有 SHORT real-target 能力。新增 SHORT-capable 测试是 mock 共享门的未来防御契约，不是当前可达能力或自然 LIVE 证据。
+
+### 10.2 残余边界：跨 regime 的实验标记未接入镜像闸（既有缺口，本批未完全封闭，不是当前 LIVE 事故）
+
+- `_auto_execute_preflight` 只在当前 regime 为 NO_TRADE 时用 `no_trade_short_sim_experiment_active()` 决定整轮去留（`risk_gates.py:294-311`）。到 RISK_OFF 轮，`_nt_short_exp` 在 `auto_execute_flow.py:460-473` 又为 false，早先因确认/chase 等待而保留的实验指令可继续按普通 SIM 指令执行。
+- 实验标记确实持久化：实际库 11-25 有 10 条 `no_trade_short_exp` 指令，其中数条仍 PENDING。成功 SIM 执行后的 `_mirror_instruction_to_live_if_allowed` 只重跑共享 LIVE 门（`auto_execute_flow.py:2184-2224`），不读该标记。
+- 无 DB/无订单内存探针：给带 `no_trade_short_exp` 的 SELL_SHORT 指令注入 `gate_allowed=True`，现有镜像助手实际调用 mirror 并返回 id=999。日志 `/tmp/ftseek-verify-two-fixes-experiment-mirror-probe.log`。这证明标记不是镜像门输入。
+- **当前不可达**：ALLOW=false、共享门 LONG/BUY-only、live context BUY 三道现状均阻止 SHORT LIVE。只有未来共享门及 live context 同时允许 real-target SHORT 时，跨 NO_TRADE→RISK_OFF 路径才成为暴露。因此不回滚本批，但也不能写成“未来任何 SHORT live-arm 下恒 SIM-only”。
+- 前置建议：在任何 SHORT live-arm 授权/实现前，于镜像入口增加**按指令身份/metadata 的实验排除**，独立于当前 regime 和全局实验开关；覆盖 NO_TRADE 标记指令在 RISK_OFF 成功 SIM 后仍不镜像、metadata 缺失/损坏的明确语义及回归测试。不得仅靠当前环境探测替代指令级边界。
+
+### 10.3 测试与静态独立复跑
+
+顺序复跑、未并行 pytest：
+
+- 针对性：**40 passed**，`/tmp/ftseek-verify-two-fixes-targeted.log`。
+- 正确性：**229 passed / 7 deselected / 2 warnings**，`/tmp/ftseek-verify-two-fixes-correctness.log`。
+- 行为/LIVE：**455 passed**，`/tmp/ftseek-verify-two-fixes-behavior.log`。完整文件集合为 §7.5 八文件 + `tests/test_daily_loss_circuit.py`、`tests/playbook/test_live_arm_p0_contracts.py`、`tests/playbook/test_live_probe_lock_waiver.py`、`tests/playbook/test_live_probe_admission_exemption.py`、`tests/playbook/test_entry_data_bounded_fetch.py`。
+- 两源+两测试 `py_compile`、`scripts/check_undefined_names.py` 均 exit0：`/tmp/ftseek-verify-two-fixes-static.log`。启动冒烟原记录 `/tmp/ftseek-opt-two-fixes-20261126-startup-smoke.log` 为 7/7。
+
+### 10.4 文档状态与未验证
+
+- RFC-217 §7 原文仍停留在“本地、未提交/未部署”，与 §9、handoff 和实际服务状态冲突；已在该 RFC 追加部署/复核补记，不静默改写原历史段。
+- 本轮未跑全量 pytest/GitHub Actions，未做生产自然日 K 并发、未来 SHORT live-arm 自然验证或收益检验；455 项通过不覆盖 §10.2 的跨 regime 镜像用例。本批仅追加 correctness DEB、RFC-217 与 handoff 文档，未提交、未推送、未重启。

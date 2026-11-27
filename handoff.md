@@ -2,6 +2,14 @@
 
 > **写入约定（2026-11-11 起）**：每条交接必须带三件可核凭据 —— `**凭据**`（commit sha / 改动文件数，`git show --stat` 可核）、`**验证**`（可复跑命令 + 日志路径，不写“已通过”）、`**未验证**`（显式列出没验的部分，无则写“无”）。自述≠事实，这三行是给下一个人核的。
 
+## 2026-11-26 23:16 CST · 【两项补丁独立复核】可保留且当前无需回滚；测试全复现，补记跨 regime 实验镜像残余边界
+
+- **结论**：日 K lost-dirty 同锁修复成立，所有缓存/time/dirty 写入与 load/save 已同锁；SIM-only 补丁在当前环境保持实验 active=true，服务实读 AUTO=sim/ALLOW=false，当前共享门仍 LONG/BUY-only，零 SHORT LIVE 能力。代码提交 `29c4a757d`、部署文档 `1e10c57e2`、PID109261与两源码SHA均核实。**残余而非本批回归**：实验指令可从 NO_TRADE 留到 RISK_OFF，镜像助手不读 `no_trade_short_exp`；内存探针在 gate_allowed=true 时仍 mirror 标记指令。当前由 ALLOW=false、LONG/BUY-only、live context BUY 阻止，不能冒称未来任意 SHORT live-arm 下恒 SIM-only。RFC-217 §7 旧“未部署”状态已追加§8补记，不改历史原文。详 correctness DEB §10。
+- **凭据**：本批仅 correctness DEB 新增§10、RFC-217 新增§8与本条 handoff 共3个Markdown；零代码/config/DB写/订单/重启，未提交未推送，保留 DEB-20261125 其他会话 WIP。镜像探针 `/tmp/ftseek-verify-two-fixes-experiment-mirror-probe.log` 无DB/无订单，输出 `mirror_called=["US.TEST"]`；实际指令库只读确认10条实验标记且含PENDING。
+- **验证**：当前HEAD顺序独立复跑针对性**40 passed**、正确性**229 passed/7 deselected**、行为/LIVE**455 passed**；日志 `/tmp/ftseek-verify-two-fixes-targeted.log`、`...-correctness.log`、`...-behavior.log`，455完整文件清单见DEB§10.3。两源+两测试py_compile/undefined-names exit0，日志 `/tmp/ftseek-verify-two-fixes-static.log`；服务PID/环境/实验激活态与两源码HEAD SHA直接实读。
+- **未验证**：未跑全量pytest/GitHub Actions；未做生产自然日K并发、未来SHORT live-arm自然验证、完整tick/订单簿或收益检验。455项不含本次新识别的跨regime镜像用例；SHORT-capable原测试是mock未来共享门，不是当前自然能力证明。
+- **下一步**：本批保持部署，不回滚、不重复重启。任何未来SHORT live-arm授权/实现前，必须在镜像入口按指令metadata排除`no_trade_short_exp`，并覆盖NO_TRADE→RISK_OFF与metadata异常回归；当前仅观察原自然链，不改实验cohort/权限/阈值。**最后更新：2026-11-26。**
+
 ## 2026-11-26 22:54 CST · 【部署收口】日K lost-dirty 同锁 + RFC-217 SIM-only 镜像边界已重启生效；启动冒烟 7/7，代码已推送
 
 - **结论**：按用户「请重启、部署、提交、推送」执行本批两项正确性修复上线。`systemctl restart ftseek-us` 后 MainPID `109261`，22:53:22 CST 启动，active/running；启动冒烟 **7/7 exit0**。重启前后 SIM 持仓 BA/BABA/GS 三笔不变，LIVE 无仓；两套出场账本非 BOOKED intent / 非 TERMINAL leg 均 0。当前实验/权限边界不变，未新增策略门、未改 cohort/阈值/方向权限/四锁。
