@@ -1409,3 +1409,71 @@ RFC-217 归档：10 条带标记指令、3 笔成交、仅 1 笔已平 CAT `+$9.
 
 - §23.8 队列不变；健康空财报三态/来源状态/挑战者事实一致性/news UTC→ET 各自独立批单变量。
 - 短K ON 态的「震荡误读率」前后对比属 A/B 预注册指标，本批不测不声称。
+
+## 25. 实施记录 X（2026-11-27 · HK→US 时间差行业/趋势参考输入 · 影子采集先行 record-only · DA 注入未实施未激活）
+
+> 用户裁（2026-11-27）：「港股的波动趋势，不仅仅只是看个股，看行业和动态趋势，可以作为信息参考输入，
+> 打港股和美股的时间差」。承接 §23 DEB §4/§7#8「HK-US 联动采集器是否推进」待裁，**范围从单股 ADR 扩展到
+> 指数＋行业篮子＋动态趋势**。本批＝影子先行第一步（DEB-20261127-hk-us-sector-trend-context）：只读 OpenD
+> 快照落日内序列，**零判定消费**；DA 参考输入注入＝后续独立批（`DA_HK_CONTEXT` 默认 OFF＋§10.4 A/B），本批不实施。
+
+### 25.1 范围与采集面
+
+- 三层采集：①指数 HSI/HSTECH/HSCEI（HK.800000/800700/800100，含 high/low chg）；②8 行业等权篮子（32 成分股，
+  探针全 NORMAL）→ 等权 chg/中位数/离散度/breadth（涨/平/跌）/成交额；③动态趋势＝日内 chg 序列（~24 tick/日）＋
+  翻红/翻绿事件（相邻 tick 符号穿越 0）＋全日 rollup（从 tick_rows 幂等重算）。另落 7 ADR 港股腿。
+- **单日描述性实证**（2026-11-27 收盘 forced verify tick）：恒生科技 +6.45%、半导体篮子 **+14.86%（3/3 涨）**、
+  科技互联网 +5.47%（8/8 涨），而银行 -1.30%（1涨3跌）、能源 -1.84%（1涨2跌）——科技/半导体强、银行/能源弱的
+  **行业轮动**，单看个股（腾讯 +3.23%）无法呈现。此为单日描述性事实，**不构成传导强度证据**（§25.5）。
+- OTC ADR（TCEHY/MPNGY/XIAOMY）行情不可用已探针实证，只标 `OTC_UNAVAILABLE`；交易所上市 ADR 标
+  `EXCHANGE_LISTED_DEFERRED`（美股侧采集后续扩展）。ADR 映射与 `hkex_source.py::HK_STOCK_MAPPING` 同源（parity 契约钉死）。
+
+### 25.2 采集合同
+
+- 载体 `scripts/hk_market_context_collector.py::record_tick`；产物 `data/shadow/hk_us_linkage/<HK交易日>.json`（gitignored）。
+- 只读 `get_market_snapshot`（无订阅无K线，§23 §5 探针 ret_code=0）；`UNITS` 量纲声明（军规）；未知不归零（chg_pct 非法→None）。
+- 时段闸（CST=HKT 早/午盘＋两收盘锚）＋假日/停市闸（指数 update_time 日期≠今日∨sec_status≠NORMAL→stale 跳过）。
+- flock 锁内 RMW＋mkstemp/os.replace 原子写（复用 §23 范式）；HH:MM 去重＋MAX_TICK_ROWS=40；fail-safe 恒 exit0。
+- **计数轴＝HK 交易日数**（每日 1 文档 ticks=int≥1 计 1，非 ticks 累加）；`--force` 落 `_verify/`（glob 不递归不污染计数）；`--dry-run` 零写盘。
+- 注册表 `hk_us_linkage_context_shadow`（OBSERVING/min_n=60/USER_ADJUDICATION/intent=hk_us_linkage_context/config_key=None/stale_expected=False）。
+
+### 25.3 验证
+
+| 项 | 结果 | 凭据 |
+|---|---|---|
+| 采集器契约 | **48 passed** | `/tmp/rfc218_s25_newtests.log` |
+| 注册表相邻（intent 唯一/rfc207/目录计数/判据可见/meta 推送去重/看板守卫/EXT 风险注册） | **58 passed** | `/tmp/rfc218_s25_registry_adj.log` |
+| 变异（chg_pct→恒 0.0）→恢复 sha 核验 | **2 红→恢复 48 绿**，sha256 一致 | `/tmp/rfc218_s25_mutation_{red,green}.log`＋`_pre.sha256` |
+| 台账 crontab 守卫（loops ledgered/names carrier/no ghost） | **3 passed** | `tests/test_control_loop_ledger.py`（整组 1F＝既有幽灵 job_id `68cc76b16ebd` 基线存量，HEAD 同红，非本批引入） |
+| 挂载核对 `check_mounting()` | 本条目 **0 新告警**（全局 5 条均既有存量） | 进程内探针 |
+| py_compile venv＋cron python3.11 双解释器＋check_undefined_names | exit0×2＋rc0 | 进程内 |
+| cron 原命令手动跑（Fri 22:11 CST 窗外） | exit0 `skipped_session`（零写盘） | `logs/hk_market_context.log` |
+| 真实收盘 forced verify tick | `_verify/2026-11-27.json` 落盘（HSI +2.11%/HSTECH +6.45%/semis +14.86%） | `data/shadow/hk_us_linkage/_verify/` |
+
+- 未跑全量 pytest/CI，不声称全绿；既有台账幽灵 job_id 基线存量 record-only 不修（另案）。
+
+### 25.4 部署
+
+- 代码提交 `d5e47ba9c`（采集器＋48 契约＋注册表＋台账 `crontab-hk-market-context`）；DEB＋本节＋handoff 落档随后提交。
+- cron 两行（系统 crontab，CST=HKT）：`7,22,37,52 9-11,13-15 * * 1-5`＋`2 12,16 * * 1-5`，timeout 120，日志 `logs/hk_market_context.log`；
+  装机前备份 `/opt/ftseek/backups/crontab-20261127-221103-pre-hk-context.txt`（447 行，diff 仅新增）；首个真实 tick＝周一 2026-11-30 09:37 CST。
+- 注册表属 app/ ⇒ 随批重启：`systemctl restart ftseek-us` → 新 PID **212536**（22:14:00 CST）；启动冒烟 **7/7 exit0** `/tmp/rfc218_s25_startup_smoke.log`。
+- 重启前快照 `/tmp/rfc218_s25_pre_restart.json` 与重启后 `_post_restart.json` **除 PID 外逐项 IDENTICAL**
+  （SIM SHORT BA 23/BABA 47/GS 5、LIVE 0、outbox 22 全 BOOKED、PENDING 4403、今日 8 指令、被禁 PENDING 28 存量、exit_ledger 在途 0）；重启后日志 0 Traceback/CRITICAL。
+- DB 全程 `mode=ro`+`query_only`；零订单/付费 LLM/实验激活；`.env.us` 未改（采集器无开关，cron fresh-import）。
+
+### 25.5 收益边界（与 §9/§15/§22.8/§23.7/§24.5 一致）
+
+- **无任何收益证据**，纯观测面新增（record-only）。单日行业轮动只是描述性事实，**不构成 HK→US 传导强度/时滞/可交易性证据**。
+- 传导命中率/经济增量属预注册研究（n≥60 HK 交易日＋|chg|≥2% 子集＋无条件基线对比＋MDE）＋§10.4 A/B 的待验指标，本批不测不声称。
+- DA 注入激活须用户单独裁决，不与资金分布/其他输入变量捆绑；「采集到行业轮动」不得直接当「DA 更准/更赚」的证据。
+
+### 25.6 回滚
+
+- 删 cron 两行（产物留档；无 config 键，勿照 config_key 判停）；注册表条目/采集器可 revert `d5e47ba9c`＋重启。
+- 与 `DA_CAPITAL_CODE_FIX`/`DA_SHORTK_NA`/`DA_INPUT_FULL`/EXT 各开关互不牵连。
+
+### 25.7 未闭合排队
+
+- DA 参考输入注入（`DA_HK_CONTEXT`）BLOCKED §25.5 研究＋§10.4 A/B＋用户裁；美股侧 ADR 盘前/开盘采集、全市场 113 板块 breadth（plate API）、篮子成分动态维护各自后续扩展。
+- §23.8/§24.7 队列不变（adapter 同日语义/EXT dry 静默/watchlist fail-close/健康空财报/来源状态/挑战者一致性逐批单变量）。
