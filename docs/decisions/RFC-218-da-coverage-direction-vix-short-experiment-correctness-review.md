@@ -1619,3 +1619,76 @@ RFC-217 归档：10 条带标记指令、3 笔成交、仅 1 笔已平 CAT `+$9.
 - §25.7/§26.7 队列不变；**挑战者事实一致性**（「数据源状态」补 `_FULL` 白名单＋两角色同事件版本/同时点价格/弃权核）＝下一批独立单变量；news UTC→ET 另案。
 - 本批 ON 新段挑战者仍不可见（白名单缺口既有，未改）；审计「缺失」混淆采集失败/健康空的**采集端**区分属采集器域，本批只在呈现层补 FAILED/EMPTY，未改采集。
 - 来源状态 ON 态的「模型误判率」前后对比属 A/B 预注册指标，本批不测不声称。
+
+## 28. 实施记录 XIII（2026-11-28 · 挑战者事实一致性 · `DA_CHALLENGER_FACT_CONSISTENCY` 独立开关默认 OFF · 正式输入变量未激活）
+
+> 本节追加，不改 §§0–27 历史。承接 §27.7 输入修复队列（挑战者事实一致性＝来源状态之后的下一批单变量）。
+> 授权：用户裁「今日开盘，请核查继续下一步」＋「按照建议 继续执行合理优化落地」＋§15.7 队列；本批**影子就绪、不激活**——
+> 正式输入呈现变量（挑战者可见内容变化），激活 BLOCKED §10.4 单变量 A/B，不得当纯遥测直接上线。
+> 详细病灶/合同/边界见 DEB-20261128-da-challenger-fact-consistency。
+
+### 28.1 病灶（§15.7 锚点核实＋真实 checkpoint 精化）
+
+- skill 仓 `llm_synth._challenger_data_view`（旧锚 `2592-2619` → 当前 `2776-2820`）：`_FULL` 白名单含「资金面」「数据质量审计」
+  却**不含「数据源状态」** → 挑战者看不到分析师所见的源 FAILED/EMPTY/RENDER_DROPPED 状态，信息不对称：
+  无法核验分析师弃权（SKIP）是否因缺材料、无法据源失败反证「没有催化剂」类论断。
+- **真实精化（67 份冻结 raw，10 份含「## 数据源状态」）**：OFF 态该段非一律丢弃——段首 40 字常含 `- 研报: FAILED`/`- 社区情绪: …`，
+  与 `_TRUNC`（「最新新闻」「研报」「社区讨论」）**子串碰撞**：9/10 整段丢弃（无碰撞）、1/10（US.UNH）截断至 600＋标记（碰撞）。
+  即挑战者 OFF 要么看不到、要么只见残缺源状态；分析师恒见全量。§27 已扩分析师侧（`DA_SOURCE_STATUS_FULL`），挑战者侧白名单缺口留本批。
+- 事实边界（不夸大）：呈现层可见性/信息对称缺口，非已证明的生产误判事故。
+
+### 28.2 修复合同（只动挑战者可见性，采集/计算/分析师渲染一行不动）
+
+- `config.py` 新增独立开关 `DA_CHALLENGER_FACT_CONSISTENCY`（默认 0；刻意不复用 `DA_CAPITAL_CODE_FIX`/`DA_SHORTK_NA`/`DA_EARNINGS_TRISTATE`/`DA_SOURCE_STATUS_FULL`/`DA_INPUT_FULL`）。
+- `llm_synth._challenger_data_view`：`_FULL` 定义后、`_TRUNC` 前插入 `if getattr(config, "DA_CHALLENGER_FACT_CONSISTENCY", False): _FULL = _FULL + ("数据源状态",)`。
+- **OFF＝逐字节旧挑战者视图**（条件块不执行；丢弃/截断/回退 `[:4000]` 逐字保留）。
+- **ON＝只增「数据源状态」段全量放行**（`_FULL` 先于 `_TRUNC` 判 → 无论是否含「研报/社区讨论」关键词都全量，不再截断/丢弃）；
+  其余白名单段、`_TRUNC` 三段截断、未识别段丢弃、空视图/异常回退 `[:4000]`、`DA_CHALLENGER_FULL_DATA=0` 旧截断逐字节不动。
+- **隔离不变量**：ON 与 OFF 唯一差异＝「数据源状态」段；`on.replace(全量段, OFF段形态, 1) == off`（OFF 形态＝丢弃""或截断 600），67 真实全成立。
+
+### 28.3 两角色事实一致性核（§15.7「同事件版本/同时点价格/弃权是否因缺材料」）
+
+- **同事件版本/同时点价格（结构保证）**：`data_text = _format_data_for_prompt(collected)` 单一真源；分析师用 `data_text`，
+  挑战者用 `_challenger_data_view(data_text)`（`_run_challenger(result, data_text, …)`）→ 白名单段（含 ON 后数据源状态）逐字同源。
+  契约钉死：ON 挑战者所见「数据源状态」段 == 分析师 prompt 中该段（合成＋67 真实）。
+- **弃权是否因缺材料（可见性闭合）**：ON 后挑战者可见源 FAILED/EMPTY/RENDER_DROPPED → 可核验 `skip_reason` 与源失败论据。
+  本批只补可见性，不改挑战者评分/合并/门（`_merge_debate_results`/`signal_gate` 一行不动）；「反证更准/弃权更准」属 A/B 指标，本批不测不声称。
+- news UTC→ET 另案。
+
+### 28.4 验证（全 `PYTHONDONTWRITEBYTECODE=1`）
+
+| 项 | 结果 | 日志 |
+|---|---|---|
+| 新契约 `tests/test_da_challenger_fact_consistency.py` | **45 passed** | `/tmp/rfc218_s28_newtests.log` |
+| OFF 逐字节扫描（合成 16 组×env2×5 开关正交＋67 真实 OFF==备份＋ON 隔离） | **checks=502 fails=0 SWEEP_ALL_OK** | `/tmp/rfc218_s28_off_sweep.log` |
+| 变异（门控→`if True:`） | **8 红**→还原 sha 核验→**45 绿** | `/tmp/rfc218_s28_mutation_red.log`／`_restore_green.log` |
+| DA 相邻＋§27＋§28 | **1F/357P**；唯一失败＝既有 PROMPT_HASH 漂移 `80176956bfbb≠c7444d67ce58`（非本批引入） | `/tmp/rfc218_s28_adjacent.log` |
+| py_compile venv＋cron `python3.11` 双解释器×2 文件 | exit0×4 | `/tmp/rfc218_s28_transform.log` |
+| fresh-import 真实 env＋`check_undefined_names.py` | `DA_CHALLENGER_FACT_CONSISTENCY=False`（余开关亦 False）；rc0 | `/tmp/rfc218_s28_env_import_smoke.log` |
+
+- §27 测试 `test_challenger_whitelist_status_section_absent_current`（钉死缺口）随本批闭合更名
+  `test_challenger_whitelist_status_section_gap_closed_by_s28`（钉门控存在＋审计段在白名单＋默认 OFF 非全量）。
+- 本测试只验呈现层可见性正确，不证收益；未跑全量 pytest/CI。DB 未触；零订单/付费 LLM/激活。
+
+### 28.5 部署
+
+- 仓外 DA 两文件（`config.py`/`llm_synth.py`），carrier/cron fresh-import 即生效；**无 app/ 改动、无需重启**。
+- 备份 `*.bak-20261128-rfc218-challenger`＋SHA256：config pre=`9436e985c2af` post=`e309cbe460c6`；llm_synth pre=`223216d70dae` post=`3783eaad24d2`（pre＝§27 post，基线无漂移；备份=pre 逐字核验）。`.env.us` **未加** `DA_CHALLENGER_FACT_CONSISTENCY` 行（未设＝默认 OFF，生产逐字节不变）。
+- 仓内产物：`tests/test_da_challenger_fact_consistency.py`＋§27 测试更新＋DEB-20261128-da-challenger-fact-consistency＋本节＋handoff 条目，提交推送（sha 见 handoff 同日条目）。
+- 变换在 DA 主批结束后执行，脚本自检 pgrep 拒跑（00:33 CST 核无 DA 进程）。
+
+### 28.6 收益边界（与 §9/§15/§22.8/§23.7/§24.5/§25.5/§26.5/§27.5 一致）
+
+- **无任何收益证据**。呈现层信息对称≠盈利；ON 态挑战者 verdict/合并方向/confidence 行为变化未验证。
+- 激活须 §10.4 单变量 A/B（n≥120/≥20 独立 ET 日/预注册 MDE），且不与资金/短K/财报三态/源状态/其他输入变量捆绑。
+
+### 28.7 回滚
+
+- `.env.us` 加 `DA_CHALLENGER_FACT_CONSISTENCY=0`（或删行）→ 逐字节旧挑战者视图；或恢复备份（sha 核验）。
+- 与 `DA_CAPITAL_CODE_FIX`/`DA_SHORTK_NA`/`DA_EARNINGS_TRISTATE`/`DA_SOURCE_STATUS_FULL`/`DA_INPUT_FULL`/EXT 各开关互不牵连。
+
+### 28.8 未闭合排队
+
+- news UTC→ET 另案；事件预期差/价格响应/持仓期风险/执行可行性（用户优先补充二~五）属研究→可执行指令缺口，另案预注册。
+- HK→US 联动（§25）采集器已落地，首个真实 tick 周一 09:37 CST；DA 注入 `DA_HK_CONTEXT` 未建未激活，BLOCKED n≥60 HK 交易日＋行业级传导命中率研究＋§10.4 A/B＋用户单独裁决。
+- 本批 ON 态「挑战者误判率/弃权准确率」前后对比属 A/B 预注册指标，本批不测不声称。

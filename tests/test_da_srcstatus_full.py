@@ -362,14 +362,41 @@ def test_status_notes_invariant_to_input_full(input_full):
     assert "资金分布: RENDER_DROPPED" in sec and "基本面指标: FAILED" in sec
 
 
-# ── 7. 消费链现状 (挑战者白名单缺口=独立批, 本批不改, 如实钉死) ────────
+# ── 7. 消费链: 挑战者白名单缺口已由 §28 独立开关闭合 (默认 OFF, 生产行为不变) ────────
 
-def test_challenger_whitelist_status_section_absent_current():
-    # §15.7 挑战者事实一致性为独立批; 本批不动白名单. 钉死现状: 「数据源状态」不在 _FULL.
+def test_challenger_whitelist_status_section_gap_closed_by_s28():
+    # §15.7 挑战者事实一致性已由 RFC-218 §28 (DA_CHALLENGER_FACT_CONSISTENCY, 默认 OFF)
+    # 闭合: 白名单条件补「数据源状态」. 钉死: ① 门控独立开关存在; ② 审计段仍在白名单;
+    # ③ 默认 OFF 生产行为不变 — 源状态段不全量进挑战者视图 (无碰撞丢弃/碰撞截断, 非全量).
     import inspect
+    import os
     src = inspect.getsource(L._challenger_data_view)
-    assert "数据源状态" not in src
     assert "数据质量审计" in src  # 审计段在白名单 (互补口径挑战者可见)
+    assert "DA_CHALLENGER_FACT_CONSISTENCY" in src  # §28 独立开关门控
+    assert "数据源状态" in src  # §28 条件补白名单 (ON 才放行)
+    # 默认 OFF: 含「研报」碰撞的源状态段被截断 (非全量放行)
+    text = ("## 数据覆盖统计: 19/19 维度有效\n- 充分 ✓\n"
+            "## 数据源状态\n- 研报: FAILED(采集失败; 不等于无新闻/无情绪)\n"
+            + ("- 社区情绪: EMPTY(源成功但无结果)\n" * 70)
+            + "## 技术面\nMA5: 100.0\n")
+    old = getattr(C, "DA_CHALLENGER_FACT_CONSISTENCY", None)
+    old_env = os.environ.get("DA_CHALLENGER_FULL_DATA")
+    C.DA_CHALLENGER_FACT_CONSISTENCY = False
+    os.environ["DA_CHALLENGER_FULL_DATA"] = "1"
+    try:
+        view = L._challenger_data_view(text)
+        assert "原文截断, 挑战者仅需主旨" in view  # OFF 截断, 非全量
+        assert view.count("EMPTY(源成功但无结果)") < 70  # 未全量放行
+    finally:
+        if old is None:
+            if hasattr(C, "DA_CHALLENGER_FACT_CONSISTENCY"):
+                delattr(C, "DA_CHALLENGER_FACT_CONSISTENCY")
+        else:
+            C.DA_CHALLENGER_FACT_CONSISTENCY = old
+        if old_env is None:
+            os.environ.pop("DA_CHALLENGER_FULL_DATA", None)
+        else:
+            os.environ["DA_CHALLENGER_FULL_DATA"] = old_env
 
 
 # ── 8. 回滚态 ────────────────────────────────────────────────────────
