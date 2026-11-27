@@ -28,6 +28,11 @@ class TestDailyReviewGenerator:
         每次 pytest 跑到本文件即污染"当前日期"的生产报告。实锤: 14 篇 postmarket
         笔记 + 7 个 JSON 带假签名 (指纹 total_pnl: 250.0)。修复 = 输出三路径
         (reviews_dir/obsidian vault/writer 单例) 全部指向 tmp_path。
+
+        RFC-218 §22 (2026-11-27): 原 fixture 只有 realized_pnl(毛), 无 pnl_net/fees_est —
+        旧日报把毛当净, 该缺口被旧断言掩盖。现补齐 pnl_net/fees_est 成"完整旧数据",
+        原断言 (5/5/3) 逐字保留, 钉死"完整旧数据结果不变"; 未知净额路径由
+        test_summary_generation_unknown_net_excluded / _partial_unknown 单独钉死。
         """
         import sqlite3
         import app.review.daily_review as dr_mod
@@ -48,6 +53,7 @@ class TestDailyReviewGenerator:
                 decision_reason TEXT, source_type TEXT DEFAULT 'PLAYBOOK_SIM',
                 trade_mode TEXT DEFAULT 'simulate', mode TEXT DEFAULT 'normal',
                 owner_strategy TEXT, trace_id TEXT, mfe_pct REAL, mae_pct REAL,
+                pnl_net REAL, fees_est REAL,
                 created_at TEXT
             )
             """
@@ -57,8 +63,9 @@ class TestDailyReviewGenerator:
             win = i < 3
             conn.execute(
                 "INSERT INTO trade_records (trade_date, symbol, direction, entry_time, exit_time, "
-                "entry_price, exit_price, quantity, realized_pnl, pnl_pct, exit_reason, created_at) "
-                "VALUES (?, 'AAPL', 'LONG', ?, ?, 175.5, ?, 100, ?, ?, ?, ?)",
+                "entry_price, exit_price, quantity, realized_pnl, pnl_pct, exit_reason, "
+                "pnl_net, fees_est, created_at) "
+                "VALUES (?, 'AAPL', 'LONG', ?, ?, 175.5, ?, 100, ?, ?, ?, ?, 10.0, ?)",
                 (
                     today,
                     f"{today}T10:0{i}:00",
@@ -67,6 +74,7 @@ class TestDailyReviewGenerator:
                     450.0 if win else -550.0,
                     0.0256 if win else -0.0313,
                     'TP' if win else 'SL',
+                    (450.0 if win else -550.0) - 10.0,
                     f"{today}T11:0{i}:00",
                 ),
             )
@@ -108,6 +116,53 @@ class TestDailyReviewGenerator:
         assert summary['total_trades'] == 5
         assert summary['closed_trades'] == 5
         assert summary['winning_trades'] == 3
+
+    def test_summary_generation_unknown_net_excluded(self, setup_data):
+        """RFC-218 §22 P1-A: 毛已知/费未知/净未知 → 不可测, 不得当净利计胜场。
+
+        旧实现回退毛额 ⇒ 这 5 笔会被记 3 胜 (毛利当净利, 审计实锤的分叉)。
+        新合同: 未知=None 不入聚合, 绝不归零成"0 胜 0 负"以外的伪读数 —
+        winning/losing/win_rate/avg_pnl 分母=可测笔数(0), 覆盖面显式披露。
+        """
+        import sqlite3
+        conn = sqlite3.connect(setup_data)
+        conn.execute("UPDATE trade_records SET pnl_net=NULL, fees_est=NULL")
+        conn.commit()
+        conn.close()
+        generator = DailyReviewGenerator()
+        today = datetime.now().strftime('%Y-%m-%d')
+        summary = generator.generate(date=today)['summary']
+        assert summary['total_trades'] == 5
+        assert summary['closed_trades'] == 5
+        assert summary['net_measurable_n'] == 0
+        assert summary['net_unknown_count'] == 5
+        assert summary['winning_trades'] == 0
+        assert summary['losing_trades'] == 0
+        assert summary['total_pnl'] == 0
+        assert summary['win_rate'] == 0
+        # 毛口径仍如实披露 (供渲染), 不与净额混淆
+        assert summary['total_pnl_gross'] == 450.0 * 3 - 550.0 * 2
+
+    def test_summary_generation_partial_unknown_denominator(self, setup_data):
+        """RFC-218 §22 P1-A: 部分未知时, 胜率/均额分母=可测笔数, 不是总平仓笔数。"""
+        import sqlite3
+        conn = sqlite3.connect(setup_data)
+        # 2 笔亏损单净/费置空 → 不可测; 3 笔盈利单完整 → 可测
+        conn.execute(
+            "UPDATE trade_records SET pnl_net=NULL, fees_est=NULL WHERE realized_pnl < 0")
+        conn.commit()
+        conn.close()
+        generator = DailyReviewGenerator()
+        today = datetime.now().strftime('%Y-%m-%d')
+        summary = generator.generate(date=today)['summary']
+        assert summary['closed_trades'] == 5
+        assert summary['net_measurable_n'] == 3
+        assert summary['net_unknown_count'] == 2
+        assert summary['winning_trades'] == 3
+        assert summary['losing_trades'] == 0
+        assert summary['win_rate'] == 1.0  # 3/3, 不是 3/5
+        assert summary['total_pnl'] == 440.0 * 3
+        assert summary['avg_pnl'] == 440.0
     
     def test_suggestions_generation(self, setup_data):
         generator = DailyReviewGenerator()

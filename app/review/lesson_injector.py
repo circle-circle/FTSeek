@@ -284,11 +284,15 @@ class LessonInjector:
                         if is_premarket and trade.get('exit_price') and trade.get('exit_price') > 0:
                             premarket_trades.append(trade)
 
-                    if not observed_premarket or not premarket_trades:
-                        # 无反例或未结算都不是支持证据，confidence/expiry/计数原样保留。
+                    # RFC-218 §22 (P1-A): 未知净额样本剔除 — 与「未结算不是支持证据」同纪律,
+                    #   未知收益不得自证/自否经验 (旧 helper 缺费时回退毛额 ⇒ 毛赢被当净赢)。
+                    premarket_measurable = [t for t in premarket_trades
+                                            if self._trade_net_pnl(t) is not None]
+                    if not observed_premarket or not premarket_measurable:
+                        # 无反例/未结算/净额不可测都不是支持证据，confidence/expiry/计数原样保留。
                         pass
                     else:
-                        premarket_pnl = sum(self._trade_net_pnl(t) for t in premarket_trades)
+                        premarket_pnl = sum(self._trade_net_pnl(t) for t in premarket_measurable)
                         if premarket_pnl < 0:
                             new_confidence = min(1.0, old_confidence + 0.1)
                             validated += 1
@@ -305,9 +309,12 @@ class LessonInjector:
                         if (t.get('signal_strength', 0) or 0) >= 60
                         and t.get('exit_price') and t.get('exit_price') > 0
                     ]
-                    
-                    if high_signal_trades:
-                        avg_pnl = sum(self._trade_net_pnl(t) for t in high_signal_trades) / len(high_signal_trades)
+                    # RFC-218 §22 (P1-A): 同上 — 均值只在可测净额样本上计算。
+                    high_signal_measurable = [t for t in high_signal_trades
+                                              if self._trade_net_pnl(t) is not None]
+
+                    if high_signal_measurable:
+                        avg_pnl = sum(self._trade_net_pnl(t) for t in high_signal_measurable) / len(high_signal_measurable)
                         if avg_pnl < 0:
                             new_confidence = min(1.0, old_confidence + 0.05)
                             validated += 1
@@ -336,11 +343,14 @@ class LessonInjector:
             conn.close()
     
     @staticmethod
-    def _trade_net_pnl(trade: Dict) -> float:
-        net = trade.get('pnl_net')
-        if net is not None:
-            return float(net)
-        return float(trade.get('realized_pnl', 0) or 0) - float(trade.get('fees_est', 0) or 0)
+    def _trade_net_pnl(trade: Dict) -> Optional[float]:
+        """RFC-218 §22 (P1-A): 统一未知净额合同 (与官方评分器/日报同源 net_basis)。
+
+        已知净保留; 毛费双已知才回算; 否则 None (未知≠0≠毛)。
+        旧实现缺费按 0 扣 ⇒ 回退毛收益; validate_lessons 现剔除 None 样本, 不更新分值/有效期。
+        """
+        from app.review.net_basis import resolve_net_pnl
+        return resolve_net_pnl(trade)
 
     def _is_premarket(self, entry_time: str) -> Optional[bool]:
         """带时区转ET；无时区按生产入口的ET，不将其错置到下一交易日。"""

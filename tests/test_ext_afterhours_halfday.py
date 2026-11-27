@@ -433,3 +433,65 @@ def test_first_hit_corrupt_state_treated_empty(canon_ledger, push_spy):
     _state_path(canon_ledger).write_text("{not json")
     mod._record_afterhours_halfday_divergence("afterhours")
     assert len(push_spy) == 1
+
+
+# ── RFC-218 §22 (P1-B): 真实 False 合同 — 失败不登记 notified, 有限重试 ──────
+
+def test_first_hit_push_false_pending_then_retry_next_tick(canon_ledger, monkeypatch):
+    """hub 返回 False (不抛异常) ⇒ 不登记 notified; 当日后续分歧 tick 重试; 成功后去重。"""
+    import app.push.hub as hub
+    calls, results = [], [False, True]
+
+    def _spy(text, *a, **kw):
+        calls.append(text)
+        return results.pop(0)
+    monkeypatch.setattr(hub, "push_text_safe", _spy)
+    mod._record_afterhours_halfday_divergence("afterhours")
+    state = json.loads(_state_path(canon_ledger).read_text())
+    assert state["2026-11-27"]["notified"] is False
+    assert state["2026-11-27"]["attempts"] == 1
+    mod._record_afterhours_halfday_divergence("afterhours")   # ticks=2, 非首日 tick 也重试
+    assert len(calls) == 2
+    state = json.loads(_state_path(canon_ledger).read_text())
+    assert isinstance(state["2026-11-27"], str)               # 成功=旧 ISO 格式
+    mod._record_afterhours_halfday_divergence("afterhours")   # ticks=3 → 去重
+    assert len(calls) == 2
+    assert _read_ledger(canon_ledger)["ticks"] == 3
+
+
+def test_first_hit_push_false_exhausts_finite_attempts(canon_ledger, monkeypatch):
+    """连续 False ⇒ 最多 3 次尝试, 之后不再推 (防无限刷屏), 待处理条目保留。"""
+    import app.push.hub as hub
+    calls = []
+
+    def _spy(text, *a, **kw):
+        calls.append(text)
+        return False
+    monkeypatch.setattr(hub, "push_text_safe", _spy)
+    for _ in range(5):
+        mod._record_afterhours_halfday_divergence("afterhours")
+    assert len(calls) == mod._FIRST_HIT_PUSH_MAX_ATTEMPTS == 3
+    state = json.loads(_state_path(canon_ledger).read_text())
+    assert state["2026-11-27"]["notified"] is False
+    assert state["2026-11-27"]["attempts"] == 3
+    assert _read_ledger(canon_ledger)["ticks"] == 5           # 台账不受提醒失败影响
+
+
+def test_first_hit_false_then_new_day_pushes_again(canon_ledger, monkeypatch):
+    """当日重试耗尽不影响新分歧日 = 新事件 (按日去重, 不是全局噤声)。"""
+    import app.push.hub as hub
+    calls = []
+
+    def _spy(text, *a, **kw):
+        calls.append(text)
+        return False if "2026-11-27" in text else True
+    monkeypatch.setattr(hub, "push_text_safe", _spy)
+    for _ in range(4):
+        mod._record_afterhours_halfday_divergence("afterhours")
+    assert len(calls) == 3
+    monkeypatch.setattr(mod, "_now_et", _at(datetime(2026, 12, 24, 17, 0, tzinfo=ET)))
+    mod._record_afterhours_halfday_divergence("afterhours")
+    assert len(calls) == 4 and "2026-12-24" in calls[3]
+    state = json.loads(_state_path(canon_ledger).read_text())
+    assert state["2026-11-27"]["attempts"] == 3
+    assert isinstance(state["2026-12-24"], str)

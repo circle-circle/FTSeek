@@ -26,6 +26,7 @@ from typing import Dict, List, Any, Optional
 
 from app.core.paths import get_trade_records_db, get_decisions_db, get_rejections_db, get_reviews_dir
 from app.review.source_attribution import aggregate_source_direction, playbook_source_sql
+from app.review.net_basis import resolve_net_pnl
 from app.playbook.instruction_attribution import (
     AMBIGUOUS,
     canonical_plan_direction,
@@ -508,10 +509,13 @@ class DailyReviewGenerator:
         # 1. 胜率表现 (25%)
         # DEB-20260903 #128: 胜率改净口径 COALESCE(pnl_net, realized_pnl) —
         # 原毛口径与 :822 "pnl_net 为唯一对外口径" 矛盾, 毛赢净亏交易被误计为胜场
-        winning = [t for t in trades
-                   if ((t.get('pnl_net') if t.get('pnl_net') is not None else t.get('realized_pnl')) or 0) > 0]
+        # RFC-218 §22 (P1-A): 净口径再收紧 — 旧 COALESCE 在净缺失时回退毛额 (费已知也不扣),
+        #   毛赢净亏/净额未知交易仍被误计为胜场。现统一 resolve_net_pnl 合同:
+        #   未知净额既不算胜也不算负, 分母=可测已平仓数。完整旧数据结果不变。
         closed = [t for t in trades if t.get('exit_price') and t.get('exit_price') > 0]
-        win_rate = len(winning) / len(closed) if closed else 0
+        _measurable_nets = [p for p in (resolve_net_pnl(t) for t in closed) if p is not None]
+        winning = [p for p in _measurable_nets if p > 0]
+        win_rate = len(winning) / len(_measurable_nets) if _measurable_nets else 0
         # 映射: 0%→0, 50%→5, 70%→8, 90%+→10
         wr_score = min(10, win_rate * 12)
         breakdown['win_rate_score'] = round(wr_score, 2)
@@ -1153,6 +1157,8 @@ class DailyReviewGenerator:
                 'max_single_net_pnl': 0,
                 'max_single_symbol': '',
                 'single_trade_share_abs': None,
+                'net_measurable_n': 0,
+                'net_unknown_count': 0,
             }
             base['trades'] = []
             if capital:
@@ -1163,9 +1169,16 @@ class DailyReviewGenerator:
             return base
         
         # 净口径 (2026-08-01, DEB-20260730 D1: pnl_net 为唯一对外口径)
-        # 旧行无 pnl_net → 回退 realized_pnl (与 exit_scorecard 同 COALESCE 语义)
-        net_pnls = [(t.get('pnl_net') if t.get('pnl_net') is not None else (t.get('realized_pnl', 0) or 0))
-                    for t in closed_trades]
+        # RFC-218 §22 (P1-A): 统一未知净额合同 (app/review/net_basis, 与官方评分器 _row_net 同源) —
+        #   旧实现在净缺失时回退毛额 realized_pnl (费已知也不扣) ⇒ 毛利被当净利上屏。
+        #   现在: 已知净保留; 毛费双已知才回算; 未知=None 不入聚合 (绝不归零/绝不用毛顶替),
+        #   以 net_measurable_n/net_unknown_count 显式披露覆盖面。
+        #   完整旧数据 (pnl_net 在场) 结果逐字不变; 胜率/均额分母=可测笔数。
+        _measurable_pairs = [(t, p) for t, p in
+                             ((t, resolve_net_pnl(t)) for t in closed_trades) if p is not None]
+        net_pnls = [p for _, p in _measurable_pairs]
+        net_measurable_n = len(_measurable_pairs)
+        net_unknown_count = len(closed_trades) - net_measurable_n
         total_pnl = sum(net_pnls)
         # 毛口径 (2026-11-04 修复): 本行 sum 的是净额, 而推送格式化器把 total_pnl 印成"毛 $"。
         #   2026-08-01 DEB-20260730 D1 把 total_pnl 从毛改净后, 日报口径未同步 → 屏幕上
@@ -1176,13 +1189,13 @@ class DailyReviewGenerator:
         # 单笔集中度 (2026-11-04 P3, 纯事实陈述, 不是门): 近 21 个交易日(≥3笔)里 7 天
         #   (33%) 的最大单笔绝对值 ≥ 当日净亏绝对值 ⇒ 单日符号由 1 笔决定, 不适合当决策依据
         #   (A3 已裁「单日集中度不加门」——这里只披露, 不拦任何动作)。
-        _max_i = max(range(len(net_pnls)), key=lambda i: abs(net_pnls[i])) if net_pnls else None
-        max_single_net = net_pnls[_max_i] if _max_i is not None else 0.0
-        max_single_symbol = closed_trades[_max_i].get('symbol') if _max_i is not None else ''
+        _max_pair = max(_measurable_pairs, key=lambda tp: abs(tp[1])) if _measurable_pairs else None
+        max_single_net = _max_pair[1] if _max_pair is not None else 0.0
+        max_single_symbol = _max_pair[0].get('symbol') if _max_pair is not None else ''
         single_share = (abs(max_single_net) / abs(total_pnl)) if total_pnl else None
         winning = [pnl for pnl in net_pnls if pnl > 0]
         fees_total = sum(t.get('fees_est', 0) or 0 for t in closed_trades)
-        fake_wins = sum(1 for t, p in zip(closed_trades, net_pnls)
+        fake_wins = sum(1 for t, p in _measurable_pairs
                         if (t.get('realized_pnl', 0) or 0) > 0 >= p)
 
         # MFE 捕获效率: 退出引擎是利润核心, 衡量实际落袋占最大有利波动的比例。
@@ -1201,13 +1214,17 @@ class DailyReviewGenerator:
             'closed_trades': len(closed_trades),
             'trades': list(closed_trades),
             'winning_trades': len(winning),
-            'losing_trades': len(closed_trades) - len(winning),
+            'losing_trades': net_measurable_n - len(winning),
             'total_pnl': round(total_pnl, 2),
-            'win_rate': round(len(winning) / len(closed_trades), 4),
-            'avg_pnl': round(total_pnl / len(closed_trades), 2),
-            'pnl_basis': 'net: COALESCE(pnl_net, realized_pnl) (DEB-20260730 D1)',
+            'win_rate': round(len(winning) / net_measurable_n, 4) if net_measurable_n else 0,
+            'avg_pnl': round(total_pnl / net_measurable_n, 2) if net_measurable_n else 0,
+            'pnl_basis': 'net: resolve_net_pnl (known net | gross-fees both known | unknown excluded) '
+                         '(DEB-20260730 D1, RFC-218 §22)',
             'fees_total': round(fees_total, 2),
             'total_pnl_net': round(total_pnl, 2),
+            # 覆盖面披露 (RFC-218 §22): 净额聚合只覆盖可测样本; unknown>0 时 毛-费≠净 是覆盖差
+            'net_measurable_n': net_measurable_n,
+            'net_unknown_count': net_unknown_count,
             # 毛利口径 (2026-11-04): 仅供渲染"毛|费|净"三列, 不参与任何裁决/门禁
             'total_pnl_gross': round(total_pnl_gross, 2),
             # 单笔集中度 (纯披露): share = |最大单笔净额| / |当日净额|; 净额为 0 时为 None
@@ -1215,7 +1232,7 @@ class DailyReviewGenerator:
             'max_single_symbol': max_single_symbol,
             'single_trade_share_abs': (round(single_share, 4) if single_share is not None else None),
             'winning_trades_net': len(winning),
-            'win_rate_net': round(len(winning) / len(closed_trades), 4),
+            'win_rate_net': round(len(winning) / net_measurable_n, 4) if net_measurable_n else 0,
             'fake_wins': fake_wins,
             'avg_holding_period': round(sum(t.get('holding_hours') or 0 for t in closed_trades) / len(closed_trades), 1) if closed_trades else 0,
             'mfe_capture_efficiency': round(sum(_cap_ratios) / len(_cap_ratios), 4) if _cap_ratios else None,

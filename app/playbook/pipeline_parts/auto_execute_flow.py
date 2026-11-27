@@ -1114,7 +1114,21 @@ def run_playbook_auto_execute(
                         #   为 1.0 中性基准, 限幅 [0.6, 1.4] 防止单点误判造成极端仓位.
                         #   max_position_pct 仍是硬上限, confidence 只在其内部分配.
                         _inst_ps = inst.get("position_size") or 0
-                        if _inst_ps <= 0 and _new_sl > 0:
+                        # RFC-218 §22 (P1-C): NO_TRADE 实验轮 + SHORT + 跨轮携带正股数
+                        #   (上一轮 reprice 已写 position_size 但暂缓未下单, 本轮 SELECT * 回读)
+                        #   ⇒ 原 `ps<=0` 条件会整块跳过 regime 重评/实验 sizing/cohort 写入,
+                        #   携带股数绕过实验数量与标记。现强制走下方同一 SSOT 重算 —
+                        #   **不是把携带股数再乘 0.3** (上轮可能已按 RISK_OFF/实验缩过,
+                        #   再乘=双重缩小); compute_position_size 从风险基数重算天然幂等。
+                        #   非实验轮 (_nt_short_exp=False) 逐字节零变化。
+                        _nt_exp_resizing = (_nt_short_exp and _inst_ps > 0
+                                            and str(_dir).upper() in ("SELL_SHORT", "SHORT"))
+                        if (_inst_ps <= 0 or _nt_exp_resizing) and _new_sl > 0:
+                            if _nt_exp_resizing:
+                                logger.info(
+                                    f"[playbook] {inst['symbol']} NO_TRADE实验轮跨轮携带 "
+                                    f"position_size={_inst_ps} → 同源重算 (防绕过实验sizing/cohort)"
+                                )
                             _risk_base = _resolve_sizing_base(pb_cfg)  # R4 SSOT: 富途实时净值
                             _risk_pct = float(pb_cfg.get("risk_pct", 0.5))
                             _max_pos_pct = float(pb_cfg.get("max_position_pct", 0.06))

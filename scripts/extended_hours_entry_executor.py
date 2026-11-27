@@ -218,6 +218,10 @@ EXT_BLACKLIST_DIR = ROOT / "data" / "shadow" / "ext_blacklist"
 #   首命中提醒只在真实生产路径触发, 防测试误发真实推送)。
 _EXT_BLACKLIST_CANON = ROOT / "data" / "shadow" / "ext_blacklist"
 
+# RFC-218 §22 (P1-B): 首命中提醒有限重试上限 — push_text_safe(sync=True) 返回 bool,
+#   False=失败不抛异常。失败不登记 notified, 留待处理条目后续命中重试, 封顶防无限刷屏。
+_FIRST_HIT_PUSH_MAX_ATTEMPTS = 3
+
 
 def _ext_blacklist_guard_enabled() -> bool:
     """独立开关 (进程 env, cron 每 tick fresh-import): 默认 OFF, 未知值 fail-closed 旧行为。
@@ -317,10 +321,11 @@ def _record_ext_blacklist(symbol, session, item, blocked, source=None):
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=1))
         os.replace(str(tmp), str(path))
-        # RFC-218 §19: 首个自然命中 → 待裁提醒 (只提示裁决, 不自动激活)。仅真实生产路径 +
-        #   新建行触发; 按标的去重 (state 文件), 异常绝不影响下单路径。
-        if _is_new:
-            _notify_ext_blacklist_first_hit(symbol, session, blocked)
+        # RFC-218 §19: 首个自然命中 → 待裁提醒 (只提示裁决, 不自动激活)。仅真实生产路径;
+        #   按标的去重 (state 文件), 异常绝不影响下单路径。
+        # RFC-218 §22 (P1-B): 每次命中都调用 (不再只限新建行) — helper 内按标的去重+失败重试;
+        #   原实现首推失败后后续 tick 永不重试 ⇒ 待裁事项静默丢失。
+        _notify_ext_blacklist_first_hit(symbol, session, blocked)
     except Exception as exc:      # 埋点禁静默: 宁可打一行日志, 也不要"影子悄悄不落盘"
         print(f"[ext_entry] blacklist shadow 落盘失败: {type(exc).__name__}: {exc}")
 
@@ -332,6 +337,11 @@ def _notify_ext_blacklist_first_hit(symbol, session, blocked):
     普通待裁队列, 目录也不被 _count_samples 计数 ⇒ 首命中只能靠人工看目录。本函数在首个命中
     落盘后经 app/push hub (push_text_safe, 异常永不上抛) 发一次性提醒, 按标的去重。
     只在真实生产路径触发 (hermetic 测试 monkeypatch EXT_BLACKLIST_DIR 到 tmp ⇒ 跳过, 防误发)。
+
+    RFC-218 §22 (P1-B) 送达合同: push_text_safe(sync=True) 返回 bool, **False=失败不抛异常**。
+    成功才登记 notified (ISO 时间戳, 旧格式保留); False → 留待处理条目
+    {notified:False, attempts:N, last_attempt:ts}, 后续命中重试, attempts≥3 停止 (防刷屏);
+    抛异常 → 不写 state (既有契约)。旧字符串条目=已通知, 直接去重。
     """
     if EXT_BLACKLIST_DIR != _EXT_BLACKLIST_CANON:
         return
@@ -341,17 +351,33 @@ def _notify_ext_blacklist_first_hit(symbol, session, blocked):
             state = json.loads(state_path.read_text())
         except (OSError, ValueError):
             state = {}
-        if not isinstance(state, dict) or symbol in state:
+        if not isinstance(state, dict):
             return
+        entry = state.get(symbol)
+        if isinstance(entry, str):      # 旧格式 = 已成功通知
+            return
+        _attempts = 0
+        if isinstance(entry, dict):
+            if entry.get("notified"):
+                return
+            _attempts = int(entry.get("attempts") or 0)
+            if _attempts >= _FIRST_HIT_PUSH_MAX_ATTEMPTS:
+                return
         from app.push.hub import push_text_safe
         _mode_txt = "blocked(守卫ON)" if blocked else "shadow(守卫OFF)"
-        push_text_safe(
+        _ok = push_text_safe(
             f"[EXT黑名单·待裁] 首个自然命中 {symbol} ({session}, {_mode_txt})。"
             f"EXT_BLACKLIST_GUARD 激活须用户单独裁决 (RFC-218 §17/§19, 预注册臂供给面变量); "
             f"本提醒≠启用。台账 data/shadow/ext_blacklist/ ; 裁决输入=§17.4 历史差分+影子台账"
             f"+「QCOM 禁令是否仍成立」复核。",
             sync=True)
-        state[symbol] = _now_et().isoformat()
+        _ts = _now_et().isoformat()
+        if _ok:
+            state[symbol] = _ts
+        else:
+            state[symbol] = {"notified": False, "attempts": _attempts + 1, "last_attempt": _ts}
+            print(f"[ext_entry] blacklist first-hit 推送失败 (第{_attempts + 1}/"
+                  f"{_FIRST_HIT_PUSH_MAX_ATTEMPTS}次), 保留待处理后续重试: {symbol}")
         state_path.write_text(json.dumps(state, ensure_ascii=False))
     except Exception as exc:
         print(f"[ext_entry] blacklist first-hit 提醒失败 (不影响交易): "
@@ -978,10 +1004,11 @@ def _record_afterhours_halfday_divergence(session):
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=1))
         os.replace(str(tmp), str(path))
-        # RFC-218 §21: 首个自然分歧日 → 待裁提醒 (提醒≠启用)。仅真实生产路径 + 新建日文档
-        #   触发; 按 ET 日去重 (state 文件); 异常绝不影响下单路径。
-        if int(doc.get("ticks") or 0) == 1:
-            _notify_ext_afterhours_halfday_first_hit(day, _mode == "blocked")
+        # RFC-218 §21: 首个自然分歧日 → 待裁提醒 (提醒≠启用)。仅真实生产路径;
+        #   按 ET 日去重 (state 文件); 异常绝不影响下单路径。
+        # RFC-218 §22 (P1-B): 每个分歧 tick 都调用 (不再只限 ticks==1) — helper 内按日去重+
+        #   失败重试; 原实现首推失败后当日后续 tick 永不重试 ⇒ 待裁事项静默丢失。
+        _notify_ext_afterhours_halfday_first_hit(day, _mode == "blocked")
     except Exception as exc:      # 埋点禁静默: 宁可打一行日志, 也不要"影子悄悄不落盘"
         print(f"[ext_entry] afterhours half-day shadow 落盘失败: {type(exc).__name__}: {exc}")
 
@@ -993,6 +1020,10 @@ def _notify_ext_afterhours_halfday_first_hit(day, blocked):
     待裁队列; 本函数在首个分歧日落盘后经 app/push hub (push_text_safe, 异常永不上抛) 发
     一次性提醒, 按 ET 日去重 (半日市每日=一个独立事件, 不按 tick 重复推)。
     只在真实生产路径触发 (hermetic 测试 monkeypatch DIR 到 tmp ⇒ 跳过, 防误发)。
+
+    RFC-218 §22 (P1-B) 送达合同: 与黑名单 helper 同 — 成功才登记 notified; False 留待处理
+    条目 {notified:False, attempts:N, last_attempt:ts} 后续分歧 tick 重试, attempts≥3 停止;
+    抛异常不写 state; 旧字符串条目=已通知。
     """
     if EXT_AFTERHOURS_HALF_DAY_DIR != _EXT_AFTERHOURS_HALF_DAY_CANON:
         return
@@ -1002,18 +1033,34 @@ def _notify_ext_afterhours_halfday_first_hit(day, blocked):
             state = json.loads(state_path.read_text())
         except (OSError, ValueError):
             state = {}
-        if not isinstance(state, dict) or day in state:
+        if not isinstance(state, dict):
             return
+        entry = state.get(day)
+        if isinstance(entry, str):      # 旧格式 = 已成功通知
+            return
+        _attempts = 0
+        if isinstance(entry, dict):
+            if entry.get("notified"):
+                return
+            _attempts = int(entry.get("attempts") or 0)
+            if _attempts >= _FIRST_HIT_PUSH_MAX_ATTEMPTS:
+                return
         from app.push.hub import push_text_safe
         _mode_txt = "blocked(守卫ON)" if blocked else "shadow(守卫OFF)"
-        push_text_safe(
+        _ok = push_text_safe(
             f"[EXT盘后半日市·待裁] 首个自然分歧日 {day} ({_mode_txt})。"
             f"今日 NYSE 提前收盘, 静态盘后窗 17:00-19:59 ET 对已收市市场放行; "
             f"EXT_AFTERHOURS_HALF_DAY_GUARD 激活须用户单独裁决 (RFC-218 §20/§21, "
             f"预注册臂供给面变量); 本提醒≠启用。台账 data/shadow/ext_afterhours_halfday/ ; "
             f"裁决输入=§20.3 全分钟扫描+影子台账+时段语义复核。",
             sync=True)
-        state[day] = _now_et().isoformat()
+        _ts = _now_et().isoformat()
+        if _ok:
+            state[day] = _ts
+        else:
+            state[day] = {"notified": False, "attempts": _attempts + 1, "last_attempt": _ts}
+            print(f"[ext_entry] afterhours half-day first-hit 推送失败 (第{_attempts + 1}/"
+                  f"{_FIRST_HIT_PUSH_MAX_ATTEMPTS}次), 保留待处理后续重试: {day}")
         state_path.write_text(json.dumps(state, ensure_ascii=False))
     except Exception as exc:
         print(f"[ext_entry] afterhours half-day first-hit 提醒失败 (不影响交易): "

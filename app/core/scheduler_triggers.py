@@ -1328,6 +1328,11 @@ def _format_daily_review(report: dict) -> str:
             _money = f"• 总盈亏：净 ${pnl_net:+.2f} | 费 ${_fees:.2f}（旧 JSON 无毛额, 不回填）"
         else:
             _money = f"• 总盈亏：毛 ${_gross:+.2f} | 费 ${_fees:.2f} | 净 ${pnl_net:+.2f}"
+        # RFC-218 §22 (P1-A): 未知净额披露 — 净额/净胜率只覆盖可测样本; unknown>0 时
+        #   毛-费≠净 是覆盖差不是矛盾, 必须明示 (旧 JSON 无 net_unknown_count 键 → 不打印)。
+        _net_unknown = summary.get('net_unknown_count') or 0
+        if _net_unknown:
+            _money += f"（{_net_unknown} 笔净额未知, 未计入净额/净胜率）"
         # 跨夜分账 (2026-11-04): overnight_risk 早已由 daily_review._analyze_overnight_risk 产出,
         #   但此前只写 Obsidian 笔记, 推送里看不到 ⇒ 一次隔夜跳空会把当日净额整体拉负却无解释。
         _ov = report.get('overnight_risk') or {}

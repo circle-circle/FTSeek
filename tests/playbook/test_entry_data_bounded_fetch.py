@@ -370,6 +370,66 @@ def test_no_trade_long_defer_recovers_when_regime_lifts(env):
     assert sizing.call_args.kwargs["regime_mult"] == 0.3
 
 
+def _nt_context(regime, vix):
+    data = {"regime": regime, "vix": vix, "assessed_at": f"read-{vix}"}
+    return SimpleNamespace(**data, score=-5, to_dict=lambda: dict(data))
+
+
+def test_no_trade_exp_cross_round_carried_size_recomputed(env):
+    """RFC-218 §22 (P1-C): 上轮 reprice 写正 position_size 但暂缓未下单, 本轮 SELECT * 回读
+    ⇒ NO_TRADE 实验轮必须强制同源重算 (regime 重评 + 实验 sizing + cohort), 不得原样保留。"""
+    env.cfg["no_trade_short_sim_experiment_enabled"] = True
+    env.row.update(direction="SELL_SHORT", position_size=40, market_regime="risk_off")
+    env.router.get_full_market_context.return_value = {"price": 101, "atr": 3, "prev_close": 100}
+    env.regime_assess.side_effect = [_nt_context("RISK_ON", 18), _nt_context("NO_TRADE", 22),
+                                     _nt_context("NO_TRADE", 22)]
+    # 同源 SSOT 桩: 从风险基数×乘数重算 (不是从携带股数出发) ⇒ 天然幂等
+    sizing = Mock(side_effect=lambda *a, **kw: int(40 * kw["regime_mult"]))
+    env.module("app.playbook.instruction_generator", compute_position_size=sizing)
+    env.module("app.risk.capital_safety", get_capital_safety_system=lambda: SimpleNamespace(
+        get_position_multiplier=lambda: 1, get_risk_multiplier=lambda: 1))
+    result = env.run_auto(real_preflight=True, reprice=True)
+    assert result["executed"] == 1
+    sizing.assert_called_once()
+    assert sizing.call_args.kwargs["regime_mult"] == 0.3
+    assert env.service.execute_instruction.call_args.kwargs["custom_params"]["position_size"] == 12
+    # cohort 标记必须落库 (旧路径携带正股数时整块跳过 ⇒ 缺标)
+    cohort = next(call.args[1]["no_trade_short_exp"]
+                  for call in env.db.merge_instruction_metadata.call_args_list
+                  if "no_trade_short_exp" in call.args[1])
+    assert cohort["vix"] == 22 and cohort["score"] == -5
+
+
+def test_no_trade_exp_carried_experiment_size_not_double_shrunk(env):
+    """携带股数已是上轮实验 sizing 结果 (12) ⇒ 重算仍 12, 不是 12×0.3=3 (双重缩小)。"""
+    env.cfg["no_trade_short_sim_experiment_enabled"] = True
+    env.row.update(direction="SELL_SHORT", position_size=12, market_regime="risk_off")
+    env.router.get_full_market_context.return_value = {"price": 101, "atr": 3, "prev_close": 100}
+    env.regime_assess.side_effect = [_nt_context("RISK_ON", 18), _nt_context("NO_TRADE", 22),
+                                     _nt_context("NO_TRADE", 22)]
+    sizing = Mock(side_effect=lambda *a, **kw: int(40 * kw["regime_mult"]))
+    env.module("app.playbook.instruction_generator", compute_position_size=sizing)
+    env.module("app.risk.capital_safety", get_capital_safety_system=lambda: SimpleNamespace(
+        get_position_multiplier=lambda: 1, get_risk_multiplier=lambda: 1))
+    result = env.run_auto(real_preflight=True, reprice=True)
+    assert result["executed"] == 1
+    assert sizing.call_args.kwargs["regime_mult"] == 0.3
+    assert env.service.execute_instruction.call_args.kwargs["custom_params"]["position_size"] == 12
+
+
+def test_carried_size_outside_experiment_round_unchanged(env):
+    """非实验轮 (_nt_short_exp=False): 携带正股数逐字节保留, 不触发重算 (零行为变化)。"""
+    env.cfg["no_trade_short_sim_experiment_enabled"] = False
+    env.row.update(direction="SELL_SHORT", position_size=40)
+    env.router.get_full_market_context.return_value = {"price": 101, "atr": 3, "prev_close": 100}
+    sizing = Mock(return_value=12)
+    env.module("app.playbook.instruction_generator", compute_position_size=sizing)
+    result = env.run_auto(reprice=True)
+    assert result["executed"] == 1
+    sizing.assert_not_called()
+    assert env.service.execute_instruction.call_args.kwargs["custom_params"]["position_size"] == 40
+
+
 def test_owner_timeout_never_publishes_late_regime_audit(env):
     env.regime_context.to_dict = lambda: {"regime": "RISK_ON"}
     block = env.blocked(env.regime_context)

@@ -83,7 +83,11 @@ class WatchlistManager:
             raw = get_config().get_dotted("risk.global_blacklist", []) or []
             return [str(s).replace("US.", "") for s in raw]
         except Exception as e:
-            logger.debug(f"[BLACKLIST] watchlist_manager 读取全局黑名单失败: {e}")
+            # RFC-218 §22 (P2): debug→warning+栈 — 内部吞异常必须对外层守卫/日志可见,
+            #   否则配置异常静默变空名单, 外层 warning 接不到真实异常。
+            #   行为保持 fail-open 返回空列表 (异常即停新仓须另行裁决, 本批不改)。
+            logger.warning(f"[BLACKLIST] watchlist_manager 读取全局黑名单失败 (fail-open 空名单): {e}",
+                           exc_info=True)
             return []
 
     def _apply_exclusions(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

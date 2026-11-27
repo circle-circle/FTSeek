@@ -233,9 +233,14 @@ def test_executor_guard_default_off_empty_set():
     assert "if _final_bl_set and " in src   # 空集短路
 
 
-def test_guardrail_skip_latch_pending_only(db):
+def test_guardrail_skip_latch_pending_only(db, monkeypatch):
     """mark_instruction_guardrail_skip 闩: 只转 PENDING∧executed=0 行;
     已执行/booked/非 PENDING 态绝不触碰 (兜底不得伤在途/已成交)。"""
+    # RFC-218 §22 测试隔离修补: 本测试验 DB 闩, 不验写入侧守卫。§19 激活后
+    # .env.us PLAYBOOK_BLACKLIST_FINAL_GUARD=1 会泄漏进未桩环境 → save_instruction
+    # 写入侧把 QCOM/LCID/TME 直接转 SKIP, 污染"已执行不改"断言 (生产闩本身正确)。
+    # 显式 OFF 隔离开关, 与 .env 激活态解耦。
+    _flag(monkeypatch, "0")
     # 三种行: PENDING(可转) / executed=1(已认领) / booked(有单号)
     iid_pending = db.save_instruction(_inst("US.QCOM", "BUY",
                                             decision_id="DA-20261127-PEND"))
@@ -259,8 +264,10 @@ def test_guardrail_skip_latch_pending_only(db):
     assert _row(db, iid_booked)["direction"] == "BUY"    # booked 不改
 
 
-def test_guardrail_skip_latch_non_pending_state(db):
+def test_guardrail_skip_latch_non_pending_state(db, monkeypatch):
     """非 PENDING 态 (如 SKIPPED_EXISTING_POSITION) 不被本闩改写."""
+    # RFC-218 §22 测试隔离修补: 同上 — DB 闩测试与写入侧开关激活态解耦。
+    _flag(monkeypatch, "0")
     iid = db.save_instruction(_inst("US.QCOM", "BUY", decision_id="DA-20261127-SEP"))
     conn = db._conn()
     conn.execute(

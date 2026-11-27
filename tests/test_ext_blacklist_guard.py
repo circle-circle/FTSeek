@@ -373,7 +373,7 @@ def test_first_hit_notify_skipped_off_canon(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "EXT_BLACKLIST_DIR", tmp_path / "other")
     pushes = []
     monkeypatch.setattr("app.push.hub.push_text_safe",
-                        lambda msg, **kw: pushes.append(msg))
+                        lambda msg, **kw: pushes.append(msg) or True)
     mod._notify_ext_blacklist_first_hit("US.QCOM", "premarket", False)
     assert pushes == []
 
@@ -384,8 +384,9 @@ def test_first_hit_notify_fires_once_per_symbol(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "EXT_BLACKLIST_DIR", canon)
     monkeypatch.setattr(mod, "_EXT_BLACKLIST_CANON", canon)
     pushes = []
+    # RFC-218 §22: 真实 bool 合同 — spy 必须返回 True (成功), 不再是 append 的 None
     monkeypatch.setattr("app.push.hub.push_text_safe",
-                        lambda msg, **kw: pushes.append(msg))
+                        lambda msg, **kw: pushes.append(msg) or True)
     mod._notify_ext_blacklist_first_hit("US.QCOM", "premarket", False)
     assert len(pushes) == 1
     mod._notify_ext_blacklist_first_hit("US.QCOM", "afterhours", False)  # 同标的去重
@@ -415,10 +416,92 @@ def test_record_new_row_triggers_first_hit_notify(tmp_path, monkeypatch):
     monkeypatch.delenv("EXT_BLACKLIST_GUARD", raising=False)
     pushes = []
     monkeypatch.setattr("app.push.hub.push_text_safe",
-                        lambda msg, **kw: pushes.append(msg))
+                        lambda msg, **kw: pushes.append(msg) or True)
     mod._record_ext_blacklist("US.QCOM", "premarket",
                               {"chg": 4.0, "px": 100.0, "vol": 500000},
                               blocked=False, source="research")
     assert len(pushes) == 1
     mod._record_ext_blacklist("US.QCOM", "premarket", None, blocked=False)
     assert len(pushes) == 1   # 非新建行不重发
+
+
+# ── RFC-218 §22 (P1-B): 真实 False 合同 — 失败不登记 notified, 有限重试 ──────
+
+def _bl_state_path(canon):
+    return canon.parent / "ext_blacklist_first_hit_notified.json"
+
+
+def _bl_canon(tmp_path, monkeypatch):
+    canon = tmp_path / "ext_blacklist"
+    monkeypatch.setattr(mod, "EXT_BLACKLIST_DIR", canon)
+    monkeypatch.setattr(mod, "_EXT_BLACKLIST_CANON", canon)
+    return canon
+
+
+def test_first_hit_push_false_not_notified_then_retry_succeeds(tmp_path, monkeypatch):
+    """hub 返回 False (不抛异常) ⇒ 不得登记 notified; 下次命中重试; 成功后去重。"""
+    canon = _bl_canon(tmp_path, monkeypatch)
+    pushes, results = [], [False, True]
+
+    def _spy(msg, **kw):
+        pushes.append(msg)
+        return results.pop(0)
+    monkeypatch.setattr("app.push.hub.push_text_safe", _spy)
+    mod._notify_ext_blacklist_first_hit("US.QCOM", "premarket", False)
+    state = json.loads(_bl_state_path(canon).read_text())
+    assert state["US.QCOM"]["notified"] is False
+    assert state["US.QCOM"]["attempts"] == 1
+    mod._notify_ext_blacklist_first_hit("US.QCOM", "premarket", False)   # 重试
+    assert len(pushes) == 2
+    state = json.loads(_bl_state_path(canon).read_text())
+    assert isinstance(state["US.QCOM"], str)                             # 成功=旧 ISO 格式
+    mod._notify_ext_blacklist_first_hit("US.QCOM", "premarket", False)   # 已成功 → 去重
+    assert len(pushes) == 2
+
+
+def test_first_hit_push_false_exhausts_finite_attempts(tmp_path, monkeypatch):
+    """连续 False ⇒ 最多 3 次尝试, 之后不再推 (防无限刷屏), 待处理条目保留。"""
+    canon = _bl_canon(tmp_path, monkeypatch)
+    pushes = []
+    monkeypatch.setattr("app.push.hub.push_text_safe",
+                        lambda msg, **kw: pushes.append(msg) or False)
+    for _ in range(5):
+        mod._notify_ext_blacklist_first_hit("US.QCOM", "premarket", False)
+    assert len(pushes) == mod._FIRST_HIT_PUSH_MAX_ATTEMPTS == 3
+    state = json.loads(_bl_state_path(canon).read_text())
+    assert state["US.QCOM"] == {"notified": False, "attempts": 3,
+                                "last_attempt": state["US.QCOM"]["last_attempt"]}
+
+
+def test_first_hit_legacy_string_state_still_dedups(tmp_path, monkeypatch):
+    """旧格式 (ISO 字符串) = 已通知 ⇒ 不推 (完整旧 state 行为不变)。"""
+    canon = _bl_canon(tmp_path, monkeypatch)
+    canon.mkdir(parents=True, exist_ok=True)
+    _bl_state_path(canon).write_text(json.dumps({"US.QCOM": "2026-11-27T08:00:00-05:00"}))
+    pushes = []
+    monkeypatch.setattr("app.push.hub.push_text_safe",
+                        lambda msg, **kw: pushes.append(msg) or True)
+    mod._notify_ext_blacklist_first_hit("US.QCOM", "premarket", False)
+    assert pushes == []
+
+
+def test_record_subsequent_tick_retries_after_push_false(tmp_path, monkeypatch):
+    """写方每个命中 tick 都调 helper ⇒ 首推 False 后, 非新建行 tick 也能重试成功。"""
+    canon = _bl_canon(tmp_path, monkeypatch)
+    monkeypatch.delenv("EXT_BLACKLIST_GUARD", raising=False)
+    pushes, results = [], [False, True]
+
+    def _spy(msg, **kw):
+        pushes.append(msg)
+        return results.pop(0)
+    monkeypatch.setattr("app.push.hub.push_text_safe", _spy)
+    mod._record_ext_blacklist("US.QCOM", "premarket",
+                              {"chg": 4.0, "px": 100.0, "vol": 500000},
+                              blocked=False, source="research")
+    assert len(pushes) == 1
+    assert json.loads(_bl_state_path(canon).read_text())["US.QCOM"]["notified"] is False
+    mod._record_ext_blacklist("US.QCOM", "premarket", None, blocked=False)   # 非新建行
+    assert len(pushes) == 2                                                   # 仍重试
+    assert isinstance(json.loads(_bl_state_path(canon).read_text())["US.QCOM"], str)
+    mod._record_ext_blacklist("US.QCOM", "premarket", None, blocked=False)
+    assert len(pushes) == 2                                                   # 成功后去重
