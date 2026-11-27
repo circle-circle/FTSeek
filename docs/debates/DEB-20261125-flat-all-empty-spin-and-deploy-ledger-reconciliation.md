@@ -363,3 +363,39 @@ Qwen独立跨模块核查，主线程实际读关键函数、日志和指定trad
 - **实际重启/冒烟**：`systemctl restart ftseek-us` → 服务14:57:37 CST启动，PID36694→55482，active/running，NRestarts0。随即 `PYTHONPATH=. ./venv/bin/python scripts/startup_smoke_check.py --wait 90` → **7/7 exit0**（启动段14:57:41），日志 `/tmp/ftseek-opt-20261126/startup-smoke.log`；ConfigValidator/漂移检测/热重载/SSOT/双臂安全/退出快循环/零Traceback-CRITICAL均通过。
 - **后核**：三仓id/方向/股数/入价/入时完全一致，stoploss JSON完整内容一致；出场/入账未决仍0，重启期间全量源码/配置SHA无变化。快照 `/tmp/ftseek-opt-20261126/restart-postcheck.json`。Kimi只读独立核服务与7项冒烟、复跑exit0，静态确认首层改为无终态DB写入的transient审计、第二层非SHORT乘数仍0.0。
 - **未验证/口径限度**：休市无自然NO_TRADE执行/反转后的LONG成交，不声称已自然验证或收益改善；mtime仅证明在途源码早于旧启动、此重启未新增它们，不足以证明全部懒加载模块或测试由旧进程执行，纠正11.6中过宽的「14源码/测试已加载」措辞。冒烟证明启动设施/模式/快循环，不证明各策略完整保护。后续11-27半日市按原实验cohort与判据观察，不改参数或补回历史SKIP。
+
+## 12. 外部 DA 策略审查复核（2026-11-26 21:3x CST，只读核查 + 文档落档）
+
+### 12.1 总结论
+
+对另一 Agent 提出的六项 DA/执行链分析，以 HEAD `2bfaea477` 复核源码、配置、原始 checkpoint、生产日志和只读数据库。**机制判断大多成立，但实施建议不能原样执行**：① 当前费用配置与示例不同；② SIM 最终数量预占、UNKNOWN 保锁和三档 RR 已部分落地；③ TP 吞咽已有生产实例，但近期已平样本没有已实现 TP 损益差；④ 严格忠实执行原价轴已由 RFC-215 封闭，不得借“契约一致性”恢复。未读取仓外生产 `llm_synth.py`，本节不评价生产 prompt/challenger 本体质量。
+
+### 12.2 逐条复核
+
+1. **DA 原案与执行方案分离：确认，但仅限实际桥接重建路径。** `_select_horizon` 与确定性 `compute_instruction_values` 重选 horizon、entry/SL/TP；原 `confirmation/invalidation` 等继续透传。`entry_archetype_routing_enabled=false`（配置 1814）、`chase_cap_enforce_enabled=true`（1809）均有真实消费语义。直接 `save_instruction` 路径不能纳入同一概括。既有 `price_ledger.py:81-167` 已保存 planned/effective/fill 三档价格、RR、数量与在险金额，`reprice_audit` 保存转换证据；后续应补统一报表和缺口，不另造一套三档账本。
+2. **时效端到端契约缺口：确认且有生产实证，不只是内存构造。** 原始 `data/da_checkpoint/2026-11-18/US.MU.json` 的 `valid_until=2026-11-18T16:00:00-05:00`，`execution_plan` 明写当日了结；trade 1934 实际 11-18 09:56:42 ET 以 705 入场，11-20 09:30:17 ET 以 `OVERNIGHT_GAP_STOP` 出场，净 -260.79。故不能说“DA 数日预测被半小时强退”，本例恰好是当日期限未成为机器约束而跨日持有。
+3. **重价后 6% 单名帽：结构确认。** `auto_execute_flow.py:1090-1091,1269` 仅在没有股数时 sizing，已有股数重价后不再按 `max_position_pct` 截断；执行 admission 不检查该帽，后续 80% 日额与 30% broker 帽不能替代 6% 单名帽。60 股由 $100 重价至 $104 后名义 $6,240>$6,000 的例子成立；未统计生产发生次数。
+4. **admission 后缩仓：调用顺序确认，$5,500 示例过时，预算口径须拆开。** `playbook_service.py:1422-1455` 先二审，`:1463-1468` 风险缩仓，`:1953-1965` gap 半仓，`:2094-2125` 最终数量下单及 SIM preflight。当前 `min_notional_usd=2500`、`fee_gate_enforce=false`（配置 1882/1894），名义/费用判据只进 `would_reject`，不是 $5,500 硬地板。auto_execute 轮内 `_new_notional` 及成功累加使用缩仓前值（`:1810-1815,2111-2115`），属于保守高估；但 SIM account reserve 使用最终数量，portfolio heat 也不是成功后的 $6,000 预留。固定往返佣金 $3.98 从 $6,000 的 6.63bps 到 $3,000 的 13.27bps 算术正确，但只是固定费用组成部分，不是完整费用。恢复最终费用硬门会改变 11-06 用户明确关闭费用拦截的现行行为，须独立裁决，不能伪装成纯正确性修复。
+5. **portfolio heat 同轮预留：限定确认。** `portfolio_heat.py:24,67-69,121-122` 的 20s 缓存与逐候选判断可在前一笔 20s 内成交后复用旧 open risk；仅受理/UNKNOWN 尚未进 `open_positions`，所以不占 heat。反向边界：SIM 提交由 account thread+flock 串行化，其他符号在 UNKNOWN/SUBMITTED/FILLED_UNBOOKED/LEGACY_LOCKED 时被 `account_unresolved_entry` 暂缓；SIM marker 保留至精确终态与入账。因此不能把“SIM 完全无预占”作为事实，也不能另建第二套 UNKNOWN 账本。历史 heat 很少绑定且本轮无生产超帽计数。
+6. **成交后 TP RR：机制及生产实例确认；既有记录需纠错，行为优先级不升。** LONG 100/95/107.5 成交 100.5 后 RR=1.2727<1.5 成立；SHORT 对称。`exit_engine.py:747-783` 用实际 fill 与绝对 SL/TP 重算并跳过固定 TP，无后续恢复固定 TP。BABA trade 1950 的生产日志 `logs/ftseek_us.log-20261126:7181` 为 RR 1.476923<1.5，与 metadata 同锚。三档 RR 与 `_tp_rr_gate` 已存在，不是待新建埋点。
+7. **退出 profile 与 BE 可成交侧：源码机制确认。** horizon/ATR bucket 决定初始 SL/TP；33/33 因子 BE 武装均为 MFE 0.4%；`exit_engine.py:111-165` 按条件顺序及方向回退选规则，换序可改变 TIME/MAX_HOLD/trailing，属于既有优先级设计而非可静默重排的 bug。adaptive trailing 是 SIM-only 且只用于 trailing-enabled 因子；W_WEEK 净水下豁免覆盖 TIME/EOD/DEAD_SIGNAL/MAX_HOLD，包含入场当日。BE 的 active/passive 与限价仍以 last 为侧别基准（`exit_monitor_flow.py:1025-1050`），bid/ask 用于遥测；LONG floor 100.10/last 100.12/bid 100.05 会发 active 100.10 卖限价但不能立即吃 bid，3s 后可转 market。该路径证明分类/等待语义，不证明实际净亏或改按 bid/ask 必然更赚。
+
+### 12.3 对 §11.1 两句读数的独立更正
+
+- **确认 TTL 覆盖**：直接只读重算 42 笔近期 DA 成交，只有 30 笔同时具备 `entry_confirm.confirmed_at` 与原 `confirmation.ttl_min`；这 30 笔均无超龄，最大 38.641 分钟，TTL 范围 60–390 分钟；另 12 笔缺 `confirmed_at` 或 TTL，不能表述为“42 笔全部已验证”。BABA 为 38.101 分钟<180 分钟，单笔结论不变。故“新增统一硬年龄门”仍无依据，但时效字段缺失/UNKNOWN 披露是实缺口。
+- **TP 样本结构**：12 笔 `_tp_rr_gate.swallowed=true` 实为 **11 已平+1 未平（BABA）**。11 笔已平退出分别是 SL_BREAKEVEN 6、SL_TRAIL_LOCK 3、DEAD_SIGNAL_EXIT 1、PRE_CLOSE_EXIT 1，§11.1“全部经 BE/trail lock 出场”不准确。按落库 MFE 口径，11 笔原 TP 距离约 7.26%–8.69%，记录 MFE 仅 0.2077%–1.6899%，均未达 TP，故“这些已平样本的 TP 已实现损益差为 0”仍成立；未平 BABA 不结算未来结局，也不把 MFE 代理夸大为完整 tick 证明。
+
+### 12.4 验证、边界与处置顺序
+
+- 隔离契约测试：`tests/test_playbook_price_ledger.py` + SIM UNKNOWN/终态预占 + gap 后最终数量守卫，**12 passed**；日志 `/tmp/ftseek-da-review-20261126-targeted-tests.log`。未跑全量 pytest。
+- SQLite 均 `mode=ro` + `PRAGMA query_only=ON`；直接读取 MU checkpoint、BABA 日志与 trade/instruction 投影。未做全量逐笔反事实、真实订单簿回放或收益显著性检验。
+- **建议顺序**：先以 record-only 对最终订单快照核 6% 单名帽与 4% heat 一致性，复用现有 price ledger/SIM 身份账本；再复用现有遥测分析 BE last 与可成交侧分歧；时效字段缺失明确 UNKNOWN；TP 只保留现有契约观测，不优先改行为。
+- **明确不做**：不恢复 $5,500/费用硬门，不新建 UNKNOWN 账本，不降 min_tp_rr、拉远 SL/TP、恢复严格原价执行或 entry-archetype 路由，不调 chase/BE/trailing，不取消/减半隔夜。任何行为变更另案、一次一变量并遵守 C4；本节零代码、零配置、零订单、零重启。
+
+## 13. 独立复核回写：RFC-217 边界与样本归因（2026-11-26 22:3x CST，只读）
+
+- 详细复核见 `docs/debates/DEB-20261126-correctness-evidence-and-reliability-fixes.md` §7；本节只回写与本 DEB §8/RFC-217 直接相关的结论。
+- **SIM-only 闸口径**：`is_live_capable_env()` 只定义 `AUTO=real AND ALLOW=true`；live_manual_arm 镜像路径可 `target_env="real"`。隔离复现显示 `AUTO=sim + ALLOW=true` 时实验可 active 而该函数为 false。当前生产 ALLOW=false、probe LONG，无当前 LIVE 暴露；但“LIVE-capable 恒不生效”不能扩大解释为任何 real-target 镜像路径恒不生效。建议闸口径显式限定或覆盖 live-arm 能力；本轮未改代码/配置。
+- **cohort 与收益**：11-25 标记指令 10 条、执行 3 条，含 1 条方向 SKIP；已平实验仅 CAT1949 净 +$9.96，BABA/GS 未平。trade metadata 标记计数 0，outbox 仅 GS BOOKED，CAT/BABA 靠 decision_id 关联。n=1 已平远低于 n≥30/10 交易日；11-25 总已平 +$215 中 +$205.04 为旧仓，不能归给实验。
+- **凭据/验证**：只读 DB `/tmp/ftseek-audit-db-readonly-20261126.log`；SIM-only 隔离复现 `/tmp/ftseek-audit-sim-only-gate-20261126.log`；行为/研究子集 236 passed `/tmp/ftseek-audit-behavior-20261126.log`。
+- **未验证/不做**：未做未来 live-arm 自然验证、完整 tick 回放或收益显著性检验；不改开关/方向权限/阈值/peak/tripped/UNKNOWN，不写库、不下单、不重启。标记完整性建议 record-only 另案；实验维持原结算与硬停。
