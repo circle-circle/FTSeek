@@ -226,3 +226,127 @@ def test_deep_analyzer_flag_off_byte_identical_legacy():
     """flag-off: 错误分布 + 空分时 → 旧 {_error: capital_flow data empty} 形态不变."""
     cap = _da_capital(ERROR, {"code": "US.X", "data": []}, fix=False)
     assert cap == {"_error": "capital_flow data empty"}
+
+
+# ── 4. RFC-218 §19 完整有效性合同 (异常矩阵 + provider 溯源) ───────────
+#   §18.2-A: 原 any(四 inflow 键) 把单字段 payload 补零成「假完整」→ 八键完整∧数值∧
+#            有限∧非 bool 才有效; §18.2-B: provider 提前补零分不清真实零/缺失 →
+#            capital_fields_missing 溯源键, 非空即拒。
+import math  # noqa: E402
+
+PARTIAL = {"code": "US.PART", "capital_in_super": 5.0}        # 仅 1 inflow 键
+STRING = {**ZERO, "capital_in_big": "123"}                    # 字符串值
+BOOL = {**ZERO, "capital_in_big": True}                       # bool (float(True)=1.0 陷阱)
+NAN = {**ZERO, "capital_in_big": float("nan")}
+INF = {**ZERO, "capital_in_big": float("inf")}
+PROV_MISSING = {**VALID, "capital_fields_missing": ["capital_in_mid"]}  # 八键在但上游缺值
+PROV_EMPTY = {**VALID, "capital_fields_missing": []}          # 八键全有效
+
+_INVALID = [PARTIAL, STRING, BOOL, NAN, INF, PROV_MISSING]
+_INVALID_IDS = ["partial", "string", "bool", "nan", "inf", "prov_missing"]
+
+
+@pytest.mark.parametrize("payload", _INVALID, ids=_INVALID_IDS)
+def test_flag_on_invalid_payload_falls_back(payload):
+    """flag-ON: 部分字段/字符串/bool/NaN/inf/上游缺值 → 不补零伪装完整, 走分时 fallback."""
+    out = _render(payload, FLOW, fix=True)
+    assert len(out) == 1 and out[0].startswith(_FALLBACK_HEAD)
+    assert _FORMAL_HEAD not in out[0]
+
+
+@pytest.mark.parametrize("payload", _INVALID, ids=_INVALID_IDS)
+def test_validator_rejects_invalid(payload):
+    """单一真源校验器: 异常 payload 一律 False (deep_analyzer 惰性导入同源)."""
+    assert L._capital_dist_valid(payload) is False
+
+
+def test_validator_accepts_valid_zero_prov_empty():
+    """真实有效 / 真实全零 / 溯源清单空 → True (零是读数, 非缺失)."""
+    assert L._capital_dist_valid(VALID) is True
+    assert L._capital_dist_valid(ZERO) is True
+    assert L._capital_dist_valid(PROV_EMPTY) is True
+
+
+def test_flag_on_prov_empty_renders_formal():
+    """八键全有效 + 溯源清单空 → 正式块恢复 (与无溯源键的归档 payload 等价)."""
+    out = _render(PROV_EMPTY, FLOW, fix=True)
+    assert out[0].startswith(_FORMAL_HEAD)
+
+
+def test_flag_off_ignores_provenance_key():
+    """flag-OFF 仍走旧 code==0 门, capital_fields_missing 不影响 (逐字节旧行为)."""
+    assert _render(PROV_EMPTY, FLOW, fix=False)[0].startswith(_FALLBACK_HEAD)
+    assert _render(PROV_MISSING, FLOW, fix=False)[0].startswith(_FALLBACK_HEAD)
+
+
+@pytest.mark.parametrize("payload", _INVALID, ids=_INVALID_IDS)
+def test_deep_analyzer_flag_on_invalid_degrades(payload):
+    """deep_analyzer 规则降级与 llm_synth 同口径: 异常 payload 不写 net_main_flow."""
+    cap = _da_capital(payload, FLOW, fix=True)
+    assert "net_main_flow" not in cap
+
+
+def test_deep_analyzer_flag_on_prov_empty_writes_net_main():
+    cap = _da_capital(PROV_EMPTY, FLOW, fix=True)
+    assert "net_main_flow" in cap
+
+
+def test_archived_valid_no_provenance_still_restores():
+    """归档 35/35 恢复不变量: 八字段数值 + 无溯源键 (旧 provider 形态) 仍判有效."""
+    assert "capital_fields_missing" not in VALID
+    assert L._capital_dist_valid(VALID) is True
+    assert _render(VALID, FLOW, fix=True)[0].startswith(_FORMAL_HEAD)
+
+
+# ── 5. provider 侧溯源纯函数 (无 futu 上下文, dict row 即可单测) ────────
+_PROVIDER = "/root/.hermes/skills/futuapi/scripts/quote"
+_PROVIDER_COMMON = "/root/.hermes/skills/futuapi/scripts"
+try:
+    if _PROVIDER not in sys.path:
+        sys.path.insert(0, _PROVIDER)
+    if _PROVIDER_COMMON not in sys.path:
+        sys.path.insert(0, _PROVIDER_COMMON)
+    import get_capital_distribution as P
+except Exception:
+    P = None
+
+_prov_skip = pytest.mark.skipif(P is None, reason="futuapi provider 不可用")
+
+
+@_prov_skip
+def test_provider_all_valid_empty_missing():
+    row = {k: 1.0 for k in P._CAP_KEYS}
+    assert P._capital_fields_missing(row) == []
+
+
+@_prov_skip
+def test_provider_real_zero_not_flagged():
+    """真实零 (int 0) ≠ 缺失: 八字段全 0 → 清单空 (区别于缺键补零)."""
+    row = {k: 0 for k in P._CAP_KEYS}
+    assert P._capital_fields_missing(row) == []
+
+
+@_prov_skip
+def test_provider_partial_flags_other_seven():
+    row = {"capital_in_super": 5.0}
+    miss = P._capital_fields_missing(row)
+    assert "capital_in_super" not in miss
+    assert len(miss) == 7
+
+
+@_prov_skip
+@pytest.mark.parametrize("bad", [None, True, "N/A", float("nan"), float("inf")],
+                         ids=["none", "bool", "non_numeric", "nan", "inf"])
+def test_provider_invalid_value_flagged(bad):
+    """缺键/None/bool/非法字符串/NaN/inf 在补零前被记缺 (消费者据此拒假完整)."""
+    row = {k: 1.0 for k in P._CAP_KEYS}
+    row["capital_in_big"] = bad
+    assert "capital_in_big" in P._capital_fields_missing(row)
+
+
+@_prov_skip
+def test_provider_numeric_string_accepted():
+    """数值字符串可表达真实数 → 不记缺 (与消费者 float 口径一致)."""
+    row = {k: 1.0 for k in P._CAP_KEYS}
+    row["capital_in_big"] = "123.5"
+    assert "capital_in_big" not in P._capital_fields_missing(row)

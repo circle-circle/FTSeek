@@ -876,3 +876,184 @@ RFC-217 归档：10 条带标记指令、3 笔成交、仅 1 笔已平 CAT `+$9.
 1. 观察 `data/shadow/ext_blacklist/` 自然命中（周检哨兵已登记，dormant 不误报）；有命中即提交用户裁决激活。
 2. §15.7 输入修复队列不变，逐批单变量；资金修复激活仍 BLOCKED 于 §10.4 A/B。
 3. Playbook §16 守卫生产自然拦截样本继续观察（`[BLACKLIST]` INFO）。
+
+---
+
+## 18. 最新实施项独立复核（2026-11-27 · §§15–17）
+
+> 本节是对资金分布修复、Playbook 黑名单守卫、EXT 黑名单影子的再次只读复核。结论：**默认开关隔离总体有效，当前无需因本节发现而盲目回滚；但资金开启态、Playbook 全链黑名单闭环、EXT 自然命中待裁链均有未闭合项，不能按原记录宣称全部完成。**
+
+### 18.1 基线与总体裁定
+
+- 复核 HEAD=`18724eda5071e422be7843d400ebeda97adcf411`，与 `origin/main` 一致；生产代码/配置/测试工作区为空，既有 DEB-20261125 WIP 未触碰。
+- 三批核心提交：资金=`1c6d625ce`；Playbook=`2732a0927`；EXT=`29609e456`。
+- 服务 MainPID=163251，2026-11-27 14:44:58 CST 启动，active/running，NRestarts=0；既有启动冒烟日志为 7/7。
+- 截至 2026-11-27 15:59 CST，当前日志无 Playbook 自然 `[BLACKLIST]` 拦截，`data/shadow/ext_blacklist/` 尚不存在。无自然命中不等于证明无需守卫。
+
+| 批次 | 可保留部分 | 尚需修正 | 当前建议 |
+|---|---|---|---|
+| §15 资金分布 | 默认 OFF 旧行为保持；正常 ticker payload 在两个消费者均可恢复 | 部分/非法输入和上游零填充合同未闭合；CI 可全 skip | **保持 OFF，修正后再谈 A/B** |
+| §16 Playbook 黑名单 | 三处候选边界、五配置项、开关和持仓边界基本正确 | DA 直写/执行层未闭环；新增 W4 棘轮；topup 异常语义及若干低风险口径 | **已激活三边界可保留，但不得称全链完成** |
+| §17 EXT 黑名单影子 | 默认 OFF 供给不变；命中才写；研究/严格臂边界覆盖 | 目录不计数、不形成待裁提示；mode 覆盖历史；只读文案不准确 | **保持 GUARD OFF；先修观测链再依赖自然命中裁决** |
+
+### 18.2 资金分布：两个激活阻塞项
+
+**A. 开启态把部分字段当成完整有效数据。**
+
+- `llm_synth.py:443-467` 与 `deep_analyzer.py:306-328` 实际使用四个 inflow 键的 `any(...)`，不是注释/RFC 所称“八字段存在”。
+- 任一 inflow 键存在后，其余字段经 `.get(...,0) or 0` 补零；单个 `capital_in_big=100` 即可形成正式块及 100% 主力占比，而不是回退分时。
+- 字符串可触发 TypeError；`True` 会被当数值 1；NaN/inf 可进入 prompt 或 analyzer 结果。
+- 新测试 `tests/test_da_capital_code_fix.py:105-141` 覆盖完整零、空壳和 `_error`，但没有部分字段、字符串、布尔、非有限值及真实 provider `{"error":...}` 形态。
+
+**B. Provider 已提前抹掉零与缺失的区别。**
+
+- `get_capital_distribution.py:44-54` 对非空上游行总构造八键。
+- `common.py:588-604` 的 `safe_get(...,default=0)`/`safe_float(...,default=0)` 会把缺键、None、非数值提前转 0。
+- 因此只把消费者从 `any` 改为 `all`，仍不能区分真实全零与上游缺失/非法。
+
+**激活前最小合同：**
+
+1. Provider 保留字段级有效性/来源状态，不能提前把缺失或非法静默写成真实零；
+2. 两个消费者使用同一完整 schema：八键齐全、数值、有限、非 bool；不完整/非法按明确合同回退；
+3. 增加部分 inflow/outflow、字符串、bool、NaN/inf、空行、真实 error shape、上游缺值与真实零的成对测试；
+4. 保持 OFF 的历史 35/35 逐字节回归；
+5. 仓外测试在通用 CI 缺 skill 时目前会整体 skip（`tests/test_da_capital_code_fix.py:28-39`），至少应有 CI 可见性或不依赖仓外 import 的合同夹具，避免“绿色但零覆盖”。
+
+现有 35/35 证明的是正常归档输入的搬运层恢复，不证明异常输入正确、模型判断改善或收益增加。
+
+### 18.3 Playbook：三边界有效，但主 DA 直写仍绕过
+
+**高优先级缺口：**
+
+- 仓外 DA 正式管线直接 `_pb_db.save_instruction(_inst)`：`pipeline.py:2416-2529`。
+- 新增守卫只在 `runtime_context._get_watchlist` 和 topup；DA 自有 scanner 提名不依赖这两个边界。
+- `PlaybookDB.save_instruction` 本身不做全局黑名单拦截；当前 `auto_execute_flow`/`playbook_service` 也未发现 `global_blacklist` 复核。
+- 因而 DA 若从动态 scanner 提名 QCOM/LCID/TME，仍可形成可执行指令。当前未证明新的受害成交，但“被禁标的已不能进入 Playbook 执行”不成立。
+
+**建议：**黑名单闭包至少覆盖最终执行入口；写入侧可在 `save_instruction` 对明确禁止的新指令转 SKIP＋保留 original_direction/原因，执行侧再拦截历史 PENDING 和其他直写方。只滤新指令，不影响已有持仓和退出链。执行时配置读取失败的政策需明确且可告警，不能只在 DEBUG 静默放行。
+
+**W4 棘轮回归确认：**
+
+- 新 `runtime_context.py:104` 在 except 内使用 `logger.debug`。
+- AST 只读复算当前 debug-swallow 为 4，基线 `data/debug_swallow_baseline.json` 为 3，`grew=True`。
+- 夜检会报 `W4_debug_swallow_grew`。修复用 `logger.warning(..., exc_info=True)`，不得提高基线；若顺带修改其他 except 日志，须同步满足 W6 栈要求并跑完整棘轮家族。
+
+**低优先级但应排队：**
+
+- topup 把原池读取和 guard import/call 放在同一 try，guard 异常会令 `_pool=[]`：`generation_flow.py:366-376`。当前 topup disabled，不是现役 outage；未来重开前应将 guard 异常单独回退原池并给正确告警。
+- 当前守卫只消费 global_blacklist，self-managed 仍只在静态 `_apply_exclusions` 使用：`watchlist_manager.py:89-121`。若 daily_active_pool/topup 可携带自管标的，需另核是否违背自管语义；当前自管两项与 HK 黑名单归一重叠，不据此虚构新增 US 事故。
+- 符号比较用简单 `.replace("US.","")`，与写侧 `normalize_symbol` 的大小写/空白/GOOGL→GOOG 别名不完全一致；属于将来扩展黑名单时的潜伏边界。
+- 合并日志在静态列表已过滤后计算 static/overlap，命中时算术语义会失真；守卫应另报 blocked count。
+- 24 项测试中的 positions 用例只调用从不读 watchlist 的函数，不能单独证明退出链不回归；应补“guard ON 不改 scheduler.watchlist/持仓与退出输入”的真实缝测试。
+
+### 18.4 EXT：交易路径无误，观测与待裁链未闭合
+
+**P2 观测缺口：**
+
+- 注册项 `data_path=data/shadow/ext_blacklist` 是目录：`shadow_registry.py:5136`。
+- `_count_samples` 对不存在路径、`.jsonl`、`.json` 有分支，目录最终 `return None`：`:5261-5269,5336-5369`。即使自然命中文件产生，`current_n` 仍不会反映命中数。
+- `no_adjudication_reason=USER_ADJUDICATION` 阻止自动 READY，待裁队列也要求该字段为空：`app/review/criteria_status.py:109-118`。因此“首个自然命中提交用户裁决”目前只能靠人工看目录，没有注册表/队列提示。
+- `check_mounting()` 干净不等于此命中→待裁链已验证；本项无 eval_script，dormant/stale_expected 又抑制缺产物和 stale 告警。
+
+**建议：**增加目录感知计数或明确的 hit evaluator，并在首次命中/状态变化时通过既有待裁载体提醒用户；只提示裁决，不自动激活。补临时目录计数、首次命中、重复命中、坏 JSON、无命中 dormant 和“提醒≠启用”的测试。
+
+**P3 历史 provenance：**
+
+- `_record_ext_blacklist` 对同一 `(session,symbol)` 的后续命中直接覆盖 `mode`，保留原 first_ts 并累计 ticks：`extended_hours_entry_executor.py:263-278`。
+- shadow→blocked→rollback shadow 会抹掉各阶段真实次数。应分别保存 shadow/blocked 次数与首次/末次时间或追加 mode transition，不能把历史影子行整体改成 blocked。
+
+**文案勘误：**
+
+- §17.3“DB 只读”不能覆盖整个相邻 pytest：保留日志 `/tmp/rfc218_ext_blacklist_adjacent.log:10-13` 明确记录既有测试对生产主库写入 5 次。
+- 准确说法应为：“历史差分查询使用 mode=ro/query_only；相邻测试触发了已登记的存量主库写入 5 次，非本 patch 新增。”该污染应另案治理，不能从文字中抹掉。
+
+### 18.5 测试与经济证据边界
+
+- 资金 16 项、Playbook 24 项、EXT 36 项契约均有当前主机通过证据；这些通过不覆盖本节新增的异常/闭环场景。
+- Playbook 相邻 18 失败与基线失败清单哈希一致；EXT 相邻 7 失败与基线一致；资金更广批 70 passed/2 failed 与 backup 的两项 RFC-207 失败一致。不得写成全量测试全绿。
+- 资金保持 OFF，当前生产收益影响为零；开启后 35/35 prompt 改变仍只是搬运层。
+- Playbook 历史 QCOM 候选指令是 deterministic SKIP，实际四笔盈利成交属 EXT；不能把 EXT 的盈亏当 Playbook 守卫收益/损失。
+- EXT 四笔 QCOM 净额合计 +$75.66 是单标的、四日、小样本历史差分，且未建模替换候选/组合互动。激活只能依据禁止语义是否仍有效，不依据该小样本追收益。
+- 本节没有任何修复后收益改善证据，不触发加仓、扩权或新方向政策。
+
+### 18.6 建议执行顺序
+
+1. **先补 Playbook 黑名单最终执行/写入闭环和 W4 修复**，保持既有三边界开启；自然命中继续观察。
+2. **资金保持 OFF**，先完成 provider→消费者的完整有效性合同和异常矩阵，再评审是否进入单变量 A/B。
+3. **EXT GUARD 保持 OFF**，先修目录计数/首命中待裁提示和 mode provenance；再由用户裁 QCOM 禁令是否仍适用于 EXT。
+4. topup、self-managed、符号归一和测试缝作为低优先级同域收口，不与资金或 EXT 经济实验捆绑。
+5. 在上述正确性缺口闭合前，不继续扩张 §15.7 的其他正式输入调整。
+
+## 19. 实施记录 IV（2026-11-27 · 用户裁「请检查，有把握收益的请执行优化落地…该重启、推送、提交做的请你基于合理性和有效性执行」· §18 缺口闭合 · 正确性批次非收益补丁）
+
+> 本节按 §18.6 顺序落地：**① Playbook 黑名单写入/执行闭环＋W4 修复（激活）；② 资金 provider→消费者完整有效性合同（保持 OFF）；③ EXT 目录计数/首命中待裁提醒/mode provenance（GUARD 保持 OFF）**。全部为正确性/风控/观测修复，**没有任何新的收益改善证据，也不声称收益**（§9/§18.5 边界不变）。正式输入变量零新增激活：`DA_CAPITAL_CODE_FIX` 与 `EXT_BLACKLIST_GUARD` 均保持 OFF，激活仍分别 BLOCKED 于 §10.4 单变量 A/B 与用户独立裁决。
+
+### 19.1 P0 · Playbook 黑名单写入/执行闭环（§18.3 高优先级缺口）＋W4 棘轮修复
+
+**病灶回顾（§18.3 确认）**：§16 守卫只在 `runtime_context._get_watchlist` 与 topup 候选边界；仓外 DA 正式管线 `pipeline.py:2529` 直写 `PlaybookDB.save_instruction` 绕过全部候选边界，执行层亦无 `global_blacklist` 复核 ⇒ 被禁标的（QCOM/LCID/TME）仍可形成并执行指令。
+
+**本批修复（独立开关 `PLAYBOOK_BLACKLIST_FINAL_GUARD`，默认 OFF，与 §16 `PLAYBOOK_BLACKLIST_GUARD` 刻意分离、独立回滚）**：
+
+1. **单标的谓词**：`app/utils/watchlist_manager.py:365` `is_global_blacklisted(symbol)` — 与 §16 `filter_global_blacklist` 同源同口径（只消费 `risk.global_blacklist`，剥 `US.` 前缀同一行谓词）；读取失败/空黑名单 → False（fail-open，守卫故障不瘫痪写入/执行），`warning+exc_info` 保证可见。开关读取 `:352` 每次实读不缓存，仅显式 truthy（1/true/yes/on）开启。
+2. **写入侧收口**：`app/playbook/db.py:589-616` `save_instruction` 在 `normalize_symbol` 之后、准入门之前统一复核 —— 开关 ON ∧ 被禁 ∧ `direction!=SKIP` → 转 `direction="SKIP"`＋`skip_reason="GLOBAL_BLACKLIST_FINAL"`，`raw_instruction.original_direction` 与 `blacklist_final_guard` 标记保留原方向（审计不丢事实，与静态侧 SKIP 同形态；准入门对 SKIP 返回 PASS 使 skip_reason 存活）。覆盖 DA 直写/UE/topup/generate 全部写入方。异常 fail-open 照常入库＋`warning+exc_info`（审计降级优于丢指令，不添 W4）。
+3. **执行侧兜底**：`app/playbook/pipeline_parts/auto_execute_flow.py:591-606` 轮级读一次黑名单集合（避免逐条 N 次配置读；OFF=空集=逐字节旧行为；读取失败 fail-open 空集＋warning）；`:618-627` 逐条在 SKIP/已执行检查之后拦截被禁标的 → `db.mark_instruction_guardrail_skip(id,"GLOBAL_BLACKLIST_FINAL")`＋`skipped_count++`。该 DB 方法自带 `executed=0 ∧ execution_state='PENDING'` 闩（`db.py:1078`），**绝不触 booked/in-flight/持仓/退出链**；覆盖历史 PENDING 与任何绕过写入侧的直写方。
+4. **W4 修复**：`runtime_context.py:104` except 内 `logger.debug` → `logger.warning(..., exc_info=True)`。AST 实测单文件 debug-swallow **4→3=基线**（`data/debug_swallow_baseline.json` 该文件=3），全仓夜检棘轮 `grew=[]`，`W4_debug_swallow_grew` 不再触发；W5/W6 对全部本批编辑文件相对 HEAD 中性。fail-open 语义不变（守卫不可用保持旧口径，但不再静默）。
+
+**激活裁定**：`.env.us` 置 `PLAYBOOK_BLACKLIST_FINAL_GUARD=1`（与 §16 同纪律：依据=**禁止语义/风控一致性**，非收益）。激活前影子探针（`/tmp/rfc218_s19_final_guard_shadow.log`）：今日真实指令集差分 ∅（今日 0 条指令，半日市）；合成注入 OFF 泄漏被禁 3/3、ON 拦截 3/3、ON 误伤非禁 0/2 ⇒ 激活对当前生产候选零误伤。历史 2 条 QCOM PENDING（id 264/457，6/7 月）被日期过滤今日不可执行，执行侧兜底对其仍有效。
+
+**刻意不做（§18.3 低优先级排队不变）**：topup 异常清空整池（当前 disabled）、self-managed 边界、符号别名/大小写归一、合并日志 blocked count、positions 真实缝测试 —— 同域低优先级另批收口，不与本批捆绑。
+
+### 19.2 P1 · 资金 provider→消费者完整有效性合同（§18.2 两个激活阻塞项闭合 · 保持 OFF）
+
+1. **Provider 保留字段级有效性**：仓外 `futuapi/scripts/quote/get_capital_distribution.py:40` 新增模块级 `_capital_fields_missing(row)` —— 在 `safe_get/safe_float` 强制转换**之前**按原始值判定（None/bool/非数值/非有限 → 记名；numpy 标量经 `.item()` 归一），结果新增 `capital_fields_missing` 列表；八个数值键形态不变（向后兼容）。缺失/非法不再被静默写成「真实零」而无痕。
+2. **消费者单一真源**：仓外 `deep-stock-analysis/scripts/llm_synth.py:436-463` `_CAPITAL_FIELDS`（八字段）＋`_capital_dist_valid`：**八键齐全 ∧ int/float 非 bool ∧ math.isfinite ∧ `capital_fields_missing` 存在则必须为空**。flag-ON `_render_capital_section` 改用该判定；不完整/非法 → 明确回退分时 fallback（不再 `any` 四 inflow 键＋其余补 0 伪装完整）。
+3. **对称消费**：`deep_analyzer._analyze_capital:305-320` flag-ON 惰性 `from llm_synth import _capital_dist_valid`（循环导入安全），两路径同一合同；**flag-OFF 逐字节旧 `code==0` 路径不变**。
+4. **测试矩阵＋32=48**（`tests/test_da_capital_code_fix.py`）：部分 inflow/outflow、字符串、bool、NaN/inf、空行、真实 provider `{"error":...}` 形态、上游缺值 vs 真实零成对、`capital_fields_missing` 传递；本机 provider 测试全部 RAN 零 skip（通用 CI 缺 skill 整体 skip 的可见性问题仍排队，见 §19.6）。
+5. **变异测试**：把 `_capital_dist_valid` 变异回旧 `any()` 四键 → **18 红**（`/tmp/rfc218_s19_cap_mutation_red.log`）；按 SHA 恢复 → 48 绿（`_restore_green.log`）。证明新合同真实钉死行为而非恒真。
+6. **OFF 零漂移复验**：§19 改动后重跑 `/tmp/rfc218_capital_regression.py` → **flag-off 35/35 逐字节一致**、历史消费 35/35、flag-off formal/fallback/none=0/34/1、flag-on formal 35/35（`/tmp/rfc218_s19_cap_off_regression_rerun.log`）。
+
+**保持 OFF**：`DA_CAPITAL_CODE_FIX` 未置位（进程 env 无此键）。合同闭合只是解除 §18.2 的**代码层**激活阻塞；激活仍须用户批准 §10.4 单变量 A/B（n≥120/≥20 独立 ET 日/预注册 MDE）。35/35 恢复仍只是搬运层，不证预测力/收益；大单流入不得直接解释为「机构确定看多」。
+
+### 19.3 P2/P3 · EXT 观测链闭合（§18.4 · GUARD 保持 OFF · 交易路径逐字不变）
+
+1. **目录计数**：`app/playbook/shadow_registry.py:5264-5283` `_count_samples` 新增目录分支 —— 按日聚合 `*.json` 中含 `rows` dict 的命中行数；坏 JSON 跳过；空目录/无 rows 文件 → None（不伪装 0，与「无命中=无目录=通过态」一致）。只影响目录型条目（当前仅 `ext_blacklist_guard_shadow`）；`.json/.jsonl` 文件分支逐字不变。自然命中自此可驱动 `current_n`。
+2. **首命中待裁提醒（提醒≠启用）**：`scripts/extended_hours_entry_executor.py:328` `_notify_ext_blacklist_first_hit` —— 仅真实生产规范路径（`_EXT_BLACKLIST_CANON`，hermetic 测试 monkeypatch 到 tmp 即跳过，防误发）＋新建行触发；经 `app/push` hub `push_text_safe(sync=True)`（hub 纪律，禁直连 notifier）；按标的去重（`data/shadow/ext_blacklist_first_hit_notified.json`）；异常永不上抛交易路径。文案明示「激活须用户单独裁决，本提醒≠启用」。`USER_ADJUDICATION` 不进普通待裁队列的语义不变 —— 提醒是补充载体，不改注册表裁决政策。
+3. **mode provenance**：`_record_ext_blacklist:265-310` 顶层 `mode/ticks` 保留（最新态/总次数，既有 36 契约向后兼容），新增 `modes` 分模式 `{ticks, first_ts, last_ts}`；shadow→blocked→rollback 不再抹掉各阶段次数。升级旧行（无 modes）保守把既有 ticks 归「上一已知 mode」并标 `migrated=True`（重建非实测）。**顺序 bug 实测修复**：`_prev_mode` 必须在 `prev["mode"]=_mode` 覆写前捕获（初版读新 mode → 迁移误归，测试红→修复绿）；本轮再补 `_prev_last_ts` 覆写前捕获（`:276`），迁移记录的旧 mode 末次时点=真实旧观测而非升级命中新时点，测试钉死。
+4. **测试**：EXT 契约＋8=44（`tests/test_ext_blacklist_guard.py`：分模式新行/升级/回滚/迁移时点、首命中去重/非规范路径跳过/push 异常不上抛）；新增 `tests/test_shadow_registry_dir_count.py` 8 例（目录计数/坏 JSON/空目录/文件分支不变）。
+5. **生效方式**：EXT 本体 cron 313/314 fresh-import 即生效（无需重启）；`shadow_registry.py` 属 `app/` 随本批服务重启一致性生效。**`EXT_BLACKLIST_GUARD` 保持 0、`EXT_BLACKLIST_SHADOW` 保持 1**。激活仍须用户裁「QCOM 禁令是否仍适用于 EXT」；§17.4 历史差分 4 笔 QCOM 全部盈利（净 +$75.66，单标的四日小样本）⇒ 激活依据只能是禁止语义，不是该小样本追收益。
+
+### 19.4 验证矩阵（全部可复跑）
+
+| 项 | 结果 | 凭据 |
+|---|---|---|
+| 新契约合计 | **129 passed**（黑名单 29＋资金 48＋EXT 44＋目录计数 8） | `PYTHONDONTWRITEBYTECODE=1 ./venv/bin/python -m pytest tests/playbook/test_blacklist_final_guard.py tests/test_da_capital_code_fix.py tests/test_ext_blacklist_guard.py tests/test_shadow_registry_dir_count.py -q` |
+| Playbook 相邻 | 18 failed/1569 passed，FAILED 清单与基线 **IDENTICAL** | `/tmp/rfc218_s19_pb_adjacent.log`＋`_pb_base_failed.txt` diff ∅ |
+| EXT 相邻（含本轮 last_ts 精化后复跑） | 7 failed/284 passed，FAILED 与基线 **IDENTICAL** | `/tmp/rfc218_s19_ext_adjacent_rerun.log`＋`_ext_base_norm.txt` diff ∅ |
+| 资金 broader | `tests/test_da_prompt_injection.py` **23 passed**（§15 时 2 失败为日期敏感 EventContext 伪影，本轮日期下通过，与本批无关） | `/tmp/rfc218_s19_cap_broader.log` |
+| 资金 OFF 逐字节 | **35/35 一致**（§19 改后复验） | `/tmp/rfc218_s19_cap_off_regression_rerun.log` |
+| W4/W5/W6 | runtime_context 单文件 4→3=基线；全仓 `grew=[]`；W5/W6 中性 | `daily_invariant_check._check_log_hygiene` 只读复算 |
+| 变异测试 | 资金 validator→旧 any()=18 红→恢复 48 绿；黑名单谓词→False=4 红→恢复 29 绿 | `/tmp/rfc218_s19_cap_mutation_red.log`/`_restore_green.log`/`_bl_*` |
+| 激活影子探针 | 今日差分 ∅；OFF 泄漏 3/ON 拦截 3/误伤 0 | `/tmp/rfc218_s19_final_guard_shadow.log` |
+| 静态 | `check_undefined_names.py` exit0；双解释器（venv py3.11＋EXT cron py3.11）py_compile 全过（含仓外 DA 三文件） | 本批命令留痕 |
+
+既有 18＋7 相邻失败为基线存量（另案治理，本批不修不掩盖）；未跑全量 pytest/CI，不声称全绿。
+
+### 19.5 收益边界（与 §9/§18.5 一致，不得越界表述）
+
+- **本批没有任何收益改善证据**。最终黑名单守卫=禁止语义风控（历史 Playbook QCOM 候选本就是 deterministic SKIP，四笔盈利成交属 EXT，不能记为 Playbook 守卫损失）；资金修复 OFF=生产影响为零；EXT 观测修复不改供给面。
+- 正确性≠盈利：指令更有依据、更可解释、被禁标的不再可执行，是**风控与事实正确性**收益；能否提高净收益须独立验证（§10 分层），不能从「模型看得更多/守卫更严」直接推导。
+- 不触发加仓、扩权、新方向政策；正式输入/角色逻辑调整仍受 R2、预注册与实验名额约束。
+
+### 19.6 未闭合排队（不变＋新增）
+
+1. 资金激活 BLOCKED 于 §10.4 单变量 A/B 用户裁决；通用 CI 缺 skill 整体 skip 的可见性/仓内合同夹具仍排队（§18.2-5）。
+2. EXT GUARD 激活 BLOCKED 于用户裁「QCOM 禁令是否仍适用于 EXT」；首个自然命中提醒到达后携台账裁决。
+3. §18.3 低优先级：topup 异常语义、self-managed 边界、符号别名归一、合并日志 blocked count、positions 真实缝测试。
+4. §15.7 输入修复队列（健康空财报三态/短 K UNKNOWN/源状态/挑战者一致性）逐批单变量，不与本批捆绑。
+5. EXT 相邻测试存量主库写 5 次（§18.4 勘误）另案治理。
+
+### 19.7 回滚
+
+- 最终守卫：`.env.us` 改 `PLAYBOOK_BLACKLIST_FINAL_GUARD=0`（或删行）＋`systemctl restart ftseek-us`＋启动冒烟；或 revert 本批 commit。与 §16 三边界开关互不牵连。
+- EXT 观测：additive（modes 键/目录计数/提醒），回滚=revert；`EXT_BLACKLIST_GUARD=0` 不变即供给面旧行为。
+- 资金：本就 OFF，无需回滚动作；仓外三文件备份 `*.bak-20261127-rfc218-capital`（§15）＋本批 `/tmp/rfc218_s19_llm_synth.bak/.sha`。

@@ -301,3 +301,124 @@ def test_research_expired_arm_zero_traffic(monkeypatch, research_env,
     monkeypatch.setattr(mod, "_research_sources_active", lambda: False)
     assert mod._research_source_candidates("premarket", object(), existing=set()) == []
     assert _ledger_rows(ledger_dir) == {}
+
+
+# ── RFC-218 §19 P3: mode provenance (分模式留痕, 不覆写历史) ────────────
+
+def test_mode_provenance_new_row_single_mode(ledger_dir, monkeypatch):
+    """新行: modes 从 tick1 精确分模式, 无 migrated 标记."""
+    monkeypatch.delenv("EXT_BLACKLIST_GUARD", raising=False)
+    mod._record_ext_blacklist("US.QCOM", "premarket",
+                              {"chg": 4.0, "px": 100.0, "vol": 500000}, blocked=False)
+    r = _ledger_rows(ledger_dir)["premarket:US.QCOM"]
+    assert r["mode"] == "shadow" and r["ticks"] == 1
+    assert r["modes"]["shadow"]["ticks"] == 1
+    assert "migrated" not in r["modes"]["shadow"]
+    assert "blocked" not in r["modes"]
+
+
+def test_mode_provenance_shadow_then_blocked_preserves_both(ledger_dir, monkeypatch):
+    """shadow→blocked: 顶层 mode=最新态/ticks=总次数 (向后兼容), modes 分存各阶段次数."""
+    monkeypatch.delenv("EXT_BLACKLIST_GUARD", raising=False)
+    mod._record_ext_blacklist("US.QCOM", "premarket",
+                              {"chg": 4.0, "px": 100.0, "vol": 500000}, blocked=False)
+    mod._record_ext_blacklist("US.QCOM", "premarket", None, blocked=True)
+    mod._record_ext_blacklist("US.QCOM", "premarket", None, blocked=True)
+    r = _ledger_rows(ledger_dir)["premarket:US.QCOM"]
+    assert r["mode"] == "blocked"          # 顶层最新态
+    assert r["ticks"] == 3                 # 总次数 (既有 36 契约不变)
+    assert r["modes"]["shadow"]["ticks"] == 1
+    assert r["modes"]["blocked"]["ticks"] == 2
+
+
+def test_mode_provenance_rollback_blocked_then_shadow(ledger_dir, monkeypatch):
+    """blocked→shadow (回滚): 两阶段次数都保留, 不被覆写抹掉."""
+    monkeypatch.delenv("EXT_BLACKLIST_GUARD", raising=False)
+    mod._record_ext_blacklist("US.QCOM", "premarket",
+                              {"chg": 4.0, "px": 100.0, "vol": 500000}, blocked=True)
+    mod._record_ext_blacklist("US.QCOM", "premarket", None, blocked=True)
+    mod._record_ext_blacklist("US.QCOM", "premarket", None, blocked=False)
+    r = _ledger_rows(ledger_dir)["premarket:US.QCOM"]
+    assert r["mode"] == "shadow"
+    assert r["modes"]["blocked"]["ticks"] == 2
+    assert r["modes"]["shadow"]["ticks"] == 1
+
+
+def test_mode_provenance_migrates_legacy_row_to_old_mode(ledger_dir, monkeypatch):
+    """升级旧行 (无 modes): 既有 ticks 归「上一已知 mode」(shadow), 标 migrated=True;
+    新 tick 的 mode (blocked) 单独计 1。钉死: 旧 mode 必须在覆写前捕获。"""
+    monkeypatch.delenv("EXT_BLACKLIST_GUARD", raising=False)
+    day = "2026-11-27"
+    ledger_dir.mkdir(parents=True, exist_ok=True)
+    legacy = {"et_date": day, "rows": {"premarket:US.QCOM": {
+        "symbol": "US.QCOM", "session": "premarket", "mode": "shadow",
+        "first_ts": "2026-11-27T08:00:00-05:00",
+        "last_ts": "2026-11-27T08:05:00-05:00", "ticks": 5}}}
+    (ledger_dir / (day + ".json")).write_text(json.dumps(legacy))
+    mod._record_ext_blacklist("US.QCOM", "premarket", None, blocked=True)
+    r = _ledger_rows(ledger_dir)["premarket:US.QCOM"]
+    assert r["ticks"] == 6
+    assert r["modes"]["shadow"]["ticks"] == 5      # 旧 ticks 归旧 mode (非新 mode)
+    assert r["modes"]["shadow"]["migrated"] is True
+    # 迁移记录的旧 mode 末次时点 = 真实旧 last_ts (覆写前捕获), 非本次升级命中的新时点
+    assert r["modes"]["shadow"]["last_ts"] == "2026-11-27T08:05:00-05:00"
+    assert r["modes"]["shadow"]["first_ts"] == "2026-11-27T08:00:00-05:00"
+    assert r["modes"]["blocked"]["ticks"] == 1
+
+
+# ── RFC-218 §19 P2: 首命中待裁提醒 (提醒≠启用, 异常绝不影响下单) ────────
+
+def test_first_hit_notify_skipped_off_canon(tmp_path, monkeypatch):
+    """hermetic/非规范路径: 不发提醒 (防测试误发)."""
+    monkeypatch.setattr(mod, "EXT_BLACKLIST_DIR", tmp_path / "other")
+    pushes = []
+    monkeypatch.setattr("app.push.hub.push_text_safe",
+                        lambda msg, **kw: pushes.append(msg))
+    mod._notify_ext_blacklist_first_hit("US.QCOM", "premarket", False)
+    assert pushes == []
+
+
+def test_first_hit_notify_fires_once_per_symbol(tmp_path, monkeypatch):
+    """规范路径: 首命中发一次, 按标的去重; 不同标的再发。"""
+    canon = tmp_path / "ext_blacklist"
+    monkeypatch.setattr(mod, "EXT_BLACKLIST_DIR", canon)
+    monkeypatch.setattr(mod, "_EXT_BLACKLIST_CANON", canon)
+    pushes = []
+    monkeypatch.setattr("app.push.hub.push_text_safe",
+                        lambda msg, **kw: pushes.append(msg))
+    mod._notify_ext_blacklist_first_hit("US.QCOM", "premarket", False)
+    assert len(pushes) == 1
+    mod._notify_ext_blacklist_first_hit("US.QCOM", "afterhours", False)  # 同标的去重
+    assert len(pushes) == 1
+    mod._notify_ext_blacklist_first_hit("US.LCID", "premarket", True)
+    assert len(pushes) == 2
+    assert "待裁" in pushes[0] and "US.QCOM" in pushes[0]
+
+
+def test_first_hit_notify_push_failure_never_raises(tmp_path, monkeypatch):
+    """push 异常永不上抛 (观测面与决策面解耦)."""
+    canon = tmp_path / "ext_blacklist"
+    monkeypatch.setattr(mod, "EXT_BLACKLIST_DIR", canon)
+    monkeypatch.setattr(mod, "_EXT_BLACKLIST_CANON", canon)
+
+    def _boom(msg, **kw):
+        raise RuntimeError("push down")
+    monkeypatch.setattr("app.push.hub.push_text_safe", _boom)
+    mod._notify_ext_blacklist_first_hit("US.QCOM", "premarket", False)  # 不抛
+
+
+def test_record_new_row_triggers_first_hit_notify(tmp_path, monkeypatch):
+    """_record_ext_blacklist 新建行 → 触发首命中提醒; 后续 tick 不重复发."""
+    canon = tmp_path / "ext_blacklist"
+    monkeypatch.setattr(mod, "EXT_BLACKLIST_DIR", canon)
+    monkeypatch.setattr(mod, "_EXT_BLACKLIST_CANON", canon)
+    monkeypatch.delenv("EXT_BLACKLIST_GUARD", raising=False)
+    pushes = []
+    monkeypatch.setattr("app.push.hub.push_text_safe",
+                        lambda msg, **kw: pushes.append(msg))
+    mod._record_ext_blacklist("US.QCOM", "premarket",
+                              {"chg": 4.0, "px": 100.0, "vol": 500000},
+                              blocked=False, source="research")
+    assert len(pushes) == 1
+    mod._record_ext_blacklist("US.QCOM", "premarket", None, blocked=False)
+    assert len(pushes) == 1   # 非新建行不重发

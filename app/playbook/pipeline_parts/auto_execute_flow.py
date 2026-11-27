@@ -588,6 +588,22 @@ def run_playbook_auto_execute(
                 _mom_budget_ok = False
                 logger.error(f"[MOM-ETF-V1] 子帽预算查询失败 fail-close: {_mom_budget_err}",
                              exc_info=True)
+        # RFC-218 §19 (P0 黑名单最终执行闭环): 执行入口统一复核, 覆盖历史 PENDING 与所有
+        #   直写方 (DA/UE/generate 绕过候选边界时此兜底)。轮级读一次黑名单集合 (避免逐条
+        #   N 次配置读)。独立开关 PLAYBOOK_BLACKLIST_FINAL_GUARD 默认 OFF (OFF=空集=逐字节
+        #   旧行为); 读取失败 fail-open 空集放行, 但 warning+exc_info 保证可见 (§18.3 要求
+        #   配置读取失败不得 DEBUG 静默)。只拦新入场, 不动已执行/SKIP/持仓/退出链。
+        _final_bl_set = set()
+        try:
+            from app.utils.watchlist_manager import (
+                _blacklist_final_guard_enabled, get_watchlist_manager)
+            if _blacklist_final_guard_enabled():
+                _final_bl_set = set(get_watchlist_manager()._get_global_blacklist() or [])
+        except Exception as _fbl_err:
+            logger.warning(
+                f"[BLACKLIST] 最终执行守卫黑名单读取失败 (fail-open 放行): {_fbl_err}",
+                exc_info=True)
+            _final_bl_set = set()
         for inst in instructions:
             # 2026-11-03 (冻结长轮次): 主线程每处理一条指令打一次"进度"心跳 (5s 节流)。
             #   与出场快循环的 /run/ftseek-heartbeat 分开 (语义=有进展, 非"活着"),
@@ -598,6 +614,16 @@ def run_playbook_auto_execute(
             if inst.get("executed"):
                 continue
             if inst.get("direction") == "SKIP":
+                continue
+            # RFC-218 §19: 被禁标的最终拦截 — 转 guardrail SKIP (仅 PENDING 未执行行,
+            #   mark_instruction_guardrail_skip 自带 executed=0 ∧ execution_state=PENDING 闩,
+            #   绝不触 booked/in-flight)。与写入侧同一谓词同源 (剥 US.)。
+            if _final_bl_set and str(inst.get("symbol", "")).replace("US.", "") in _final_bl_set:
+                db.mark_instruction_guardrail_skip(inst["id"], "GLOBAL_BLACKLIST_FINAL")
+                logger.info(
+                    f"[BLACKLIST] 最终执行守卫拦截被禁标的: {inst.get('symbol')} "
+                    f"(inst#{inst['id']}, did={inst.get('decision_id', '')})")
+                skipped_count += 1
                 continue
             # [DEB-20261125 §8] NO_TRADE SHORT 实验: LONG/BUY 本轮不进 (第一层;
             #   第二层 sizing NO_TRADE 乘数对非 SHORT 恒 0.0), SHORT 进后续全部门。

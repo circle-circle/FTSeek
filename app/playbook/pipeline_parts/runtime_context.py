@@ -101,7 +101,10 @@ def _get_watchlist(scheduler) -> List[str]:
     try:
         from app.utils.watchlist_manager import filter_global_blacklist as _bl_guard
     except Exception as e:
-        logger.debug(f"[playbook] 黑名单守卫不可用, 保持旧口径: {e}")
+        # RFC-218 §19 (W4 棘轮修复): except 内失败必须可见且带栈 — 原 logger.debug 在
+        #   LOG_LEVEL=INFO 下被吞 (W4_debug_swallow 基线 3→4 回归)。改 warning+exc_info,
+        #   计数回落基线, 守卫不可用不再静默。fail-open 语义不变 (保持旧口径)。
+        logger.warning(f"[playbook] 黑名单守卫不可用, 保持旧口径: {e}", exc_info=True)
         _bl_guard = lambda syms: syms  # noqa: E731
     wl = _bl_guard(wl)
 

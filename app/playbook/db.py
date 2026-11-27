@@ -586,6 +586,34 @@ class PlaybookDB:
         # 写入侧规范化: 折叠 US.US. 双前缀 + 归并别名(GOOGL->GOOG), 防数据割裂
         inst["symbol"] = normalize_symbol(inst.get("symbol"))
 
+        # RFC-218 §19 (P0 黑名单写入闭环): 全写入方唯一收口点的最终黑名单复核。
+        #   病灶 (§18.3 确认): §16 守卫只在 runtime_context/topup 候选边界; DA 正式管线
+        #   (仓外 pipeline.py:2529) / UE / generate 直写 save_instruction 绕过 → 被禁标的
+        #   (QCOM/LCID/TME) 仍可形成可执行指令。此处在规范化后、准入门前统一复核:
+        #   明确禁止的新入场指令转 SKIP + 保留 original_direction/原因 (与静态侧 SKIP 同形态)。
+        #   独立开关 PLAYBOOK_BLACKLIST_FINAL_GUARD 默认 OFF (OFF=逐字节旧行为);
+        #   只转新入场 (direction!=SKIP), 不动已 SKIP 票/持仓/退出链; 异常 fail-open 照常入库
+        #   (审计降级优于丢指令, 与准入门同纪律), 但用 warning+exc_info 保证可见 (不添 W4)。
+        try:
+            from app.utils.watchlist_manager import (
+                _blacklist_final_guard_enabled, is_global_blacklisted)
+            if _blacklist_final_guard_enabled() and is_global_blacklisted(inst.get("symbol")):
+                _bl_orig_dir = inst.get("direction")
+                if _bl_orig_dir and str(_bl_orig_dir).upper() != "SKIP":
+                    inst["direction"] = "SKIP"
+                    inst["skip_reason"] = "GLOBAL_BLACKLIST_FINAL"
+                    _bl_raw = inst.get("raw_instruction")
+                    if isinstance(_bl_raw, dict):
+                        _bl_raw.setdefault("original_direction", _bl_orig_dir)
+                        _bl_raw["blacklist_final_guard"] = {
+                            "blocked": True, "original_direction": _bl_orig_dir}
+                    logger.info(
+                        f"[BLACKLIST] 写入守卫转 SKIP 被禁标的: {inst.get('symbol')} "
+                        f"(原方向 {_bl_orig_dir}, did={inst.get('decision_id', '')})")
+        except Exception as _bl_wr_err:
+            logger.warning(
+                f"[BLACKLIST] 写入守卫异常 (fail-open 照常入库): {_bl_wr_err}", exc_info=True)
+
         # 准入门 (2026-08-06): 全写入方唯一收口点 — DA 直写/UE/topup/generate 四路都过这里。
         #   立项根因: confidence 门只写在 _build_instructions_from_votes 内 (pipeline.py:1264),
         #   DA/UE 直写 DB 绕过全部质量门 (实测 35 日 DA 219 条 BUY 平均 conf=36 全入库)。

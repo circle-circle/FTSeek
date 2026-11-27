@@ -349,6 +349,36 @@ def filter_global_blacklist(symbols: List[str]) -> List[str]:
     return out
 
 
+def _blacklist_final_guard_enabled() -> bool:
+    """RFC-218 §19 独立开关: PLAYBOOK_BLACKLIST_FINAL_GUARD (进程 env, systemd 注入 .env.us)。
+
+    与 §16 PLAYBOOK_BLACKLIST_GUARD 相互独立: §16 门控「新候选名单三边界」, 本开关门控
+    「写入侧 save_instruction + 最终执行入口」闭环 (覆盖 DA 直写/UE/topup/generate 全写入方
+    与历史 PENDING)。默认 OFF; 仅显式 truthy 开启, 未知值 fail-closed 回旧行为。每次实读不缓存。
+    刻意不复用 §16 开关: 两批 enforcement 点独立回滚, 避免把已激活的候选边界与新增写入/执行
+    闭环耦合 (同 §17 EXT 不复用 filter_global_blacklist 包装的纪律)。
+    """
+    v = os.environ.get("PLAYBOOK_BLACKLIST_FINAL_GUARD", "0")
+    return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+
+def is_global_blacklisted(symbol: Any) -> bool:
+    """RFC-218 §19: 单标的黑名单谓词 — 与 filter_global_blacklist 同源同口径。
+
+    只消费 risk.global_blacklist (明确禁止语义), 剥 US. 前缀比对 (与 §16/§17 同一行谓词,
+    parity 契约钉死)。读取失败/空黑名单 → False (fail-open, 守卫故障不瘫痪写入/执行)。
+    不触碰 enabled=false 普通暂停 / self_managed / 持仓与退出链。
+    """
+    try:
+        blacklist = get_watchlist_manager()._get_global_blacklist()
+        if not blacklist:
+            return False
+        return str(symbol).replace("US.", "") in set(blacklist)
+    except Exception as e:
+        logger.warning(f"[BLACKLIST] 单标的谓词读取失败 (fail-open 放行): {e}", exc_info=True)
+        return False
+
+
 def get_order_qty(symbol: str, default_qty: int = 50) -> int:
     """快捷函数: 获取下单数量"""
     return get_watchlist_manager().get_order_qty(symbol, default_qty)

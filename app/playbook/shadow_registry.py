@@ -5261,6 +5261,26 @@ def _count_samples(s: ShadowItem, base) -> int | None:
     p = base / path_str
     if not p.exists():
         return None
+    if p.is_dir():
+        # RFC-218 §19 (P2 观测闭环): 目录型 data_path (按日 JSON 命中台账, 如 ext_blacklist)。
+        #   此前目录一律落到末尾 return None ⇒ 自然命中永不计数, current_n 恒 None, 首命中
+        #   无法驱动待裁。现按日聚合命中行数: 仅计含 "rows" dict 的日文件 (ext_blacklist 形态),
+        #   坏 JSON 跳过, 空目录/无 rows 文件 → None (不伪装 0, 与「无命中=无目录=通过态」一致)。
+        #   只影响目录型条目 (当前仅 ext_blacklist_guard_shadow); 文件型分支逐字不变。
+        try:
+            total = 0
+            found = False
+            for f in sorted(p.glob("*.json")):
+                try:
+                    d = _j.loads(f.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if isinstance(d, dict) and isinstance(d.get("rows"), dict):
+                    total += len(d["rows"])
+                    found = True
+            return total if found else None
+        except Exception:
+            return None
     if path_str.endswith(".jsonl"):
         try:
             if s.count_mode.startswith("distinct:"):

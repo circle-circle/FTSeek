@@ -214,6 +214,9 @@ def _record_short_nearmiss(symbol, session, change_pct, price, volume, now_et):
 #   失败 fail-open 空集), 与 Playbook §16 守卫同源同口径; 候选侧剥 US. 同一行谓词。
 #   回滚: EXT_BLACKLIST_GUARD=0 (或删 env) → 旧供给面; EXT_BLACKLIST_SHADOW=0 关影子。
 EXT_BLACKLIST_DIR = ROOT / "data" / "shadow" / "ext_blacklist"
+# RFC-218 §19: 生产规范路径 (hermetic 测试会 monkeypatch EXT_BLACKLIST_DIR 到 tmp;
+#   首命中提醒只在真实生产路径触发, 防测试误发真实推送)。
+_EXT_BLACKLIST_CANON = ROOT / "data" / "shadow" / "ext_blacklist"
 
 
 def _ext_blacklist_guard_enabled() -> bool:
@@ -262,27 +265,97 @@ def _record_ext_blacklist(symbol, session, item, blocked, source=None):
         rows = doc.get("rows") or {}
         key = "%s:%s" % (session, symbol)
         prev = rows.get(key)
+        _mode = "blocked" if blocked else "shadow"
+        _ts = now_et.isoformat()
+        _is_new = prev is None
+        # RFC-218 §19: 旧 mode 必须在下方 prev["mode"]=_mode 覆写前捕获, 否则升级旧行时
+        #   既有 ticks 会被误归到「新 mode」(迁移失真)。_prev_mode 仅供 modes 迁移用。
+        _prev_mode = prev.get("mode") if prev else None
+        # 同理旧 last_ts 也须在覆写前捕获: 迁移记录的「旧 mode 末次观测」应是真实旧时点,
+        #   而非本次升级命中的新时点 (migrated=True 已标重建, 但可得的真值不应丢弃)。
+        _prev_last_ts = prev.get("last_ts") if prev else None
         if prev:
             prev["ticks"] = int(prev.get("ticks") or 1) + 1
-            prev["last_ts"] = now_et.isoformat()
-            prev["mode"] = "blocked" if blocked else "shadow"
+            prev["last_ts"] = _ts
+            prev["mode"] = _mode
         else:
             it = item or {}
-            rows[key] = {"symbol": symbol, "session": session,
-                         "mode": "blocked" if blocked else "shadow",
-                         "source": it.get("_source") or source,
-                         "chg_pct": round(float(it.get("chg") or 0), 2),
-                         "px": round(float(it.get("px") or 0), 4),
-                         "volume": int(it.get("vol") or 0),
-                         "first_ts": now_et.isoformat(),
-                         "last_ts": now_et.isoformat(), "ticks": 1}
+            prev = {"symbol": symbol, "session": session,
+                    "mode": _mode,
+                    "source": it.get("_source") or source,
+                    "chg_pct": round(float(it.get("chg") or 0), 2),
+                    "px": round(float(it.get("px") or 0), 4),
+                    "volume": int(it.get("vol") or 0),
+                    "first_ts": _ts, "last_ts": _ts, "ticks": 1}
+            rows[key] = prev
+        # RFC-218 §19 (P3 mode provenance): 分模式累计次数/首末时点。此前后续命中直接覆写
+        #   顶层 mode ⇒ shadow→blocked→rollback shadow 会抹掉各阶段真实次数。现顶层 mode/ticks
+        #   保留 (最新态/总次数, 向后兼容既有 36 契约), 另以 modes 分模式留痕。
+        modes = prev.get("modes")
+        if not isinstance(modes, dict):
+            modes = {}
+            if not _is_new:
+                # 升级旧行: 无法回溯历史分模式拆分, 保守把既有 ticks 归到「上一已知 mode」
+                #   并标 migrated=True (重建非实测, 不冒充逐 mode 观测)。新行从 tick1 精确分模式。
+                _old_mode = _prev_mode or _mode
+                modes[_old_mode] = {
+                    "ticks": int(prev.get("ticks") or 1) - 1,
+                    "first_ts": prev.get("first_ts") or _ts,
+                    "last_ts": _prev_last_ts or _ts,
+                    "migrated": True}
+            prev["modes"] = modes
+        mrec = modes.get(_mode)
+        if not isinstance(mrec, dict):
+            mrec = {"ticks": 0, "first_ts": _ts, "last_ts": _ts}
+            modes[_mode] = mrec
+        mrec["ticks"] = int(mrec.get("ticks") or 0) + 1
+        mrec["last_ts"] = _ts
+        if not mrec.get("first_ts"):
+            mrec["first_ts"] = _ts
         doc["et_date"] = day
         doc["rows"] = rows
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=1))
         os.replace(str(tmp), str(path))
+        # RFC-218 §19: 首个自然命中 → 待裁提醒 (只提示裁决, 不自动激活)。仅真实生产路径 +
+        #   新建行触发; 按标的去重 (state 文件), 异常绝不影响下单路径。
+        if _is_new:
+            _notify_ext_blacklist_first_hit(symbol, session, blocked)
     except Exception as exc:      # 埋点禁静默: 宁可打一行日志, 也不要"影子悄悄不落盘"
         print(f"[ext_entry] blacklist shadow 落盘失败: {type(exc).__name__}: {exc}")
+
+
+def _notify_ext_blacklist_first_hit(symbol, session, blocked):
+    """RFC-218 §19: EXT 黑名单首个自然命中 → 用户待裁提醒 (提醒≠启用)。
+
+    §18.4 确认: 注册项 data_path 是目录 + no_adjudication_reason=USER_ADJUDICATION ⇒ 既不进
+    普通待裁队列, 目录也不被 _count_samples 计数 ⇒ 首命中只能靠人工看目录。本函数在首个命中
+    落盘后经 app/push hub (push_text_safe, 异常永不上抛) 发一次性提醒, 按标的去重。
+    只在真实生产路径触发 (hermetic 测试 monkeypatch EXT_BLACKLIST_DIR 到 tmp ⇒ 跳过, 防误发)。
+    """
+    if EXT_BLACKLIST_DIR != _EXT_BLACKLIST_CANON:
+        return
+    try:
+        state_path = EXT_BLACKLIST_DIR.parent / "ext_blacklist_first_hit_notified.json"
+        try:
+            state = json.loads(state_path.read_text())
+        except (OSError, ValueError):
+            state = {}
+        if not isinstance(state, dict) or symbol in state:
+            return
+        from app.push.hub import push_text_safe
+        _mode_txt = "blocked(守卫ON)" if blocked else "shadow(守卫OFF)"
+        push_text_safe(
+            f"[EXT黑名单·待裁] 首个自然命中 {symbol} ({session}, {_mode_txt})。"
+            f"EXT_BLACKLIST_GUARD 激活须用户单独裁决 (RFC-218 §17/§19, 预注册臂供给面变量); "
+            f"本提醒≠启用。台账 data/shadow/ext_blacklist/ ; 裁决输入=§17.4 历史差分+影子台账"
+            f"+「QCOM 禁令是否仍成立」复核。",
+            sync=True)
+        state[symbol] = _now_et().isoformat()
+        state_path.write_text(json.dumps(state, ensure_ascii=False))
+    except Exception as exc:
+        print(f"[ext_entry] blacklist first-hit 提醒失败 (不影响交易): "
+              f"{type(exc).__name__}: {exc}")
 
 
 def _classify_ext_direction(symbol, session, change_pct, price, volume):
