@@ -2,13 +2,13 @@
 
 > **写入约定（2026-11-11 起）**：每条交接必须带三件可核凭据 —— `**凭据**`（commit sha / 改动文件数，`git show --stat` 可核）、`**验证**`（可复跑命令 + 日志路径，不写“已通过”）、`**未验证**`（显式列出没验的部分，无则写“无”）。自述≠事实，这三行是给下一个人核的。
 
-## 2026-11-27 11:01 CST · 【proposal A2 落地修复】bridge 版本基线改为内容 sha 绑定 + 一致读取稳定性校验；已重启生效，冒烟 7/7，代码已提交待推送
+## 2026-11-27 11:01 CST · 【proposal A2 落地修复】bridge 版本基线改为内容 sha 绑定 + 一致读取稳定性校验；已重启生效，冒烟 7/7，代码与文档已推送主线
 
 - **结论**：读取 `docs/proposals/2026-11-27-da-profitability-agent-execution-handoff.md` 并按 A0 独立复核：问题 1/2（评分 fail-close/CI 文案）第一轮已修，本轮按 A0 步骤 3「已修复则报告断言停止重复修改」**未改评分**；问题 3（bridge）对照 A2 严格判据仍有残留缺口——第一轮基线绑定探测期 mtime 而非实际读入内容，致同 mtime 重写漏检、探测/读取竞态错误归属、无注入前稳定性校验。本轮最小补修：loader 一次读字节+读前后 stat 稳定性校验（注入前）+解析同一字节+sha256 附 adapter；基线记读入版本；运行期 sha 权威（未变不重读即便 mtime 被 touch，变才刷新），旧 adapter 缺 sha 退回 mtime 并在刷新后建立绑定（迁移）。`scheduler_core` 启动接线未改（W4 通过），supply gate/complete 判定/已认领保护未触。正确性恢复非 alpha，官方 DA 读数不变（整窗 −24.8369bps NOT_MET、post −17.4678bps UNDERPOWERED、KR2 21.2329% MET）。详 verification DEB §9。
 - **凭据**：代码提交 `d5051134f98bd8b60588ec0775b0bc1655a9c853`（2 文件，216+/16-；`git show --stat` 可核：`app/playbook/pipeline.py`、`tests/test_stale_bridge_guard.py`）。本条与 verification DEB §9/proposal 为文档批；保留 DEB-20261125 其他会话 WIP 未提交。重启前/后只读快照 `/tmp/ftseek-handoff-20261127-pre-restart.log`、`/tmp/ftseek-handoff-20261127-post-restart.log`：SIM BA/BABA/GS 三笔 SHORT 23/47/5 不变，LIVE 无仓，未结算已执行指令 0；`git status --porcelain -- app/ scripts/` 仅本批 pipeline.py。
 - **验证**：针对性三件 **117 passed** `/tmp/ftseek-handoff-20261127-targeted.log`；桥接+供给门 **57 passed** `/tmp/ftseek-handoff-20261127-a2-bridge-supply.log`；正确性相邻 **229 passed/7 deselected** `/tmp/ftseek-handoff-20261127-correctness.log`；行为相邻 **240 passed** `/tmp/ftseek-handoff-20261127-behavior.log`；变异撤回内容绑定+稳定性校验 → S11/S12/S14/S18 **4 failed** `/tmp/ftseek-handoff-20261127-a2-mutation-red.log`，恢复后绿；A0 评分复现 `/tmp/ftseek-handoff-20261127-a0-scoring-repro.log`（缺费缺净 NOT_MEASURABLE、负 CI 不误标）。`systemctl restart ftseek-us` 后 PID147844、11:00:23 CST 启动、active/running；`PYTHONPATH=. ./venv/bin/python scripts/startup_smoke_check.py --wait 90` **7/7 exit0** `/tmp/ftseek-handoff-20261127-startup-smoke.log`。
 - **未验证**：生产自然「DA 同日重写→内存刷新」命中（本轮当日 bridge 未产出，TechnicalFallback 兜底，无法实测自然链路）；全量 pytest/GitHub Actions；完整 tick/订单簿回放；收益显著性检验。契约由 S11-S18 隔离证明，不等于生产命中统计。提案阶段 B（冻结真实快照查收益损耗）/C（资金分布输入实验）需真实资料与预注册授权，本轮未做。收益未证，正确性修复不等于盈利改善。
-- **下一步**：推送 `origin/main`（代码 `d5051134f` + 文档批）；下一交易时段仅观察自然 bridge 同日刷新与官方评分，不人工造单、不清 UNKNOWN 锁、不重置峰值/累计止损、不调方向/阈值/live 权限。RFC-217 维持原 cohort/停止判据；未来 SHORT live-arm 前补跨 regime 实验标记隔离。11-30 正式结算不延期。**最后更新：2026-11-27。**
+- **下一步**：已推送 `origin/main` 快进 `45bd4b9a3..e740bd8ad`（含代码 `d5051134f` + 文档 `e740bd8ad`），远端 main 与本地 HEAD 一致；下一交易时段仅观察自然 bridge 同日刷新与官方评分，不人工造单、不清 UNKNOWN 锁、不重置峰值/累计止损、不调方向/阈值/live 权限。RFC-217 维持原 cohort/停止判据；未来 SHORT live-arm 前补跨 regime 实验标记隔离。11-30 正式结算不延期。**最后更新：2026-11-27。**
 
 ## 2026-11-27 10:09 CST · 【DA 审查建议复核 + P0 正确性修复部署】bridge 启动刷新基线 + OKR fail-close/CI 文案已重启生效；冒烟 7/7，代码与文档已推送主线
 

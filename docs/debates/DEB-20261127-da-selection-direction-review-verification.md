@@ -142,6 +142,7 @@ bridge 缺口已隔离复现，但生产发生次数和收益影响未测量。�
 - 启动冒烟 `PYTHONPATH=. ./venv/bin/python scripts/startup_smoke_check.py --wait 90` → **7/7 exit0**，`/tmp/ftseek-handoff-20261127-startup-smoke.log`。
 - 重启后复核 `/tmp/ftseek-handoff-20261127-post-restart.log`：三笔 SIM 持仓方向/数量不变，LIVE 无仓。当日 bridge 文件尚未产出 → TechnicalFallback 兜底，新 loader 缺失分支干净运行，无 Traceback/稳定性告警。
 - 保留其他会话 WIP：`DEB-20261125-flat-all-empty-spin-and-deploy-ledger-reconciliation.md` 未提交。
+- 推送：`git push origin main` 快进 `45bd4b9a3..e740bd8ad`（代码 `d5051134f` + 文档 `e740bd8ad`），远端 main 与本地 HEAD 一致；推送回执随后续文档提交。
 
 ### 9.7 未验证与收益边界
 
