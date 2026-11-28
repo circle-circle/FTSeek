@@ -1,0 +1,24 @@
+{
+ "degen": [
+  "da_gate.challenger_score",
+  "da_gate.da_score",
+  "da_gate.invalidation_trigger_count",
+  "da_gate.tripwire_count",
+  "da_instruction.score",
+  "ue_instruction.confidence",
+  "da_instruction.confidence_semantic",
+  "ue_scan.borrow_data_basis"
+ ],
+ "established_at": "2026-09-06T04:30:17-04:00",
+ "note": "已知常量退化字段基线 (ADR-038 P7 军规自动化, 2026-09-06 用户裁\"按建议执行\"; 守卫=scripts/daily_invariant_check.py::_check_field_cardinality W2, cron 05 5 * * 2-6)。豁免=degen 追加 \"source.field\" 并在 refs 写诊断出处与处置路径。改本文件=改判据, 须先落档 ADR/DEB; 棘轮只降不升 — 字段愈合后由人工收缩, 守卫不自动改写。",
+ "refs": {
+  "da_gate.da_score": "PROPOSAL-20260905 A1/A8 证实: 挑战者取低覆写把 HIGH 档 33/43=77% 拉平 8.0→6.0; 丙1 已于 2026-09-05 改影子记录 (skill llm_synth.py:2066 _merge_debate_results), 存量 237 行不自愈 → 愈合只能由新行带来",
+  "da_gate.challenger_score": "同 A1 族: challenger 分本身 3 档且 75.9% 塌在 6.0; 丙1 后挑战者分改落 _challenger_score_shadow, 影响面复算见 scripts/da_score_overwrite_counterfactual.py (tier 翻转 29/33, decision 翻转 0)",
+  "da_gate.invalidation_trigger_count": "PROPOSAL-20260905 A5 证实: 237/237 恒=2 (依从率 100%/信息量 0) → 判据须改为多样性; 修在乙类 prompt 批次 (蒸馏影子对照窗满 9/16 后启动), 未动前恒 DEGEN",
+  "da_gate.tripwire_count": "A5 同族: 236/237 恒=2; 处置同上 (乙类 prompt 批次, 9/16 后)",
+  "da_instruction.score": "A8 均值锚: 2/3 档塌在 7.0 (llm_synth.py:1045 注释自认); 丙1 修覆写后观察 HIGH 档区分度是否恢复, 未恢复则升级立案",
+  "ue_instruction.confidence": "AGENT.md 军规既有案 (UE conf cap=50 恒常量, n=97 100%=50); 真信息在 origin.raw_confidence (18 唯一值/熵 0.909, OK) → 消费方应读 raw, 本字段待退役或修 cap",
+  "da_instruction.confidence_semantic": "DEB-20261128-fullchain-guard-hygiene §5 (2026-11-28 登记): n=407 top=0.5@92.9% 熵0.371。断崖精确 2026-10-23 = 仓外 DA skill commit 78a3dca (10-23 13:00) 引入 debate_state.py (DA_DEBATE_STATE_FIX 默认 ON): PARTIAL_AGREE+agreed=true 不再冒充独立一致, 0.7 档表面一致被诚实落 0.5 — 已裁决真值修复的预期效果, 非写入方退化。逐日✅率 10-22 5/15→10-23 1/15→10-30 0/18; gate 10-26 周 AGREE 36 行中 33 行 (SKIP,SKIP) 仅 3 行 (BUY,BUY) 与指令级 3✅ 吻合 ⇒ adapter 无第二 bug; 挑战者模型全程 deepseek-v4.1-flash 未换。app/ 零消费方 (grep 0 命中, write-only 观测)。区分度若恢复由新行带来, 届时人工收缩本基线。",
+  "ue_scan.borrow_data_basis": "DEB-20261128-fullchain-guard-hygiene §6 (2026-11-28 登记): n=115 全 MATERIAL (100%, 熵0)。ADR-046 (2026-10-14) 后 llm_universe_scan.py::_render_borrow_snapshot (~L2344) 渲染借券快照进 brief; 时间线 10-12/13 全 UNKNOWN→10-15/16 混合→10-20 起 100% MATERIAL 稳 5+ 周 ⇒ 借券快照持续物化成功的健康常量, 非写入方退化。写入方 app/data/borrow_verifier.py (无数据 UNKNOWN/物化 MATERIAL); 消费方 app/playbook/quality_shadow.py record-only 无判定消费; UE C18 关闭仅观察。盲点声明: W2 只判塌缩不判方向 — 若塌回 UNKNOWN (借券供给面断线) 本维不响, 由 UE 空头供给面另守。"
+ }
+}

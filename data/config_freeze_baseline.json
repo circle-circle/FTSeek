@@ -1,0 +1,18 @@
+{
+  "versions": [
+    "v2"
+  ],
+  "established_at": "2026-08-31T12:40:00-04:00",
+  "note": "OKR-2026-09 KR2 冻结基线; 豁免=本文件 versions 追加新版本+deb_ref。改本文件=改判据, 须先改 OKR/DEB (判据字典纪律)。 exit_versions=metadata_json.config_version (退出参数哈希) 豁免清单, 与列口径 versions 并行。 2026-09-18 第三方复核批追加 exit-34c7153088a1 (用户令「按建议执行」); 同批发现列 config_version='v1' (7 行, 9/17) 系 schema DEFAULT 'v1' (写方未写该列), 属写方缺口**未登记进 versions**, 待修写方。",
+  "source": "2026-08-31 Codex 补档批: 建基线时窗口 2026-08-24→ 实测唯一版本 v2 (n=63, SELECT config_version,COUNT(*) ... GROUP BY 1)",
+  "exit_versions": {
+    "exit-7f5263af3cfd": "KR2 冻结基线版本 (8/24-8/28 唯一版本)",
+    "exit-2623be9c8879": "45e62f0f (8/29 17:10, 用户裁'盈利三漏治理①③⑤': early_tight_sl 影子毕业转正, 先于 9/1 C1 冻结; 8/31 起唯一版本) — KR2 例外通道豁免, 2026-09-01 全链体检定性",
+    "exit-d1120a105711": "e32d376f (9/1 用户裁'A': ATR 比例紧 SL, C1 冻结显式豁免=DEB-20260831 §八) + 9/2 R-4b 漏键收尾 (mfe_gate/atr 三键入哈希, 此前判分假绿) — 9/2 起版本",
+    "exit-f837b002896d": "RFC-073 (2026-09-02 用户裁'确认正效应直接上sim'): DEAD_SIGNAL 隔夜仓时间口径对齐 (墙钟→今日开盘以来分钟, 同RFC-064); 回放6笔1min bar悲观序+$97正效应; 新键入快照防漏键假绿",
+    "exit-de49b1299290": "DEB-20260903-dell-dual-failure 议题二方案A (9/3 用户裁'按建议执行'): 被动侧净保本限价改 marketable limit (检测价∓15bps垫), 新键 breakeven_passive_marketable_pad_bps 入快照防漏键假绿; 家族5案0回摆成交全负 (均值≈-$19.7/案), DELL 9/2 可回收分量 $30.90/63%",
+    "exit-13f6c2cc7fc4": "DEB-20260909-exit-params-multi-model-debate 行动项C (9/9 用户裁'同意' M2): BE 保本垫兜底收敛 — yaml breakeven_fee_cushion_pct 0.4→0.15 (≈fee-aware 实弹均值0.147%; 修 0.4+0.2>0.4=breakeven_at_pct 几何破缺, fee-aware 静默失败时武装即触发=变相硬TP) + 五处代码兜底收敛共享常量 BE_FALLBACK_FEE_CUSHION_PCT; 仅 yaml 缺键/故障降级路径生效, fee-aware 正常 (8/20 起 156/156) 零行为变更。【KR2 判据处置, 2026-09-11 用户裁'按建议执行'=DEB-20260909 §7.6 选项(d) 双口径并列】本条曾自称'判分窗口自本版本新开' — 那是**未经裁决的判据改写**, 且违反本文件 note 的纪律 (改本文件≠改判据), 现予撤回并如实记录: 主 cohort 判分窗**仍为 2026-09-03 起, 判 BROKEN, 不重开不放宽** (_FREEZE_COHORT_START 未动, tests/test_w1_exit_version_guard.py 字面钉死); 另设 sub_cohort **观测面**起点 2026-09-10 (_SUB_COHORT_START), 只报已闭合笔数与哈希唯一性, **不是 KR2 判分对象**, 不得据此宣称 KR2 达标或 9 月样本有效。详见 DEB-20260909 §7 + OKR-2026-09 变更记录 2026-09-11 行。",
+    "exit-34c7153088a1": "Codex 66d781dcc (2026-09-17 晚, DEB-20260917-extended-hours-auto-trading §20–§22): 延长时段退出链重构 = 恢复原 Playbook 利润保护规则 (§21, 依用户勘误) + MFE 自适应 trailing (§22)。用户 2026-09-17 令「Codex重新调整了盘前中后阶段的最新止损止盈策略和逻辑…请复查」经独立逐行复核(DEB §23: 策略语义/费用门/非死门/执行器无 DB 写/§18 数据修复逐条属实)。用户 2026-09-18 令「按建议执行」= 授权本条豁免登记 (含第三方复核结论与 F1–F6 处置)。【KR2 判据处置】本条**只登记版本**, 不改判分窗口: 主 cohort 判分窗仍为 2026-09-03 起, 判 BROKEN, 不重开不放宽 (_FREEZE_COHORT_START 未动); 不得据本条宣称 KR2 达标。",
+    "exit-ca4487172a6f": "410297295 (2026-10-08 22:04, RFC-106 §5.2 出场日 gap 证据 record-only 同批): short_horizon.overnight_gap_stop_pct=3.0 由代码默认 (exit_engine.py) 显式写入 yaml = 同值显式化, **零行为变更**; 指纹移动纯属整文件哈希副作用 (config.py R-4b 注: 过宽的代价仅是无关键变更多打一次版本号)。2026-10-09 resume 会话逐提交二分归因 (隔离 worktree 全配置扫描, 9/26 钉值 exit-34c7153088a1 精确复现, 410297295 为唯一跳变点) + 用户裁「继续」(D-1 重钉队列①); 落档 DEB-20261008 (路线图) §24.3。**行为等价声明**: 与 exit-34c7153088a1 退出行为逐键相同, 10-08 起 trade_records 新行打 ca44 但与 34c7 同 regime。【KR2 判据处置】本条只登记版本, 不改判分窗口: 主 cohort (9/3→) 与 oct cohort (9/17→) 判分维豁免通道关闭, 两维 BROKEN 状态维持 (2026-10-09 05:05 invariant 已推 W1_oct_cohort_broken) — 按预注册回滚线须 DEB 落档 + 开跑会级裁决, 不得静默移窗; 本条豁免仅解除 W1_exit_version_drift (未登记告警) 一维。"
+  }
+}
