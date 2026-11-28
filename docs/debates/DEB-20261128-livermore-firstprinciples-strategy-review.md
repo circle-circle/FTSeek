@@ -404,3 +404,75 @@ trail_lock 中 MFE≥2% 的 45 笔 capture_med 68%；MFE≥3% 仅 18 笔；**MFE
   `docs/debates/DEB-20261128-us-adr-leg.md`。
 - **回滚**：`git revert <本 commit>`（纯 .md + 只读脚本，无服务回滚、无配置项、无数据迁移）。
 - **复现**：见 §3 横幅命令；OKR 读数见 §9 横幅命令。
+
+## 13. 补遗（2026-11-28 晚）：结构锚 trailing 只读可行性回放（方案 A 方向性 sanity，非 efficacy）
+
+> 触发：用户问「能否基于已有数据验证方案 A，并通俗解释」。本补遗是 **record-only 历史可行性回放**，
+> 落档供 12-21 §6 裁决引用。**不是注册影子、不是 KR4 实验、不是预注册 efficacy 证明**；
+> §7A 的前瞻配对影子仍是独立用户裁决步骤，本补遗不替代它、不据此上线/下线任何生产规则。
+
+### 13.1 数据可行性（已有 1min 缓存即可，无需新数据通道）
+
+- 数据源 = `data/replay_bars` 共享 1min K 线缓存（3145 文件；既有 `atr_trail_replay_c.py` 等只读回放同款源，绝不碰 OpenD）。
+- 覆盖（只读逐笔核对，11 月 DA）：全人群 **141/147 full**（6 partial）；SL_TRAIL_LOCK **37/38 full**（仅 GOOG 11-16 缺 1 天）。
+- ⇒ 在已有数据上回放结构锚 trailing **数据可行**；1min 可确定性重采样成 15m。
+
+### 13.2 方法（参数事先固定，无未来函数，不调参）
+
+| 参数 | 值 | 出处/性质 |
+|---|---|---|
+| 重采样 | 1min→15m | RFC §4.6 |
+| swing 确认 | fractal 左右各 2bar，右侧确认 | 影子初始假设（RFC bar 数未钉死）|
+| ATR | 14 | 标准 |
+| 缓冲 | 0.2×ATR | DEB §7A / RFC §4.6 |
+| TREND 判据 | 连续 HH∧HL（LONG）/ LH∧LL（SHORT）| RFC §5 |
+| 破位 | 15m 收盘价穿越结构锚 | 影子初始假设 |
+| 未形成结构 | ABSTAIN 沿用现行出场 | RFC §3「数据不足只能 ABSTAIN」|
+| fees | 该笔实际 fees_est 代理 | 非重新估算 |
+
+无未来函数：每个 swing 仅在右侧 2bar 走完后确认（`confirmed_at`），禁右侧回填；LONG/SHORT 镜像。
+
+### 13.3 结果（37 笔可回放 trail 出场，配对实际 adaptive trail）
+
+| 项 | 值 |
+|---|---|
+| TREND 生效（armed）| **7/37（19%）** |
+| 无结构可依（ABSTAIN）| 30/37 |
+| armed Δ净$ | **−307.3（−4.78bps，分母 Nov DA 名义 $642,910）** |
+| armed 逐笔 | 6 笔更差 / 1 笔更好 |
+| 出场时点 | **7/7 全部更晚**（拿得更久）|
+| capture 中位 | 结构 **12%** vs 现行 **56%**（§3.3）|
+| 实际净$ → 结构净$ | +217.4 → −89.9 |
+
+逐笔（Δ$ 升序）：MU 11-04 LONG −132.8 / AVGO 11-04 LONG −118.9 / BWXT 11-10 LONG −49.4 /
+CAT 11-24 SHORT −31.5 / HPE 11-16 SHORT −11.2 / CAT 11-09 SHORT −6.7 / CAT 11-17 SHORT +43.1。
+
+### 13.4 机制解释（第一性原理）
+
+当前 DA 是 **scalp 类别**（浮盈峰值中位仅 1.3%，§3.3），结构锚是**趋势类别出场**。给 scalp 仓配趋势出场＝
+**等一个不来的趋势，把已到手的快钱吐回**：结构锚（最后确认 higher-low − 0.2ATR）远比 adaptive trail
+（0.4–1.2%）宽，浮盈回吐更大；且 37 笔仅 7 笔形成干净 15m HH/HL ⇒ 机制绝大多数时候无结构可依。
+典型：MU 11-04 冲 +3.25% MFE，adaptive 落袋 +$39.6，结构锚死等趋势、反转后 −$93.2。
+
+### 13.5 诚实边界（务必先读，防误读）
+
+- **armed n=7 < 30 结论门槛** ⇒ 按宪章**不构成结论**，**不是「证伪方案 A」**，只是可行性方向警示。
+- 历史回放 ≠ 前瞻影子；**arming 率对 swing 定义敏感**（RFC bar 数未钉死，换合理定义生效率会变）。
+- 参数事先固定未调；SIM 无市场冲击；fees 用实际估算代理；单窗口（11 月）。
+- **不得据此上线/下线任何生产规则**；不得用受影响子集（armed 7 笔）t 值宣称盈利/证伪（注册表既有纪律）。
+
+### 13.6 对 §7A 的修正性含义（新证据，供 12-21 引用）
+
+- 方案 A 的**真正归宿是趋势类入场（方案 C）的出场机制**，不宜单独 bolt 到现有 scalp 仓上。
+- **A↔C 配套**：利弗莫尔方法＝趋势入场（C：领头羊+关键点+最小阻力线）+ 结构出场（A）；
+  单独把 A 套在 scalp 上回放为负（n 小不结论）。这强化 §5/§7C「换类别才是根本收益杠杆」。
+- **不改变 §7A「开放轴」地位**（未证伪），但把 A 的适用条件**收紧到趋势类别**：
+  §7A 前瞻影子的预注册人群应明确为趋势类入场，而非现有 scalp 全人群。
+
+### 13.7 凭据 / 复现 / 回滚
+
+- 脚本：`scripts/deb20261128_structural_trail_feasibility_replay.py`（新增，只读 `mode=ro`，不 import app.*，只打印不写文件）。
+- 复现：`PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. ./venv/bin/python scripts/deb20261128_structural_trail_feasibility_replay.py`
+  （日志 `/tmp/structural_trail_feasibility_formal.log`；py_compile + check_undefined_names rc0；逐字复现 §13.3）。
+- 零改动面：app/ / config/ / .env.us / 注册表 / crontab / 四锁 / scan_loop / 方向 / 阈值 / 仓位 / live 权限；**无重启**。
+- 他人 WIP 未触碰未提交。回滚＝`git revert` 本补遗 commit（纯 .md + 只读脚本，无服务回滚）。
