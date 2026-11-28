@@ -178,8 +178,9 @@ def get_market_hours_us(start_dt, end_dt) -> float:
                 if _cal.is_us_holiday(current.date()):
                     current = (current + timedelta(days=1)).replace(hour=9, minute=30, second=0, microsecond=0)
                     continue
-            except Exception:
-                pass  # 日历异常降级: 保留原行为(按工作日计), 不阻断报表
+            except Exception as _cal_err:
+                # 日历异常降级: 保留原行为(按工作日计), 不阻断报表
+                logger.warning("[ExitMonitor] 假日日历查询异常 (降级按工作日计): %s", _cal_err, exc_info=True)
             # [RFC-171 §9] 半日市动态收盘 (13:00), 常规 16:00; 取值失败兜底 960
             _close_mins = 16 * 60
             try:

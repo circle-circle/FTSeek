@@ -69,13 +69,14 @@ def _tail_rows(path: Path, limit: int = _TAIL_LINES) -> List[Dict[str, Any]]:
                 continue
             try:
                 parsed = json.loads(line)
-            except Exception:
+            except Exception as _row_err:
+                logger.warning("[LateFill] 账本坏行跳过 %s: %s", path.name, _row_err, exc_info=True)
                 continue
             if isinstance(parsed, dict):
                 rows.append(parsed)
         return rows
     except Exception as error:
-        logger.warning("[LateFill] 账本尾部读取失败 %s: %s", path.name, error)
+        logger.warning("[LateFill] 账本尾部读取失败 %s: %s", path.name, error, exc_info=True)
         return []
 
 
@@ -110,8 +111,9 @@ def _fill_instant(execution_ts: Any):
             parsed = parse_iso_safe(text)
             if parsed is not None and parsed.tzinfo is not None:
                 return parsed
-        except Exception:
-            pass
+        except Exception as _tz_err:
+            logger.warning("[LateFill] 成交时戳 tz 解析失败 (回退 reconcile 时刻): %s", _tz_err,
+                           exc_info=True)
     try:
         from app.utils.timezone import now_et
         return now_et()

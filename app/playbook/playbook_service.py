@@ -2003,8 +2003,9 @@ class PlaybookService:
                 try:
                     self.db.update_instruction_tracking(
                         instruction_id, {"skip_reason": _mom_final_reject})
-                except Exception:
-                    pass
+                except Exception as _mom_track_err:
+                    logger.warning("[MOM-ETF-V1] %s 拒单 skip_reason 回写失败 (不影响拒单): %s",
+                                   symbol, _mom_track_err, exc_info=True)
                 return {"success": False, "message": _mom_final_reject,
                         "skipped_mom_final_check": True}
 
@@ -2147,13 +2148,15 @@ class PlaybookService:
                 # This control path proves submit_order has not been invoked.
                 try:
                     reject_sim_submission(submit_state="DEFINITIVE_REJECT", dealt_qty=0)
-                except Exception:
-                    pass
+                except Exception as _reject_err:
+                    logger.warning("[sim-budget] DEFINITIVE_REJECT 标记失败 (instruction=%s, 不阻断 defer): %s",
+                                   instruction_id, _reject_err, exc_info=True)
                 try:
                     self.db.unlock_execution_if_zero_fill_terminal(
                         instruction_id, _attempt, "DEFINITIVE_REJECT", dealt_qty=0)
-                except Exception:
-                    pass
+                except Exception as _unlock_err:
+                    logger.warning("[playbook] zero-fill 终态解锁失败 (instruction=%s, attempt=%s): %s",
+                                   instruction_id, _attempt, _unlock_err, exc_info=True)
                 return defer(f"submission_marker_not_durable:{_marker_error}")
 
         try:

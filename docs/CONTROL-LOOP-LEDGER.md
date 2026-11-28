@@ -370,8 +370,8 @@ cohort 窗 — 全窗已不可逆有 4 个哈希, 按全窗字面判必 BROKEN; 
 | `crontab-mom-etf-v1` → `scripts/mom_etf_v1_generate.py` | 中环·MOM-ETF-V1 SIM 指令写入方 | 前一交易日 asof + 本地交易日历 + 四 ETF 完整性 + QQQ MA200 现金门；日历/数据失败 fail-closed 非零退出，不补跑、不放宽；`CRON_TZ=America/New_York` 全年 09:35（后恢复 Asia/Shanghai），调仓日仅 09:30–09:50 ET 可写，错位 fail-closed；执行窗口 09:50–14:00 ET 见 RFC-199。 |
 | `crontab-premarket-index-snapshot` → `scripts/premarket_index_snapshot.py` | 中环·盘前指数快照 | 存量采集环，供盘前上下文；数据缺失须显式降级，不得伪造实时快照。本行只补既有载体登记。 |
 | `crontab-stop-invalidation-audit` → `scripts/stop_invalidation_audit.py` | 元环·止损失效审计 | 存量只读审计环；失效时应产生可见错误，不以空结果冒充零异常。本行只补既有载体登记。 |
-| `fcec2b6482b6` (`gap-rank-attribution-daily`) | Hermes 中环·跳空排名归因 | enabled job 补登记；输出只作研究/复盘，不直接改交易参数。 |
-| `68cc76b16ebd` (`NVDA-RTH-10AM-checkpoint`) | Hermes 快环·NVDA RTH 10:00 检查点 | enabled job 补登记；属于单标的观察/检查点，不是自动下单授权。其 prompt 内嵌 SQL 守卫红另列，不在本批改线上 prompt。 |
+| `fcec2b6482b6` (`gap-rank-attribution-daily`) | Hermes 中环·跳空排名归因 | **disabled 留痕登记**（2026-11-13 06:50 CST script exit 1 incident 后 paused，enabled=false，completed=4；仍在 jobs.json，非幽灵）；输出只作研究/复盘，不直接改交易参数。状态更正见 DEB-20261128-fullchain-guard-hygiene §7.2。 |
+| `68cc76b16ebd` (`NVDA-RTH-10AM-checkpoint`) | Hermes 快环·NVDA RTH 10:00 检查点 | **留痕不入守卫**：一次性 read-only 检查点 job **已销**（created 2026-11-12，once 2026-11-12 23:00 CST，times=1 completed=1，state=completed，enabled=false；现已不在 jobs.json，executions.db 0 残留）。历史登记保留，非活体环路；六面零活体消费方审计见 DEB-20261128-fullchain-guard-hygiene §7.1。原「prompt 内嵌 SQL 守卫红」随 job 销户不再适用。 |
 
 ---
 

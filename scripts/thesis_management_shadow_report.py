@@ -48,7 +48,8 @@ def summarize(path: Path, forward_path: Path | None = None) -> dict:
                     continue
                 try:
                     row = json.loads(line)
-                except (TypeError, ValueError, json.JSONDecodeError):
+                except (TypeError, ValueError, json.JSONDecodeError) as _bad_row_err:
+                    print(f"[thesis_mgmt_shadow] forward 坏行跳过: {_bad_row_err}", file=sys.stderr)
                     continue
                 if row.get("schema_version") == "thesis_management_path_v1":
                     forward_rows.append(row)

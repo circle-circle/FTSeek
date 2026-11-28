@@ -247,7 +247,7 @@ def emit_blackout_shadow(scheduler, today: str, now_dt, logger: Any,
                     _quote_source = "full_market_context" if _px > 0 else None
             except EntryDataUnavailable as _quote_err:
                 _n_quote_error += 1
-                logger.warning(f"[blackout-shadow] {_sym} 取数暂不可用: {_quote_err}")
+                logger.warning(f"[blackout-shadow] {_sym} 取数暂不可用: {_quote_err}", exc_info=True)
                 continue
             except Exception:
                 _n_quote_error += 1
@@ -262,7 +262,7 @@ def emit_blackout_shadow(scheduler, today: str, now_dt, logger: Any,
                         _quote_source = "quote_fallback" if _px > 0 else None
                 except EntryDataUnavailable as _quote_err:
                     _n_quote_error += 1
-                    logger.warning(f"[blackout-shadow] {_sym} 取数暂不可用: {_quote_err}")
+                    logger.warning(f"[blackout-shadow] {_sym} 取数暂不可用: {_quote_err}", exc_info=True)
                     continue
                 except Exception:
                     _n_quote_error += 1
@@ -469,7 +469,7 @@ def run_playbook_auto_execute(
                 _nt_short_exp = _normalize_regime_str(_nt_ctx) == "NO_TRADE"
                 _record_regime_snapshot(_cycle_regime_audit, "experiment", _nt_ctx, logger)
         except Exception as _nt_exp_err:
-            logger.warning(f"[playbook] NO_TRADE SHORT实验态读取失败 (回落旧门): {_nt_exp_err}")
+            logger.warning(f"[playbook] NO_TRADE SHORT实验态读取失败 (回落旧门): {_nt_exp_err}", exc_info=True)
             _nt_short_exp = False
 
         # [阶段 9] 预算/单日 guardrail 装配本体迁 execution_flow;
@@ -554,7 +554,7 @@ def run_playbook_auto_execute(
         except Exception as _bp_err:
             _bp_unavailable = (_bp_err if isinstance(_bp_err, EntryDataUnavailable)
                                else EntryDataUnavailable("broker_positions", "query_failed"))
-            logger.warning(f"[playbook] 轮级 broker 持仓未知，本轮暂缓入场: {_bp_err}")
+            logger.warning(f"[playbook] 轮级 broker 持仓未知，本轮暂缓入场: {_bp_err}", exc_info=True)
             for _deferred_inst in instructions:
                 if (not _deferred_inst.get("executed")
                         and _deferred_inst.get("direction") != "SKIP"
@@ -1180,8 +1180,11 @@ def run_playbook_auto_execute(
                                                     "at": _now_utc_nt().isoformat(),
                                                 }
                                             })
-                                        except Exception:
-                                            pass
+                                        except Exception as _nt_meta_err:
+                                            logger.warning(
+                                                f"[playbook] no_trade_short cohort metadata 合并失败 "
+                                                f"inst={inst.get('id')} (record-only, 不影响执行): {_nt_meta_err}",
+                                                exc_info=True)
                                 # 2026-08-06 (用户指示, sim 采集期): cautious 不再降仓 — 数据采集优先.
                                 #   原 0.5 与 LONG分歧0.5 相乘 → 名义仅 25%, 大量单被 min_notional=3000 物理拦截.
                                 #   回滚: cautious_mult 改回 0.5 (或删本行恢复硬编码).
@@ -1718,7 +1721,7 @@ def run_playbook_auto_execute(
                 except Exception as _cc_headroom_err:
                     logger.warning(
                         f"[playbook] chase_cap_anchor_headroom 影子写盘失败 {inst.get('symbol')} "
-                        f"(record-only, 不影响 chase-cap 判定): {_cc_headroom_err}")
+                        f"(record-only, 不影响 chase-cap 判定): {_cc_headroom_err}", exc_info=True)
                 if _cc_violated(_dir, _new_entry, _cc_f):
                     from pathlib import Path as _Pcc
                     _cc_path = _Pcc(module_file).resolve().parents[2] / "data" / "shadow" / "pullback_limit_shadow.jsonl"

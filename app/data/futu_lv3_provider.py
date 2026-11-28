@@ -1601,7 +1601,9 @@ class FutuLV3Provider:
                 bars = entry.get("bars") or []
                 try:
                     ts = float(entry.get("fetched_at") or 0)
-                except (TypeError, ValueError, OverflowError):
+                except (TypeError, ValueError, OverflowError) as _ts_err:
+                    logger.warning(f"[FutuLV3·DailyK] {sym} fetched_at 解析失败 (跳过该缓存条目): {_ts_err}",
+                                   exc_info=True)
                     continue
                 if not bars or ts <= 0 or ts <= self._daily_kline_cache_time.get(sym, 0):
                     continue

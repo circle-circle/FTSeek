@@ -1081,7 +1081,7 @@ class USPositionSync:
                                     except Exception as _commit_err:
                                         logger.warning(
                                             "[US Sync] %s open_positions 对齐提交失败: %s",
-                                            row['symbol'], _commit_err)
+                                            row['symbol'], _commit_err, exc_info=True)
                                 fill_time = _parse_entry_ts(_pick_order_ts(snapshot))
                                 execution_time = (fill_time.isoformat() if fill_time is not None
                                                   else row['execution_time'] or now_et().isoformat())
@@ -1106,7 +1106,7 @@ class USPositionSync:
                                 except Exception as _late_fill_err:
                                     logger.warning(
                                         "[US Sync] %s 迟成交证据回灌失败 (不影响交易): %s",
-                                        row['symbol'], _late_fill_err)
+                                        row['symbol'], _late_fill_err, exc_info=True)
                             break
                         if observation['zero_terminal']:
                             pdb.unlock_execution_if_zero_fill_terminal(

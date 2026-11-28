@@ -5349,7 +5349,9 @@ def _count_samples(s: ShadowItem, base) -> int | None:
             for f in sorted(p.glob("*.json")):
                 try:
                     d = _j.loads(f.read_text(encoding="utf-8"))
-                except Exception:
+                except Exception as _bad_json_err:
+                    _log.warning("[ShadowRegistry] 目录型坏 JSON 跳过 %s: %s", f.name, _bad_json_err,
+                                 exc_info=True)
                     continue
                 if isinstance(d, dict) and isinstance(d.get("rows"), dict):
                     total += len(d["rows"])

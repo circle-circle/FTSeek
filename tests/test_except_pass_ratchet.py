@@ -14,7 +14,22 @@ import pathlib
 import re
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-BASELINE = 899  # 2026-11-09 清剿 RFC-190/192/193/195 新增 36 处后调低 (935→899): 逐文件就地
+BASELINE = 897  # 2026-11-28 全链路守卫卫生批调低 (899→897, DEB-20261128-fullchain-guard-hygiene §2):
+#   ① **扫描面收敛**: _EXCLUDE_PARTS 增 ".qoder" — 他人 agent 的 worktree 副本
+#      (.qoder/worktrees/trade-recovery-20261121/, 83M, 非生产代码, 无 import 引用、
+#      无调度载体) 贡献 **907** 处假红。实测 1817→910; 排除项必须**带点**
+#      (path.parts 是 ".qoder", 写 "qoder" 不生效, 实测仍 1817)。判据对齐 W4/W6
+#      _HYGIENE_ROOTS 与 2026-10-28 排 docs 先例。边界声明: .qoder/ 下不得放生产逻辑。
+#   ② **清剿基线 commit 61acb818d 后真实新增 13 处** (同口径逐文件 diff 实证):
+#      futu_lv3_provider 1 / late_fill_evidence 2 / auto_execute_flow 1 /
+#      playbook_service 3 / shadow_registry 1 / position_exit_monitor 1 /
+#      da_entry_quality_trend 1 / extended_hours_entry_executor 2 /
+#      thesis_management_shadow_report 1。全部就地留痕 (app→logger.warning(exc_info=True);
+#      无 logger 脚本→print(..., file=sys.stderr)), 零控制流变更 (pass→留痕,
+#      continue→留痕+continue, 嵌套 raise 保留)。新增留痕全带 exc_info ⇒ 不引入 W6/W4 新违反。
+#   对账 (勿用总数差额冒充清零): 899 + 13(新增) − 2(他批已愈合: position_sync 20→19 −1 /
+#      playbook_service 旧 L269 消失 −1) − 13(本批清剿) = **897** = 修后同口径实测。只降不升。
+#   [历史] 2026-11-09 清剿 RFC-190/192/193/195 新增 36 处后调低 (935→899): 逐文件就地
 #   留痕, 零控制流变更 (脚本无 logger → print(..., file=sys.stderr) 带异常类型; app 模块 →
 #   logger.warning(..., exc_info=True) — 一律 warning, 不用 debug: W4 棘轮把新点位 debug 判违反)。
 #   36 处全部活体探针逼走 except 分支, 证实无 NameError 且输出/落盘不变。只降不升 (原 905 是 11-03 等价校准值)。
@@ -96,7 +111,12 @@ _EXCLUDE_PARTS = {"venv", "node_modules", ".git", "tests", "archive",
                   # 2026-10-28 扫描面收敛到生产可见面 (用户裁「按建议执行」): docs/ 是文档与
                   # 证据归档面 (含一次性离线回放程序), 无 import 引用、无调度载体; 纳入会
                   # 让每次分析交付都染红棘轮。判据与 W4/W6 的 _HYGIENE_ROOTS 对齐。
-                  "docs"}
+                  "docs",
+                  # 2026-11-28 同款收敛 (DEB-20261128-fullchain-guard-hygiene §2.1):
+                  # .qoder/ 是他人 agent 的 worktree 副本 (非生产代码), 贡献 907 处假红
+                  # (1817→910)。排除项必须带点 (path.parts 是 ".qoder")。
+                  # 边界声明: .qoder/ 下不得放生产逻辑, 否则逃出本棘轮 (同 docs 口径)。
+                  ".qoder"}
 _PATTERN = re.compile(r"except[^:\n]*:\s*\n\s*(pass|continue)\s*(?:#.*)?$", re.MULTILINE)
 
 

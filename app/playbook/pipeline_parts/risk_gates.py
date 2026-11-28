@@ -283,7 +283,7 @@ def _auto_execute_preflight(
             except EntryDataUnavailable as error:
                 # Never feed this through SIM's generic risk fail-open branch.
                 # Kill switch, risk-state mutation and daily-loss remain caller work.
-                logger.warning(f"[playbook] 入场 regime 取数暂不可用，本轮暂缓: {error}")
+                logger.warning(f"[playbook] 入场 regime 取数暂不可用，本轮暂缓: {error}", exc_info=True)
                 return {"date": today, "executed": 0, "skipped": 0,
                         "reason": "entry_data_unavailable",
                         "skipped_reason": "entry_data_unavailable",

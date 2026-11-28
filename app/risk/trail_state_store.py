@@ -275,7 +275,7 @@ class TrailStateStore:
                 return json.loads(row[0]), row[1]
             return None, None
         except Exception as e:
-            logger.error(f"[TrailStateStore] load_with_ts({symbol}) 失败: {e}")
+            logger.error(f"[TrailStateStore] load_with_ts({symbol}) 失败: {e}", exc_info=True)
             return None, None
 
     def load_all(self) -> Dict[str, Dict[str, Any]]:

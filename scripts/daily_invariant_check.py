@@ -1276,6 +1276,16 @@ def main(push_enabled: bool = True) -> int:
     # F: 字段健康度 — 非空率骤降即测量链断线 (常量退化族预警)
     field_health = {}
     if rows:
+        # 2026-11-28 DEB-20261128-fullchain-guard-hygiene §4: slippage_bps 分母分层。
+        #   收养/补录行 (entry_reason ∈ ARTIFACT_ENTRY_REASONS) 无 arrival 锚, execution
+        #   块结构性缺失 ⇒ 滑点不可算; 混入分母把「结构性不可算」误报成「测量链断线」
+        #   (11-27 实证 7/15: 7 真实信号行全有滑点, 8 收养行全缺)。先例: scripts/utils/
+        #   da_sample.py (2026-11-14 用户裁, 死单率同型分层)。只改 slippage_bps 一维分母;
+        #   收养行单列计数不抹账; 其余四维与阈值逐字不动。
+        from scripts.utils.da_sample import is_recovery_artifact
+        _signal_rows = [r for r in rows
+                        if not is_recovery_artifact({"entry_reason": _col(r, "entry_reason")})]
+        _artifact_n = len(rows) - len(_signal_rows)
         checks = {
             "slippage_bps": lambda r, m: (m.get("execution") or {}).get("slippage_bps"),
             "exit_telemetry": lambda r, m: m.get("exit_telemetry"),
@@ -1284,11 +1294,14 @@ def main(push_enabled: bool = True) -> int:
             "fees_est": lambda r, m: (r["fees_est"] if "fees_est" in r.keys() else None),  # 2026-07-30 上线
         }
         for name, fn in checks.items():
-            nn = sum(1 for r in rows if fn(r, json.loads(r["metadata_json"] or "{}")) not in (None, "", {}))
-            field_health[name] = f"{nn}/{len(rows)}"
+            _pop = _signal_rows if name == "slippage_bps" else rows
+            nn = sum(1 for r in _pop if fn(r, json.loads(r["metadata_json"] or "{}")) not in (None, "", {}))
+            field_health[name] = f"{nn}/{len(_pop)}"
+            if name == "slippage_bps" and _artifact_n:
+                field_health[name] += f" (signal; artifact {_artifact_n} 行无 arrival 锚, 单列不计)"
             # attribution/fees_est 是新字段, 首周不告警; 其余跌破 50% 告警
-            if name not in ("attribution", "fees_est") and len(rows) >= 10 and nn < len(rows) * 0.5:
-                rec("F_field_dropout", "-", name, f"非空率 {nn}/{len(rows)}")
+            if name not in ("attribution", "fees_est") and len(_pop) >= 10 and nn < len(_pop) * 0.5:
+                rec("F_field_dropout", "-", name, f"非空率 {nn}/{len(_pop)}")
 
     # ── J2 三口径盈亏对账 (2026-07-31 议题⑩, 用户裁"整体执行"): trade_records (SSOT)
     #    vs trade_attribution vs daily_review 同窗口净额差值 — >5% (且绝对差 >$20) 告警.

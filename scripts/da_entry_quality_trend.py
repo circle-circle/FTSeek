@@ -23,6 +23,7 @@
 import argparse
 import json
 import sqlite3
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -93,7 +94,9 @@ def load_chase_cap_rounds(start, path=SHADOW_JSONL):
                 continue
             try:
                 r = json.loads(line)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as _bad_row_err:
+                print(f"[da_entry_quality_trend] chase_cap 坏行跳过 ({path}): {_bad_row_err}",
+                      file=sys.stderr)
                 continue  # 坏行跳过，不计数（同坏行不进分母的既有纪律）
             if r.get("type") != "chase_cap_violation":
                 continue

@@ -257,8 +257,9 @@ def _atomic_write_json(path, doc):
     except Exception:
         try:
             os.unlink(tmp_name)
-        except OSError:
-            pass
+        except OSError as _unlink_err:
+            _log.warning("[ext-entry] 原子写失败后 tmp 清理失败 %s: %s", tmp_name, _unlink_err,
+                         exc_info=True)
         raise
 
 
@@ -4442,8 +4443,9 @@ def _execute_account_locked(
                 # This branch has not invoked place_order; only our marker may clear.
                 try:
                     reject_sim_submission(submit_state="DEFINITIVE_REJECT", dealt_qty=0)
-                except Exception:
-                    pass
+                except Exception as _reject_err:
+                    _log.warning("[ext-entry·sim-budget] DEFINITIVE_REJECT 标记失败 (symbol=%s, 不阻断 defer): %s",
+                                 symbol, _reject_err, exc_info=True)
                 return {**rec, **defer(f"submission_marker_not_durable:{_marker_error}")}
         ret, data = tctx.place_order(price=price, qty=qty, code=symbol, trd_side=trd_side,
                                      order_type=OrderType.NORMAL, trd_env=env, acc_id=acc_id,
